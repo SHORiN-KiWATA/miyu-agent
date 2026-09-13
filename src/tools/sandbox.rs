@@ -164,6 +164,7 @@ pub fn confine_std(command: &mut std::process::Command) {
 }
 
 /// 内核能不能用:`Some(abi)` 能(ABI 号,>= 3 算完整),`None` 不能。启动时记日志用。
+#[cfg(target_os = "linux")]
 pub fn probe() -> Option<i64> {
     let abi = unsafe {
         libc::syscall(
@@ -176,36 +177,60 @@ pub fn probe() -> Option<i64> {
     (abi > 0).then_some(abi as i64)
 }
 
+/// Landlock 是 Linux 专有的内核特性,别的平台一律「没有」——与内核没编
+/// Landlock 走同一条路。
+#[cfg(not(target_os = "linux"))]
+pub fn probe() -> Option<i64> {
+    None
+}
+
 // ── Landlock UAPI,本地定义(内核 ABI 稳定;与 dsh landlock-run 逐字一致) ──
 
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct RulesetAttr {
     handled_access_fs: u64,
 }
 
+#[cfg(target_os = "linux")]
 #[repr(C, packed)]
 struct PathBeneathAttr {
     allowed_access: u64,
     parent_fd: i32,
 }
 
+#[cfg(target_os = "linux")]
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
+#[cfg(target_os = "linux")]
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
 
+#[cfg(target_os = "linux")]
 const NR_LANDLOCK_CREATE_RULESET: libc::c_long = 444;
+#[cfg(target_os = "linux")]
 const NR_LANDLOCK_ADD_RULE: libc::c_long = 445;
+#[cfg(target_os = "linux")]
 const NR_LANDLOCK_RESTRICT_SELF: libc::c_long = 446;
 
+#[cfg(target_os = "linux")]
 const FS_EXECUTE: u64 = 1 << 0;
+#[cfg(target_os = "linux")]
 const FS_WRITE_FILE: u64 = 1 << 1;
+#[cfg(target_os = "linux")]
 const FS_READ_FILE: u64 = 1 << 2;
+#[cfg(target_os = "linux")]
 const FS_READ_DIR: u64 = 1 << 3;
+#[cfg(target_os = "linux")]
 const FS_REFER: u64 = 1 << 13; // ABI 2
+#[cfg(target_os = "linux")]
 const FS_TRUNCATE: u64 = 1 << 14; // ABI 3
+#[cfg(target_os = "linux")]
 const FS_IOCTL_DEV: u64 = 1 << 15; // ABI 5
+#[cfg(target_os = "linux")]
 const ABI1_MASK: u64 = FS_REFER - 1;
+#[cfg(target_os = "linux")]
 const MAX_ABI: i64 = 5;
 
+#[cfg(target_os = "linux")]
 fn fs_mask_for_abi(abi: i64) -> u64 {
     let mut mask = ABI1_MASK;
     if abi >= 2 {
@@ -221,6 +246,7 @@ fn fs_mask_for_abi(abi: i64) -> u64 {
 }
 
 /// fork 前就把路径转成 C 字符串:`pre_exec` 里不该再分配。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct Rules {
     read_only: Vec<CString>,
     read_write: Vec<CString>,
@@ -242,6 +268,7 @@ impl Rules {
 
     /// 子进程里跑:建规则集 → 逐条加路径 → no_new_privs → 套到自己身上。
     /// 出错就返回 errno 风格的 io::Error(不分配),spawn 随之失败。
+    #[cfg(target_os = "linux")]
     fn apply(&self) -> std::io::Result<()> {
         let abi = unsafe {
             libc::syscall(
@@ -286,8 +313,16 @@ impl Rules {
         unsafe { libc::close(ruleset_fd) };
         Ok(())
     }
+
+    /// 没有 Landlock 的平台:按模块开头的规矩**失败关闭**——成员的命令一个
+    /// 都不跑,而不是裸奔。管理员没有策略,压根不会走到这里。
+    #[cfg(not(target_os = "linux"))]
+    fn apply(&self) -> std::io::Result<()> {
+        Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
+    }
 }
 
+#[cfg(target_os = "linux")]
 fn add_rule(ruleset_fd: libc::c_int, path: &CString, mut access: u64) -> std::io::Result<()> {
     let path_fd = unsafe { libc::open(path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
     if path_fd < 0 {
