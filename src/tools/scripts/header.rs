@@ -254,7 +254,89 @@ pub(crate) fn extract_metadata(raw: &str) -> ScriptMetadata {
             HeaderKey::Requires => metadata.requires = split_groups(value),
         }
     }
+    if let Some(parameters) = metadata.parameters.as_mut() {
+        sanitize_script_parameters(metadata.id.as_deref(), parameters);
+    }
     metadata
+}
+
+pub(crate) fn sanitize_script_parameters(id: Option<&str>, schema: &mut Value) {
+    let script_id = id.unwrap_or("<unknown>");
+    sanitize_schema_recursively(script_id, schema);
+}
+
+fn sanitize_schema_recursively(script_id: &str, value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let expected_type = map.get("type").and_then(Value::as_str).map(|s| s.to_string());
+            if let Some(enum_val) = map.get_mut("enum") {
+                if let Value::Array(items) = enum_val {
+                    let orig_len = items.len();
+                    items.retain(|item| {
+                        let ok = match expected_type.as_deref() {
+                            Some("string") => item.as_str().is_some_and(|s| !s.is_empty()),
+                            Some("integer") => item.as_i64().is_some() || item.as_u64().is_some(),
+                            Some("number") => item.as_f64().is_some(),
+                            Some("boolean") => item.is_boolean(),
+                            _ => match item {
+                                Value::String(s) => !s.is_empty(),
+                                Value::Null => false,
+                                _ => true,
+                            },
+                        };
+                        if !ok {
+                            tracing::warn!(
+                                script = script_id,
+                                bad_value = ?item,
+                                expected_type = ?expected_type,
+                                "script schema contains invalid or empty enum entry; dropped"
+                            );
+                        }
+                        ok
+                    });
+                    if items.len() < orig_len {
+                        tracing::warn!(
+                            script = script_id,
+                            "sanitized enum in script parameter schema"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        script = script_id,
+                        "script schema 'enum' is not an array; dropping"
+                    );
+                    map.remove("enum");
+                }
+                if map
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .is_some_and(|arr| arr.is_empty())
+                {
+                    map.remove("enum");
+                }
+            }
+            if let (Some(default_val), Some(Value::Array(enum_items))) =
+                (map.get("default"), map.get("enum"))
+            {
+                if !enum_items.contains(default_val) {
+                    tracing::warn!(
+                        script = script_id,
+                        default = ?default_val,
+                        "script schema 'default' is not in 'enum'"
+                    );
+                }
+            }
+            for child in map.values_mut() {
+                sanitize_schema_recursively(script_id, child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_schema_recursively(script_id, item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// 在最先出现的半角或全角冒号处切开——此前先找半角再找全角,

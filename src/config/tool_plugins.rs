@@ -106,7 +106,7 @@ pub struct AntigravityPluginConfig {
     /// 桥上的 Miyu 工具按 eager 注册(以 `mcp_miyu_<name>` 原生名直接可调,
     /// schema 进系统提示词);关掉则走 agy 的懒加载(模型先读 schema 文件再经
     /// `call_mcp_tool` 调用,省 token 但每件工具多一跳)。
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub miyu_tools_eager: bool,
     /// 流空闲看门狗(秒):这么久没有任何输出就杀进程。
     #[serde(default = "default_antigravity_idle_timeout_seconds")]
@@ -123,7 +123,7 @@ impl Default for AntigravityPluginConfig {
             binary: String::new(),
             native_tools: default_antigravity_native_tools(),
             miyu_tools: default_antigravity_miyu_tools(),
-            miyu_tools_eager: true,
+            miyu_tools_eager: false,
             idle_timeout_seconds: default_antigravity_idle_timeout_seconds(),
             print_timeout_seconds: default_antigravity_print_timeout_seconds(),
         }

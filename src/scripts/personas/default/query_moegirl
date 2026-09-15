@@ -34,8 +34,7 @@
 #         "zh",
 #         "cn",
 #         "uk",
-#         "ja",
-#         ""
+#         "ja"
 #       ],
 #       "description": "Moegirlpedia site: cn (default), zh, uk or ja"
 #     }

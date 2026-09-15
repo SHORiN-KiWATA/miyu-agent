@@ -250,3 +250,37 @@ fn manifest_fields_default_to_owner_and_unset() {
     let metadata = extract_metadata("#!/bin/sh\n# Trust: everyone-and-their-dog\necho ok");
     assert_eq!(metadata.trust, None);
 }
+
+#[test]
+fn sanitizes_empty_and_mismatched_enum_entries_in_script_parameters() {
+    let raw = r#"#!/usr/bin/env python3
+# Id: test_script
+# Description: Test
+# Parameters:
+# {
+#   "type": "object",
+#   "properties": {
+#     "site": {
+#       "type": "string",
+#       "enum": ["zh", "", "en", 123]
+#     },
+#     "count": {
+#       "type": "integer",
+#       "enum": [1, 2, "bad"]
+#     },
+#     "empty_enum": {
+#       "type": "string",
+#       "enum": [""]
+#     }
+#   }
+# }
+"#;
+    let metadata = extract_metadata(raw);
+    let params = metadata.parameters.expect("parameters present");
+    let site_enum = params["properties"]["site"]["enum"].as_array().unwrap();
+    assert_eq!(site_enum, &vec![serde_json::json!("zh"), serde_json::json!("en")]);
+    let count_enum = params["properties"]["count"]["enum"].as_array().unwrap();
+    assert_eq!(count_enum, &vec![serde_json::json!(1), serde_json::json!(2)]);
+    assert!(params["properties"]["empty_enum"].get("enum").is_none());
+}
+

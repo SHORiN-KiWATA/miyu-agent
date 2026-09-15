@@ -1735,7 +1735,7 @@
           label: "桥工具 eager 注册",
           hint: "原生名直调;关掉走懒加载省 token 但多一跳",
           kind: "toggle",
-          default: true,
+          default: false,
         },
         {
           key: "idle_timeout_seconds",
