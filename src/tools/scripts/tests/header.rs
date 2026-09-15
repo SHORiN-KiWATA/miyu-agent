@@ -278,9 +278,14 @@ fn sanitizes_empty_and_mismatched_enum_entries_in_script_parameters() {
     let metadata = extract_metadata(raw);
     let params = metadata.parameters.expect("parameters present");
     let site_enum = params["properties"]["site"]["enum"].as_array().unwrap();
-    assert_eq!(site_enum, &vec![serde_json::json!("zh"), serde_json::json!("en")]);
+    assert_eq!(
+        site_enum,
+        &vec![serde_json::json!("zh"), serde_json::json!("en")]
+    );
     let count_enum = params["properties"]["count"]["enum"].as_array().unwrap();
-    assert_eq!(count_enum, &vec![serde_json::json!(1), serde_json::json!(2)]);
+    assert_eq!(
+        count_enum,
+        &vec![serde_json::json!(1), serde_json::json!(2)]
+    );
     assert!(params["properties"]["empty_enum"].get("enum").is_none());
 }
-

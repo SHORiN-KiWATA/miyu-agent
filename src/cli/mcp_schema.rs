@@ -41,7 +41,10 @@ pub(in crate::cli) fn sanitize_schema(mut schema: Value) -> Value {
 fn sanitize_value(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            let expected_type = map.get("type").and_then(Value::as_str).map(|s| s.to_string());
+            let expected_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
             if let Some(enum_val) = map.get_mut("enum") {
                 if let Value::Array(items) = enum_val {
                     items.retain(|item| match expected_type.as_deref() {
@@ -257,4 +260,3 @@ mod tests {
         assert!(sanitized["properties"]["status"].get("enum").is_none());
     }
 }
-

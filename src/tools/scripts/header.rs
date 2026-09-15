@@ -268,7 +268,10 @@ pub(crate) fn sanitize_script_parameters(id: Option<&str>, schema: &mut Value) {
 fn sanitize_schema_recursively(script_id: &str, value: &mut Value) {
     match value {
         Value::Object(map) => {
-            let expected_type = map.get("type").and_then(Value::as_str).map(|s| s.to_string());
+            let expected_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
             if let Some(enum_val) = map.get_mut("enum") {
                 if let Value::Array(items) = enum_val {
                     let orig_len = items.len();
