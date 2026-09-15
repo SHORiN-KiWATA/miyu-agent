@@ -27,7 +27,6 @@ pub(in crate::platforms::plugins::real_context) fn placeholder_only(text: &str) 
     saw_placeholder && rest.trim().is_empty()
 }
 
-
 impl RealContextPlugin {
     pub(in crate::platforms::plugins::real_context) async fn decide_group_trigger(
         &self,

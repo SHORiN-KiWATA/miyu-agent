@@ -26,9 +26,66 @@ const GEMINI_KEYS: &[&str] = &[
 ];
 
 pub(in crate::cli) fn shape_for_dialect(schema: Value, dialect: &str) -> Value {
+    let sanitized = sanitize_schema(schema);
     match dialect {
-        "gemini" => gemini_compatible(schema),
-        _ => schema,
+        "gemini" => gemini_compatible(sanitized),
+        _ => sanitized,
+    }
+}
+
+pub(in crate::cli) fn sanitize_schema(mut schema: Value) -> Value {
+    sanitize_value(&mut schema);
+    schema
+}
+
+fn sanitize_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let expected_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            if let Some(enum_val) = map.get_mut("enum") {
+                if let Value::Array(items) = enum_val {
+                    items.retain(|item| match expected_type.as_deref() {
+                        Some("string") => item.as_str().is_some_and(|s| !s.is_empty()),
+                        Some("integer") => item.as_i64().is_some() || item.as_u64().is_some(),
+                        Some("number") => item.as_f64().is_some(),
+                        Some("boolean") => item.is_boolean(),
+                        _ => match item {
+                            Value::String(s) => !s.is_empty(),
+                            Value::Null => false,
+                            _ => true,
+                        },
+                    });
+                } else {
+                    map.remove("enum");
+                }
+                if map
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .is_some_and(|arr| arr.is_empty())
+                {
+                    map.remove("enum");
+                }
+            }
+            if let (Some(default_val), Some(Value::Array(enum_items))) =
+                (map.get("default"), map.get("enum"))
+            {
+                if !enum_items.contains(default_val) {
+                    map.remove("default");
+                }
+            }
+            for child in map.values_mut() {
+                sanitize_value(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_value(item);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -67,9 +124,16 @@ fn gemini_compatible(schema: Value) -> Value {
             }
             "enum" => {
                 if let Value::Array(values) = value {
+                    let expected_type = out.get("type").and_then(Value::as_str);
                     let kept: Vec<Value> = values
                         .into_iter()
-                        .filter(|v| v.as_str().is_none_or(|s| !s.is_empty()))
+                        .filter(|v| match expected_type {
+                            Some("string") => v.as_str().is_some_and(|s| !s.is_empty()),
+                            Some("integer") => v.as_i64().is_some() || v.as_u64().is_some(),
+                            Some("number") => v.as_f64().is_some(),
+                            Some("boolean") => v.is_boolean(),
+                            _ => v.as_str().is_none_or(|s| !s.is_empty()),
+                        })
                         .collect();
                     if !kept.is_empty() {
                         out.insert(key, Value::Array(kept));
@@ -172,5 +236,27 @@ mod tests {
         let shaped = shape_for_dialect(raw.clone(), "gemini");
         assert_eq!(shaped, json!({ "type": "object" }));
         assert_eq!(shape_for_dialect(raw.clone(), ""), raw);
+    }
+
+    #[test]
+    fn sanitize_schema_cleans_empty_enums_and_invalid_defaults_across_dialects() {
+        let raw = json!({
+            "type": "object",
+            "properties": {
+                "site": {
+                    "type": "string",
+                    "enum": ["zh", "", "cn"],
+                    "default": "gone"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [""]
+                }
+            }
+        });
+        let sanitized = shape_for_dialect(raw, "");
+        assert_eq!(sanitized["properties"]["site"]["enum"], json!(["zh", "cn"]));
+        assert!(sanitized["properties"]["site"].get("default").is_none());
+        assert!(sanitized["properties"]["status"].get("enum").is_none());
     }
 }
