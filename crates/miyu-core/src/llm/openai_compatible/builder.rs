@@ -70,6 +70,7 @@ impl OpenAiCompatibleClient {
             codebuddy,
             claude_code_dev_mode: false,
             zen_session: None,
+            log_identity: LogIdentity::default(),
         };
         client.restore_saved_thinking_variants(paths);
         Ok(client)
@@ -166,6 +167,7 @@ impl OpenAiCompatibleClient {
             codebuddy,
             claude_code_dev_mode: false,
             zen_session: None,
+            log_identity: LogIdentity::default(),
         };
         client.restore_saved_thinking_variants(paths);
         Ok(client)
@@ -301,6 +303,7 @@ impl OpenAiCompatibleClient {
             codebuddy,
             claude_code_dev_mode: false,
             zen_session: None,
+            log_identity: LogIdentity::default(),
         };
         client.restore_saved_thinking_variants(paths);
         Ok(client)
@@ -426,6 +429,7 @@ impl OpenAiCompatibleClient {
             codebuddy: self.codebuddy.clone(),
             claude_code_dev_mode: self.claude_code_dev_mode,
             zen_session: self.zen_session.clone(),
+            log_identity: self.log_identity.clone(),
         }
     }
 
@@ -442,6 +446,20 @@ impl OpenAiCompatibleClient {
     pub fn with_zen_session(mut self, session_id: &str) -> Self {
         self.zen_session = Some(session_id.to_string());
         self
+    }
+
+    /// 记账日志的会话归属(Agent 构造时随 `with_zen_session` 一起置位)。
+    pub fn with_log_session(mut self, session_id: &str) -> Self {
+        self.log_identity.session = Some(session_id.into());
+        self
+    }
+
+    /// 回合边界:每轮开始时调一次,之后这一轮的每条记账行都带上这个轮 id。
+    /// 走共享槽所以 `&self` 即可——客户端在 Agent 里是跨回合存活的。
+    pub fn set_log_turn(&self, turn_id: Option<&str>) {
+        if let Ok(mut slot) = self.log_identity.turn.lock() {
+            *slot = turn_id.map(Arc::from);
+        }
     }
 
     /// Returns a clone whose chat completions are capped at `max_tokens`.

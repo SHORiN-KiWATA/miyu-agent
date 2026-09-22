@@ -327,11 +327,17 @@ impl AppConfig {
         if !(0.1..=1.0).contains(&self.context.trim_at_ratio) {
             bail!("context.trim_at_ratio must be between 0.1 and 1.0");
         }
+        if let Some(ratio) = self.context.compact_at_ratio {
+            if !(0.1..=1.0).contains(&ratio) {
+                bail!("context.compact_at_ratio must be between 0.1 and 1.0");
+            }
+        }
         if !(0.1..=1.0).contains(&self.context.compact_force_ratio) {
             bail!("context.compact_force_ratio must be between 0.1 and 1.0");
         }
-        if self.context.compact_force_ratio < self.context.trim_at_ratio {
-            bail!("context.compact_force_ratio must be >= context.trim_at_ratio");
+        // 强制折叠不能排在开始折叠前面。
+        if self.context.compact_force_ratio < self.context.effective_compact_at_ratio() {
+            bail!("context.compact_force_ratio must be >= the compaction trigger");
         }
         if !(0.01..=0.9).contains(&self.context.trim_batch_ratio) {
             bail!("context.trim_batch_ratio must be between 0.01 and 0.9");

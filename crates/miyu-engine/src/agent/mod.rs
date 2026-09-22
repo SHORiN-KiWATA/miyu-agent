@@ -454,8 +454,9 @@ impl Agent {
         if visible_count == 0 {
             return Ok(None);
         }
+        // 手动压缩不看水位,这里只借它算 reserved_tokens。
         let check =
-            overflow::OverflowCheck::new(Some(context_window), self.core.trim_at_ratio, None);
+            overflow::OverflowCheck::new(Some(context_window), self.core.compact_at_ratio, None);
         on_event(AgentEvent::CompactStart)?;
         let compactor = compact::Compactor::new(
             self.client.clone(),

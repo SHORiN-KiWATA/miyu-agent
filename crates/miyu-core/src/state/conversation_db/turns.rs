@@ -310,6 +310,16 @@ impl ConversationDb {
     }
 
     pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
+        self.interrupt_turn_with_usage(turn_id, TurnTokens::default())
+    }
+
+    /// 打断也要记账:这一轮已经发出去的请求是真花了钱的。原先这条路只改
+    /// status,于是被打断的轮 token 列永远是 0——会话累计 Σ 在打断那一刻
+    /// 掉回打断前的基线,本轮烧掉的全部消失(09-22 实测:终端会话某个被打断
+    /// 的轮实际 187,217 prompt / 123,520 cache_read,库里记 0/0)。
+    /// `tokens` 为零(进程已死、由 `recover_stale_turns` 补标的残留轮拿不到
+    /// 用量)时不动那几列,免得把别处写好的数覆盖成 0。
+    pub fn interrupt_turn_with_usage(&self, turn_id: &str, tokens: TurnTokens) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let revision: Option<i64> = tx
@@ -325,12 +335,31 @@ impl ConversationDb {
         };
         let now = Utc::now().to_rfc3339();
         let (content, reasoning) = interrupted_projection_locked(&tx, turn_id, revision)?;
-        tx.execute(
-            "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
-                    assistant_timestamp = ?3, status = 'interrupted'
-             WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
-            params![content, reasoning, now, turn_id, revision],
-        )?;
+        if tokens.total > 0 || tokens.prompt > 0 {
+            tx.execute(
+                "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
+                        assistant_timestamp = ?3, status = 'interrupted',
+                        token_total = ?6, token_prompt = ?7, token_cache_read = ?8
+                 WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
+                params![
+                    content,
+                    reasoning,
+                    now,
+                    turn_id,
+                    revision,
+                    tokens.total as i64,
+                    tokens.prompt as i64,
+                    tokens.cache_read as i64
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
+                        assistant_timestamp = ?3, status = 'interrupted'
+                 WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
+                params![content, reasoning, now, turn_id, revision],
+            )?;
+        }
         bump_completion_seq_locked(&tx, turn_id)?;
         // 跑完的两条路都会在这儿存一份回放快照,中断这条从前没存——于是重开
         // 之后这一轮只剩一句「已中断」,而流水账明明还在(用户 09-21 实测)。
@@ -348,18 +377,48 @@ impl ConversationDb {
     }
 
     pub fn interrupt_turn_revision(&self, turn_id: &str, revision: i64) -> Result<bool> {
+        self.interrupt_turn_revision_with_usage(turn_id, revision, TurnTokens::default())
+    }
+
+    /// 带用量的重做打断。回滚到备份那条路(`restored`)不记账:那一轮恢复成了
+    /// 重做之前的内容,原来的数就是对的。
+    pub fn interrupt_turn_revision_with_usage(
+        &self,
+        turn_id: &str,
+        revision: i64,
+        tokens: TurnTokens,
+    ) -> Result<bool> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let restored = restore_redo_backup_locked(&tx, turn_id, revision)?;
         if !restored {
             let (content, reasoning) = interrupted_projection_locked(&tx, turn_id, revision)?;
             let now = Utc::now().to_rfc3339();
-            tx.execute(
-                "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
-                        assistant_timestamp = ?3, status = 'interrupted'
-                 WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
-                params![content, reasoning, now, turn_id, revision],
-            )?;
+            if tokens.total > 0 || tokens.prompt > 0 {
+                tx.execute(
+                    "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
+                            assistant_timestamp = ?3, status = 'interrupted',
+                            token_total = ?6, token_prompt = ?7, token_cache_read = ?8
+                     WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
+                    params![
+                        content,
+                        reasoning,
+                        now,
+                        turn_id,
+                        revision,
+                        tokens.total as i64,
+                        tokens.prompt as i64,
+                        tokens.cache_read as i64
+                    ],
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE turns SET assistant_content = ?1, assistant_reasoning = ?2,
+                            assistant_timestamp = ?3, status = 'interrupted'
+                     WHERE turn_id = ?4 AND revision = ?5 AND status = 'running'",
+                    params![content, reasoning, now, turn_id, revision],
+                )?;
+            }
             store_replay_journal(&tx, turn_id)?;
             tx.execute(
                 "UPDATE turn_journal_segments

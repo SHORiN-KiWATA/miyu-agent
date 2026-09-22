@@ -53,7 +53,10 @@ impl Agent {
             std::process::id(),
         )?;
         let guard =
-            PendingRedoGuard::new(self.state.clone(), candidate.turn_id.clone(), redo.revision);
+            PendingRedoGuard::new(self.state.clone(), candidate.turn_id.clone(), redo.revision)
+                .with_usage_mirror(self.runtime.turn_usage.clone());
+        self.runtime.turn_usage.reset();
+        self.client.set_log_turn(Some(&candidate.turn_id));
         let mut on_event = on_event;
         on_event(AgentEvent::TurnStarted {
             turn_id: candidate.turn_id.clone(),

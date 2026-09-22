@@ -102,6 +102,8 @@ impl Agent {
         let client = client.with_claude_code_dev_mode(dev);
         // opencode Zen 的会话头按这个走:一次对话对应服务端一个会话。
         let client = client.with_zen_session(&state.session_id());
+        // 记账日志的会话归属(与 zen 的请求头分开,语义各管各的)。
+        let client = client.with_log_session(&state.session_id());
         let base_system_prompt = persona_system_prompt(
             &config,
             paths,
@@ -189,6 +191,7 @@ impl Agent {
                 paths: paths.clone(),
                 subsystems,
                 trim_at_ratio: config.context.trim_at_ratio,
+                compact_at_ratio: config.context.effective_compact_at_ratio(),
                 trim_batch_ratio: config.context.trim_batch_ratio,
                 tools_enabled,
                 max_tool_rounds,
@@ -207,6 +210,7 @@ impl Agent {
             },
             runtime: TurnRuntime {
                 persona_reminder: None,
+                turn_usage: TurnUsageMirror::default(),
                 last_request_snapshot: None,
                 pending_remote_tool_calls: std::sync::Mutex::new(Vec::new()),
                 last_request_endpoint: None,
@@ -610,6 +614,7 @@ impl Agent {
         self.core.tools_enabled = self.core.config.tools.enabled;
         self.core.max_tool_rounds = self.core.config.tools.max_rounds;
         self.core.trim_at_ratio = self.core.config.context.trim_at_ratio;
+        self.core.compact_at_ratio = self.core.config.context.effective_compact_at_ratio();
         self.core.trim_batch_ratio = self.core.config.context.trim_batch_ratio;
         self.core.on_overflow = self.core.config.context.on_overflow.clone();
         self.core.subsystems = PersonaManifest::load(

@@ -37,6 +37,35 @@ pub struct ModelTiersConfig {
     pub roles: BTreeMap<String, String>,
 }
 
+/// 不接受 `role: "tool"` 消息里放多模态 content 的端点。
+///
+/// OpenAI 规范里 tool 消息的 `content` 只能是字符串，多模态块仅允许出现在
+/// user 消息里（opencode 的 `supportsMediaInToolResult` 注释同款：
+/// "OpenAI-compatible APIs only support string content in tool results"）。
+/// 收到数组的端点会回一条 422，而失败的那一轮整个回滚、库里不留痕。
+///
+/// 09-23 的两条实测，正好一正一反：
+///
+/// - `opencode.ai`（Console Go）**拒收**。视觉分析工具返回图片后连撞三次
+///   422，端点冷却到 8 分钟。09-17 那次的错误体还带着字段路径，把位置说死了：
+///   `{"param":"messages.46.tool.content.str","message":"...Input should be a
+///   valid string"}`；09-22 起上游把 param 吞了，只剩那句话，于是排查时
+///   完全看不出是哪一条消息的问题。
+/// - `api.deepseek.com` **接受**。同一个视觉分析工具跑通，模型自己回
+///   「图片以 inline 模式直接给我看了」。
+///
+/// 所以这里是**黑名单**：默认按「能带」算，只排掉实测撞过的。反过来做
+/// （只放行已知支持的）会把官方 DeepSeek 这类本来就收的端点降级到
+/// 「tool 消息只放文本、紧跟一条带图的 user 消息」那条退路上——功能不丢，
+/// 但拿不到「工具返回了图」这个更自然的形态（09-03 用户裁定要的就是它）。
+/// 撞到新的就往这里加，或者在该供应商上显式写 `tool_result_media: false`。
+const TOOL_RESULT_MEDIA_REJECTED_HOSTS: &[&str] = &[
+    // OpenAI 官方：规范的出处，自然严格。
+    "api.openai.com",
+    // opencode Zen（付费档与免费档共用同一个 host）。
+    "opencode.ai",
+];
+
 impl ModelTiersConfig {
     pub fn is_empty(&self) -> bool {
         ModelTier::ALL
@@ -698,7 +727,7 @@ impl ProviderConfig {
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
-        host != "api.openai.com"
+        !TOOL_RESULT_MEDIA_REJECTED_HOSTS.contains(&host.as_str())
     }
 
     /// 内置 CLI 供应商的模型目录(没有 /models 端点,目录就是预置别名表)。

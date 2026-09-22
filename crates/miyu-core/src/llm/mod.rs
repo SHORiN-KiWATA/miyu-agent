@@ -1,7 +1,9 @@
 mod cache_log;
+mod cache_prefix;
 mod openai_compatible;
 pub(crate) mod provider_capabilities;
 pub mod request_log;
+mod request_shape;
 
 pub use openai_compatible::ContentPolicyBlocked;
 pub use openai_compatible::{

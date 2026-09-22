@@ -314,6 +314,8 @@ impl ResumePlan {
 pub fn forget_relay_sessions(miyu_session: &str) {
     // 常驻的 agy 进程手里就是这条会话,一并收掉。
     super::antigravity::pool::forget_session(miyu_session);
+    // 前缀指纹的上一条链也跟着这条会话走。
+    crate::llm::cache_prefix::forget_session(miyu_session);
     let removed = session::forget_miyu_session(miyu_session);
     if removed.is_empty() {
         return;

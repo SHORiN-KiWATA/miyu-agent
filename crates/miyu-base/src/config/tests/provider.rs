@@ -1242,6 +1242,26 @@ fn tool_result_media_capability_is_inferred_per_provider() {
     assert!(!zhipu.tool_result_carries_media());
 }
 
+/// 09-23 的一正一反两条实测，钉住黑名单这条规则。
+///
+/// OpenAI 规范里 tool 消息的 content 只能是字符串。`opencode.ai` 严格照规范
+/// 校验，视觉分析工具返回图片后连撞三次 422（09-17 那次的错误体还带字段路径
+/// `messages.46.tool.content.str`）；官方 DeepSeek 则收下了，同一个工具跑通。
+#[test]
+fn opencode_zen_rejects_media_in_tool_results_while_official_deepseek_takes_it() {
+    let zen =
+        ProviderConfig::template("opencodego", "OpenCode Go", "https://opencode.ai/zen/go/v1");
+    assert!(
+        !zen.tool_result_carries_media(),
+        "Console Go 会把 tool 消息里的多模态 content 判成 422",
+    );
+    let deepseek = ProviderConfig::template("deepseek", "DeepSeek", "https://api.deepseek.com");
+    assert!(
+        deepseek.tool_result_carries_media(),
+        "官方 DeepSeek 实测接受，别被黑名单误伤",
+    );
+}
+
 fn provider_at(id: &str, base_url: &str) -> ProviderConfig {
     let mut provider = ProviderConfig::default_opencodezen();
     provider.id = id.to_string();

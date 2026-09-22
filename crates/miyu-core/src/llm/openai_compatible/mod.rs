@@ -125,6 +125,29 @@ pub struct OpenAiCompatibleClient {
     /// 由 `StateStore::session_id` 置位)。未置位时退回进程级的那个,见
     /// `zen_headers`。
     zen_session: Option<String>,
+    /// 记账日志的归属:哪个会话、哪一轮。`cache-usage.jsonl` 少了这两维就
+    /// 没法对账——09-22 排查缓存时只能按 prompt 单调递增去猜会话边界,还把
+    /// 「新会话第一轮」误判成了断裂。与 `zen_session` 分开是因为那个的语义
+    /// 是 opencode 的请求头,不该被日志绑住。
+    log_identity: LogIdentity,
+}
+
+/// 记账日志的会话/回合归属。回合 id 每轮变而客户端跨回合存活,所以走一个
+/// 共享槽;辅助客户端(压缩、判官)clone 过去时跟着一起继承。
+#[derive(Clone, Default)]
+pub(crate) struct LogIdentity {
+    session: Option<Arc<str>>,
+    turn: Arc<std::sync::Mutex<Option<Arc<str>>>>,
+}
+
+impl LogIdentity {
+    pub(crate) fn session(&self) -> Option<&str> {
+        self.session.as_deref()
+    }
+
+    pub(crate) fn turn(&self) -> Option<Arc<str>> {
+        self.turn.lock().ok().and_then(|slot| slot.clone())
+    }
 }
 
 #[derive(Clone, Copy)]
