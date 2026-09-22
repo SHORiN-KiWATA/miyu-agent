@@ -111,6 +111,19 @@ fn quote(path: &Path) -> String {
     out
 }
 
+/// 路径要先解析成真身再写进策略。
+///
+/// `sandbox-exec` 的 `subpath` 拿**解析后**的路径匹配，而 macOS 上 `/var` 是指向
+/// `/private/var` 的符号链接、`/tmp` 指向 `/private/tmp`——`tempfile::tempdir()`
+/// 给的正是 `/var/folders/…`。照原样写进策略的话，规则永远匹配不上真实路径，
+/// 结果是**盒内也写不进去**，看起来像沙盒太狠，其实是规则没命中（2026-09-23
+/// 实测；同一个符号链接坑当天还在打包测试里踩过一次）。
+///
+/// 解析不了（路径还不存在）就退回原样：宁可规则宽一点，也不要把一条规则整个丢掉。
+fn resolved(path: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// 默认放行、禁写、再逐条放开可写目录。见模块头：这只收写，不收读。
 fn profile(policy: &SandboxPolicy) -> String {
     let mut out = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
@@ -123,7 +136,7 @@ fn profile(policy: &SandboxPolicy) -> String {
     }
     for path in writable {
         out.push_str("(allow file-write* (subpath \"");
-        out.push_str(&quote(path));
+        out.push_str(&quote(&resolved(path)));
         out.push_str("\"))\n");
     }
     // 标准输出/错误、临时设备节点：不放行的话连报错都打不出来。
