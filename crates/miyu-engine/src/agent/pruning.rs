@@ -111,7 +111,9 @@ impl Agent {
     {
         use std::sync::atomic::Ordering;
         let context_window = self.context_window();
-        let check = overflow::OverflowCheck::new(context_window, self.core.trim_at_ratio, None);
+        // 压缩用自己的水位,不再借裁剪的那个:同水位时裁剪在回合开头先把
+        // 上下文压到线下,压缩永远等不到触发(09-22 实测 0 次 vs 44 次)。
+        let check = overflow::OverflowCheck::new(context_window, self.core.compact_at_ratio, None);
         let context_tokens = usize::try_from(context_tokens).unwrap_or(usize::MAX);
         if !check.is_enabled() {
             return Ok(None);

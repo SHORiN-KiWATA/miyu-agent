@@ -381,7 +381,13 @@ pub(crate) fn default_tool_output_spill_bytes() -> usize {
 /// Compact trigger watermark. Kept at 0.8 rather than 0.9 for headroom on
 /// small windows: the reserve floor is 4096 tokens, so a 32k window at 0.9
 /// would leave less room for the answer than the reserve asks for.
+/// 裁剪退为兜底之后抬到 0.95：正常情况轮不到它，压缩在 0.8 就接手了。
 pub(crate) fn default_trim_at_ratio() -> f32 {
+    0.95
+}
+
+/// 压缩的触发水位，低于裁剪。
+pub(crate) fn default_compact_at_ratio() -> f32 {
     0.8
 }
 

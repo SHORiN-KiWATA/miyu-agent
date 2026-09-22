@@ -35,6 +35,8 @@ pub(in crate::agent) struct CoreTurnSnapshot {
     /// 不再各自读 persona.toml。中途改清单只影响之后新建的 Agent(daemon 每回合新建)。
     pub(in crate::agent) subsystems: miyu_base::config::EnabledSubsystems,
     pub(in crate::agent) trim_at_ratio: f32,
+    /// 压缩的触发水位,低于 `trim_at_ratio`(见 config::ContextConfig)。
+    pub(in crate::agent) compact_at_ratio: f32,
     pub(in crate::agent) trim_batch_ratio: f32,
     pub(in crate::agent) tools_enabled: bool,
     pub(in crate::agent) max_tool_rounds: usize,

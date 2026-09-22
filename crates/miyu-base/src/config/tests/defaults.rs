@@ -10,6 +10,34 @@ fn context_overflow_defaults_to_compact() {
     assert_eq!(deserialized.on_overflow, "compact");
 }
 
+/// 水位顺序:压缩触发 ≤ 强制压缩 ≤ 裁剪兜底。
+///
+/// 回归的是 09-22 那个藏了很久的缺口——压缩借用了 `trim_at_ratio` 当触发
+/// 水位,而裁剪跑在回合开头、压缩跑在回合末尾,同水位下裁剪永远先把上下文
+/// 压到线下,压缩再也等不到自己的条件。真机三天日志:compact 0 次、
+/// trim 44 次,上下文全靠删最老的轮维持(既丢信息,又把前缀缓存从头掰断)。
+#[test]
+fn compaction_triggers_before_trimming_falls_back() {
+    let context = ContextConfig::default();
+    assert!(
+        context.compact_at_ratio < context.trim_at_ratio,
+        "压缩得排在裁剪前面,否则它永远跑不到:compact_at={} trim_at={}",
+        context.compact_at_ratio,
+        context.trim_at_ratio,
+    );
+    assert!(context.compact_force_ratio >= context.compact_at_ratio);
+}
+
+/// 配置校验守着同一条顺序:把压缩水位调到裁剪之上要被拦下。
+#[test]
+fn a_compaction_watermark_above_trimming_is_rejected() {
+    let mut config = AppConfig::default();
+    config.context.compact_at_ratio = 0.98;
+    config.context.trim_at_ratio = 0.9;
+    let error = config.validate().unwrap_err().to_string();
+    assert!(error.contains("compact_at_ratio"), "{error}");
+}
+
 #[test]
 fn vision_timeouts_have_stable_defaults() {
     let vision: VisionPluginConfig = serde_json::from_value(serde_json::json!({})).unwrap();

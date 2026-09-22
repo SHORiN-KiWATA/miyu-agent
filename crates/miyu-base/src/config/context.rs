@@ -9,6 +9,14 @@ pub struct ContextConfig {
     /// 0 = 关闭外溢。照抄 dsh 默认 50KB。
     #[serde(default = "default_tool_output_spill_bytes")]
     pub tool_output_spill_bytes: usize,
+    /// 压缩的触发水位。**必须低于 `trim_at_ratio`**：裁剪跑在回合开头、压缩
+    /// 跑在回合末尾，两者同水位时裁剪永远先把上下文压到线下，压缩就再也
+    /// 等不到自己的触发条件（09-22 实测：三天 compact 0 次、trim 44 次，
+    /// 上下文全靠删最老的轮维持——既丢信息，又把前缀缓存从头掰断）。
+    #[serde(default = "default_compact_at_ratio")]
+    pub compact_at_ratio: f32,
+    /// 裁剪(直接删最老的轮)的水位。压缩接手之后它只是兜底：压缩失败、
+    /// 或 `on_overflow` 不走压缩时才轮到它。
     #[serde(default = "default_trim_at_ratio")]
     pub trim_at_ratio: f32,
     #[serde(default = "default_trim_batch_ratio")]
@@ -66,6 +74,7 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             tool_output_spill_bytes: default_tool_output_spill_bytes(),
+            compact_at_ratio: default_compact_at_ratio(),
             trim_at_ratio: default_trim_at_ratio(),
             trim_batch_ratio: default_trim_batch_ratio(),
             on_overflow: default_on_overflow(),
