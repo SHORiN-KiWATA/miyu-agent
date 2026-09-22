@@ -95,6 +95,7 @@ async fn response_header_timeout_fails_over_to_the_next_endpoint() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
     };
 
     let result = client
@@ -533,6 +534,7 @@ async fn endpoint_failover_resets_partial_reasoning_before_retry() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     };
     let mut chunks = Vec::new();
@@ -625,6 +627,7 @@ async fn buffered_completion_fails_over_after_partial_content() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     };
 

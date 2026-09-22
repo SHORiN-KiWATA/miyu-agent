@@ -53,7 +53,12 @@ impl Agent {
             std::process::id(),
             attachment_run_id.as_deref(),
         )?;
-        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        // 新回合从零起算:镜像跨回合复用(Agent 在 REPL 里跨回合存活)。
+        self.runtime.turn_usage.reset();
+        // 这一轮的每条记账行都带上轮 id,`cache-usage.jsonl` 才能与 turns 对账。
+        self.client.set_log_turn(Some(&turn_id));
+        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone())
+            .with_usage_mirror(self.runtime.turn_usage.clone());
         let mut on_event = on_event;
         on_event(AgentEvent::TurnStarted {
             turn_id: turn_id.clone(),

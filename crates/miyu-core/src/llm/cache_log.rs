@@ -11,6 +11,7 @@
 //! and files older than the configured retention are pruned on rotation.
 //! Recording must never fail a request: all errors degrade to a debug log.
 
+use crate::llm::cache_prefix::PrefixDiff;
 use crate::llm::Usage;
 use miyu_base::config::CacheConfig;
 use miyu_base::paths::MiyuPaths;
@@ -64,6 +65,35 @@ pub(crate) fn record(
     request_id: &str,
     usage: Option<&Usage>,
 ) {
+    record_with_context(
+        scope,
+        provider,
+        model,
+        key_index,
+        request_id,
+        usage,
+        &RecordContext::default(),
+    );
+}
+
+/// 记账归属与前缀比对结果。没有这两样,一行 `cache_read=0` 既可能是我们把
+/// 前缀掰了、也可能是上游丢了缓存,分不出来(模块头有判定表)。
+#[derive(Default)]
+pub(crate) struct RecordContext<'a> {
+    pub(crate) session: Option<&'a str>,
+    pub(crate) turn: Option<&'a str>,
+    pub(crate) prefix: Option<PrefixDiff>,
+}
+
+pub(crate) fn record_with_context(
+    scope: &str,
+    provider: &str,
+    model: &str,
+    key_index: usize,
+    request_id: &str,
+    usage: Option<&Usage>,
+    context: &RecordContext<'_>,
+) {
     let Some(mutex) = SINK.get() else {
         return;
     };
@@ -83,6 +113,7 @@ pub(crate) fn record(
         key_index,
         request_id,
         usage,
+        context,
     );
     if let Err(error) = sink.write_line(&date, &line) {
         tracing::debug!(error = %error, "cache usage log write failed");
@@ -116,6 +147,7 @@ impl Sink {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_line(
     ts: &str,
     scope: &str,
@@ -124,6 +156,7 @@ fn format_line(
     key_index: usize,
     request_id: &str,
     usage: Option<&Usage>,
+    context: &RecordContext<'_>,
 ) -> String {
     let (prompt, cache_read, cache_write, completion, reasoning, reported) = match usage {
         Some(usage) => (
@@ -136,7 +169,7 @@ fn format_line(
         ),
         None => (0, 0, 0, 0, 0, false),
     };
-    serde_json::json!({
+    let mut line = serde_json::json!({
         "ts": ts,
         "scope": scope,
         "provider": provider,
@@ -149,8 +182,31 @@ fn format_line(
         "completion": completion,
         "reasoning": reasoning,
         "reported": reported,
-    })
-    .to_string()
+    });
+    let object = line.as_object_mut().expect("json! built an object");
+    if let Some(session) = context.session {
+        object.insert("sess".into(), session.into());
+    }
+    if let Some(turn) = context.turn {
+        object.insert("turn".into(), turn.into());
+    }
+    if let Some(prefix) = context.prefix {
+        // `msgs`/`prev`/`same` 三个数就够判定:same==prev 是纯追加,
+        // same==0 是开头就变了,中间停住的话 `at`/`role` 指出是哪一条。
+        object.insert("msgs".into(), prefix.messages.into());
+        if let Some(previous) = prefix.previous {
+            object.insert("prev".into(), previous.into());
+        }
+        object.insert("same".into(), prefix.same.into());
+        if let Some((at, role)) = prefix.rewritten_at {
+            object.insert("at".into(), at.into());
+            object.insert("role".into(), role.into());
+        }
+        if prefix.tools_changed {
+            object.insert("tools_changed".into(), true.into());
+        }
+    }
+    line.to_string()
 }
 
 /// Deletes cache-usage files whose date suffix is more than `retention_days`
@@ -227,6 +283,7 @@ mod tests {
             0,
             "llm_1",
             Some(&usage),
+            &RecordContext::default(),
         );
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["prompt"], 51910);
@@ -234,12 +291,57 @@ mod tests {
         assert_eq!(value["scope"], "qq-judge");
         assert_eq!(value["key"], 1);
         assert_eq!(value["reported"], true);
+        // 没有归属与指纹时不写这几个键:老行照旧能解析。
+        assert!(value.get("sess").is_none());
+        assert!(value.get("same").is_none());
 
-        let empty = format_line("ts", "chat", "p", "m", 2, "llm_2", None);
+        let empty = format_line(
+            "ts",
+            "chat",
+            "p",
+            "m",
+            2,
+            "llm_2",
+            None,
+            &RecordContext::default(),
+        );
         let value: serde_json::Value = serde_json::from_str(&empty).unwrap();
         assert_eq!(value["prompt"], 0);
         assert_eq!(value["reported"], false);
         assert_eq!(value["key"], 3);
+    }
+
+    #[test]
+    fn an_identified_line_carries_session_turn_and_the_prefix_verdict() {
+        let line = format_line(
+            "ts",
+            "chat",
+            "opencodego",
+            "mimo-v2.6-flash",
+            0,
+            "llm_3",
+            None,
+            &RecordContext {
+                session: Some("default"),
+                turn: Some("turn_1"),
+                prefix: Some(PrefixDiff {
+                    messages: 42,
+                    previous: Some(40),
+                    same: 37,
+                    rewritten_at: Some((37, "tool")),
+                    tools_changed: true,
+                }),
+            },
+        );
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["sess"], "default");
+        assert_eq!(value["turn"], "turn_1");
+        assert_eq!(value["msgs"], 42);
+        assert_eq!(value["prev"], 40);
+        assert_eq!(value["same"], 37);
+        assert_eq!(value["at"], 37);
+        assert_eq!(value["role"], "tool");
+        assert_eq!(value["tools_changed"], true);
     }
 
     #[test]

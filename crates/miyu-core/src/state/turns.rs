@@ -101,13 +101,30 @@ impl StateStore {
     }
 
     pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
-        self.conv_db.interrupt_turn(turn_id)?;
+        self.interrupt_turn_with_usage(turn_id, TurnTokens::default())
+    }
+
+    /// 带用量的打断:见 `ConversationDb::interrupt_turn_with_usage`。
+    pub fn interrupt_turn_with_usage(&self, turn_id: &str, tokens: TurnTokens) -> Result<()> {
+        self.conv_db.interrupt_turn_with_usage(turn_id, tokens)?;
         let session_id = self.session_id();
         self.recover_journal_assets(&session_id, turn_id)
     }
 
     pub fn interrupt_turn_revision(&self, turn_id: &str, revision: i64) -> Result<()> {
-        let restored = self.conv_db.interrupt_turn_revision(turn_id, revision)?;
+        self.interrupt_turn_revision_with_usage(turn_id, revision, TurnTokens::default())
+    }
+
+    /// 带用量的重做打断:见 `ConversationDb::interrupt_turn_revision_with_usage`。
+    pub fn interrupt_turn_revision_with_usage(
+        &self,
+        turn_id: &str,
+        revision: i64,
+        tokens: TurnTokens,
+    ) -> Result<()> {
+        let restored = self
+            .conv_db
+            .interrupt_turn_revision_with_usage(turn_id, revision, tokens)?;
         if restored {
             let session_id = self
                 .conv_db

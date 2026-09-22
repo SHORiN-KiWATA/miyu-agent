@@ -111,6 +111,49 @@ fn interrupt_turn() {
     assert_eq!(turns[0].assistant_content, interrupted_text());
 }
 
+/// 打断的回合也要记账:这一轮已经发出去的请求是真花了钱的。
+///
+/// 回归的是 09-22 实测到的那个缺口——`interrupt_turn` 只改 status,于是
+/// 会话累计 Σ 在打断那一刻掉回打断前的基线(终端会话某个被打断的轮实际
+/// 187,217 prompt / 123,520 cache_read,库里记 0/0)。
+#[test]
+fn an_interrupted_turn_keeps_the_tokens_it_already_spent() {
+    let (_temp, store) = test_store();
+    store.start_turn("turn_1", "do something", 999999).unwrap();
+    store
+        .interrupt_turn_with_usage(
+            "turn_1",
+            TurnTokens {
+                total: 187_900,
+                prompt: 187_217,
+                cache_read: 123_520,
+            },
+        )
+        .unwrap();
+
+    let turns = store.load_turns().unwrap();
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(turns[0].token_prompt, 187_217);
+    assert_eq!(turns[0].token_cache_read, 123_520);
+    assert_eq!(turns[0].token_total, 187_900);
+    // 会话累计(footer 的 Σ)是 turns 的 SUM,所以打断的那一轮也进得去。
+    let cumulative = store.session_cumulative_token_totals().unwrap();
+    assert_eq!(cumulative.prompt, 187_217);
+    assert_eq!(cumulative.cache_read, 123_520);
+}
+
+/// 进程已死、由 `recover_stale_turns` 补标的残留轮拿不到用量:那几列
+/// 保持原样,不要被写成 0 覆盖掉别处记好的数。
+#[test]
+fn a_stale_turn_without_usage_leaves_the_token_columns_alone() {
+    let (_temp, store) = test_store();
+    store.start_turn("turn_1", "do something", 999999).unwrap();
+    store.interrupt_turn("turn_1").unwrap();
+    let turns = store.load_turns().unwrap();
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(turns[0].token_prompt, 0);
+}
+
 /// 并发回合完成序追加:与已完成回合重叠的回合在完成/中断时移到
 /// 会话末尾,已完成历史跨请求 append-only,不再出现插入型缓存
 /// 断点;无重叠回合与 redo 修订保持原位。

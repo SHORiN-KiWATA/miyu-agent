@@ -118,6 +118,9 @@ pub(in crate::agent) struct TurnRuntime {
     /// window instantly — compacting harder won't help ("thrashing").
     pub(in crate::agent) last_compact_max_seq: std::sync::atomic::AtomicI64,
     pub(in crate::agent) rapid_compacts: std::sync::atomic::AtomicU32,
+    /// 本回合已发出请求的累计用量镜像,回合守卫在打断时照它记账
+    /// (见 `control::TurnUsageMirror`)。
+    pub(in crate::agent) turn_usage: TurnUsageMirror,
 }
 
 /// 记忆子系统整套。`store` 是否真的建库由 `config::subsystems` 的快照裁决
