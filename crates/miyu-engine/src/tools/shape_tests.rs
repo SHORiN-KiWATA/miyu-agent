@@ -19,7 +19,16 @@ fn shape(registry: &ToolRegistry) -> BTreeMap<String, String> {
 fn current() -> serde_json::Value {
     let temp = tempfile::tempdir().unwrap();
     let paths = tests::test_paths(temp.path());
-    let config = AppConfig::default();
+    let mut config = AppConfig::default();
+    // Arch 那套工具 09-23 起默认**跟着宿主走**（不是 Arch 就不注册）。而这份夹具
+    // 是「工具面字节稳定」的守卫（AGENTS §1.1），必须平台无关：不钉死这一位的话，
+    // 在 Arch 上生成的夹具到 Ubuntu / macOS 的 CI 上必然漂移，报
+    // `missing=[archlinux_news, aur, …]`——那是宿主不同，不是工具面变了
+    // （2026-09-23 CI 实测撞到）。
+    //
+    // 钉成 true：夹具覆盖的是「这些工具在时的形状」，真正要防的回归是它们的
+    // schema 变了。它们注册与否由 `the_v4_migration…` 那几条单独把守。
+    config.plugins.archlinux.enabled = true;
     serde_json::json!({
         "normal": shape(&builtin_registry(&config, &paths)),
         "dev": shape(&dev_registry(&config, &paths)),
