@@ -188,6 +188,21 @@ impl Agent {
                     }
                     Err(e) => {
                         on_event(AgentEvent::CompactEnd)?;
+                        // 压缩失败以前一点痕迹都不留：往上抛的 Err 被回合收尾
+                        // 吞掉，而库里也不会多出摘要轮。于是「上下文越线了，
+                        // 压缩却什么都没发生」这件事从外面完全看不出来
+                        // ——09-22 排查缓存时在这上面耗了很久。
+                        tracing::warn!(
+                            target: "miyu::qq",
+                            error = %format!("{e:#}"),
+                            context_tokens,
+                            trigger = check.threshold().unwrap_or(0),
+                            "{}",
+                            miyu_base::i18n::text(
+                                "compaction failed; context stays above the trigger",
+                                "压缩失败：上下文仍在触发线以上"
+                            )
+                        );
                         return Err(e);
                     }
                 };
@@ -211,6 +226,18 @@ impl Agent {
                             restored,
                         ),
                     })?;
+                }
+                if result.is_none() {
+                    tracing::info!(
+                        target: "miyu::qq",
+                        context_tokens,
+                        trigger = check.threshold().unwrap_or(0),
+                        "{}",
+                        miyu_base::i18n::text(
+                            "compaction ran but folded nothing",
+                            "压缩跑了但一轮都没折"
+                        )
+                    );
                 }
                 if result.is_some() {
                     // Post-compaction check: still over the trigger means the

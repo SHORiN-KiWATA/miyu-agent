@@ -382,12 +382,14 @@ impl Compactor {
                     {
                         Ok(Ok(text)) => fork_summary = Some(text),
                         Ok(Err(error)) => tracing::warn!(
+                            target: "miyu::qq",
                             error = %error,
                             "fork summarization failed; falling back to the isolated path"
                         ),
                         Err(_) => {
                             fork_timed_out = true;
                             tracing::warn!(
+                                target: "miyu::qq",
                                 budget_secs = budget.as_secs(),
                                 summary_cap = self.summary_cap,
                                 "fork summarization timed out; not retrying on the isolated path"
@@ -396,6 +398,7 @@ impl Compactor {
                     }
                 }
                 Err(error) => tracing::warn!(
+                    target: "miyu::qq",
                     error = %error,
                     "fork prefix build failed; falling back to the isolated path"
                 ),
@@ -458,6 +461,7 @@ impl Compactor {
             Ok(text) => text,
             Err(error) if mechanical_fallback => {
                 tracing::warn!(
+                    target: "miyu::qq",
                     error = %error,
                     folded = fold.len(),
                     "compaction summary unavailable; folding mechanically"
@@ -528,7 +532,12 @@ impl Compactor {
             footprint_json.as_deref(),
             extras_json.as_deref(),
         )?;
+        // target 必须是 `miyu::qq`：daemon 默认只有这一条 target 记 INFO。
+        // 没有它的时候，压缩跑没跑过完全看不出来——09-22 排查缓存时据此
+        // 误判「三天 0 次压缩」，实际是日志压根没写出来（真判据是库里的
+        // 摘要轮 `is_summary=1`）。
         tracing::info!(
+            target: "miyu::qq",
             folded_turns = fold.len(),
             kept_turns = head.len() - cut,
             summary_chars = summary.len(),

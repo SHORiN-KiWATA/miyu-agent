@@ -722,7 +722,10 @@ fn a_large_trim_batch_still_wins_when_it_cuts_deeper() {
         "0.6 的批量落点（{target}）比解锁线（{unstick}）更低，该照用户的来",
     );
     // 落点就是按 batch 算的那个数（f32 精度会差一个 token，所以不钉死魔数）。
-    assert!((39_990..=40_000).contains(&target), "落点应在 0.4 * window 附近：{target}");
+    assert!(
+        (39_990..=40_000).contains(&target),
+        "落点应在 0.4 * window 附近：{target}"
+    );
 }
 
 #[test]
