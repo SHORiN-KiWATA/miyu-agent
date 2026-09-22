@@ -22,7 +22,9 @@ BIN=${MIYU_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/target/debug/miyu}
 MODEL=${MIYU_AB_MODEL:-opencodego/mimo-v2.6-flash}
 REAL=$HOME/.miyu/config/config.jsonc
 ROUNDS=${2:-14}
-WINDOW=32000
+# 窗口越小越快跑到水位。32000 那版每轮只涨约 940 token（剪枝把工具输出压到
+# 1700 上下——那正是剪枝的价值，却让测试 12 轮都够不着 25600 的触发线）。
+WINDOW=20000
 
 declare -A PORTS=([a]=8393 [b]=8394)
 # arm -> "compact_at trim_at"
@@ -66,6 +68,9 @@ context.update(
         "compact_force_ratio": max(compact_at, 0.9),
         "trim_batch_ratio": 0.15,
         "on_overflow": "compact",
+        # 关掉剪枝：它是两组的共同项，不影响「水位」这个自变量，但留着会
+        # 把每轮增量压到 1/6，测试要跑几十轮才跨得过线。
+        "tool_result_prune_chars": 0,
     }
 )
 seeded["context"] = context
