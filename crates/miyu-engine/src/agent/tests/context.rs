@@ -691,6 +691,40 @@ fn assistant_reasoning_is_not_replayed_across_turns() {
     ));
 }
 
+/// 裁剪的落点必须低于压缩的触发线。
+///
+/// 裁剪只在压缩自锁（`compact_stuck`）之后才轮得到，而那个闩要等上下文掉到
+/// 压缩触发线以下才解开。落点若停在线上（按 `trim_batch_ratio` 算默认是
+/// 0.85，压缩触发线 0.8），裁完压缩照样不跑——会话被救活了，压缩却永久停摆，
+/// 之后只能靠一轮轮删历史维持。
+#[test]
+fn trimming_lands_below_the_compaction_trigger_so_compaction_can_resume() {
+    let window = 100_000;
+    let compact_at = 0.8;
+    // 默认 batch 会算出 0.85 * window，高于触发线——必须被压下来。
+    let target = crate::agent::history::trim_target(window, 0.15, compact_at);
+    let trigger = (window as f32 * compact_at) as usize;
+    assert!(
+        target < trigger,
+        "裁剪落点 {target} 不能停在压缩触发线 {trigger} 之上，否则压缩解不开自锁",
+    );
+}
+
+/// 用户把 `trim_batch_ratio` 调得很大时（群会话就配了 0.6），按它算出来的
+/// 落点更低，那就照用户的来——两者取更低的那个。
+#[test]
+fn a_large_trim_batch_still_wins_when_it_cuts_deeper() {
+    let window = 100_000;
+    let target = crate::agent::history::trim_target(window, 0.6, 0.8);
+    let unstick = (window as f32 * 0.8 * 0.95) as usize;
+    assert!(
+        target < unstick,
+        "0.6 的批量落点（{target}）比解锁线（{unstick}）更低，该照用户的来",
+    );
+    // 落点就是按 batch 算的那个数（f32 精度会差一个 token，所以不钉死魔数）。
+    assert!((39_990..=40_000).contains(&target), "落点应在 0.4 * window 附近：{target}");
+}
+
 #[test]
 fn trim_visible_context_keeps_summary_and_removes_oldest_turn() {
     let temp = tempfile::tempdir().unwrap();

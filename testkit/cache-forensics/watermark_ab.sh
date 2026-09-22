@@ -47,6 +47,15 @@ seeded = {key: cfg[key] for key in carry if key in cfg}
 seeded["config_version"] = cfg.get("config_version")
 seeded["oobe_done"] = True
 seeded["memory"] = {"enabled": False}
+# 窗口的真相源是 provider 的 `model_context_window`，不是
+# `context.default_context_window`（那个只是查不到元数据时的兜底）。第一版
+# 只改了兜底，实测跑到 72k prompt 仍一次都没触发——mimo 配的窗口是
+# 1,048,576，触发线在 83 万开外。这里把每个模型的窗口一起压小。
+for provider in seeded.get("providers", []):
+    windows = provider.get("model_context_window")
+    if isinstance(windows, dict):
+        provider["model_context_window"] = {name: window for name in windows}
+
 context = dict(cfg.get("context", {}))
 context.update(
     {
@@ -69,7 +78,13 @@ PY
 start() {
   local arm=$1 dir
   dir=$(home_for "$arm")
-  MIYU_HOME="$dir" "$BIN" daemon --port "${PORTS[$arm]}" start >/dev/null
+  # 起不来时要看得见原因：第一版把 stderr 也吞了，只剩 set -e 让整个脚本
+  # 悄悄退出，查了两轮才发现是上一次的 daemon 没停干净。
+  if ! MIYU_HOME="$dir" "$BIN" daemon --port "${PORTS[$arm]}" start >/dev/null; then
+    echo "  [$arm] daemon 起不来（home=$dir port=${PORTS[$arm]}）" >&2
+    return 1
+  fi
+  echo "  [$arm] :${PORTS[$arm]}"
 }
 
 stop_all() {
