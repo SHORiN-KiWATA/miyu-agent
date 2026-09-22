@@ -21,7 +21,18 @@ impl Agent {
         // prefix (the turn's own requests refresh the cache anyway).
         self.cancel_cache_keepalive();
         self.state.recover_stale_turns()?;
-        self.trim_visible_context()?;
+        // 走压缩的会话不跑裁剪(09-23 用户裁定)。
+        //
+        // 裁剪是**直接删最老的轮**,代价有两层:删掉的历史只归档进
+        // `evicted_context.db`、不再回到上下文;而历史开头一变,前缀缓存就
+        // 从头断一次。上下文该由压缩处理——它把旧轮折成摘要留在上下文里,
+        // 也只断一次前缀,但信息还在。
+        //
+        // `on_overflow = "pop"` 是另一回事:那个档位的语义就是「不压缩、
+        // 直接丢」,裁剪正是它的实现,所以保留。
+        if self.core.on_overflow != "compact" {
+            self.trim_visible_context()?;
+        }
         self.runtime.persona_reminder = self.resolve_persona_reminder().await;
         // 人类新回合:重复链语境重置。goal 自动续轮/job 唤醒不算语境
         // 变化——跨自动轮的原样重复正是最需要打断的死循环(dsh 同款:

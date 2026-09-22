@@ -191,7 +191,7 @@ impl Agent {
                 paths: paths.clone(),
                 subsystems,
                 trim_at_ratio: config.context.trim_at_ratio,
-                compact_at_ratio: config.context.compact_at_ratio,
+                compact_at_ratio: config.context.effective_compact_at_ratio(),
                 trim_batch_ratio: config.context.trim_batch_ratio,
                 tools_enabled,
                 max_tool_rounds,
@@ -614,7 +614,7 @@ impl Agent {
         self.core.tools_enabled = self.core.config.tools.enabled;
         self.core.max_tool_rounds = self.core.config.tools.max_rounds;
         self.core.trim_at_ratio = self.core.config.context.trim_at_ratio;
-        self.core.compact_at_ratio = self.core.config.context.compact_at_ratio;
+        self.core.compact_at_ratio = self.core.config.context.effective_compact_at_ratio();
         self.core.trim_batch_ratio = self.core.config.context.trim_batch_ratio;
         self.core.on_overflow = self.core.config.context.on_overflow.clone();
         self.core.subsystems = PersonaManifest::load(

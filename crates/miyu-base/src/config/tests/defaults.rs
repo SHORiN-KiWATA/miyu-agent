@@ -10,32 +10,27 @@ fn context_overflow_defaults_to_compact() {
     assert_eq!(deserialized.on_overflow, "compact");
 }
 
-/// 水位顺序:压缩触发 ≤ 强制压缩 ≤ 裁剪兜底。
+/// 上下文处置按档位二分，不混合：对话走压缩，平台（`pop`）走裁剪。
 ///
-/// 回归的是 09-22 那个藏了很久的缺口——压缩借用了 `trim_at_ratio` 当触发
-/// 水位,而裁剪跑在回合开头、压缩跑在回合末尾,同水位下裁剪永远先把上下文
-/// 压到线下,压缩再也等不到自己的条件。真机三天日志:compact 0 次、
-/// trim 44 次,上下文全靠删最老的轮维持(既丢信息,又把前缀缓存从头掰断)。
+/// 压缩的触发线默认继承 `trim_at_ratio`——09-23 实测把它单独调低（0.8）会让
+/// 压缩触发次数翻倍，而每压缩一次前缀就断一次，整体命中率反而从 86.3% 掉到
+/// 84.0%。要提高命中率是让压缩更少更晚，不是更早。
 #[test]
-fn compaction_triggers_before_trimming_falls_back() {
+fn the_compaction_trigger_inherits_the_trim_watermark_by_default() {
     let context = ContextConfig::default();
-    assert!(
-        context.compact_at_ratio < context.trim_at_ratio,
-        "压缩得排在裁剪前面,否则它永远跑不到:compact_at={} trim_at={}",
-        context.compact_at_ratio,
-        context.trim_at_ratio,
-    );
-    assert!(context.compact_force_ratio >= context.compact_at_ratio);
+    assert_eq!(context.compact_at_ratio, None);
+    assert_eq!(context.effective_compact_at_ratio(), context.trim_at_ratio);
+    assert!(context.compact_force_ratio >= context.effective_compact_at_ratio());
 }
 
-/// 配置校验守着同一条顺序:把压缩水位调到裁剪之上要被拦下。
+/// 单独调压缩水位是允许的，但强制线不能排在它前面。
 #[test]
-fn a_compaction_watermark_above_trimming_is_rejected() {
+fn a_force_watermark_below_the_compaction_trigger_is_rejected() {
     let mut config = AppConfig::default();
-    config.context.compact_at_ratio = 0.98;
-    config.context.trim_at_ratio = 0.9;
+    config.context.compact_at_ratio = Some(0.95);
+    config.context.compact_force_ratio = 0.9;
     let error = config.validate().unwrap_err().to_string();
-    assert!(error.contains("compact_at_ratio"), "{error}");
+    assert!(error.contains("compact_force_ratio"), "{error}");
 }
 
 #[test]
