@@ -177,8 +177,8 @@ impl Compactor {
     /// 保留区的工具输出瘦身参数。见 `tool_result_prune` 字段。
     pub fn with_tool_result_prune(mut self, threshold: usize, head: usize, tail: usize) -> Self {
         // 预算不自洽(头+尾不比阈值小)时不瘦身:那样"剪"出来可能比原文还长。
-        self.tool_result_prune = (threshold > 0 && head + tail < threshold)
-            .then_some((threshold, head, tail));
+        self.tool_result_prune =
+            (threshold > 0 && head + tail < threshold).then_some((threshold, head, tail));
         self
     }
 
