@@ -5,7 +5,9 @@ use super::SandboxPolicy;
 pub(super) enum Rules {
     #[cfg(target_os = "linux")]
     Linux(super::linux::Rules),
-    #[cfg(any(not(target_os = "linux"), test))]
+    #[cfg(target_os = "macos")]
+    Macos(super::macos::Rules),
+    #[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
     Unsupported,
 }
 
@@ -17,7 +19,10 @@ tokio::task_local! {
 }
 
 impl Rules {
-    pub(super) fn prepare(policy: &SandboxPolicy) -> Self {
+    pub(super) fn prepare(
+        policy: &SandboxPolicy,
+        command: &(std::ffi::OsString, Vec<std::ffi::OsString>),
+    ) -> Self {
         #[cfg(test)]
         if FORCE_UNSUPPORTED
             .try_with(|forced| *forced)
@@ -27,11 +32,16 @@ impl Rules {
         }
         #[cfg(target_os = "linux")]
         {
+            let _ = command;
             Self::Linux(super::linux::Rules::prepare(policy))
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
-            let _ = policy;
+            Self::Macos(super::macos::Rules::prepare(policy, &command.0, &command.1))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (policy, command);
             Self::Unsupported
         }
     }
@@ -40,7 +50,9 @@ impl Rules {
         match self {
             #[cfg(target_os = "linux")]
             Self::Linux(rules) => rules.apply(),
-            #[cfg(any(not(target_os = "linux"), test))]
+            #[cfg(target_os = "macos")]
+            Self::Macos(rules) => rules.apply(),
+            #[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
             Self::Unsupported => super::unsupported::apply(),
         }
     }
