@@ -339,10 +339,26 @@ fn assert_golden(name: &str, actual: &str) {
     );
 }
 
+/// golden 比的是**字节**，宽度必须钉死。
+///
+/// 不钉的话它走 `content_cols` → `crossterm::terminal::size()`，而那个在
+/// `cargo test` 下**仍能从 /dev/tty 量到录制者终端的宽度**（ioctl 失败时还会
+/// 回退读 `COLUMNS`）。于是这几份 .ansi 实际上编码了「谁录的、他终端多宽」，
+/// 换台机器就红——2026-09-23 实测：本机 COLUMNS=80 绿，100/120/200 全红，
+/// CI 上四条全红。手册里那条「测试不得依赖 runner 是否有控制终端或 TERM」
+/// 说的就是这个。
+///
+/// 120 是常见的宽终端，够摆下时间线里最长的那几行而不触发截断——按它重录一次，
+/// 之后这些文件就和跑它的人无关了。
+const GOLDEN_COLS: u16 = 120;
+
 fn capture(surface: Surface) -> String {
+    crate::render::set_cols_override(GOLDEN_COLS);
     let mut renderer = surface.renderer();
     run_script(&mut renderer);
     let raw = String::from_utf8_lossy(&renderer.take_output_frame()).into_owned();
+    // 线程级覆盖用完撤掉,别让同线程后面的测试继承。
+    crate::render::set_cols_override(0);
     mask_volatile(&raw)
 }
 
