@@ -38,6 +38,10 @@ pub struct BuiltinPluginDescriptor {
     pub kind: PluginKind,
     pub name_zh: &'static str,
     pub hint_zh: &'static str,
+    /// 英文界面用这一份。原来只有中文，于是英文 locale 下这一栏留中文、
+    /// 而隔壁脚本那一栏按 locale 变英文，同一页混两种语言（用户 09-23 截图）。
+    pub name_en: &'static str,
+    pub hint_en: &'static str,
     /// 引导 / 成员人格页给不给开关;常开件不摆出来。
     pub toggleable: bool,
     /// 机器级开关:本机装了 / 开了没有。人格只能在装了的里挑;运行态条件
@@ -87,6 +91,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Core,
         name_zh: "文件",
         hint_zh: "读写工作区文件",
+        name_en: "Files",
+        hint_en: "Read and write workspace files",
         toggleable: false,
         installed: always,
         switch: None,
@@ -97,6 +103,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "用量查询",
         hint_zh: "对话里问用了多少 token",
+        name_en: "Usage",
+        hint_en: "Ask how many tokens were used",
         toggleable: false,
         installed: always,
         switch: None,
@@ -107,6 +115,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "闹钟",
         hint_zh: "定时提醒",
+        name_en: "Alarm",
+        hint_en: "Timed reminders",
         toggleable: true,
         installed: always,
         switch: None,
@@ -117,6 +127,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "汇率",
         hint_zh: "货币换算",
+        name_en: "Exchange rate",
+        hint_en: "Currency conversion",
         toggleable: true,
         installed: exchange_rate_installed,
         switch: Some(MachineSwitch {
@@ -130,6 +142,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "Arch Linux",
         hint_zh: "AUR 查询与审查安装、Arch 新闻",
+        name_en: "Arch Linux",
+        hint_en: "AUR search and audited install, Arch news",
         toggleable: true,
         installed: archlinux_installed,
         switch: Some(MachineSwitch {
@@ -143,6 +157,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "打印图片",
         hint_zh: "把图片打到终端里,可调尺寸",
+        name_en: "Print image",
+        hint_en: "Print images into the terminal, size adjustable",
         toggleable: false,
         installed: always,
         switch: None,
@@ -153,6 +169,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "表情包",
         hint_zh: "用表情包回复",
+        name_en: "Memes",
+        hint_en: "Reply with a meme",
         toggleable: true,
         installed: memes_installed,
         switch: Some(MachineSwitch {
@@ -166,6 +184,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "外发",
         hint_zh: "从对话里给通讯平台发消息",
+        name_en: "Outreach",
+        hint_en: "Send to a messaging platform from the conversation",
         toggleable: false,
         installed: platform_outreach_installed,
         switch: None,
@@ -176,6 +196,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "搜图",
         hint_zh: "网络找图",
+        name_en: "Image search",
+        hint_en: "Find images on the web",
         toggleable: false,
         installed: web_images_installed,
         switch: Some(MachineSwitch {
@@ -189,6 +211,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "生图",
         hint_zh: "AI 画图",
+        name_en: "Image generation",
+        hint_en: "Draw with AI",
         toggleable: true,
         installed: image_generation_installed,
         switch: Some(MachineSwitch {
@@ -202,6 +226,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "知识库",
         hint_zh: "自己的资料库,对话里能查",
+        name_en: "Knowledge base",
+        hint_en: "Your own library, searchable in conversation",
         toggleable: false,
         installed: knowledge_base_installed,
         switch: Some(MachineSwitch {
@@ -215,6 +241,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Builtin,
         name_zh: "记账",
         hint_zh: "记账本",
+        name_en: "Ledger",
+        hint_en: "Expense ledger",
         toggleable: true,
         installed: always,
         switch: None,
@@ -225,6 +253,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Provider,
         name_zh: "脚本工具",
         hint_zh: "逐个勾选",
+        name_en: "Script tools",
+        hint_en: "Pick them one by one",
         toggleable: false,
         installed: always,
         switch: None,
@@ -236,6 +266,8 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         kind: PluginKind::Provider,
         name_zh: "MCP",
         hint_zh: "外接 MCP 服务器的工具",
+        name_en: "MCP",
+        hint_en: "Tools from external MCP servers",
         toggleable: false,
         installed: mcp_installed,
         switch: Some(MachineSwitch {
@@ -300,6 +332,9 @@ pub struct MachineFeature {
     pub id: &'static str,
     pub name_zh: &'static str,
     pub hint_zh: &'static str,
+    /// 英文界面用这一份（理由同 `BuiltinPluginDescriptor`）。
+    pub name_en: &'static str,
+    pub hint_en: &'static str,
     pub switch: MachineSwitch,
     pub settings: bool,
 }
@@ -309,6 +344,8 @@ pub const MACHINE_FEATURES: &[MachineFeature] = &[
         id: "web",
         name_zh: "网络搜索",
         hint_zh: "搜索 API 与脚本兜底",
+        name_en: "Web search",
+        hint_en: "Search APIs with a script fallback",
         switch: MachineSwitch {
             get: |config| config.plugins.web.enabled,
             set: |config, on| config.plugins.web.enabled = on,
@@ -319,6 +356,8 @@ pub const MACHINE_FEATURES: &[MachineFeature] = &[
         id: "vision",
         name_zh: "识图",
         hint_zh: "图片理解与终端预览",
+        name_en: "Vision",
+        hint_en: "Image understanding and terminal preview",
         switch: MachineSwitch {
             get: |config| config.plugins.vision.enabled,
             set: |config, on| config.plugins.vision.enabled = on,

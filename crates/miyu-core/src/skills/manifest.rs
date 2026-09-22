@@ -31,7 +31,14 @@ pub struct SkillMetadata {
 
 impl SkillMetadata {
     /// 界面上的名字:人槽优先,没写就回退到技能 id。
+    ///
+    /// **英文界面直接走模型槽**——那本来就是英文触发词。人槽是中文,英文界面
+    /// 照搬会让设置页中英混杂：隔壁脚本那一栏按 locale 变英文，技能这栏却是
+    /// 中文（用户 09-23 截图）。不用给技能格式加英文槽,现成的模型槽就够。
     pub fn ui_name(&self) -> &str {
+        if miyu_base::i18n::locale() == miyu_base::i18n::Locale::En {
+            return &self.name;
+        }
         self.display_name
             .as_deref()
             .map(str::trim)
