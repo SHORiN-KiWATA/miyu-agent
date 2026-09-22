@@ -134,11 +134,25 @@ fn agent_for(config: AppConfig, paths: &MiyuPaths, state: StateStore) -> Agent {
     .unwrap()
 }
 
+/// 供应商**接受** tool 消息带媒体时，图就放在那条 tool 消息里（09-03 裁定
+/// 「与 Claude Code 的 Read 同构」）。
+///
+/// 这里显式打开而不是靠 `AppConfig::default()`：默认供应商是 opencode Zen，
+/// 而 09-23 实测它照 OpenAI 规范严格校验 tool 消息的 content，收到多模态数组
+/// 直接回 422（见 `TOOL_RESULT_MEDIA_REJECTED_HOSTS`）。默认档位从此走的是
+/// 下面那条退路，所以这条得自己把开关打开才测得到。
 #[test]
-fn inline_media_replays_inside_its_tool_message_by_default() {
+fn inline_media_replays_inside_its_tool_message_when_the_provider_accepts_it() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
-    let config = AppConfig::default();
+    let mut config = AppConfig::default();
+    let active = config.provider(None).unwrap().id.clone();
+    config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == active)
+        .unwrap()
+        .tool_result_media = Some(true);
     assert!(config.active_pool_tool_result_media());
     let state = StateStore::new(&paths).unwrap();
     seed_inline_media_turn(&state);
@@ -171,6 +185,20 @@ fn inline_media_replays_inside_its_tool_message_by_default() {
 }
 
 /// 供应商不认 tool 消息带图(显式关掉):退回"tool 之后补一条带图的用户消息"。
+/// 默认档位（opencode Zen）必须走退路：图不进 tool 消息。
+///
+/// 09-23 回归——`tool_result_carries_media()` 原先的默认是「只要不是
+/// api.openai.com 就当能带」，opencode.ai 因此被判成支持，视觉分析工具返回
+/// 图片后连撞三次 422、端点冷却到 8 分钟。
+#[test]
+fn the_default_pool_does_not_put_media_in_tool_results() {
+    let config = AppConfig::default();
+    assert!(
+        !config.active_pool_tool_result_media(),
+        "默认供应商是 opencode Zen，它不收 tool 消息里的多模态 content",
+    );
+}
+
 #[test]
 fn inline_media_falls_back_to_a_user_message_when_the_provider_cannot_carry_it() {
     let temp = tempfile::tempdir().unwrap();

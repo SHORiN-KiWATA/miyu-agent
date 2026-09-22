@@ -163,7 +163,6 @@ impl Agent {
         // 无条件覆盖:redo 前的旧修订可能留有 tool_flow,新修订没有工具
         // 调用时空 flow 也必须写入,否则旧工具流会被冒名回放。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
-        prune_tool_flow(&mut tool_flow, &self.core.config.context);
         self.append_remote_tool_flow(&mut tool_flow);
         self.state
             .set_turn_tool_flow(&candidate.turn_id, &tool_flow)?;

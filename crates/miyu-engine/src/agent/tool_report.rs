@@ -441,25 +441,6 @@ pub(in crate::agent) fn prune_tool_output(
     pruned
 }
 
-pub(in crate::agent) fn prune_tool_flow(
-    flow: &mut [miyu_core::state::ToolFlowRound],
-    context: &miyu_base::config::ContextConfig,
-) {
-    let (threshold, head, tail) = (
-        context.tool_result_prune_chars,
-        context.tool_result_prune_head_chars,
-        context.tool_result_prune_tail_chars,
-    );
-    if threshold == 0 || head + tail >= threshold {
-        return;
-    }
-    for round in flow.iter_mut() {
-        for call in round.calls.iter_mut() {
-            call.output = prune_tool_output(&call.output, threshold, head, tail);
-        }
-    }
-}
-
 /// 回放视图:连续同签名(整轮的 名字+参数 序列相同)的轮只保留第一轮。
 /// 复读轮是端点故障窗口的毒料,原样回放会教模型继续复读——08-24 取证:
 /// 一个群会话积累 122 个历史工具调用、111 个纯重复(60×同一 web_search),

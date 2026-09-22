@@ -8,7 +8,8 @@
 //! 冷恢复剪枝）：它折的是 `turns.tool_reports`，而那一列从 07-01 起就只装
 //! `extract_persistable_tool_report` 的白名单精选小结，从来不装工具输出本体
 //! ——实测 410 轮共 ~1.2KB，连单批 12,500 字节的收割闸门都够不着，一次都没
-//! 触发过。真正的工具体量在 `tool_flow`，已由 `prune_tool_flow` 在落盘时截断。
+//! 触发过。真正的工具体量在 `tool_flow`，由压缩那一刻的保留区瘦身处理
+//! （`compact.rs` 的 `tool_result_prune`）。
 
 use crate::agent::*;
 
@@ -139,6 +140,12 @@ impl Agent {
             // `tool_flow` and is already trimmed at write time by
             // `prune_tool_flow`, which costs no cache reset at all. That left
             // the 0.5 notice announcing a fold that could not happen.
+            //
+            // 09-23 更正：上面那句「`prune_tool_flow` costs no cache reset at
+            // all」当时就是错的——它在**每轮落库**时改写已经发出去的工具输出，
+            // 下一轮回放便与上游缓存对不上，前缀每轮断一次（A/B：8 个新轮断
+            // 6 次，断点全是 tool 消息）。瘦身已挪到压缩那一刻，那里前缀本来
+            // 就断了一次，才真是零额外代价。
             return Ok(None);
         }
         if self.runtime.compact_stuck.load(Ordering::Relaxed) {
@@ -162,6 +169,11 @@ impl Agent {
                     check.reserved_tokens,
                     self.compact_tail_budget(window),
                     self.preset_dialogs.len(),
+                )
+                .with_tool_result_prune(
+                    self.core.config.context.tool_result_prune_chars,
+                    self.core.config.context.tool_result_prune_head_chars,
+                    self.core.config.context.tool_result_prune_tail_chars,
                 )
                 .with_extras(self.compact_extras_policy());
                 let mut on_chunk =

@@ -211,7 +211,6 @@ impl Agent {
     /// 是 `?`,真有持久化问题跑不掉。
     fn checkpoint_tool_flow(&self, turn_id: &str, messages: &[ChatMessage], replay_start: usize) {
         let mut tool_flow = derive_tool_flow(messages, replay_start, false);
-        prune_tool_flow(&mut tool_flow, &self.core.config.context);
         self.append_remote_tool_flow(&mut tool_flow);
         if tool_flow.is_empty() {
             return;

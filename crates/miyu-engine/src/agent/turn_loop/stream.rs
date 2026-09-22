@@ -149,8 +149,10 @@ impl Agent {
         if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
             self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
         }
+        // 工具输出的瘦身不在这里做——放在压缩那一刻(见 compact.rs 的
+        // `tool_result_prune`)。在落库时剪，等于把**已经发出去的全文**改写成
+        // 头尾，下一轮回放就和上游缓存里的对不上，前缀每轮断一次。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
-        prune_tool_flow(&mut tool_flow, &self.core.config.context);
         self.append_remote_tool_flow(&mut tool_flow);
         if !tool_flow.is_empty() {
             self.state.set_turn_tool_flow(&turn_id, &tool_flow)?;
