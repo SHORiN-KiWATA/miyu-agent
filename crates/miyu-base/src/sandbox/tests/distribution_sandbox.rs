@@ -10,12 +10,17 @@ enum Entry {
 
 const ENTRIES: [Entry; 3] = [Entry::Async, Entry::Std, Entry::Relay];
 
+/// 把「这台机器上没有可用后端」这个现场造出来。
+///
+/// 有后端的平台只能靠注入(`FORCE_UNSUPPORTED` 是 task-local,只影响这一个任务)。
+/// macOS 原来落在下面那一支——它当时**真的**没有后端,`probe()` 就是 None;
+/// 接上 sandbox-exec 之后 `probe()` 返回 `Some(1)`,那句断言当场就炸(09-23 CI)。
 async fn unavailable_backend<F: std::future::Future>(future: F) -> F::Output {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         backend::FORCE_UNSUPPORTED.scope(true, future).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         assert_eq!(probe(), None);
         future.await
