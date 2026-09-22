@@ -12,6 +12,7 @@ mod queue_journal;
 mod reasoning;
 mod remote_tools;
 mod request_shape;
+mod session_usage;
 mod shared;
 mod stream;
 mod subsystems;
