@@ -75,17 +75,43 @@ def capture():
     ).stdout.splitlines()
 
 
+def require_tmux():
+    """这份走查拿 tmux 当终端仿真器。没装的话原来是一句
+    `FileNotFoundError: 'tmux'`,看起来像被测的东西坏了——实际是机器上缺件。"""
+    if shutil.which("tmux"):
+        return True
+    print("! 这份走查要 tmux(拿它当终端仿真器),这台机器上没有。\n"
+          "  Linux: 用你的包管理器装 tmux;macOS: brew install tmux。",
+          file=sys.stderr)
+    return False
+
+
+def belongs_to_sandbox(pid):
+    """这个进程是不是**我们这轮**的沙箱 daemon。
+
+    Linux 上直接读它的环境最准。macOS 读不到:SIP 之后连同用户的进程都不给,
+    `ps -E`/`ps eww` 打出来只有命令行(09-23 在真机上验过)。退而求其次看它开着
+    哪些文件——daemon 一定开着沙箱 HOME 底下的库。`/tmp` 在 macOS 上是
+    `/private/tmp` 的符号链接,所以两种写法都要比。"""
+    try:
+        env = pathlib.Path(f"/proc/{pid}/environ").read_bytes().decode("utf-8", "replace")
+        return f"MIYU_HOME={HOME}" in env
+    except OSError:
+        pass
+    if not shutil.which("lsof"):
+        return False
+    out = subprocess.run(["lsof", "-p", str(pid), "-Fn"],
+                         capture_output=True, text=True, check=False).stdout
+    return str(HOME) in out or os.path.realpath(HOME) in out
+
+
 def kill_sandbox_daemon():
     """上一轮的沙箱 daemon 会活过 tmux 会话:新 TUI 连上它就拿到旧会话历史,
     桩按「已有几条工具结果」定档,于是直接跳到收尾那一档——看起来像工具没调。"""
     out = subprocess.run(["pgrep", "-f", "__daemon"], capture_output=True, text=True,
                          check=False).stdout.split()
     for pid in out:
-        try:
-            env = pathlib.Path(f"/proc/{pid}/environ").read_bytes().decode("utf-8", "replace")
-        except OSError:
-            continue
-        if f"MIYU_HOME={HOME}" in env:
+        if belongs_to_sandbox(pid):
             subprocess.run(["kill", pid], check=False)
     time.sleep(1)
 
@@ -95,6 +121,9 @@ def main():
     parser.add_argument("--binary", default=str(ROOT / "target" / "debug" / "miyu"))
     args = parser.parse_args()
     binary = Path(args.binary).resolve()
+
+    if not require_tmux():
+        return 2
 
     kill_sandbox_daemon()
     shutil.rmtree(HOME.parent, ignore_errors=True)
