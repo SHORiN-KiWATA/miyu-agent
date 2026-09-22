@@ -767,10 +767,16 @@ mod tests {
         // 走 PNG 传输(`f=100`)而不是裸 RGBA(`f=32`):一张大片留白的图差着一个
         // 数量级,而 PNG 字节本来就在手里。
         assert!(sequence.contains("f=100"), "没走 PNG 传输");
+        // 只量**传输段**。序列后半截是占位格,它的大小跟着显示网格走(每格一个
+        // 四字节的 U+10EEEE 加两个变音符),跟图本身多大没关系。CI 上字体少,同一
+        // 张图渲出来只有 4KB,占位格却照旧那么大,整条序列就顶到了 2.14 倍——量错
+        // 了对象,不是传输真的胖了(09-23,`--workspace` 第一次把这条带上 CI 才露出来)。
+        let transfer_end = sequence.rfind("\u{1b}\\").expect("传输段该有收尾") + 2;
+        let transfer = &sequence[..transfer_end];
         assert!(
-            sequence.len() < png.len() * 2,
+            transfer.len() < png.len() * 2,
             "传输量不该比 PNG 本身大出一倍以上:{} vs {}",
-            sequence.len(),
+            transfer.len(),
             png.len()
         );
         // kitty 的占位格是 U+10EEEE（六位，别少写一位写成 U+10EEE）。
