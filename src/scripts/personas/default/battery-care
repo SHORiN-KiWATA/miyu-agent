@@ -843,9 +843,11 @@ print_status_summary() {
 # 第三方工具是去写私有 SMC 键（CHWA / BCLM），那要 root、随系统版本漂、写坏了
 # 是硬件层面的事。这个脚本不碰它，照实说清楚由系统设置管。
 #
-# ⚠️ 验证范围：写这段时手上的 Mac 是 **Mac Studio（台式机，没有电池）**，所以
-# 只验过「没有电池」那条路。**有电池的 MacBook 那条路没有在真机上跑过**，
-# 字段名按 ioreg/pmset 的公开输出写的。
+# ⚠️ 验证范围：手上的 Mac 是 **Mac Studio（台式机，没有电池）**，所以真机上只
+# 验得了「没有电池」那条路。**有电池的 MacBook 那条路没有在真机上跑过。**
+# 退而求其次，`testkit/battery-care/macos_fake.py` 拿假的 uname/pmset/ioreg 把
+# 解析那一层钉住（Apple Silicon 与 Intel 两种形态各一组，26/26）。它证明的是
+# 「对着这几种输出形态算得对」，**不是**「真机打出来的就是这几种形态」。
 is_macos() { [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; }
 
 macos_has_battery() {
@@ -870,15 +872,24 @@ macos_status() {
   state="$(pmset -g batt 2>/dev/null | sed -n 's/.*; \([a-z ]*\);.*/\1/p' | head -n 1)"
   cycles="$(macos_ioreg_int CycleCount)"
   now="$(macos_ioreg_int AppleRawMaxCapacity)"
-  [[ -n "$now" ]] || now="$(macos_ioreg_int MaxCapacity)"
+  max="$(macos_ioreg_int MaxCapacity)"
   design="$(macos_ioreg_int DesignCapacity)"
   printf 'Battery: internal\n'
   [[ -n "$pct" ]] && printf 'Charge: %s%%\n' "$pct"
   [[ -n "$state" ]] && printf 'State: %s\n' "$state"
   [[ -n "$cycles" ]] && printf 'Cycles: %s\n' "$cycles"
+  # `MaxCapacity` 这个字段两种机器上**不是一回事**:Intel 上是 mAh,Apple Silicon
+  # 上是已经算好的百分比(0–100),而 `AppleRawMaxCapacity` 在后者上常常根本没有。
+  # 不分开判的话,拿 100 去除以 design(4790 这种量级)会算出「健康度 2%」——
+  # 一个看着像坏了、其实是单位搞错的数。所以先认 mAh,认不出再当百分比收。
   if [[ -n "$now" && -n "$design" && "$design" -gt 0 ]]; then
     health=$(( now * 100 / design ))
     printf 'Health: %s%%\n' "$health"
+  elif [[ -n "$max" && -n "$design" && "$design" -gt 0 && "$max" -gt 100 ]]; then
+    health=$(( max * 100 / design ))
+    printf 'Health: %s%%\n' "$health"
+  elif [[ -n "$max" && "$max" -le 100 && "$max" -gt 0 ]]; then
+    printf 'Health: %s%%\n' "$max"
   fi
   printf 'Limit: not settable here\n'
   printf 'Reason: macOS exposes no supported charge-threshold interface; the system manages it (Settings > Battery)\n'

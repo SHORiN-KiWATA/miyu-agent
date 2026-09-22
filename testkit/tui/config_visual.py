@@ -19,6 +19,7 @@ import pty
 import re
 import select
 import struct
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -172,14 +173,31 @@ class Driver:
         return int(round(seconds * 100))
 
     def close(self):
+        """收摊。**先关 master,再等**,而且等不到也只是喊一声,不掀翻整份走查。
+
+        macOS 上连 SIGKILL 之后 `wait(5)` 都超时:43 项检查全绿,最后炸在收摊这一步
+        (09-23 真机)。收摊本来就不是被测的东西,它不该决定这份走查红还是绿——
+        但也不能悄悄咽下去,所以等不到的时候把进程那一行原样打出来。"""
+        try:
+            os.close(self.master)
+        except OSError:
+            pass
         if self.process.poll() is None:
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill()
-                self.process.wait(timeout=5)
-        os.close(self.master)
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    state = subprocess.run(
+                        ["ps", "-o", "pid=,ppid=,stat=,command=", "-p",
+                         str(self.process.pid)],
+                        capture_output=True, text=True, check=False,
+                    ).stdout.strip()
+                    print(f"! 收摊:SIGKILL 之后还等不到 {self.process.pid}"
+                          f" —— ps 说 [{state or '查无此进程'}]", file=sys.stderr)
 
 
 def to_main(driver):
