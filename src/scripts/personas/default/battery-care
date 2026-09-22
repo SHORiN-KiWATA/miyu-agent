@@ -831,6 +831,69 @@ print_status_summary() {
   printf 'Path: %s\n' "$(primary_path "$idx")"
 }
 
+# ── macOS ────────────────────────────────────────────────────────────────────
+#
+# Linux 那一整套走 /sys/class/power_supply 的 charge_control_*_threshold，macOS
+# 上一个都不存在，于是原来在 Mac 上只会回一句 "Reason: no known charge-threshold
+# interface / Device: unknown"——行为没错，但那措辞像是设备识别失败，看的人会去
+# 查硬件（2026-09-22 真机实测）。
+#
+# 读这一侧 macOS 是给得出来的：pmset 报充放电状态，ioreg 的 AppleSmartBattery
+# 给循环次数与容量。写这一侧**故意不做**：macOS 没有受支持的充电阈值接口，
+# 第三方工具是去写私有 SMC 键（CHWA / BCLM），那要 root、随系统版本漂、写坏了
+# 是硬件层面的事。这个脚本不碰它，照实说清楚由系统设置管。
+#
+# ⚠️ 验证范围：写这段时手上的 Mac 是 **Mac Studio（台式机，没有电池）**，所以
+# 只验过「没有电池」那条路。**有电池的 MacBook 那条路没有在真机上跑过**，
+# 字段名按 ioreg/pmset 的公开输出写的。
+is_macos() { [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; }
+
+macos_has_battery() {
+  pmset -g batt 2>/dev/null | grep -q 'InternalBattery'
+}
+
+macos_ioreg_int() { # 字段名 -> 整数(取不到就空)
+  ioreg -rn AppleSmartBattery 2>/dev/null \
+    | sed -n "s/.*\"$1\" = \([0-9][0-9]*\).*/\1/p" | head -n 1
+}
+
+macos_status() {
+  printf 'Device: %s\n' "$(sysctl -n hw.model 2>/dev/null || echo Mac)"
+  if ! macos_has_battery; then
+    # 台式机不是「不支持」,是「没有这个东西」。分开说,否则看的人会去查驱动。
+    printf 'Battery: none\n'
+    printf 'Reason: this Mac has no internal battery\n'
+    return 0
+  fi
+  local pct state cycles now max design health
+  pct="$(pmset -g batt 2>/dev/null | sed -n 's/.*[^0-9]\([0-9][0-9]*\)%.*/\1/p' | head -n 1)"
+  state="$(pmset -g batt 2>/dev/null | sed -n 's/.*; \([a-z ]*\);.*/\1/p' | head -n 1)"
+  cycles="$(macos_ioreg_int CycleCount)"
+  now="$(macos_ioreg_int AppleRawMaxCapacity)"
+  [[ -n "$now" ]] || now="$(macos_ioreg_int MaxCapacity)"
+  design="$(macos_ioreg_int DesignCapacity)"
+  printf 'Battery: internal\n'
+  [[ -n "$pct" ]] && printf 'Charge: %s%%\n' "$pct"
+  [[ -n "$state" ]] && printf 'State: %s\n' "$state"
+  [[ -n "$cycles" ]] && printf 'Cycles: %s\n' "$cycles"
+  if [[ -n "$now" && -n "$design" && "$design" -gt 0 ]]; then
+    health=$(( now * 100 / design ))
+    printf 'Health: %s%%\n' "$health"
+  fi
+  printf 'Limit: not settable here\n'
+  printf 'Reason: macOS exposes no supported charge-threshold interface; the system manages it (Settings > Battery)\n'
+  return 0
+}
+
+macos_refuse_write() {
+  printf 'Support: no\n'
+  printf 'Device: %s\n' "$(sysctl -n hw.model 2>/dev/null || echo Mac)"
+  printf 'Reason: macOS exposes no supported charge-threshold interface\n'
+  printf 'Hint: charge limiting lives in System Settings > Battery; this tool will not write private SMC keys\n'
+  return 1
+}
+
+
 cmd_status() {
   local type idx
   probe_all
@@ -992,6 +1055,14 @@ set -- "${REMAINING_ARGS[@]}"
 
 cmd="${1:-status}"
 [[ $# -gt 0 ]] && shift || true
+
+if is_macos; then
+  case "$cmd" in
+    status) macos_status; exit $? ;;
+    doctor) macos_status; exit $? ;;
+    set | limit | reset) macos_refuse_write; exit $? ;;
+  esac
+fi
 
 case "$cmd" in
   status)
