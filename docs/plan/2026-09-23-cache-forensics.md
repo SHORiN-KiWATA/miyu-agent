@@ -22,20 +22,40 @@
 
 已修：轮内累计器往一份共享镜像同步，守卫 Drop 时照它写库。
 
-## 二、累计被刷新（更大的一头）：trim 直接删轮
+## 二、trim 直接删轮——但大部分是用户自己配的 pop 模式
 
-`trim_visible_context`（`history.rs:12`）是压缩之外的第二道水位闸。它不折叠、
-不摘要，**直接把最老的几轮从库里 DELETE**（只归档进 `evicted_context.db`）。
-
-09-20~22 三天触发 **44 次**，每次删 12–50 轮。库里的痕迹：
+`trim_visible_context`（`history.rs:12`）不折叠、不摘要，**直接把最老的几轮
+从库里 DELETE**（只归档进 `evicted_context.db`）。库里的痕迹：
 
 | 会话 | 现存行 | seq 范围 | 应有 | 缺失 |
 |---|---|---|---|---|
 | qq:…group:1305 | 40 | 72–202 | 131 | **91 轮** |
 | qq:…private:24 | 3 | 1–18 | 18 | **15 轮** |
 
-`evicted_context.db` 里 105 条归档，与当天被删的轮数吻合——数据进了另一个
-库，**不进 Σ**。删掉的轮同时也让下一次请求的历史开头变了，前缀从头断。
+**先别急着把这算成 bug。** 用户配置里有一处作用域覆盖：
+
+```jsonc
+"group_context": {
+  "on_overflow": "pop",
+  "trim_batch_ratio": 0.6
+}
+```
+
+QQ 群会话被显式配成 **pop 模式**——那个模式本来就只用 trim、不用 compact。
+按 `evict_to` 把三天 44 次 trim 拆开：
+
+| `evict_to` | 对应 | 次数 | 性质 |
+|---|---|---|---|
+| 51199 / 67199 | `trim_batch_ratio=0.6` → QQ 群 | **43** | **pop 的设计行为，不是 bug** |
+| 108800 / 142800 | `0.15` → 终端 / WebUI | **4** | 「压缩被架空」的实例 |
+
+所以上面那 91 轮缺口是 pop 在正常工作。**初稿把 44 次全算成了架空的证据，
+是归因错误**——架空问题真实存在，但只发生在非群会话上、三天 4 次。修复的
+受益面是终端与 WebUI，群会话行为不变。
+
+被删的轮同时也让下一次请求的历史开头变了，前缀从头断；`SUM(turns)` 少了
+那几轮，Σ 也跟着掉——这两点在 pop 模式下同样成立，只是那是选 pop 时就
+接受了的代价。
 
 ## 三、trim 把 compact 架空了
 
@@ -49,9 +69,11 @@ let check = overflow::OverflowCheck::new(context_window, self.core.trim_at_ratio
 在每个回合一开始就跑（`stream.rs`），把上下文压到 `1-trim_batch_ratio` 以下；
 等回合结束 `handle_overflow` 去检查时，上下文早已在水位之下。
 
-实测：三天日志里 `context_rewrite reason=compact` **0 次**，trim 44 次。
+实测：三天日志里 `context_rewrite reason=compact` **0 次**。非 pop 作用域的
+trim 触发了 4 次——那 4 次本该由压缩接手。
 
-于是现在是 trim 在做全部工作（删除、丢信息、掰前缀），compact 形同虚设。
+于是在终端与 WebUI 会话上，上下文处置全靠删最老的轮（丢信息、掰前缀），
+compact 形同虚设。
 
 ## 四、命中率：事后剪枝每轮掰一次前缀
 
@@ -101,6 +123,9 @@ prompt 总量更值钱——只有在缓存读完全免费的供应商上才该�
   session_id=…`）。用户的终端会话里一条 agy 都没有，不成立。
 - **「seq14 的全断是压缩」**：那一轮 `is_summary=0`、compact 标记全空，而且
   三天根本没触发过 compact。真正让 prompt 从 189,687 掉到 73,478 的是剪枝。
+- **「三天 44 次 trim 都是压缩被架空的证据」**：43 次是 QQ 群的 pop 模式在
+  正常工作（用户自己配的 `group_context.on_overflow = "pop"`），只有 4 次
+  属于架空。没先看作用域覆盖就下了结论。
 
 ## 六、取证能力（这次补上的）
 

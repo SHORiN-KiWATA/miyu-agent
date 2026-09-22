@@ -26,7 +26,9 @@ pub struct ContextConfig {
     #[serde(default = "default_context_window")]
     pub default_context_window: usize,
     /// Watermark that forces a compaction even when the fold-economics gate
-    /// would skip it. Must be >= trim_at_ratio.
+    /// would skip it. Must be >= `compact_at_ratio`: between the two, a
+    /// compaction still runs but bails out when there is too little to fold
+    /// (`MIN_FOLD_TOKENS`); at or above this line it folds regardless.
     #[serde(default = "default_compact_force_ratio")]
     pub compact_force_ratio: f32,
     /// Verbatim tail budget kept outside the summary, in tokens. None derives
