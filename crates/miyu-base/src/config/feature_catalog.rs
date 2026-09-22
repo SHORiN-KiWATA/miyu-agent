@@ -47,6 +47,9 @@ pub struct SubsystemDescriptor {
     pub id: &'static str,
     pub name_zh: &'static str,
     pub hint_zh: &'static str,
+    /// 英文界面用这一份（理由同 `BuiltinPluginDescriptor`）。
+    pub name_en: &'static str,
+    pub hint_en: &'static str,
     /// 引导里摆不摆。
     pub in_onboarding: bool,
     pub get: fn(&Subsystems) -> bool,
@@ -63,6 +66,8 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         id: "voice",
         name_zh: "语音",
         hint_zh: "唤醒对话、听写、朗读",
+        name_en: "Voice",
+        hint_en: "Wake word, dictation, speech",
         in_onboarding: true,
         get: |subsystems| subsystems.voice,
         set: |subsystems, on| subsystems.voice = on,
@@ -73,6 +78,8 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         id: "persona_reminder",
         name_zh: "人格提醒",
         hint_zh: "隔几轮提醒模型保持人设",
+        name_en: "Persona reminder",
+        hint_en: "Remind the model to stay in character",
         in_onboarding: true,
         get: |subsystems| subsystems.persona_reminder,
         set: |subsystems, on| subsystems.persona_reminder = on,
@@ -83,6 +90,8 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         id: "emotion",
         name_zh: "情绪与好感度",
         hint_zh: "通讯平台里的情绪状态与好感度",
+        name_en: "Mood and affection",
+        hint_en: "Mood and affection on messaging platforms",
         in_onboarding: true,
         get: |subsystems| subsystems.emotion,
         set: |subsystems, on| subsystems.emotion = on,
@@ -93,6 +102,8 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         id: "memory",
         name_zh: "长期记忆",
         hint_zh: "记忆、联想、日记",
+        name_en: "Memory",
+        hint_en: "Long-term memory",
         in_onboarding: false,
         get: |subsystems| subsystems.memory,
         set: |subsystems, on| subsystems.memory = on,
@@ -103,6 +114,8 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         id: "skills",
         name_zh: "技能",
         hint_zh: "技能目录与 load_skill",
+        name_en: "Skills",
+        hint_en: "Loadable skill packs",
         in_onboarding: false,
         get: |subsystems| subsystems.skills,
         set: |subsystems, on| subsystems.skills = on,
@@ -210,8 +223,8 @@ pub fn catalog(
             items.push(FeatureItem {
                 kind: FeatureKind::Machine,
                 id: feature.id.into(),
-                name: feature.name_zh.into(),
-                hint: feature.hint_zh.into(),
+                name: crate::i18n::text(feature.name_en, feature.name_zh).into(),
+                hint: crate::i18n::text(feature.hint_en, feature.hint_zh).into(),
                 on,
                 builtin: false,
                 settings: feature.settings,
@@ -230,8 +243,8 @@ pub fn catalog(
         items.push(FeatureItem {
             kind: FeatureKind::Subsystem,
             id: descriptor.id.into(),
-            name: descriptor.name_zh.into(),
-            hint: descriptor.hint_zh.into(),
+            name: crate::i18n::text(descriptor.name_en, descriptor.name_zh).into(),
+            hint: crate::i18n::text(descriptor.hint_en, descriptor.hint_zh).into(),
             on: (descriptor.get)(&manifest.subsystems),
             builtin: false,
             settings: descriptor.settings,
@@ -248,8 +261,8 @@ pub fn catalog(
         items.push(FeatureItem {
             kind: FeatureKind::Plugin,
             id: plugin.id.into(),
-            name: plugin.name_zh.into(),
-            hint: plugin.hint_zh.into(),
+            name: crate::i18n::text(plugin.name_en, plugin.name_zh).into(),
+            hint: crate::i18n::text(plugin.hint_en, plugin.hint_zh).into(),
             on: manifest.plugin_enabled(plugin.id),
             builtin: false,
             settings: plugin.settings,
@@ -640,5 +653,84 @@ mod tests {
         assert!(items
             .iter()
             .all(|item| item.kind != FeatureKind::Subsystem || item.id == "voice"));
+    }
+}
+
+#[cfg(test)]
+mod bilingual_tests {
+    use super::*;
+
+    /// 三张表每一条都得有英文名与英文说明，而且不能照抄中文。
+    ///
+    /// 09-23 之前只有中文：英文 locale 下脚本那一栏按 locale 变英文，而内置功能、
+    /// 子系统、网络搜索/识图这三类没得选只能留中文，**同一页混两种语言**
+    /// （用户截图）。以后往表里加条目漏了英文名，这条会当场红。
+    #[test]
+    fn every_catalog_entry_carries_both_languages() {
+        let mut missing = Vec::new();
+        for plugin in crate::config::builtin_plugins::BUILTIN_PLUGINS {
+            if plugin.name_en.trim().is_empty() || plugin.hint_en.trim().is_empty() {
+                missing.push(format!("plugin {}", plugin.id));
+            }
+        }
+        for feature in crate::config::builtin_plugins::MACHINE_FEATURES {
+            if feature.name_en.trim().is_empty() || feature.hint_en.trim().is_empty() {
+                missing.push(format!("machine feature {}", feature.id));
+            }
+        }
+        for descriptor in SUBSYSTEMS {
+            if descriptor.name_en.trim().is_empty() || descriptor.hint_en.trim().is_empty() {
+                missing.push(format!("subsystem {}", descriptor.id));
+            }
+        }
+        assert!(missing.is_empty(), "这些条目缺英文名/英文说明: {missing:?}");
+    }
+
+    /// 英文名不能是中文——照抄一份中文进去等于没加。
+    #[test]
+    fn the_english_names_are_not_chinese() {
+        let chinese = |value: &str| {
+            value
+                .chars()
+                .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+        };
+        for plugin in crate::config::builtin_plugins::BUILTIN_PLUGINS {
+            assert!(
+                !chinese(plugin.name_en),
+                "{} 的英文名里有中文: {}",
+                plugin.id,
+                plugin.name_en
+            );
+        }
+        for descriptor in SUBSYSTEMS {
+            assert!(
+                !chinese(descriptor.name_en),
+                "{} 的英文名里有中文: {}",
+                descriptor.id,
+                descriptor.name_en
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod locale_switch_tests {
+    use super::*;
+
+    /// 同一张表在两种 locale 下给出不同语言——这是用户看到的那个现象的直接判据。
+    #[test]
+    fn the_same_entry_renders_in_the_requested_language() {
+        let plugin = crate::config::builtin_plugins::BUILTIN_PLUGINS
+            .iter()
+            .find(|item| item.id == "alarm")
+            .expect("alarm is a built-in plugin");
+        assert_eq!(
+            crate::i18n::text_for(crate::i18n::Locale::Zh, plugin.name_en, plugin.name_zh),
+            "闹钟"
+        );
+        assert_eq!(
+            crate::i18n::text_for(crate::i18n::Locale::En, plugin.name_en, plugin.name_zh),
+            "Alarm"
+        );
     }
 }
