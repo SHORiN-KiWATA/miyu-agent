@@ -664,22 +664,14 @@ mod test_support;
 /// 装上「本会话用量」那件工具。
 ///
 /// 它要的数只有回合开始时才知道（会话是那时才定的，装配层只认人格与工具面），
-/// 所以在这儿注册。跟着全局那件一起开关：工具面里没有 `query_system_token_usage`
-/// 的场合（插件关掉了、受限工具面）这件也不装——本会话的账和全局的账是同一
-/// 件事的两面，没道理一个在一个不在。
+/// 所以在这儿注册。判据只有一条：会话取值器给得出数就装——本会话的账不跟
+/// 全局那件走（dev 的 `core_only` 没有全局那件，这条账照样要能问）。
 fn bind_session_usage(
     tools: &mut ToolRegistry,
     state: &StateStore,
     client: &OpenAiCompatibleClient,
     config: &miyu_base::config::AppConfig,
 ) {
-    if !tools
-        .tool_names()
-        .iter()
-        .any(|name| name == "query_system_token_usage")
-    {
-        return;
-    }
     let state = state.clone();
     let window_config = config.clone();
     let window_client = client.clone();
@@ -696,5 +688,8 @@ fn bind_session_usage(
                 .unwrap_or(0),
         })
     });
-    crate::tools::usage_query::register_session(tools, session);
+    // 取值器给得出数就装，给不出来（平台工具集、还没绑会话）才不装。
+    if session().is_some() {
+        crate::tools::usage_query::register_session(tools, session);
+    }
 }
