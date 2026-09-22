@@ -19,6 +19,7 @@ import pty
 import re
 import select
 import struct
+import shutil
 import subprocess
 import tempfile
 import termios
@@ -67,7 +68,7 @@ class Unauthorized(http.server.BaseHTTPRequestHandler):
 
 
 class Driver:
-    def __init__(self, binary, home, cols=COLS, rows=ROWS):
+    def __init__(self, binary, home, runtime, cols=COLS, rows=ROWS):
         self.screen = pyte.Screen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
         master, slave = pty.openpty()
@@ -83,7 +84,7 @@ class Driver:
             # 真彩：pyte 才会把前景色原样给出来，颜色断言要用。
             env=dict(os.environ, MIYU_HOME=str(home), TERM="xterm-256color",
                      COLORTERM="truecolor", LANG="zh_CN.UTF-8",
-                     XDG_RUNTIME_DIR=str(home / "run")),
+                     XDG_RUNTIME_DIR=str(runtime)),
             preexec_fn=setup,
         )
         os.close(slave)
@@ -146,9 +147,29 @@ class Driver:
         self.pump(0.4)
 
     def cpu_ticks(self):
-        with open(f"/proc/{self.process.pid}/stat") as handle:
-            fields = handle.read().rsplit(") ", 1)[1].split()
-        return int(fields[11]) + int(fields[12])
+        """这个进程到现在烧掉多少**厘秒** CPU(1 秒 100 个,所以数值就是单核百分比)。
+
+        Linux 上 /proc/<pid>/stat 里 utime+stime 的单位正是厘秒(USER_HZ=100)。
+        macOS 没有 /proc,这一句原来直接 FileNotFoundError,再把 close() 那条路
+        拖垮成 TimeoutExpired——整份走查看起来像被测的东西挂了(09-23 真机)。
+        `ps -o cputime=` 打的是 `分:秒.厘秒`,同一个单位,拿来减就行。"""
+        try:
+            with open(f"/proc/{self.process.pid}/stat") as handle:
+                fields = handle.read().rsplit(") ", 1)[1].split()
+            return int(fields[11]) + int(fields[12])
+        except OSError:
+            pass
+        raw = subprocess.run(["ps", "-o", "cputime=", "-p", str(self.process.pid)],
+                             capture_output=True, text=True, check=False).stdout.strip()
+        if not raw:
+            return 0
+        days, _, clock = raw.rpartition("-")          # `1-02:03:04` 这种形态
+        seconds = 0.0
+        for part in clock.split(":"):
+            seconds = seconds * 60 + float(part)
+        if days:
+            seconds += float(days) * 86400
+        return int(round(seconds * 100))
 
     def close(self):
         if self.process.poll() is None:
@@ -211,7 +232,12 @@ def main():
     sandbox = Path(tempfile.mkdtemp(prefix="miyu-config-visual-"))
     home = sandbox / "home"
     (home / "config").mkdir(parents=True)
-    (home / "run").mkdir()
+    # 运行时目录**不能**挂在沙箱底下。daemon 的 IPC socket 落在
+    # `<runtime>/miyu-<12 位摘要>/core.sock`,而 unix socket 的路径在 macOS 上
+    # 顶格 104 字节;那儿的默认 TMPDIR 是
+    # `/var/folders/dz/6m5cg9zj6fb081f1r4f75gmr0000gn/T/`,光前缀就 48 字节,
+    # 算下来 113,daemon 直接起不来(09-23 在真机上量的)。所以给它单独找个短的。
+    runtime = Path(tempfile.mkdtemp(prefix="mx-cv-", dir="/tmp"))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Unauthorized)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     denied = f"http://127.0.0.1:{server.server_address[1]}/v1"
@@ -229,7 +255,7 @@ def main():
         "memory": {"enabled": False},
     }))
 
-    driver = Driver(args.binary.resolve(), home)
+    driver = Driver(args.binary.resolve(), home, runtime)
     try:
         text = driver.wait("供应商和模型", "保存并退出")
         check(text is not None, "主菜单画出来了")
@@ -414,6 +440,7 @@ def main():
     finally:
         (sandbox / "last.txt").write_text(driver.text())
         driver.close()
+        shutil.rmtree(runtime, ignore_errors=True)
 
     passed = sum(results)
     print(f"\n{passed}/{len(results)} passed  ({sandbox})")
