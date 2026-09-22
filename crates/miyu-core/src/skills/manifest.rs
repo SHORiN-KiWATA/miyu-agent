@@ -29,21 +29,52 @@ pub struct SkillMetadata {
     pub allowed_tools: Option<String>,
 }
 
+/// `travel-planner` → `Travel planner`。规则与脚本那边的 `humanize_script_id`
+/// 一致：连字符/下划线换空格，只把第一个词首字母大写（技能 id 里常有
+/// `bilibili`、`linux` 这种专名，全词大写反而怪）。
+fn humanize_skill_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    let mut capitalize = true;
+    for ch in id.chars() {
+        if ch == '-' || ch == '_' {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            continue;
+        }
+        if capitalize {
+            out.extend(ch.to_uppercase());
+            capitalize = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    if out.trim().is_empty() {
+        id.to_string()
+    } else {
+        out
+    }
+}
+
 impl SkillMetadata {
     /// 界面上的名字:人槽优先,没写就回退到技能 id。
     ///
     /// **英文界面直接走模型槽**——那本来就是英文触发词。人槽是中文,英文界面
     /// 照搬会让设置页中英混杂：隔壁脚本那一栏按 locale 变英文，技能这栏却是
     /// 中文（用户 09-23 截图）。不用给技能格式加英文槽,现成的模型槽就够。
-    pub fn ui_name(&self) -> &str {
+    pub fn ui_name(&self) -> String {
         if miyu_base::i18n::locale() == miyu_base::i18n::Locale::En {
-            return &self.name;
+            // 模型槽就是技能 id（`travel-planner`），直接摆进设置页是个裸 id。
+            // 按脚本那边同一套规则拼成人话（`humanize_script_id`）：连字符换空格、
+            // 首字母大写。
+            return humanize_skill_id(&self.name);
         }
         self.display_name
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or(&self.name)
+            .to_string()
     }
 
     /// 界面上的一句话说明:人槽优先,没写就回退到模型槽。
@@ -358,4 +389,29 @@ pub(crate) fn validate_persona_scope(scope: &str) -> Result<()> {
         bail!("invalid persona skill scope");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod humanize_tests {
+    use super::*;
+
+    /// 英文界面下技能名不能是裸 id。09-23 用户截图：设置页上脚本那栏按 locale
+    /// 变英文、技能那栏留中文；改成走模型槽之后，模型槽本身就是 id
+    /// （`travel-planner`），直接摆上去只是把一种难看换成另一种。
+    #[test]
+    fn a_skill_id_becomes_a_readable_english_name() {
+        assert_eq!(humanize_skill_id("travel-planner"), "Travel planner");
+        assert_eq!(
+            humanize_skill_id("linux-game-compatibility"),
+            "Linux game compatibility"
+        );
+        assert_eq!(humanize_skill_id("script_creator"), "Script creator");
+    }
+
+    /// 拼不出东西就退回原样,别给个空字符串。
+    #[test]
+    fn a_degenerate_id_falls_back_to_itself() {
+        assert_eq!(humanize_skill_id("---"), "---");
+        assert_eq!(humanize_skill_id(""), "");
+    }
 }
