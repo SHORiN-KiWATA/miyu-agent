@@ -23,11 +23,16 @@
 //!   `(import "system.sb")` 也不行；
 //! - `(allow default)` + 禁写白名单 —— 可用，目录外写被拒、**孙进程也被挡住**、
 //!   14.8 KB 的长策略照跑；
-//! - `(allow default)` + 禁读白名单 —— 把一切都憋死了，连 `echo` 的输出都没有
-//!   （dyld 读共享缓存、往继承来的管道写 stderr 都被拒）。
+//! - `(allow default)` + 禁读白名单 —— **进程直接 abort**：`Abort trap: 6`
+//!   （SIGABRT，退出码 134），无 stdout 无 stderr。09-23 又专门二分过一次：
+//!   逐步加上 `/usr` `/bin` `/sbin` `/System` `/Library` `/private/var/db/dyld`
+//!   `/dev` `/private/etc` 全套放行，仍然 134；连不经过 shell 的
+//!   `/bin/echo` 也一样。**动态链接那一层在读被拒时直接 abort，不是缺某一条
+//!   路径的事。**
 //!
-//! 读侧要收紧得把这些逐个试出来，那是另一件事。**在那之前，环境块里必须如实写明
-//! macOS 上读没有收**，不能让模型以为和 Linux 一样。
+//! 所以读侧收紧在 `sandbox-exec -p` 这条路上**不可行**，不是「还没调出来」。
+//! 要做只剩重写成 `(deny default)` 的完整白名单，而那一条上面已经证否。
+//! **因此环境块里必须如实写明 macOS 上读没有收**，不能让模型以为和 Linux 一样。
 
 use super::SandboxPolicy;
 use std::ffi::{CString, OsStr, OsString};
