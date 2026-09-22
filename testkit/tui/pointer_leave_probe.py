@@ -49,6 +49,12 @@ def describe(chunk):
 
 
 def main():
+    if not sys.stdin.isatty():
+        print("这是要人拿鼠标配合的探针,不是能批量跑的走查:它得在一个真终端窗口里\n"
+              "开着,等你把指针移进移出。没有控制终端就没有可测的东西。\n"
+              "跑法:在你平时用的那个 kitty 窗口里 `python3 testkit/tui/"
+              "pointer_leave_probe.py`。", file=sys.stderr)
+        return 2
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     out = sys.stdout
@@ -92,4 +98,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
