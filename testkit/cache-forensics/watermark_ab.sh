@@ -22,9 +22,11 @@ BIN=${MIYU_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/target/debug/miyu}
 MODEL=${MIYU_AB_MODEL:-opencodego/mimo-v2.6-flash}
 REAL=$HOME/.miyu/config/config.jsonc
 ROUNDS=${2:-14}
-# 窗口越小越快跑到水位。32000 那版每轮只涨约 940 token（剪枝把工具输出压到
-# 1700 上下——那正是剪枝的价值，却让测试 12 轮都够不着 25600 的触发线）。
-WINDOW=20000
+# 窗口不能压得太小。20000 那版两组都只剩 1 轮、一次压缩都没跑：系统提示词
+# 加工具表就占 12700，可见历史最多 7300，全落在压缩的保尾预算（8192）里，
+# `find_cut_index` 返回 0——压缩判定「没东西可折」直接 return，上下文全靠
+# 裁剪删轮维持。窗口要留得下「保尾预算 + 一段够折的历史」。
+WINDOW=60000
 
 declare -A PORTS=([a]=8393 [b]=8394)
 # arm -> "compact_at trim_at"

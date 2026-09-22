@@ -4,8 +4,10 @@
 A 组是改之前（压缩借用裁剪的水位，两者打平），B 组是改之后（压缩有自己更低
 的水位，裁剪退为兜底）。四个口径：
 
-- **压缩触发**：日志里 `context_rewrite reason=compact` 的条数。A 组预期为 0
-  ——裁剪在回合开头就把上下文压到线下了，压缩等不到自己的条件。
+- **压缩触发**：库里的摘要轮（`is_summary=1`，压缩每跑一次插一行）。**不能
+  数日志**——压缩那条 `tracing::info!` 没写 `miyu::qq` 这个 target，而 daemon
+  默认只有它记 INFO，于是那个计数恒为 0，看着像「压缩没跑」其实是「日志没
+  记」。A 组预期为 0：裁剪在回合开头就把上下文压到线下了，压缩等不到条件。
 - **裁剪触发**：日志里「上下文裁剪已触发」的条数，以及它一共计划逐出多少轮。
 - **轮的去留**：`turns` 表里 seq 的缺口就是被删掉的轮数（裁剪是 DELETE，
   不是折叠）。压缩不删轮，它写摘要行。
@@ -107,7 +109,8 @@ def summarize(name, home):
     turns = turn_stats(home) or {"rows": 0, "missing": 0, "summaries": 0}
     return {
         "组": name,
-        "压缩触发": count_log(home, "context_rewrite reason=compact"),
+        # 判据是摘要轮，不是日志（见模块头）。
+        "压缩触发": turns["summaries"],
         "裁剪触发": count_log(home, "上下文裁剪已触发"),
         "计划逐出轮": planned_evictions(home),
         "现存轮": turns["rows"],
