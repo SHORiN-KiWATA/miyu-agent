@@ -53,7 +53,10 @@ impl Agent {
             std::process::id(),
         )?;
         let guard =
-            PendingRedoGuard::new(self.state.clone(), candidate.turn_id.clone(), redo.revision);
+            PendingRedoGuard::new(self.state.clone(), candidate.turn_id.clone(), redo.revision)
+                .with_usage_mirror(self.runtime.turn_usage.clone());
+        self.runtime.turn_usage.reset();
+        self.client.set_log_turn(Some(&candidate.turn_id));
         let mut on_event = on_event;
         on_event(AgentEvent::TurnStarted {
             turn_id: candidate.turn_id.clone(),
@@ -160,7 +163,6 @@ impl Agent {
         // 无条件覆盖:redo 前的旧修订可能留有 tool_flow,新修订没有工具
         // 调用时空 flow 也必须写入,否则旧工具流会被冒名回放。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
-        prune_tool_flow(&mut tool_flow, &self.core.config.context);
         self.append_remote_tool_flow(&mut tool_flow);
         self.state
             .set_turn_tool_flow(&candidate.turn_id, &tool_flow)?;

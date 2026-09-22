@@ -21,7 +21,18 @@ impl Agent {
         // prefix (the turn's own requests refresh the cache anyway).
         self.cancel_cache_keepalive();
         self.state.recover_stale_turns()?;
-        self.trim_visible_context()?;
+        // 走压缩的会话不跑裁剪(09-23 用户裁定)。
+        //
+        // 裁剪是**直接删最老的轮**,代价有两层:删掉的历史只归档进
+        // `evicted_context.db`、不再回到上下文;而历史开头一变,前缀缓存就
+        // 从头断一次。上下文该由压缩处理——它把旧轮折成摘要留在上下文里,
+        // 也只断一次前缀,但信息还在。
+        //
+        // `on_overflow = "pop"` 是另一回事:那个档位的语义就是「不压缩、
+        // 直接丢」,裁剪正是它的实现,所以保留。
+        if self.core.on_overflow != "compact" {
+            self.trim_visible_context()?;
+        }
         self.runtime.persona_reminder = self.resolve_persona_reminder().await;
         // 人类新回合:重复链语境重置。goal 自动续轮/job 唤醒不算语境
         // 变化——跨自动轮的原样重复正是最需要打断的死循环(dsh 同款:
@@ -53,7 +64,12 @@ impl Agent {
             std::process::id(),
             attachment_run_id.as_deref(),
         )?;
-        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        // 新回合从零起算:镜像跨回合复用(Agent 在 REPL 里跨回合存活)。
+        self.runtime.turn_usage.reset();
+        // 这一轮的每条记账行都带上轮 id,`cache-usage.jsonl` 才能与 turns 对账。
+        self.client.set_log_turn(Some(&turn_id));
+        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone())
+            .with_usage_mirror(self.runtime.turn_usage.clone());
         let mut on_event = on_event;
         on_event(AgentEvent::TurnStarted {
             turn_id: turn_id.clone(),
@@ -133,8 +149,10 @@ impl Agent {
         if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
             self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
         }
+        // 工具输出的瘦身不在这里做——放在压缩那一刻(见 compact.rs 的
+        // `tool_result_prune`)。在落库时剪，等于把**已经发出去的全文**改写成
+        // 头尾，下一轮回放就和上游缓存里的对不上，前缀每轮断一次。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
-        prune_tool_flow(&mut tool_flow, &self.core.config.context);
         self.append_remote_tool_flow(&mut tool_flow);
         if !tool_flow.is_empty() {
             self.state.set_turn_tool_flow(&turn_id, &tool_flow)?;

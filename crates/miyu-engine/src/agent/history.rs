@@ -8,6 +8,24 @@
 
 use crate::agent::*;
 
+/// 裁剪一次要裁到哪个 token 数。
+///
+/// 裁剪是压缩放弃之后的兜底，所以它必须**裁到压缩能重新接手的位置**。按
+/// `trim_batch_ratio` 算出来的落点默认是窗口的 0.85，而压缩的自锁
+/// (`compact_stuck`) 要等上下文掉到压缩触发线（0.8）以下才解开——0.85 还在
+/// 线上，于是裁完压缩照样不跑，会话从此只能靠一轮轮删历史苟着：兜底把会话
+/// 救活了，却没把压缩救回来。取两者更低的那个，裁一次就能把压缩放回来。
+pub(in crate::agent) fn trim_target(
+    context_window: usize,
+    trim_batch_ratio: f32,
+    compact_at_ratio: f32,
+) -> usize {
+    let batch = (context_window as f32 * (1.0 - trim_batch_ratio)).max(1.0) as usize;
+    // 压到触发线再往下一点：正好压在线上仍算「未低于」，解不开那个闩。
+    let unstick = (context_window as f32 * compact_at_ratio * 0.95).max(1.0) as usize;
+    batch.min(unstick)
+}
+
 impl Agent {
     pub(in crate::agent) fn trim_visible_context(
         &self,
@@ -33,7 +51,11 @@ impl Agent {
             return Ok(Vec::new());
         }
 
-        let target = (context_window as f32 * (1.0 - self.core.trim_batch_ratio)).max(1.0) as usize;
+        let target = trim_target(
+            context_window,
+            self.core.trim_batch_ratio,
+            self.core.compact_at_ratio,
+        );
         let turns = self.state.load_visible_turns()?;
         let mut count = 0usize;
         for turn in turns

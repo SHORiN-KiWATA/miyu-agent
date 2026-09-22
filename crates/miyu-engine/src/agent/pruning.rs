@@ -8,7 +8,8 @@
 //! 冷恢复剪枝）：它折的是 `turns.tool_reports`，而那一列从 07-01 起就只装
 //! `extract_persistable_tool_report` 的白名单精选小结，从来不装工具输出本体
 //! ——实测 410 轮共 ~1.2KB，连单批 12,500 字节的收割闸门都够不着，一次都没
-//! 触发过。真正的工具体量在 `tool_flow`，已由 `prune_tool_flow` 在落盘时截断。
+//! 触发过。真正的工具体量在 `tool_flow`，由压缩那一刻的保留区瘦身处理
+//! （`compact.rs` 的 `tool_result_prune`）。
 
 use crate::agent::*;
 
@@ -111,7 +112,9 @@ impl Agent {
     {
         use std::sync::atomic::Ordering;
         let context_window = self.context_window();
-        let check = overflow::OverflowCheck::new(context_window, self.core.trim_at_ratio, None);
+        // 压缩用自己的水位,不再借裁剪的那个:同水位时裁剪在回合开头先把
+        // 上下文压到线下,压缩永远等不到触发(09-22 实测 0 次 vs 44 次)。
+        let check = overflow::OverflowCheck::new(context_window, self.core.compact_at_ratio, None);
         let context_tokens = usize::try_from(context_tokens).unwrap_or(usize::MAX);
         if !check.is_enabled() {
             return Ok(None);
@@ -137,6 +140,12 @@ impl Agent {
             // `tool_flow` and is already trimmed at write time by
             // `prune_tool_flow`, which costs no cache reset at all. That left
             // the 0.5 notice announcing a fold that could not happen.
+            //
+            // 09-23 更正：上面那句「`prune_tool_flow` costs no cache reset at
+            // all」当时就是错的——它在**每轮落库**时改写已经发出去的工具输出，
+            // 下一轮回放便与上游缓存对不上，前缀每轮断一次（A/B：8 个新轮断
+            // 6 次，断点全是 tool 消息）。瘦身已挪到压缩那一刻，那里前缀本来
+            // 就断了一次，才真是零额外代价。
             return Ok(None);
         }
         if self.runtime.compact_stuck.load(Ordering::Relaxed) {
@@ -160,6 +169,11 @@ impl Agent {
                     check.reserved_tokens,
                     self.compact_tail_budget(window),
                     self.preset_dialogs.len(),
+                )
+                .with_tool_result_prune(
+                    self.core.config.context.tool_result_prune_chars,
+                    self.core.config.context.tool_result_prune_head_chars,
+                    self.core.config.context.tool_result_prune_tail_chars,
                 )
                 .with_extras(self.compact_extras_policy());
                 let mut on_chunk =
@@ -186,6 +200,21 @@ impl Agent {
                     }
                     Err(e) => {
                         on_event(AgentEvent::CompactEnd)?;
+                        // 压缩失败以前一点痕迹都不留：往上抛的 Err 被回合收尾
+                        // 吞掉，而库里也不会多出摘要轮。于是「上下文越线了，
+                        // 压缩却什么都没发生」这件事从外面完全看不出来
+                        // ——09-22 排查缓存时在这上面耗了很久。
+                        tracing::warn!(
+                            target: "miyu::qq",
+                            error = %format!("{e:#}"),
+                            context_tokens,
+                            trigger = check.threshold().unwrap_or(0),
+                            "{}",
+                            miyu_base::i18n::text(
+                                "compaction failed; context stays above the trigger",
+                                "压缩失败：上下文仍在触发线以上"
+                            )
+                        );
                         return Err(e);
                     }
                 };
@@ -209,6 +238,18 @@ impl Agent {
                             restored,
                         ),
                     })?;
+                }
+                if result.is_none() {
+                    tracing::info!(
+                        target: "miyu::qq",
+                        context_tokens,
+                        trigger = check.threshold().unwrap_or(0),
+                        "{}",
+                        miyu_base::i18n::text(
+                            "compaction ran but folded nothing",
+                            "压缩跑了但一轮都没折"
+                        )
+                    );
                 }
                 if result.is_some() {
                     // Post-compaction check: still over the trigger means the

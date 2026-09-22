@@ -7,13 +7,15 @@ const MIN_RESERVED_TOKENS: usize = 4096;
 pub struct OverflowCheck {
     pub context_window: Option<usize>,
     pub reserved_tokens: usize,
-    pub trim_at_ratio: f32,
+    /// 触发水位。裁剪与压缩各传各的——两者同水位时裁剪永远先跑，压缩就
+    /// 等不到触发（09-22 实测：三天 compact 0 次、trim 44 次）。
+    pub trigger_ratio: f32,
 }
 
 impl OverflowCheck {
     pub fn new(
         context_window: Option<usize>,
-        trim_at_ratio: f32,
+        trigger_ratio: f32,
         reserved_tokens: Option<usize>,
     ) -> Self {
         let reserved_tokens = reserved_tokens.unwrap_or_else(|| {
@@ -24,7 +26,7 @@ impl OverflowCheck {
         Self {
             context_window,
             reserved_tokens,
-            trim_at_ratio,
+            trigger_ratio,
         }
     }
 
@@ -40,7 +42,7 @@ impl OverflowCheck {
 
     pub fn threshold(&self) -> Option<usize> {
         self.context_window
-            .map(|w| (w as f32 * self.trim_at_ratio).max(1.0) as usize)
+            .map(|w| (w as f32 * self.trigger_ratio).max(1.0) as usize)
     }
 
     pub fn check_tokens(&self, tokens: usize) -> bool {

@@ -594,6 +594,7 @@ async fn responses_continuation_is_pinned_to_its_original_endpoint() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     };
     let initial_result = initial_client
@@ -636,6 +637,7 @@ async fn responses_continuation_is_pinned_to_its_original_endpoint() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     };
 

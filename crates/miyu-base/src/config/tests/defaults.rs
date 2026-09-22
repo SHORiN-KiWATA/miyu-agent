@@ -10,6 +10,29 @@ fn context_overflow_defaults_to_compact() {
     assert_eq!(deserialized.on_overflow, "compact");
 }
 
+/// 上下文处置按档位二分，不混合：对话走压缩，平台（`pop`）走裁剪。
+///
+/// 压缩的触发线默认继承 `trim_at_ratio`——09-23 实测把它单独调低（0.8）会让
+/// 压缩触发次数翻倍，而每压缩一次前缀就断一次，整体命中率反而从 86.3% 掉到
+/// 84.0%。要提高命中率是让压缩更少更晚，不是更早。
+#[test]
+fn the_compaction_trigger_inherits_the_trim_watermark_by_default() {
+    let context = ContextConfig::default();
+    assert_eq!(context.compact_at_ratio, None);
+    assert_eq!(context.effective_compact_at_ratio(), context.trim_at_ratio);
+    assert!(context.compact_force_ratio >= context.effective_compact_at_ratio());
+}
+
+/// 单独调压缩水位是允许的，但强制线不能排在它前面。
+#[test]
+fn a_force_watermark_below_the_compaction_trigger_is_rejected() {
+    let mut config = AppConfig::default();
+    config.context.compact_at_ratio = Some(0.95);
+    config.context.compact_force_ratio = 0.9;
+    let error = config.validate().unwrap_err().to_string();
+    assert!(error.contains("compact_force_ratio"), "{error}");
+}
+
 #[test]
 fn vision_timeouts_have_stable_defaults() {
     let vision: VisionPluginConfig = serde_json::from_value(serde_json::json!({})).unwrap();

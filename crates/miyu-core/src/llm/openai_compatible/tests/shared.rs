@@ -163,6 +163,7 @@ pub(super) fn client_over(endpoints: Vec<LlmEndpoint>) -> OpenAiCompatibleClient
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     }
 }
@@ -193,6 +194,7 @@ pub(super) fn test_client(provider: ProviderConfig) -> OpenAiCompatibleClient {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     }
 }

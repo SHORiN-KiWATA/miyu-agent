@@ -10,10 +10,36 @@ use crate::agent::*;
 
 pub(in crate::agent) const MAX_QUESTION_ROUNDS_PER_TURN: usize = 8;
 
+/// 回合内「已经发出去的请求」累计用量的共享镜像。
+///
+/// 回合用量本来只在跑完那一刻写库,被打断的轮因此永远记 0——Σ 在打断那一刻
+/// 掉回基线,本轮烧掉的全部消失(09-22 实测)。累计器本身是 `chat_with_tools`
+/// 的栈上局部态,打断时随栈销毁,守卫够不着;所以每次请求入账后往这里同步
+/// 一份,守卫 Drop 时照它记账。
+#[derive(Clone, Default)]
+pub(in crate::agent) struct TurnUsageMirror(Arc<Mutex<TurnTokens>>);
+
+impl TurnUsageMirror {
+    pub(in crate::agent) fn set(&self, tokens: TurnTokens) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = tokens;
+        }
+    }
+
+    pub(in crate::agent) fn reset(&self) {
+        self.set(TurnTokens::default());
+    }
+
+    pub(in crate::agent) fn get(&self) -> TurnTokens {
+        self.0.lock().map(|slot| *slot).unwrap_or_default()
+    }
+}
+
 pub struct PendingTurnGuard {
     pub(in crate::agent) state: StateStore,
     pub(in crate::agent) turn_id: String,
     pub(in crate::agent) completed: bool,
+    pub(in crate::agent) usage: TurnUsageMirror,
 }
 
 impl PendingTurnGuard {
@@ -22,7 +48,14 @@ impl PendingTurnGuard {
             state,
             turn_id,
             completed: false,
+            usage: TurnUsageMirror::default(),
         }
+    }
+
+    /// 打断时按这份镜像记账。
+    pub(in crate::agent) fn with_usage_mirror(mut self, usage: TurnUsageMirror) -> Self {
+        self.usage = usage;
+        self
     }
 
     pub fn complete_with_model(
@@ -50,7 +83,8 @@ impl PendingTurnGuard {
     #[allow(dead_code)]
     pub fn interrupt(&mut self) -> Result<()> {
         if !self.completed {
-            self.state.interrupt_turn(&self.turn_id)?;
+            self.state
+                .interrupt_turn_with_usage(&self.turn_id, self.usage.get())?;
             self.completed = true;
         }
         Ok(())
@@ -60,7 +94,10 @@ impl PendingTurnGuard {
 impl Drop for PendingTurnGuard {
     fn drop(&mut self) {
         if !self.completed {
-            if let Err(error) = self.state.interrupt_turn(&self.turn_id) {
+            if let Err(error) = self
+                .state
+                .interrupt_turn_with_usage(&self.turn_id, self.usage.get())
+            {
                 tracing::error!(
                     turn_id = %self.turn_id,
                     error = %error,
@@ -76,6 +113,7 @@ pub(in crate::agent) struct PendingRedoGuard {
     pub(in crate::agent) turn_id: String,
     pub(in crate::agent) revision: i64,
     pub(in crate::agent) completed: bool,
+    pub(in crate::agent) usage: TurnUsageMirror,
 }
 
 impl PendingRedoGuard {
@@ -85,7 +123,14 @@ impl PendingRedoGuard {
             turn_id,
             revision,
             completed: false,
+            usage: TurnUsageMirror::default(),
         }
+    }
+
+    /// 打断时按这份镜像记账,同 `PendingTurnGuard`。
+    pub(in crate::agent) fn with_usage_mirror(mut self, usage: TurnUsageMirror) -> Self {
+        self.usage = usage;
+        self
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -116,10 +161,11 @@ impl PendingRedoGuard {
 impl Drop for PendingRedoGuard {
     fn drop(&mut self) {
         if !self.completed {
-            if let Err(error) = self
-                .state
-                .interrupt_turn_revision(&self.turn_id, self.revision)
-            {
+            if let Err(error) = self.state.interrupt_turn_revision_with_usage(
+                &self.turn_id,
+                self.revision,
+                self.usage.get(),
+            ) {
                 tracing::error!(
                     turn_id = %self.turn_id,
                     revision = self.revision,

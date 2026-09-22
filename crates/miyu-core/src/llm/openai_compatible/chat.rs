@@ -163,6 +163,13 @@ impl OpenAiCompatibleClient {
         F: FnMut(ChatStreamChunk) -> Result<()>,
     {
         let request_id = gen_llm_request_id();
+        // 前缀指纹要在**发出去之前**算并比对:比对结果依赖「上一次请求」,
+        // 而响应是乱序回来的,放到 record 那一刻算会把并发请求比串。
+        let prefix = crate::llm::cache_prefix::compare_and_store(
+            self.request_scope,
+            self.log_identity.session(),
+            &crate::llm::cache_prefix::PrefixChain::of(&messages, &tools),
+        );
         let endpoints = self.endpoints.as_ref();
         let mut errors = Vec::new();
         // 这一轮有没有被 agy 的内容策略拦过（见下面 push 失败行那一处）。
@@ -286,13 +293,19 @@ impl OpenAiCompatibleClient {
                         next.endpoint_id = endpoint.id();
                     }
                     mark_endpoint_success(endpoint);
-                    crate::llm::cache_log::record(
+                    let turn = self.log_identity.turn();
+                    crate::llm::cache_log::record_with_context(
                         self.request_scope,
                         &endpoint.provider.id,
                         &endpoint.provider.default_model,
                         endpoint.key_index,
                         &request_id,
                         result.usage.as_ref(),
+                        &crate::llm::cache_log::RecordContext {
+                            session: self.log_identity.session(),
+                            turn: turn.as_deref(),
+                            prefix: Some(prefix),
+                        },
                     );
                     tracing::debug!(
                         request_id,
@@ -335,6 +348,11 @@ impl OpenAiCompatibleClient {
                             endpoint_cooling_down,
                             cooldown_seconds,
                             elapsed_ms = started.elapsed().as_millis(),
+                            // 被拒请求的形状(不含正文):中转常把上游的字段
+                            // 路径吞掉,只剩「应该是个字符串」这类话,而失败
+                            // 的那一轮会整个回滚、库里不留痕。见 request_shape。
+                            shape = %crate::llm::request_shape::summarize(&messages, &tools),
+                            session = self.log_identity.session().unwrap_or("-"),
                             "{}",
                             t("LLM endpoint HTTP failure", "LLM 端点 HTTP 请求失败")
                         );

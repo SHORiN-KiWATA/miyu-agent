@@ -380,6 +380,7 @@ fn mixed_client_keeps_variants_per_provider_and_model() {
         codebuddy: None,
         claude_code_dev_mode: false,
         zen_session: None,
+        log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
     };
 

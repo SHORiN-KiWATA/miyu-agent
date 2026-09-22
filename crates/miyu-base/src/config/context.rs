@@ -9,6 +9,16 @@ pub struct ContextConfig {
     /// 0 = 关闭外溢。照抄 dsh 默认 50KB。
     #[serde(default = "default_tool_output_spill_bytes")]
     pub tool_output_spill_bytes: usize,
+    /// 压缩的触发水位。留空就继承 `trim_at_ratio`。
+    ///
+    /// 09-23 实测：把它单独调低（0.8）会让压缩触发次数翻倍，而**每压缩一次
+    /// 前缀就断一次**，整体命中率反而从 86.3% 掉到 84.0%。要提高命中率是让
+    /// 压缩更少更晚，不是更早。所以默认不与 `trim_at_ratio` 分家；分开只是
+    /// 为了留一个能单独调的旋钮。
+    #[serde(default)]
+    pub compact_at_ratio: Option<f32>,
+    /// 裁剪(直接删最老的轮)的水位。**只对 `on_overflow = "pop"` 有意义**：
+    /// 走压缩的会话根本不跑裁剪（09-23 用户裁定，理由是裁剪会掰断缓存前缀）。
     #[serde(default = "default_trim_at_ratio")]
     pub trim_at_ratio: f32,
     #[serde(default = "default_trim_batch_ratio")]
@@ -18,7 +28,9 @@ pub struct ContextConfig {
     #[serde(default = "default_context_window")]
     pub default_context_window: usize,
     /// Watermark that forces a compaction even when the fold-economics gate
-    /// would skip it. Must be >= trim_at_ratio.
+    /// would skip it. Must be >= `compact_at_ratio`: between the two, a
+    /// compaction still runs but bails out when there is too little to fold
+    /// (`MIN_FOLD_TOKENS`); at or above this line it folds regardless.
     #[serde(default = "default_compact_force_ratio")]
     pub compact_force_ratio: f32,
     /// Verbatim tail budget kept outside the summary, in tokens. None derives
@@ -66,6 +78,7 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             tool_output_spill_bytes: default_tool_output_spill_bytes(),
+            compact_at_ratio: None,
             trim_at_ratio: default_trim_at_ratio(),
             trim_batch_ratio: default_trim_batch_ratio(),
             on_overflow: default_on_overflow(),
@@ -81,5 +94,14 @@ impl Default for ContextConfig {
             compact_restore_total_tokens: default_compact_restore_total_tokens(),
             compact_transcript_export: true,
         }
+    }
+}
+
+impl ContextConfig {
+    /// 压缩的触发水位。`compact_at_ratio` 留空就继承 `trim_at_ratio`——两者
+    /// 分家实测是负收益（09-23：压缩次数翻倍、命中率 86.3% → 84.0%），
+    /// 所以默认不分。
+    pub fn effective_compact_at_ratio(&self) -> f32 {
+        self.compact_at_ratio.unwrap_or(self.trim_at_ratio)
     }
 }
