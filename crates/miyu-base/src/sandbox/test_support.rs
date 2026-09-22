@@ -8,7 +8,13 @@ pub fn confine_std(command: &mut std::process::Command) {
         for (key, value) in child_env(&policy, false) {
             command.env(key, value);
         }
-        let rules = Rules::prepare(&policy);
+        let rules = Rules::prepare(
+            &policy,
+            &(
+                command.get_program().to_os_string(),
+                command.get_args().map(|arg| arg.to_os_string()).collect(),
+            ),
+        );
         // SAFETY: 同上。
         unsafe {
             command.pre_exec(move || rules.apply());

@@ -20,6 +20,8 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(any(not(target_os = "linux"), test))]
 mod unsupported;
 
@@ -32,7 +34,11 @@ pub fn probe() -> Option<i64> {
     {
         linux::probe()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::probe()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         unsupported::probe()
     }
@@ -171,13 +177,32 @@ fn child_env(policy: &SandboxPolicy, keep_home: bool) -> Vec<(String, std::ffi::
 }
 
 /// 有策略在身就给 Command 挂 `pre_exec`(在子进程里装规则再 exec);没有就原样。
+/// 把命令本身抄出来（macOS 那一支要把它接在 `sandbox-exec` 后面）。
+///
+/// Linux 用不到，但两边共用一个 `prepare` 签名比按平台分叉两套调用点干净。
+/// 读是安全的：`std::process::Command` 的 program/args 都可读，stdio 与 env
+/// 留在原 `Command` 上，跨 `execv` 照常继承。
+fn program_and_args(
+    command: &tokio::process::Command,
+) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+    let std_command = command.as_std();
+    (
+        std_command.get_program().to_os_string(),
+        std_command
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect(),
+    )
+}
+
 pub fn confine(command: &mut tokio::process::Command) {
     if let Some(policy) = current_sandbox() {
         for (key, value) in child_env(&policy, false) {
             command.env(key, value);
         }
-        let rules = Rules::prepare(&policy);
+        let rules = Rules::prepare(&policy, &program_and_args(command));
         // SAFETY: 闭包只做裸 syscall / open / close,不碰锁、不分配。
+        // macOS 那一支是 execv,同样 async-signal-safe(见 `macos::Rules::apply`)。
         unsafe {
             command.pre_exec(move || rules.apply());
         }
@@ -200,7 +225,7 @@ pub fn confine_relay(command: &mut tokio::process::Command, extra_rw: &[PathBuf]
         for (key, value) in child_env(&extended, true) {
             command.env(key, value);
         }
-        let rules = Rules::prepare(&extended);
+        let rules = Rules::prepare(&extended, &program_and_args(command));
         // SAFETY: 同 confine。
         unsafe {
             command.pre_exec(move || rules.apply());

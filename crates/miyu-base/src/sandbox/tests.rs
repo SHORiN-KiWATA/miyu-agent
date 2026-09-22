@@ -1,11 +1,20 @@
 use super::*;
 
 /// 只读根 + 可写 /tmp 目录:目录里能写,别处不能;规则随 exec 继承到 sh。
-#[cfg(target_os = "linux")]
+///
+/// 09-23 起 macOS 也跑这一条。**这是沙盒唯一的行为级证据**——「编过」不等于
+/// 「关得住」，而 macOS 那一版走的是完全不同的机制（execv 到 sandbox-exec，
+/// 见 `sandbox::macos`）。不在两个平台都跑，改动就只有编译保证。
+///
+/// 读那一侧两边不同：Linux 的 Landlock 是白名单，没列的路径读也拒（所以策略里
+/// 给了 `read_only: ["/"]`）；macOS 那一版只收写，读本来就是放开的。这条脚本
+/// 末尾读 `/etc/hosts`（两个平台都有）——在 Linux 上验的是「放行的读得到」，
+/// 在 macOS 上验的是「读没被误伤」。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn member_policy_confines_shell_writes() {
-    let abi = probe().expect("BLOCKED: kernel without Landlock");
-    eprintln!("Landlock ABI: {abi}");
+    let abi = probe().expect("BLOCKED: no sandbox backend on this machine");
+    eprintln!("sandbox backend ready: {abi}");
     let temp = tempfile::tempdir().unwrap();
     let allowed = temp.path().join("allowed");
     std::fs::create_dir_all(&allowed).unwrap();
@@ -19,7 +28,7 @@ async fn member_policy_confines_shell_writes() {
         ..Default::default()
     });
     let script = format!(
-        "echo ok > {}/a.txt && ! (echo no > {}/b.txt) 2>/dev/null && cat /etc/hostname >/dev/null",
+        "echo ok > {}/a.txt && ! (echo no > {}/b.txt) 2>/dev/null && cat /etc/hosts >/dev/null",
         allowed.display(),
         denied.display()
     );
