@@ -199,9 +199,24 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
         );
     }
     match miyu_base::sandbox::probe() {
-        Some(abi) => tracing::info!(abi, "member sandbox: landlock available"),
+        // 后端名照实报：macOS 走 sandbox-exec，日志里写 landlock 会让人对着
+        // 一个这台机器上根本不存在的东西查问题。
+        Some(abi) => tracing::info!(
+            abi,
+            backend = if cfg!(target_os = "macos") {
+                "sandbox-exec"
+            } else {
+                "landlock"
+            },
+            "member sandbox: available"
+        ),
         None => tracing::warn!(
-            "member sandbox: landlock unavailable on this kernel; member commands will be refused"
+            backend = if cfg!(target_os = "macos") {
+                "sandbox-exec"
+            } else {
+                "landlock"
+            },
+            "member sandbox: unavailable here; member commands will be refused"
         ),
     }
     std::io::stdout().flush().ok();

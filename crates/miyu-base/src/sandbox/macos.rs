@@ -89,6 +89,16 @@ impl Rules {
     }
 }
 
+/// 这台机器上沙盒能不能用：就看 `sandbox-exec` 在不在。
+///
+/// 漏了这一支的话 `probe()` 会走 `unsupported`、返回 `None`，于是**沙盒明明能用，
+/// 启动日志却报「不可用，成员命令会被拒」**——比没有更糟，因为它会让人对着一个
+/// 假故障查半天。返回值只用来表示「有」，所以给 1（Linux 那边返回的是 Landlock
+/// 的 ABI 版本号，这里没有对应的东西）。
+pub(super) fn probe() -> Option<i64> {
+    std::path::Path::new(SANDBOX_EXEC).is_file().then_some(1)
+}
+
 /// SBPL 的字符串字面量里 `"` 和 `\` 要转义，否则一个带引号的路径就能把策略截断。
 fn quote(path: &Path) -> String {
     let mut out = String::with_capacity(path.as_os_str().len() + 2);

@@ -181,8 +181,23 @@ async fn host_environment_reads_the_sandbox_policy_from_the_turn_scope() {
     });
     let (first, second) =
         miyu_base::sandbox::with_sandbox(Some(policy), async { (build(), build()) }).await;
-    assert!(first.contains(" sandbox=\"landlock\" root=\""), "{first}");
-    assert!(first.contains(" writable=\"root, /tmp\" readable=\"root, /tmp, system dirs\""));
+    // 后端名与「读收没收」按平台走：macOS 那一版只收写（见 `sandbox::macos`）。
+    let (backend, readable) = if cfg!(target_os = "macos") {
+        (
+            "sandbox-exec",
+            " writable=\"root, /tmp\" readable=\"everything (this backend confines writes only)\"",
+        )
+    } else {
+        (
+            "landlock",
+            " writable=\"root, /tmp\" readable=\"root, /tmp, system dirs\"",
+        )
+    };
+    assert!(
+        first.contains(&format!(" sandbox=\"{backend}\" root=\"")),
+        "{first}"
+    );
+    assert!(first.contains(readable), "{first}");
     assert_eq!(first, second, "same policy must render byte-identically");
     let outside = build();
     assert!(!outside.contains("sandbox="), "{outside}");

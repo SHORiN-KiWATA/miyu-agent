@@ -165,11 +165,23 @@ pub fn host_environment_block_full(
         block.push_str(&format!(" effort=\"{}\"", xml_attr_escape(effort)));
     }
     if let Some(policy) = sandbox {
+        // 后端与「读收没收」必须照实报。macOS 走 sandbox-exec，而那一版**只收写**
+        // （见 `sandbox::macos` 模块头的三条真机探测）：照搬 landlock 的措辞会让
+        // 模型以为读也被关住，据此做出错误判断——比如以为读不到的东西就不必回避。
+        let (backend, readable) = if cfg!(target_os = "macos") {
+            (
+                "sandbox-exec",
+                "everything (this backend confines writes only)".to_string(),
+            )
+        } else {
+            ("landlock", policy.readable_summary.join(", "))
+        };
         block.push_str(&format!(
-            " sandbox=\"landlock\" root=\"{}\" writable=\"{}\" readable=\"{}\"",
+            " sandbox=\"{}\" root=\"{}\" writable=\"{}\" readable=\"{}\"",
+            backend,
             xml_attr_escape(&policy.root.display().to_string()),
             xml_attr_escape(&policy.writable_summary.join(", ")),
-            xml_attr_escape(&policy.readable_summary.join(", ")),
+            xml_attr_escape(&readable),
         ));
     }
     block.push_str("/>");
@@ -254,9 +266,14 @@ mod tests {
         };
         let root = PathBuf::from("/home/tester/.miyu");
         let block = host_environment_block_full(&root, Some("stub/a"), None, Some(&policy));
-        assert!(block.contains(
+        // 后端与「读收没收」按平台不同——macOS 那一版只收写，照搬 landlock 的
+        // 措辞会让模型以为读也关住了（见 `sandbox::macos` 模块头）。
+        let expected = if cfg!(target_os = "macos") {
+            " sandbox=\"sandbox-exec\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"everything (this backend confines writes only)\"/>"
+        } else {
             " sandbox=\"landlock\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"root, /tmp, system dirs\"/>"
-        ), "{block}");
+        };
+        assert!(block.contains(expected), "{block}");
         assert_eq!(
             block,
             host_environment_block_full(&root, Some("stub/a"), None, Some(&policy))
