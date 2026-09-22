@@ -21,7 +21,13 @@ def execute(suite, binary, box, supervisor, report_dir, timeout, frozen):
     commands = []
     if suite not in ('source-unit', *FILTERS):
         raise BlockedError(f'Suite {suite} awaits its task implementation and required environment.')
-    argv = ['cargo', 'test', '--frozen' if frozen else '--locked', '--lib']
+    # `--workspace`:没有它就只跑根包,四个 crate（miyu-base / miyu-core /
+    # miyu-engine / miyu-hosts）的单测一条都不跑。2026-09-23 实测 CI 上发现
+    # 422 条,而本机 `refactor-check.sh` 跑的是 2667 条——差的两千多条里包括
+    # 沙盒的行为测试，于是「CI 绿了」对那些代码根本不构成保证（当天差点据此
+    # 宣布 macOS 沙盒验过了）。本机实测：不加 423 条，加了 825 条。
+    argv = ['cargo', 'test', '--frozen' if frozen else '--locked',
+            '--workspace', '--lib']
     if suite in FILTERS:
         argv.append(FILTERS[suite])
     env = box.environment()
