@@ -485,6 +485,11 @@ def main():
         # 5a. 先来一个提问面板：回车选中第一项。面板是盖上去的，它退场之后
         #     「问了什么答了什么」必须留在正文里，否则等于没输出。
         report["question_panel"] = drain_until(master, sink, "走查用的问题", 30.0)
+        # `drain_until` 一撞见那句话就返回,此刻面板往往只画了一半。等静默,
+        # 别拿半帧当画面——这正是 `settle` 自己文档里写的那条,这儿漏了。
+        # macOS 上抓到的就是半帧:停在第二个选项,「自己输入」那行和底部按键提示
+        # 都还没到,于是 item14 判成「面板没贴底」(09-23 真机,Linux 上同一帧是全的)。
+        settle(master, sink, quiet=0.6, timeout=15.0)
         # item10：面板是盖上去的，它在的时候正文就得还在；退场后更得在。
         during_question = render(bytes(sink))
         (OUT / "question-panel.txt").write_text(

@@ -260,6 +260,14 @@ fn mask_volatile(raw: &str) -> String {
         (r"\d+(\.\d+)? tok/s", "<N> tok/s"),
         (r"\d+ 词元", "<N> 词元"),
         (r"\d+ tokens", "<N> tokens"),
+        // 时长连**单位**一起掩掉。上面几条只把数字换成 <N>,可 `Worked for`
+        // 写的是 `123ms` 还是 `1.2s`,取决于跑这份测试的机器有多快——runner 上
+        // 同一段落到 `<N>s`,本机是 `<N>ms`,于是 golden 记住的是「谁录的、他机器
+        // 多快」(09-23 macOS CI)。时长来自 `Instant::now().elapsed()`,测试控制
+        // 不了,只能掩。**版式和顺序照样冻着**,掩掉的只有那个数和它的单位。
+        (r"<M>m <S>s", "<DUR>"),
+        (r"<N>ms", "<DUR>"),
+        (r"<N>s", "<DUR>"),
     ] {
         out = fancy_regex::Regex::new(pattern)
             .expect("掩码正则")
