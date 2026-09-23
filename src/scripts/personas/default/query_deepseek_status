@@ -2,9 +2,8 @@
 # Id: query_deepseek_status
 # Display name: Check DeepSeek status
 # 显示名称: 查询 DeepSeek 状态
-# Description: Query DeepSeek service status.
+# Description: Query DeepSeek service status and recent incidents. Use when the user asks whether DeepSeek is down or complains about DeepSeek errors.
 # 描述：查 DeepSeek 官方服务状态与近期故障记录。
-# Expose: skill
 # Timeout: 60
 # Group: systeminfo
 # Trust: external

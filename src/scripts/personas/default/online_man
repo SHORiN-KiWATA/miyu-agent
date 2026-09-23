@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Id: online_man
-# Display name: Online manual
-# 显示名称: 在线手册
+# Display name: Man page lookup
+# 显示名称: 查询man命令手册
 # Description: Online Linux manuals. search queries the Arch manual pages; read fetches a page from Arch or man7.org. For normal reading set max_chars to at least 8000; lower it only for an excerpt.
 # 描述：在线查 Linux man 手册：搜索条目，或抓一整页正文。
 # Timeout: 90

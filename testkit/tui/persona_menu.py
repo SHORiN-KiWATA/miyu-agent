@@ -175,8 +175,15 @@ def main():
         check("[*]" in text, "开关是 [*]")
         check("⚙" in text, "能进设置的行摆了齿轮")
         check("(本机未开)" in text, "勾着但机器上没开的标出来了")
-        check("网络搜索" in text and "长期记忆" in text and "文件" in text,
-              "引导里藏起来的那些（机器能力/记忆/常开件）这里都摆出来了")
+        check("网络搜索" in text and "长期记忆" in text and "语音功能" in text,
+              "引导里藏起来的那些（机器能力/记忆/子系统）这里都摆出来了")
+        # 09-23 的改名:识图→视觉识别(机器能力,只有设置面摆)、汇率→汇率查询(插件)。
+        check("视觉识别" in text and "识图" not in text, "识图已改名视觉识别")
+        check("汇率查询" in text, "汇率已改名汇率查询")
+        # 09-23 用户拍板:读写文件/外发/人格提醒/情绪与好感度两个 scope 都不摆。
+        check("读写文件" not in text and "外发" not in text
+              and "人格提醒" not in text and "情绪与好感度" not in text,
+              "表上不再出现读写文件/外发/人格提醒/情绪与好感度")
 
         # ── 取消勾选「生图」→ 人格清单写明细 ──
         check(driver.walk_to("生图"), "走得到「生图」那一行")
@@ -195,6 +202,9 @@ def main():
         check(driver.walk_to("生图"), "再走到「生图」")
         os.write(driver.master, b" ")
         driver.pump(0.5)
+        # 09-23:query_deepseek_status 恢复上表(用户拍板不删)。脚本节在插件节
+        # 下面,walk_to 只往下走——放这儿才不会挡住后面的行程。
+        check(driver.walk_to("查询 DeepSeek 状态"), "查询 DeepSeek 状态回到功能表上")
         driver.send(b"\x1b", "当前人格", "启用的功能")
 
         # ── 保存并退出，机器层的开关应该被打开了 ──

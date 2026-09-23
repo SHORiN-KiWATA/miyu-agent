@@ -41,11 +41,6 @@ const BUILTIN_SKILLS: &[(&str, &str, bool)] = &[
         include_str!("../../../../src/skills/script-creator.md"),
         true,
     ),
-    (
-        "linux-game-compatibility",
-        include_str!("../../../../src/skills/personas/default/linux-game-compatibility.md"),
-        false,
-    ),
     // 09-21:机票/酒店比价两件脚本改成技能资源(`# Expose: skill`),这份技能
     // 是它们唯一的入口——漏登记的话两件能力就整个消失。
     (
@@ -86,7 +81,7 @@ pub(crate) fn is_platform_wide_builtin(name: &str) -> bool {
         .any(|(builtin, _, platform_wide)| *builtin == name && *platform_wide)
 }
 
-/// 非平台级的内置技能(linux-game-compatibility 这类 Miyu 配件)。
+/// 非平台级的内置技能(travel-planner、bilibili-live 这类 Miyu 配件)。
 fn is_optional_builtin(name: &str) -> bool {
     BUILTIN_SKILLS
         .iter()
@@ -469,7 +464,7 @@ mod tests {
             .map(|entry| entry.metadata.name)
             .collect();
         assert!(names.contains("skill-creator"));
-        assert!(names.contains("linux-game-compatibility"));
+        assert!(names.contains("travel-planner"));
 
         let mut custom = AppConfig::default();
         custom.prompt.active_persona = "alter".to_string();
@@ -486,7 +481,7 @@ mod tests {
         );
 
         // 隐藏的内置技能连 load 都拒绝,不让模型照历史捞回。
-        assert!(load("linux-game-compatibility", &custom, &paths).is_err());
+        assert!(load("travel-planner", &custom, &paths).is_err());
         assert!(load("skill-creator", &custom, &paths).is_ok());
 
         // 指纹随可见集合变化:换人格后目录没动,指纹也必须不同。

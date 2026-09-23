@@ -465,7 +465,7 @@
     },
     {
       "id": "bangumi",
-      "display_name": "番组日历",
+      "display_name": "番剧信息",
       "description": "查 Bangumi（bgm.tv）：今天/某天/整周的新番放送表；按名字搜动画、书、游戏、音乐、三次元条目；看条目详情（评分、排名、标签、简介、已播到第几集、下一集何时播）和剧集列表。用户问「今天有什么番」「某番播到哪了」「某作评分」用这个。",
       "path": "bangumi",
       "parameters": {

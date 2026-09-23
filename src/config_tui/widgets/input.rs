@@ -9,7 +9,9 @@ use std::time::Instant;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::config_tui) enum Input {
-    Key(KeyCode),
+    /// 按键带上修饰键(09-23):功能表的 Ctrl+A 全开/全关要认 Ctrl,以前这里
+    /// 用 `..` 把 modifiers 丢了,Ctrl+A 与裸 a 不可分。
+    Key(KeyCode, KeyModifiers),
     Resize,
 }
 
@@ -25,7 +27,11 @@ fn read_window(
             return Ok(None);
         }
         match next(remaining)? {
-            Some(Event::Key(KeyEvent { code, .. })) => return Ok(Some(Input::Key(code))),
+            Some(Event::Key(KeyEvent {
+                code, modifiers, ..
+            })) => {
+                return Ok(Some(Input::Key(code, modifiers)));
+            }
             Some(Event::Resize(..)) => return Ok(Some(Input::Resize)),
             Some(_) => {}
             None => return Ok(None),
@@ -52,8 +58,17 @@ pub(in crate::config_tui) fn poll_window(window: Duration) -> Result<Option<Inpu
 /// 拿旧帧糊弄会留下按旧宽度排的行。
 pub(in crate::config_tui) fn read_key(ui: &mut Ui) -> Result<KeyCode> {
     Ok(match ui.wait_key(None)? {
-        Some(Input::Key(key)) => key,
+        Some(Input::Key(key, _)) => key,
         _ => KeyCode::Null,
+    })
+}
+
+/// 读键并带上修饰键。功能表的 Ctrl+A 要认 Ctrl;其余调用方用 [`read_key`]
+/// 就够(它们按裸键分发)。
+pub(in crate::config_tui) fn read_key_with_mods(ui: &mut Ui) -> Result<(KeyCode, KeyModifiers)> {
+    Ok(match ui.wait_key(None)? {
+        Some(Input::Key(code, modifiers)) => (code, modifiers),
+        _ => (KeyCode::Null, KeyModifiers::empty()),
     })
 }
 
@@ -62,7 +77,7 @@ pub(in crate::config_tui) fn read_key_with_timeout(
     timeout: Option<Duration>,
 ) -> Result<Option<KeyCode>> {
     Ok(match ui.wait_key(timeout)? {
-        Some(Input::Key(key)) => Some(key),
+        Some(Input::Key(key, _)) => Some(key),
         Some(Input::Resize) | None => None,
     })
 }
@@ -74,7 +89,7 @@ pub(in crate::config_tui) fn wait_for_key(
 ) -> Result<()> {
     loop {
         draw(ui)?;
-        if matches!(ui.wait_key(None)?, Some(Input::Key(_))) {
+        if matches!(ui.wait_key(None)?, Some(Input::Key(..))) {
             return Ok(());
         }
     }
@@ -94,7 +109,7 @@ mod tests {
         );
         assert_eq!(
             read_window(Duration::from_millis(100), &mut next, || Duration::ZERO).unwrap(),
-            Some(Input::Key(KeyCode::Null))
+            Some(Input::Key(KeyCode::Null, KeyModifiers::empty()))
         );
     }
 
@@ -126,7 +141,7 @@ mod tests {
         );
         assert_eq!(
             read_window(Duration::from_millis(100), &mut next, || Duration::ZERO).unwrap(),
-            Some(Input::Key(KeyCode::Char('x')))
+            Some(Input::Key(KeyCode::Char('x'), KeyModifiers::empty()))
         );
     }
 
