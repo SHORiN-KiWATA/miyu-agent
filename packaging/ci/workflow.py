@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Small, controlled GitHub Actions adapters for the Linux release scripts."""
+"""Small, controlled GitHub Actions adapters for the release scripts (Linux containers, macOS runner)."""
 import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,7 @@ import tarfile
 import tempfile
 import tomllib
 
-from lib.common import BlockedError, fresh_directory, load_json, write_json
+from lib.common import BlockedError, fresh_directory, load_json, sha256_file, write_json
 from lib.downloads import safe_extract
 from lib.inputs import verify_prepared
 from lib.source import git, safe_relative
@@ -25,6 +26,10 @@ BUILD_TARGETS = {
     'gnu-x86_64': ('debian13-x86_64', 'ubuntu2404-x86_64', 'ubuntu2604-x86_64',
                    'mint22-x86_64', 'fedora-current-x86_64'),
 }
+# macOS 包在 GitHub 的 macos runner 上构建(09-23 用户拍板)。发版链的其余部分仍在本机,
+# 所以 runner 从同一个提交重新冻结一次,本机再核对两边 release-input 逐字节相同。
+MACOS_PROFILE = 'smoke'
+MACOS_BUILD = 'macos-arm64'
 
 
 def run(script, *arguments, timeout=9000):
@@ -146,6 +151,118 @@ def verify_packages(args):
                 '--provider-config', path)
 
 
+def macos_parameters(event, ref_name, inputs):
+    """Candidate branches carry the release request in their name: release/v0.6.3-1.
+
+    workflow_dispatch 只认默认分支上已有的工作流文件;推候选分支触发则跑分支自己的那份,
+    发版时不用先把工作流合进 main。macos-preview/** 分支只出预览包(不打 tag)。"""
+    if event == 'push' and ref_name.startswith('release/'):
+        match = re.fullmatch(r'release/(v\d+\.\d+\.\d+)-([1-9]\d*)', ref_name)
+        if not match:
+            raise ValueError('Release candidate branches are named release/v<version>-<revision>.')
+        return {'mode': 'release', 'tag': match.group(1), 'revision': match.group(2), 'expect': ''}
+    if event == 'push' and ref_name.startswith('macos-preview/'):
+        return {'mode': 'preview', 'tag': '', 'revision': '1', 'expect': ''}
+    if event == 'workflow_dispatch':
+        mode, tag, revision = inputs.get('mode', ''), inputs.get('tag', ''), inputs.get('revision', '1')
+        expect = inputs.get('expect', '')
+        if (mode not in ('preview', 'release') or not re.fullmatch(r'[1-9]\d*', revision)
+                or (mode == 'release') != bool(re.fullmatch(r'v\d+\.\d+\.\d+', tag))
+                or (expect and not re.fullmatch(r'[0-9a-f]{64}', expect))):
+            raise ValueError('Invalid macOS package dispatch inputs.')
+        return {'mode': mode, 'tag': tag, 'revision': revision, 'expect': expect}
+    raise ValueError(f'Unsupported macOS package trigger: {event} {ref_name}')
+
+
+def macos_params(args):
+    values = macos_parameters(os.environ.get('GITHUB_EVENT_NAME', ''), os.environ.get('GITHUB_REF_NAME', ''),
+        {key: os.environ.get('INPUT_'+key.upper(), '') for key in ('mode', 'tag', 'revision', 'expect')})
+    print(''.join(f'{key}={value}\n' for key, value in values.items()), end='')
+
+
+def macos_freeze(args):
+    version = tomllib.loads((REPO/'Cargo.toml').read_text())['package']['version']
+    command = ['--mode', args.mode, '--source-ref', 'HEAD', '--profile', MACOS_PROFILE,
+               '--revision', args.revision, '--out', args.root/'release-input.json']
+    if args.mode == 'release':
+        if args.tag != 'v'+version or args.revision <= 0:
+            raise ValueError('Release mode requires the exact version tag and a positive revision.')
+        head = git(REPO, 'rev-parse', 'HEAD')
+        existing = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--verify', '--quiet',
+                                   'refs/tags/'+args.tag+'^{commit}'], capture_output=True, text=True)
+        if existing.returncode == 0 and existing.stdout.strip() != head:
+            raise ValueError('The release tag exists but points at another commit.')
+        if existing.returncode != 0:
+            # 候选分支推上来时 tag 还没公开(手册:验收完才推 tag)。只在一次性 runner 上补一个
+            # 本地轻量 tag,好让 metadata 写出与本机完全相同的 tag/tag_commit。
+            if os.environ.get('GITHUB_ACTIONS') != 'true':
+                raise ValueError('Create the release tag locally before freezing.')
+            subprocess.run(['git', '-C', str(REPO), 'tag', args.tag, head], check=True, timeout=30)
+        command += ['--tag', args.tag]
+    run('metadata.py', *command)
+    digest = sha256_file(args.root/'release-input.json')
+    print(f'release-input.json sha256: {digest}')
+    if args.expect_release_input and args.expect_release_input != digest:
+        raise ValueError(f'Runner froze a different release input than expected: {digest}')
+    run('prepare.py', '--manifest', args.root/'release-input.json', '--out', args.root/'inputs')
+
+
+def macos_build(args):
+    root = args.root.resolve()
+    manifest = root/'release-input.json'
+    output = fresh_directory(args.out)
+    run('build.py', '--manifest', manifest, '--inputs', root/'inputs', '--build-id', MACOS_BUILD,
+        '--component', 'core', '--target-cache', output/'targets/core', '--out', output/'build/core')
+    run('stage.py', '--manifest', manifest, '--inputs', root/'inputs', '--build-id', MACOS_BUILD,
+        '--build-root', output/'build', '--out', output/'stage')
+    run('package.py', '--manifest', manifest, '--stage', output/'stage', '--asset-id', 'macos-core',
+        '--out', output/'packages/macos-core')
+
+
+def macos_verify(args):
+    root = args.root.resolve()
+    command = ['--manifest', root/'release-input.json', '--packages', args.out/'packages',
+               '--target-id', MACOS_BUILD, '--report-dir', args.out/'reports'/MACOS_BUILD,
+               '--allow-homebrew-changes']
+    if not os.environ.get('OPENCODEGO_PROVIDER_CONFIG'):
+        if args.require_provider:
+            raise BlockedError('OPENCODEGO_PROVIDER_CONFIG is required for release acceptance.')
+        # 预览:除了没调模型的 provider-live 记 SKIPPED,其余检查必须全过。
+        subprocess.run([sys.executable, str(SCRIPTS/'verify.py'), *map(str, command), '--skip-provider'],
+                       cwd=REPO, timeout=9000)
+        report = load_json(args.out/'reports'/MACOS_BUILD/'report.json')
+        failed = [c['check'] for c in report['checks']
+                  if c['status'] != 'PASS' and not (c['check'] == 'provider-live' and c['status'] == 'SKIPPED')]
+        if failed:
+            raise ValueError(f'macOS preview checks failed: {failed}')
+        return None
+    config = provider_configuration()
+    with tempfile.TemporaryDirectory(prefix='miyu-ci-provider-') as temporary:
+        path = Path(temporary)/'provider.json'
+        write_json(path, config)
+        path.chmod(0o600)
+        local_provider(path)
+        run('verify.py', *command, '--provider-config', path)
+
+
+def macos_import(args):
+    """Bring the runner's macOS package and report into the local release tree, byte-checked."""
+    expected = sha256_file(args.manifest)
+    with tempfile.TemporaryDirectory(prefix='miyu-macos-import-') as temporary:
+        unpacked = Path(temporary)/'results'
+        unpack_transport(args.archive, unpacked)
+        record = load_json(unpacked/'packages/macos-core/package-record.json')
+        report = load_json(unpacked/'reports'/MACOS_BUILD/'report.json')
+        if record['release_input_sha256'] != expected or report['release_input_sha256'] != expected:
+            raise ValueError('The runner built against a different release input. Re-freeze or re-run.')
+        for kind, destination in (('packages/macos-core', args.packages/'macos-core'),
+                                  ('reports/'+MACOS_BUILD, args.reports/MACOS_BUILD)):
+            if destination.exists():
+                raise ValueError(f'Refusing to overwrite {destination}.')
+            shutil.copytree(unpacked/kind, destination, symlinks=True)
+    print(f'Imported macOS package and report for release input {expected}.')
+
+
 def bundle(args):
     root = args.root.resolve()
     if args.kind == 'diagnostics':
@@ -243,6 +360,24 @@ def main():
         command.add_argument('--root', type=Path, required=True)
         command.add_argument('--out', type=Path, required=True)
         command.add_argument('--build-id', choices=tuple(BUILD_TARGETS), required=True)
+    commands.add_parser('macos-params')
+    command = commands.add_parser('macos-freeze')
+    command.add_argument('--mode', choices=('preview', 'release'), required=True)
+    command.add_argument('--tag', default='')
+    command.add_argument('--revision', type=int, default=1)
+    command.add_argument('--root', type=Path, required=True)
+    command.add_argument('--expect-release-input', default='')
+    for name in ('macos-build', 'macos-verify'):
+        command = commands.add_parser(name)
+        command.add_argument('--root', type=Path, required=True)
+        command.add_argument('--out', type=Path, required=True)
+        if name == 'macos-verify':
+            command.add_argument('--require-provider', action='store_true')
+    command = commands.add_parser('macos-import')
+    command.add_argument('--archive', type=Path, required=True)
+    command.add_argument('--manifest', type=Path, required=True)
+    command.add_argument('--packages', type=Path, required=True)
+    command.add_argument('--reports', type=Path, required=True)
     command = commands.add_parser('bundle')
     command.add_argument('--root', type=Path, required=True)
     command.add_argument('--kind', choices=('frozen', 'results', 'publish', 'diagnostics'), required=True)
@@ -264,6 +399,8 @@ def main():
     try:
         actions = {'plan': plan, 'freeze': freeze, 'build': build_packages, 'verify': verify_packages,
                    'bundle': bundle, 'aggregate': aggregate, 'publish': publish, 'channels': channels,
+                   'macos-params': macos_params, 'macos-freeze': macos_freeze, 'macos-build': macos_build,
+                   'macos-verify': macos_verify, 'macos-import': macos_import,
                    'unpack': lambda a: unpack_transport(a.archive, a.out),
                    'check-provider': lambda _: provider_configuration()}
         actions[args.command](args)

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from lib.common import load_json, sha256_file, write_json
 from lib.github_release import publish_verified
-from lib.matrix import release_matrix, selected_targets
+from lib.matrix import release_matrix, selected_targets, signing_channel
 from lib.identity import build_identity
 from lib.release_bundle import bundle_checksums, output_name, sums_name, verify_bundle
 import publish
@@ -16,74 +16,94 @@ from test_metadata import fixture
 from verify_release import aggregate
 
 
-class BundleTests(unittest.TestCase):
-    def setUp(self):
-        self.temp=tempfile.TemporaryDirectory()
-        self.root=Path(self.temp.name)
-        manifest=fixture()
-        manifest['profile']='linux-smoke'
-        manifest['targets']=selected_targets('linux-smoke',None)
-        manifest['builds'],manifest['assets'],manifest['checks']=release_matrix(
-            Path(__file__).resolve().parents[2]/'common/targets.json','linux-smoke',
-            manifest['targets'],'0.6.0',1,44)
-        manifest['channels']['macos_direct_signing']='not-distributed'
-        self.manifest=manifest
-        self.path=self.root/'release-input.json'
-        write_json(self.path,manifest)
-        self.packages=self.root/'packages';self.reports=self.root/'reports'
-        hashes={}
-        binaries={}
-        for asset in manifest['assets']:
-            folder=self.packages/asset['id'];folder.mkdir(parents=True)
-            binary=folder/asset['filename'];binary.write_bytes(('test fixture '+asset['id']).encode())
-            hashes[asset['id']]=sha256_file(binary)
-            license_root='share/licenses/miyu-voice/' if asset['component']=='voice' else 'share/licenses/miyu/'
-            build_id,component=asset['build_id'],asset['component']
-            binaries[asset['id']]=hashlib.sha256((build_id+component).encode()).hexdigest()
-            evidence={'build_id':build_id,'component':component,
-                'build_identity':build_identity(manifest,build_id,component),
-                'binary_sha256':binaries[asset['id']],
-                'builder_image':'sha256:'+hashlib.sha256(build_id.encode()).hexdigest(),
-                'source_commit':manifest['source_commit'],
-                'source_snapshot_sha256':manifest['source_snapshot_sha256'],
-                'release_input_sha256':sha256_file(self.path),
-                'rustc':'rustc '+manifest['toolchain']['rust']+' (fixture)\n', 'offline':True,
-                'command':['cargo','build','--release','--frozen','--target',
-                    manifest['builds'][build_id]['target'],'--bin',
-                    'miyu-voice' if component=='voice' else 'miyu',
-                    '--config','source.crates-io.replace-with="vendored-sources"',
-                    '--config','source.vendored-sources.directory="/inputs/vendor"']}
-            if component=='voice':evidence['command']+=['--features','voice']
-            write_json(folder/'package-record.json',{'asset':asset,'sha256':hashes[asset['id']],
-                'build_evidence':evidence,
-                'release_input_sha256':sha256_file(self.path),'source_commit':manifest['source_commit'],
-                'source_snapshot_sha256':manifest['source_snapshot_sha256'],
-                'files':[{'path':license_root+'LICENSE','type':'file','size':7,
-                          'sha256':hashlib.sha256(b'license').hexdigest()},
-                    {'path':'bin/'+('miyu-voice' if component=='voice' else 'miyu'),
-                     'type':'file','size':42,'sha256':binaries[asset['id']]}]})
-        for target in manifest['targets']:
-            folder=self.reports/target;folder.mkdir(parents=True)
-            checks=[dict(c,status='PASS',artifact_sha256=hashes[c['asset_id']])
-                    for c in manifest['checks'] if c['target']==target]
-            results={}
-            for asset_id in {c['asset_id'] for c in checks}:
-                component=next(a['component'] for a in manifest['assets'] if a['id']==asset_id)
-                results[asset_id]={'asset_id':asset_id,'binary_sha256':binaries[asset_id],
-                    'version':('miyu-voice' if component=='voice' else 'miyu')+' 0.6.0',
-                    'files_verified':2,'host_path':'/private/test/home', 'api_key':'fixture-secret'}
-                if component=='core':results[asset_id]['provider_live']={
-                    'type':'done','text':'Hello from the test fixture.', 'provider_id':'opencodego',
-                    'model':'deepseek-v4.1-flash','usage':{'input_tokens':1,'output_tokens':3},
-                    'elapsed_ms':42, 'api_key':'fixture-secret'}
+MACOS_HOST={'kind':'macos-native','architecture':'arm64','system':'15.6','system_build':'24G84',
+    'runner_image':'macos15 20260920.1'}
+
+
+def bundle_fixture(test, profile):
+    """Frozen input, packages with build evidence and passing reports for every declared check."""
+    test.temp=tempfile.TemporaryDirectory()
+    test.root=Path(test.temp.name)
+    manifest=fixture()
+    manifest['profile']=profile
+    manifest['targets']=selected_targets(profile,None)
+    manifest['builds'],manifest['assets'],manifest['checks']=release_matrix(
+        Path(__file__).resolve().parents[2]/'common/targets.json',profile,
+        manifest['targets'],'0.6.0',1,44)
+    manifest['channels']['macos_direct_signing']=signing_channel(profile)
+    test.manifest=manifest
+    test.path=test.root/'release-input.json'
+    write_json(test.path,manifest)
+    test.packages=test.root/'packages';test.reports=test.root/'reports'
+    hashes={}
+    binaries={}
+    for asset in manifest['assets']:
+        folder=test.packages/asset['id'];folder.mkdir(parents=True)
+        binary=folder/asset['filename'];binary.write_bytes(('test fixture '+asset['id']).encode())
+        hashes[asset['id']]=sha256_file(binary)
+        license_root='share/licenses/miyu-voice/' if asset['component']=='voice' else 'share/licenses/miyu/'
+        build_id,component=asset['build_id'],asset['component']
+        binaries[asset['id']]=hashlib.sha256((build_id+component).encode()).hexdigest()
+        native=build_id=='macos-arm64'
+        evidence={'build_id':build_id,'component':component,
+            'build_identity':build_identity(manifest,build_id,component),
+            'binary_sha256':binaries[asset['id']],
+            'source_commit':manifest['source_commit'],
+            'source_snapshot_sha256':manifest['source_snapshot_sha256'],
+            'release_input_sha256':sha256_file(test.path),
+            'rustc':'rustc '+manifest['toolchain']['rust']+' (fixture)\n', 'offline':True,
+            'command':['cargo','build','--release','--frozen','--target',
+                manifest['builds'][build_id]['target'],'--bin',
+                'miyu-voice' if component=='voice' else 'miyu',
+                '--config','source.crates-io.replace-with="vendored-sources"',
+                '--config','source.vendored-sources.directory="'+
+                ('../inputs/vendor' if native else '/inputs/vendor')+'"']}
+        if native:
+            lock=manifest['builders'][build_id]
+            evidence['builder_host']=dict(MACOS_HOST,xcode=lock['xcode'],sdk=lock['sdk'],
+                clang='Apple clang version 17.0.0',deployment_target=lock['deployment_target'])
+        else:
+            evidence['builder_image']='sha256:'+hashlib.sha256(build_id.encode()).hexdigest()
+        if component=='voice':evidence['command']+=['--features','voice']
+        write_json(folder/'package-record.json',{'asset':asset,'sha256':hashes[asset['id']],
+            'build_evidence':evidence,
+            'release_input_sha256':sha256_file(test.path),'source_commit':manifest['source_commit'],
+            'source_snapshot_sha256':manifest['source_snapshot_sha256'],
+            'files':[{'path':license_root+'LICENSE','type':'file','size':7,
+                      'sha256':hashlib.sha256(b'license').hexdigest()},
+                {'path':'bin/'+('miyu-voice' if component=='voice' else 'miyu'),
+                 'type':'file','size':42,'sha256':binaries[asset['id']]}]})
+    for target in manifest['targets']:
+        folder=test.reports/target;folder.mkdir(parents=True)
+        checks=[dict(c,status='PASS',artifact_sha256=hashes[c['asset_id']])
+                for c in manifest['checks'] if c['target']==target]
+        results={}
+        for asset_id in {c['asset_id'] for c in checks}:
+            component=next(a['component'] for a in manifest['assets'] if a['id']==asset_id)
+            results[asset_id]={'asset_id':asset_id,'binary_sha256':binaries[asset_id],
+                'version':('miyu-voice' if component=='voice' else 'miyu')+' 0.6.0',
+                'files_verified':2,'host_path':'/private/test/home', 'api_key':'fixture-secret'}
+            if component=='core':results[asset_id]['provider_live']={
+                'type':'done','text':'Hello from the test fixture.', 'provider_id':'opencodego',
+                'model':'deepseek-v4.1-flash','usage':{'input_tokens':1,'output_tokens':3},
+                'elapsed_ms':42, 'api_key':'fixture-secret'}
+        environment={'image':manifest['toolchain']['install_images'].get(target)}
+        if target=='macos-arm64':
+            environment['host']=MACOS_HOST
+            write_json(folder/'cleanup.json',{'kind':'native','remaining':''})
+        else:
             write_json(folder/'cleanup.json',{'remove_exit_code':0,'list_exit_code':0,
                 'remaining':'','stderr':'/private/test/home'})
-            write_json(folder/'report.json',{'target':target,'status':'PASS',
-                'image':manifest['toolchain']['install_images'][target], 'results':results,
-                'commands':[{'command':['docker','/private/test/home','fixture-secret']}],
-                'source_commit':manifest['source_commit'],
-                'source_snapshot_sha256':manifest['source_snapshot_sha256'],
-                'release_input_sha256':sha256_file(self.path),'checks':checks})
+        write_json(folder/'report.json',{'target':target,'status':'PASS', 'results':results,
+            'commands':[{'command':['docker','/private/test/home','fixture-secret']}],
+            'source_commit':manifest['source_commit'],
+            'source_snapshot_sha256':manifest['source_snapshot_sha256'],
+            'release_input_sha256':sha256_file(test.path),'checks':checks,**environment})
+
+
+class BundleTests(unittest.TestCase):
+    def setUp(self):
+        bundle_fixture(self,'linux-smoke')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -273,6 +293,79 @@ class BundleTests(unittest.TestCase):
         report=copy.deepcopy(original);report['checks'].pop();write_json(path,report)
         with self.assertRaises(ValueError):
             self.aggregate()
+
+
+class SmokeBundleTests(unittest.TestCase):
+    """smoke = linux-smoke + macOS 主程序(09-23):tar.gz 公开给 Homebrew,宿主证据代替镜像。"""
+
+    def setUp(self):
+        bundle_fixture(self,'smoke')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def aggregate(self):
+        with patch('verify_release.verify_source',return_value=(self.manifest,self.root/'source')):
+            return aggregate(self.path,self.packages,self.reports,self.root/'publish')
+
+    def test_macos_tarball_is_the_seventh_public_asset(self):
+        self.aggregate()
+        backend=FakeGitHub(self.manifest['source_commit'])
+        publish_verified(self.manifest,self.root/'publish',self.path,backend)
+        macos=next(a['filename'] for a in self.manifest['assets'] if a['id']=='macos-core')
+        self.assertEqual(macos,'miyu-0.6.0-1-aarch64-apple-darwin.tar.gz')
+        self.assertEqual(len(backend.bytes),7)
+        self.assertIn(macos,backend.bytes)
+        gnu={a['filename'] for a in self.manifest['assets'] if a['build_id']=='gnu-x86_64'
+             and a['format']=='tar.gz'}
+        self.assertEqual(len(gnu),2)
+        self.assertFalse(gnu&set(backend.bytes),'GNU tar 仍是内部证据')
+
+    def test_native_build_and_host_reach_public_evidence(self):
+        result=self.aggregate()
+        provenance=load_json(self.root/'publish/provenance-0.6.0-1.json')
+        dependencies=[d['uri'] for d in provenance['predicate']['buildDefinition']['resolvedDependencies']]
+        self.assertIn('macos-host:macosx15.5',dependencies)
+        byproducts=provenance['predicate']['runDetails']['byproducts']
+        native=[b for b in byproducts if b['build_id']=='macos-arm64']
+        self.assertEqual(len(native),1)
+        self.assertNotIn('builder_image',native[0])
+        acceptance=next(f for f in result['files'] if f['kind']=='acceptance')
+        reports=load_json(self.root/'publish'/acceptance['filename'])['reports']
+        mac=next(r for r in reports if r['target']=='macos-arm64')
+        self.assertIsNone(mac['image'])
+        self.assertEqual(mac['host'],MACOS_HOST)
+        self.assertEqual(mac['cleanup'],{'kind':'native','remaining':''})
+        self.assertIn({'asset_id':'macos-core','target':'macos-arm64','check':'homebrew-formula',
+                       'status':'PASS','artifact_sha256':mac['checks'][0]['artifact_sha256']},mac['checks'])
+
+    def test_native_host_and_builder_contract_rejected(self):
+        report_path=self.reports/'macos-arm64/report.json'
+        record_path=self.packages/'macos-core/package-record.json'
+        cleanup_path=self.reports/'macos-arm64/cleanup.json'
+        report,record,cleanup=load_json(report_path),load_json(record_path),load_json(cleanup_path)
+        mutations=[
+            (report_path,report,lambda r:r['host'].update(system='14.7')),
+            (report_path,report,lambda r:r['host'].update(architecture='x86_64')),
+            (report_path,report,lambda r:r.update(image='ubuntu:24.04')),
+            (report_path,report,lambda r:r.pop('host')),
+            (cleanup_path,cleanup,lambda c:c.update(remaining='miyu-verify/local/miyu')),
+            (record_path,record,lambda r:r['build_evidence']['builder_host'].update(xcode='16.2')),
+            (record_path,record,lambda r:r['build_evidence']['builder_host'].update(home='/Users/someone')),
+            (record_path,record,lambda r:r['build_evidence'].update(builder_image='sha256:'+'a'*64)
+                                         or r['build_evidence'].pop('builder_host')),
+            (record_path,record,lambda r:r['build_evidence']['command'].__setitem__(
+                -1,'source.vendored-sources.directory="/inputs/vendor"')),
+        ]
+        for index,(path,original,mutate) in enumerate(mutations):
+            with self.subTest(mutation=index):
+                changed=copy.deepcopy(original)
+                mutate(changed)
+                write_json(path,changed)
+                with self.assertRaises(ValueError):
+                    self.aggregate()
+                write_json(path,original)
+        self.aggregate()
 
 
 class FakeGitHub:

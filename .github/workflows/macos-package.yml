@@ -1,0 +1,106 @@
+name: macOS package (Homebrew)
+
+# macOS 发布包在这里构建与验收(09-23 用户拍板:GitHub Actions macos-15)。发版链其余部分仍在
+# 本机:推候选分支 release/v<版本>-<修订> 触发本工作流,runner 从同一个提交重新冻结一次,
+# 本机用 `workflow.py macos-import` 核对两边 release-input 逐字节相同后并进发布目录。
+# workflow_dispatch 只认默认分支上已有的工作流文件,所以发版走推分支触发;
+# macos-preview/** 分支只出预览包,不打 tag、可不带模型凭据。
+on:
+  push:
+    branches: ['release/v*', 'macos-preview/**']
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: preview (no tag) or release (existing version tag at this commit).
+        type: choice
+        options: [preview, release]
+        default: preview
+      tag:
+        description: Release tag (v<Cargo version>). Empty for preview.
+        type: string
+        default: ''
+      revision:
+        description: Positive package revision.
+        type: string
+        default: '1'
+      expect:
+        description: Optional SHA256 of the locally frozen release-input.json.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-arm64:
+    runs-on: ${{ vars.MACOS_ARM64_RUNNER || 'macos-15' }}
+    timeout-minutes: 150
+    env:
+      RELEASE_ROOT: /tmp/miyu-release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Read the requested mode, tag and revision
+        id: params
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_REVISION: ${{ inputs.revision }}
+          INPUT_EXPECT: ${{ inputs.expect }}
+        run: python3 packaging/ci/workflow.py macos-params >> "$GITHUB_OUTPUT"
+      - name: Select the locked Xcode and install the locked Rust toolchain
+        run: |
+          xcode=$(python3 -c "import json; print(json.load(open('packaging/common/toolchain.lock.json'))['builders']['macos-arm64']['xcode'])")
+          sudo xcode-select -s "/Applications/Xcode_${xcode}.app"
+          xcodebuild -version
+          rustc_version=$(python3 -c "import json; print(json.load(open('packaging/common/toolchain.lock.json'))['rust'])")
+          rustup toolchain install "$rustc_version" --profile minimal
+          # cargo vendor / metadata 也用锁定的那一版,和本机冻结时一致。
+          echo "RUSTUP_TOOLCHAIN=$rustc_version" >> "$GITHUB_ENV"
+      - name: Freeze this commit and prepare the locked inputs
+        env:
+          MODE: ${{ steps.params.outputs.mode }}
+          TAG: ${{ steps.params.outputs.tag }}
+          REVISION: ${{ steps.params.outputs.revision }}
+          EXPECT: ${{ steps.params.outputs.expect }}
+        run: |
+          python3 packaging/ci/workflow.py macos-freeze --mode "$MODE" --tag "$TAG" \
+            --revision "$REVISION" --expect-release-input "$EXPECT" --root "$RELEASE_ROOT"
+          echo "release-input.json sha256: $(shasum -a 256 "$RELEASE_ROOT/release-input.json" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Build, stage and package macos-core offline
+        run: python3 packaging/ci/workflow.py macos-build --root "$RELEASE_ROOT" --out "$RELEASE_ROOT/macos"
+      - name: Install from the tarball and through the Homebrew formula
+        env:
+          OPENCODEGO_PROVIDER_CONFIG: ${{ secrets.OPENCODEGO_PROVIDER_CONFIG }}
+          MODE: ${{ steps.params.outputs.mode }}
+        run: |
+          if [ "$MODE" = release ]; then require=--require-provider; else require=; fi
+          python3 packaging/ci/workflow.py macos-verify --root "$RELEASE_ROOT" --out "$RELEASE_ROOT/macos" $require
+          (cd "$RELEASE_ROOT/macos/packages/macos-core" && shasum -a 256 ./*.tar.gz) >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive the package and its report without credentials
+        run: python3 packaging/ci/workflow.py bundle --kind results --root "$RELEASE_ROOT/macos" --out "$RELEASE_ROOT/results-macos-arm64.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-results-macos-arm64
+          path: /tmp/miyu-release/results-macos-arm64.tar.gz
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+      - name: Preserve failure logs without credentials or build caches
+        if: failure()
+        run: python3 packaging/ci/workflow.py bundle --kind diagnostics --root "$RELEASE_ROOT/macos" --out "$RELEASE_ROOT/failure-macos-arm64.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: failed-results-macos-arm64
+          path: /tmp/miyu-release/failure-macos-arm64.tar.gz
+          compression-level: 0
+          if-no-files-found: ignore

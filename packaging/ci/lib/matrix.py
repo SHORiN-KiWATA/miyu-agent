@@ -4,7 +4,10 @@ from .common import load_json
 TARGET_IDS = ('arch-x86_64', 'debian13-x86_64', 'ubuntu2404-x86_64',
               'ubuntu2604-x86_64', 'mint22-x86_64', 'fedora-current-x86_64',
               'macos-arm64')
-PROFILES = ('preview-core', 'stable-core', 'stable-full', 'linux-smoke')
+PROFILES = ('preview-core', 'stable-core', 'stable-full', 'linux-smoke', 'smoke')
+# smoke = linux-smoke 的六个 Linux 目标 + macOS 主程序(09-23 用户拍板:Homebrew 渠道)。
+# linux-smoke 留给只会构建 Linux 的远端 release.yml。
+SMOKE_PROFILES = ('linux-smoke', 'smoke')
 CORE_CHECKS = ('artifact-identity', 'package-install', 'assets-complete', 'renderer-live',
                'embedding-live', 'embedding-degrade', 'daemon-lifecycle', 'sandbox-contract',
                'service-lifecycle', 'upgrade-uninstall')
@@ -22,6 +25,13 @@ def selected_targets(profile, selection):
     if not selected or len(set(selected)) != len(selected) or set(selected) - set(TARGET_IDS):
         raise ValueError('Target selection is empty, duplicated or unknown.')
     return [target for target in TARGET_IDS if target in selected]
+
+
+def signing_channel(profile):
+    """macOS 包怎么交到用户手里。smoke 的 tar.gz 只给 Homebrew 下载:formula 经 curl 取包、
+    不打隔离标记,所以不签名不公证;浏览器直接下载会被 Gatekeeper 拦,发布说明要写明。"""
+    return {'linux-smoke': 'not-distributed', 'smoke': 'homebrew-unsigned',
+            'preview-core': 'unsigned-preview'}.get(profile, 'required')
 
 
 def filename(asset_id, version, revision, fedora):
@@ -47,7 +57,7 @@ def release_matrix(catalog_path, profile, selected, version, revision, fedora):
         config = catalog['targets'][target]
         build_id = config['build_id']
         components = ['core']
-        if profile in ('stable-full', 'linux-smoke') or (profile == 'stable-core' and target != 'macos-arm64'):
+        if profile in ('stable-full', 'linux-smoke') or (profile in ('stable-core', 'smoke') and target != 'macos-arm64'):
             components.append('voice')
         builds.setdefault(build_id, dict(catalog['builds'][build_id], components=[], features={}))
         for component in components:
@@ -60,11 +70,14 @@ def release_matrix(catalog_path, profile, selected, version, revision, fedora):
             required = list(CORE_CHECKS if component == 'core' else VOICE_CHECKS)
             if profile == 'preview-core':
                 required.remove('service-lifecycle')
-            elif profile == 'linux-smoke':
+            elif profile in SMOKE_PROFILES:
                 required = ['artifact-identity', 'package-install']
                 if component == 'core':
                     required += ['assets-complete', 'provider-live']
-            if target == 'macos-arm64':
+            if target == 'macos-arm64' and profile == 'smoke':
+                # 用户拿到它的唯一途径是 formula:发布前在干净的 macOS 上真装一遍。
+                required.append('homebrew-formula')
+            elif target == 'macos-arm64':
                 if component == 'core':
                     required.append('platform-interaction')
                 if profile != 'preview-core':
@@ -81,7 +94,7 @@ def release_matrix(catalog_path, profile, selected, version, revision, fedora):
             required = list(CORE_CHECKS if component == 'core' else VOICE_CHECKS)
             if profile == 'preview-core':
                 required.remove('service-lifecycle')
-            elif profile == 'linux-smoke':
+            elif profile in SMOKE_PROFILES:
                 required = ['artifact-identity', 'package-install']
                 if component == 'core':
                     required += ['assets-complete', 'provider-live']

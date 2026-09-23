@@ -18,6 +18,28 @@
 
 仍然缺的（登记在案，不谎报）：`ci.yml` 没有任何 cargo 缓存，每次都是冷编译（本机实测冷构建光依赖就 40 分钟，`vars.LINUX_X64_RUNNER` 指自托管 runner 时尤其值得加）；`refactor-check.sh` 里的行数、层序两道门禁和 `cargo test --workspace` 仍只在本机跑（远端只有 `--suite source-unit`，即根 crate 的 lib 测试）。0.6.1 的本机实测：`cargo test --workspace` 2621 条用例、约 13 个测试目标，远端要跑得先解决缓存与时长。
 
+## 2026-09-23：macOS 包（Homebrew 渠道）
+
+用户拍板 macOS 包在 GitHub Actions 的 macos-15 runner 上构建，经 Homebrew tap
+（`SHORiN-KiWATA/homebrew-miyu`）分发。新工作流 `macos-package.yml` 只管 macOS 这一份包，
+发版链其余部分仍在本机（手册第 3b 节）：
+
+- **触发靠推候选分支**：`release/v<版本>-<修订>`（release 模式）或 `macos-preview/**`（预览，
+  不打 tag）。`workflow_dispatch` 只认默认分支上已有的工作流文件，发版时不能依赖它；分支名
+  由 `workflow.py macos-params` 解析并校验。
+- **同一份冻结输入**：runner 从同一个提交重新跑 `metadata.py --profile smoke`，本机用
+  `workflow.py macos-import` 核对包记录与报告绑定的 `release-input.json` 与本机逐字节相同。
+- **原生构建**（`lib/native_build.py`）：锁文件里的 Xcode 与 SDK、锁定的 Rust、离线 vendor
+  （相对路径 `../inputs/vendor`，让构建记录与机器无关）；构建记录用宿主记录（系统 / Xcode /
+  SDK / clang）代替镜像 digest；构建目录不许在家目录下，二进制里不许出现家目录路径；产物必须是
+  arm64、最低系统 15.0、签名有效。
+- **验收**（`lib/native_verify.py`）：解压到带空格的临时前缀跑 `probes/installed.py`（加
+  `--functional`：资源按前缀找得到、内置技能加载得出、出厂脚本跑得起来），再用本次包渲染的
+  formula 真 `brew install` + `brew test`。后者会往 Homebrew 装依赖，只在一次性 runner 上跑
+  （`--allow-homebrew-changes`），个人 Mac 上默认拒绝。
+- **凭据**：只有验收那一步拿到 `OPENCODEGO_PROVIDER_CONFIG`（`test_workflows.py` 钉住）。
+  release 模式缺它直接失败；预览模式缺它时 provider-live 记 SKIPPED，其余检查必须全过。
+
 ## 工作流职责
 
 | 工作流 | 入口 | 实际职责 |
@@ -25,7 +47,8 @@
 | `ci.yml` | PR、main push、手动 | Rust 1.96.1 fmt、Python packaging 单测、模型面无 CJK、隔离 source-unit（`MIYU_LANG=zh`）；另用 Rust 1.89.0 执行 `cargo check --locked --all-targets`；独立作业跑 actionlint |
 | `release.yml` | 仅手动 | 默认只生成 `NOT_EXECUTED` dry-run 计划；显式执行才走准备、构建、安装、聚合、发布 |
 | `build-package-verify.yml` | 受控 reusable workflow | 仅接受 `gnu-x86_64` 或 `arch-x86_64`，运行该构建对应的全部安装目标 |
-| `packaging-update.yml` | 手动指定已完成 release run | 下载已聚合产物，在同一源码 ref 上生成 AUR PKGBUILD、.SRCINFO 和 patch；不 apply、不推送渠道仓库 |
+| `packaging-update.yml` | 手动指定已完成 release run | 下载已聚合产物，在同一源码 ref 上生成 AUR PKGBUILD、.SRCINFO、Homebrew formula（产物里有 macOS 包时）和 patch；不 apply、不推送渠道仓库 |
+| `macos-package.yml` | 推 `release/v*`、`macos-preview/**` 分支，或手动 | 在 macos-15 上重新冻结、原生构建 `macos-core`、解压验收 + Homebrew 真装；产物 `verified-results-macos-arm64` 由本机导入聚合 |
 
 Rust job 的两档工具链最多同时运行两个任务，且在格式/Python 检查通过后启动。发布构建矩阵也是 `max-parallel: 2`，GNU 与 Arch 各一条；各自的 core、voice 顺序构建。MSRV job 不使用 `continue-on-error`，当前依赖若不支持 1.89.0 会明确失败。
 

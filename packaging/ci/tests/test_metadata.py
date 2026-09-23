@@ -94,6 +94,37 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual({c['target'] for c in checks if c['check']=='provider-live'}, set(selected))
 
 
+class SmokeProfileTests(unittest.TestCase):
+    """09-23:macOS 主程序进公开发布(Homebrew),语音不进;Linux 那六个目标一点不变。"""
+
+    def test_smoke_adds_only_macos_core_to_linux_smoke(self):
+        linux = release_matrix(COMMON/'targets.json', 'linux-smoke', selected_targets('linux-smoke', None),
+                               '0.6.0', 1, 44)
+        selected = selected_targets('smoke', None)
+        self.assertEqual(selected, list(TARGET_IDS))
+        builds, assets, checks = release_matrix(COMMON/'targets.json', 'smoke', selected, '0.6.0', 1, 44)
+        self.assertEqual(builds['macos-arm64']['components'], ['core'])
+        self.assertEqual({a['id'] for a in assets} - {a['id'] for a in linux[1]}, {'macos-core'})
+        mac = [c['check'] for c in checks if c['target'] == 'macos-arm64']
+        self.assertEqual(mac, ['artifact-identity', 'package-install', 'assets-complete',
+                               'provider-live', 'homebrew-formula'])
+        self.assertEqual([c for c in checks if c['target'] != 'macos-arm64'], linux[2])
+        with self.assertRaises(ValueError):
+            selected_targets('smoke', ['macos-arm64'])
+
+    def test_smoke_manifest_validates_in_release_and_preview(self):
+        manifest = fixture('smoke')
+        manifest['channels']['macos_direct_signing'] = 'homebrew-unsigned'
+        validate_manifest(manifest)
+        manifest['channels']['macos_direct_signing'] = 'required'
+        with self.assertRaises(ValueError):
+            validate_manifest(manifest)
+        preview = fixture('smoke')
+        preview['channels']['macos_direct_signing'] = 'homebrew-unsigned'
+        preview.update(mode='preview', tag=None, tag_commit=None)
+        validate_manifest(preview)
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

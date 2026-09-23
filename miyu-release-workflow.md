@@ -2,7 +2,8 @@
 
 本手册按 2026-09-20 的 **0.6.1** 实际构建、容器验收、发布、AUR 推送与本机升级更新。工具入口在
 `packaging/ci/`，资源清单在 `packaging/common/assets.json`，Arch 四份配方仍以
-`packaging/arch/` 为真相源。远端 CI 的职责与凭据契约见
+`packaging/arch/` 为真相源，Homebrew formula 与 tap 的 README 以 `packaging/homebrew/`
+为真相源。远端 CI 的职责与凭据契约见
 [CI 说明](docs/plan/distribution/ci.md)。
 
 ## 范围与工作区
@@ -12,6 +13,11 @@ Linux Mint 22.3、Fedora 44，均为 Linux x86_64。两个 Ubuntu 一头一尾�
 支持的**下限**，26.04 是最新。（0.6.0 当时验的是 25.10 而不是 24.04；2026-09-20 起
 构建基座降到 24.04，往下多盖了两个 LTS 周期的用户。）Mint 22.x 的基座就是
 Ubuntu 24.04，但它自带软件源，DEB 的依赖是从 Mint 自己的镜像拉的，所以单独装一次。公开附件仅为 Arch、DEB、RPM 的主程序与 voice，共六个包。GNU tar 仅保留内部验收。
+
+**2026-09-23 起 profile 改用 `smoke`**：上面六个 Linux 目标原样不动，再加 `macos-arm64`
+（只有主程序，没有 voice）。macOS 包是 Homebrew formula 下载的那个 tar.gz，所以它是
+**第七个公开附件**；它在 GitHub Actions 的 macos-15 runner 上构建与验收（第 3b 节），本机
+负责其余一切。只有 Linux 的远端 `release.yml` 仍用 `linux-smoke`。
 主程序要求真实安装、资源/版本校验及指定供应商正常回复；voice 要求实际安装和版本校验。
 GNU tar 使用独立安装前缀与 MIYU_HOME。物理麦克风、Mac 和完整升级恢复不在这次验收范围。
 
@@ -63,7 +69,7 @@ metadata 同时保存源码快照和文件清单。运行前必须检出待发�
 
 ```bash
 python3 packaging/ci/metadata.py --mode release --source-ref HEAD --tag v0.6.1 \
-  --profile linux-smoke --revision 1 --out out/distribution/release-0.6.1/release-input.json
+  --profile smoke --revision 1 --out out/distribution/release-0.6.1/release-input.json
 python3 packaging/ci/prepare.py --manifest out/distribution/release-0.6.1/release-input.json \
   --out out/distribution/release-0.6.1/inputs
 ```
@@ -100,9 +106,56 @@ build-id、component、out、builder-image；可指定该 component 独占的 `-
 绑定到实际二进制；不能只改 JSON 中的 source/hash 来复用旧二进制。Arch 使用系统 ORT，
 GNU 使用私有 CPU ORT。Arch namcap E 会拒绝打包，RPM 不声明发行版共有目录的所有权。
 
+## 3b. macOS 构建与验收（GitHub Actions，2026-09-23 起）
+
+macOS 没有容器，包由 `.github/workflows/macos-package.yml` 在 macos-15 runner 上原生构建。
+本机冻结的输入传不上去，所以 runner 从**同一个提交**再冻结一次，两边的 `release-input.json`
+必须逐字节相同——元数据只取决于提交内容与锁文件，第 2 节那条命令在哪台机器上跑结果都一样。
+
+1. 第 2 节冻结完，记下本机的哈希：`sha256sum out/distribution/release-<版本>/release-input.json`。
+2. 把 release commit 推成候选分支（对外操作，按任务授权；tag 仍然等全部验收后才推）：
+
+   ```bash
+   git push origin <release-commit>:refs/heads/release/v<版本>-<修订>
+   ```
+
+   分支名就是发版请求：工作流从名字里取 tag 与修订号，在 runner 上补一个本地轻量 tag 再冻结。
+   不用 `workflow_dispatch` 是因为它只认默认分支上已有的工作流文件。
+3. 等它跑完（冷构建约半小时），核对 job summary 里的 `release-input.json sha256` 与第 1 步一致：
+
+   ```bash
+   gh run list --repo SHORiN-KiWATA/miyu-agent --workflow macos-package.yml --branch release/v<版本>-<修订>
+   gh run watch <run-id> --repo SHORiN-KiWATA/miyu-agent
+   ```
+
+4. 下载并导入。`macos-import` 会再核对一遍包记录与报告绑定的是本机这份输入，然后放进
+   `packages/macos-core` 与 `reports/macos-arm64`，之后照常走第 5 节的聚合：
+
+   ```bash
+   gh run download <run-id> --repo SHORiN-KiWATA/miyu-agent -n verified-results-macos-arm64 \
+     -D out/distribution/release-<版本>/macos-download
+   python3 packaging/ci/workflow.py macos-import \
+     --archive out/distribution/release-<版本>/macos-download/results-macos-arm64.tar.gz \
+     --manifest out/distribution/release-<版本>/release-input.json \
+     --packages out/distribution/release-<版本>/packages --reports out/distribution/release-<版本>/reports
+   ```
+
+5. 正式发布、tag 推上去之后删掉候选分支：`git push origin --delete release/v<版本>-<修订>`。
+
+runner 上做了什么：锁文件里的 Xcode（`sudo xcode-select`，SDK 对不上直接 BLOCKED）、锁定的 Rust、
+离线 vendor；构建目录放在 `/tmp` 下并检查二进制里没有构建机的家目录（编译期的源码根路径会被
+编进二进制）；产物必须是 arm64、最低系统 15.0、带有效签名。验收分两段：解压到带空格的临时
+前缀跑安装探针（逐文件哈希、版本、`miyu paths` 的「系统人格资源目录」落在前缀里、内置技能
+全部加载得出、出厂脚本跑得起来、真模型回一句），再用本次的包渲染 formula（file:// 地址）真
+`brew install` + `brew test`，最后卸载并确认测试 tap 已移除。
+
+真模型那一项要仓库的 Actions secret `OPENCODEGO_PROVIDER_CONFIG`（专用测试凭据，格式见
+`docs/plan/distribution/ci.md`）。候选分支（release 模式）缺它直接失败；`macos-preview/**`
+分支是预览模式，没有凭据时这一项记 SKIPPED，其余照验，产物只供调试，不能进发布。
+
 ## 4. 实际安装与模型验收
 
-对 manifest 的六个 target-id 分别运行 `verify.py`：
+对 manifest 的六个 Linux target-id 分别运行 `verify.py`（`macos-arm64` 在 runner 上验，见第 3b 节）：
 
 ```bash
 python3 packaging/ci/verify.py --manifest out/distribution/release-0.6.1/release-input.json \
@@ -118,7 +171,8 @@ python3 packaging/ci/verify.py --manifest out/distribution/release-0.6.1/release
 
 六个目标是 `arch-x86_64`、`debian13-x86_64`、`ubuntu2404-x86_64`、
 `ubuntu2604-x86_64`、`mint22-x86_64`、`fedora-current-x86_64`。0.6.1 共 42 项必需
-检查（六个目标 × 主包 4 项 + voice 2 项，外加 GNU tar 的 6 项），均需 PASS。
+检查（六个目标 × 主包 4 项 + voice 2 项，外加 GNU tar 的 6 项），均需 PASS。`smoke` 再加
+macOS 的 5 项（身份、安装、资源、真模型、Homebrew formula），共 47 项。
 变更 CLI 默认行为时还要运行真实 PTY：本次确认不设置 MIYU_TUI 默认全屏，
 MIYU_TUI=0 回退 inline。不能在验收命令里继续设置 MIYU_TUI=1 而把默认行为缺陷藏起来。
 
@@ -146,10 +200,13 @@ python3 packaging/ci/publish.py --manifest out/distribution/release-0.6.1/releas
 | Arch | `.pkg.tar.zst` | `.pkg.tar.zst` |
 | Debian / Ubuntu（共用） | `.deb` | `.deb` |
 | Fedora | `.rpm` | `.rpm` |
+| macOS（Apple Silicon，Homebrew 下载） | `.tar.gz` | — |
 
-公开附件固定为上述六个。GNU tar、截图、SHA256SUMS、acceptance、SPDX、provenance、
+公开附件固定为上述七个（`linux-smoke` 是前六个）。macOS 的 tar.gz 没有签名：formula 经 curl
+下载不会被打隔离标记，浏览器直接下载则会被 Gatekeeper 拦，发布说明要写明 macOS 只支持
+`brew install shorin-kiwata/miyu/miyu`。GNU tar、截图、SHA256SUMS、acceptance、SPDX、provenance、
 release-input 与 release-manifest 都不上传 Release。GitHub 自动生成的两项 Source code
-下载由平台提供，不计入六个手动附件。内部 bundle 及 CI artifact 仍保留完整证据。
+下载由平台提供，不计入手动附件。内部 bundle 及 CI artifact 仍保留完整证据。
 SPDX 在当前工具中是文件清单，不等于完整依赖 SBOM；provenance 是构建来源，
 release-input / release-manifest 分别记录输入与输出，不是供用户安装的文件。
 
@@ -162,14 +219,14 @@ release-input / release-manifest 分别记录输入与输出，不是供用户�
 图片放在仓库 `docs/releases/<version>/`，使用 `raw.githubusercontent.com` 的 tag 或
 确定提交链接嵌入正文。可以收折次要图片，保留真实截图，不将截图作为 Release 附件。
 0.6.0-2 用过四张 OOBE 图和三张实机截图；0.6.1 的正文是纯文字（用户要求简短）。用图时发布前逐个读取图片 URL，核对返回内容与
-仓库原图 hash；删除旧图片附件前先更新正文链接。六个最终包的 SHA256 放正文
+仓库原图 hash；删除旧图片附件前先更新正文链接。全部最终包的 SHA256 放正文
 `<details>` 折叠区，并链接完整 changelog。正文完成并确认没有遗漏后才清空已归档记录。
 
 ### 上传与回读
 
 全部验证成功后推送已授权的分支和 tag，再把 dry-run 换为 `--execute`，同时传
 `--notes docs/releases/0.6.1/release-notes.md`。首次上传创建 draft，每个包上传后下载
-回读 hash，六附件名单核对后才转正式。已有同名异内容或额外远端资产会失败，不能
+回读 hash，公开附件名单（`smoke` 七个）核对后才转正式。已有同名异内容或额外远端资产会失败，不能
 使用 clobber 绕过；同版本替换按最后一节的单独迁移步骤处理。
 
 ## 6. 合并 main 并推送
@@ -181,7 +238,7 @@ release-input / release-manifest 分别记录输入与输出，不是供用户�
 
 `miyu-git` 的远端 main 必须先包含其 PKGBUILD 调用的资源脚本，再更新 AUR VCS 配方。
 
-## 7. 同步 AUR
+## 7. 同步 AUR 与 Homebrew tap
 
 正式 Release 回读成功后执行渠道生成，以下为本次参数形态：
 
@@ -206,6 +263,29 @@ _release_pkgrel、URL、SHA256、精确主包依赖与 .SRCINFO 必须一致；`
 不是未提交的配方修改，应保留；若配方本身有改动，先保留并合并，不能直接覆盖。
 只复制、提交 PKGBUILD 与 .SRCINFO，分别 push miyu、miyu-voice、miyu-git 的实际分支。
 最后对照 AUR 远端 HEAD，并确认这三个检出的两份文件与主仓逐字节一致。
+
+### Homebrew tap（`smoke` 发布时）
+
+同一条 `channel_update.py` 在发布产物里有 `macos-core` 时，会回读线上 macOS 包的哈希，
+把地址、版本、哈希与 revision（包修订号 2 起写 `revision 1`，同版本重编也会让 brew 提示升级）
+写进 `channels/homebrew/Formula/miyu.rb`；`--apply` 同时更新仓库里的真相源
+`packaging/homebrew/Formula/miyu.rb`。`channels/homebrew/` 就是 tap 仓库该有的全部内容
+（README 与 formula），整份复制过去：
+
+```bash
+git -C ~/Documents/github/homebrew-miyu pull --ff-only
+cp -r out/distribution/release-<版本>/channels/homebrew/. ~/Documents/github/homebrew-miyu/
+git -C ~/Documents/github/homebrew-miyu add README.md Formula/miyu.rb
+git -C ~/Documents/github/homebrew-miyu commit -m "miyu <版本>"
+git -C ~/Documents/github/homebrew-miyu push
+```
+
+推之前确认 `Formula/miyu.rb` 的 sha256 不是全零、与 Release 上那个 tar.gz 的哈希一致。
+第一次发布前 tap 仓库还不存在：`gh repo create SHORiN-KiWATA/homebrew-miyu --public`
+后再推（对外操作，先问）。仓库名必须带 `homebrew-` 前缀，用户才能写
+`brew install shorin-kiwata/miyu/miyu`。Homebrew 6 起第三方 tap 要显式信任，全名安装只信任
+这一个 formula，说明里一律写全名。第一个带 macOS 包的版本发布后，README 的「如何安装？」与
+`docs/wiki/01-快速开始.md` 补上 macOS 段落（tap 上线前写进去，用户照着装会失败）。
 
 ## 8. 升级本机与清理覆盖文件（任务已授权时）
 
@@ -246,7 +326,8 @@ systemd-run --user --collect --unit=miyu-daemon \
 既有镜像/卷、AUR 未跟踪文件与生产数据保留。活库备份使用 VACUUM INTO，禁止 fs::copy。
 
 保留最终发行 bundle、原资产替换备份和必要日志/报告。最后核对：main 与远端一致，
-release tag 对应真实构建源码，附件精确六个且 hash/正文/图片一致，AUR 远端及配方一致，
+release tag 对应真实构建源码，附件精确七个（`linux-smoke` 为六个）且 hash/正文/图片一致，
+AUR 远端及配方一致，tap 的 `Formula/miyu.rb` 与仓库 `packaging/homebrew/` 逐字节一致，
 本机版本及实际 exe 正确，测试资源无残留。源码/CI 修复必须有修前红测和修后绿测；
 新 CI 若失败先读测试日志与清理记录，不以“只有清理失败”推断 Rust 已全过。
 
@@ -299,15 +380,15 @@ main（0.6.0 与 0.6.1 都是这么做的）——不要为了把 hash 塞进 ta
 发布说明写明重编原因、修订号和新源码。验证成功后才更新版本 tag（用旧远端值作为
 force-with-lease 条件），使自动源码下载对应实际构建源码；不得伪改构建记录复用旧二进制。
 
-先上传并回读新修订的六个包，再移除旧包和内部附件，最后验证远端精确六附件名单。
+先上传并回读新修订的全部公开包，再移除旧包和内部附件，最后验证远端精确附件名单。
 替换期间暂停正常发布器的“远端不得有额外资产”步骤；这是人工执行的有旧新资产
 清单及 hash 校验的迁移，正常发布器继续拒绝冲突与额外资产。之后用正常发布器再次
-核验最终状态。按新 hash 更新仓库/AUR 配方和正文 SHA256，不能沿用旧校验值。
+核验最终状态。按新 hash 更新仓库/AUR 配方、Homebrew formula（包修订号变了会多一行 `revision`）和正文 SHA256，不能沿用旧校验值。
 
 
 0.6.0-2 的实际顺序是：保存旧 release body / asset IDs / tag 对象 → 本地更新 tag 并
 冻结新源码 → 四个二进制重编、五目标验收 → 推送源码 main → 用旧 tag **对象 ID**
-作 force-with-lease 条件推送 tag → 上传并回读六个新包 → 验证仓库图片并更新正文 →
+作 force-with-lease 条件推送 tag → 上传并回读六个新包（当时还没有 macOS 包）→ 验证仓库图片并更新正文 →
 按已保存的旧 asset ID 删除旧附件 → 正常发布器再验精确六附件 → 更新 AUR、升级本机。
 删除时拒绝未在原清单中的并发新增资产；重试时同名新包先比 hash，不重复覆盖。
 

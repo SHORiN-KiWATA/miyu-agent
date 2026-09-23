@@ -5,8 +5,10 @@
 资源随主包提供，voice 是可选包，不存在独立 assets 包。
 
 Linux 0.6.1 已发布并通过容器安装和真实模型输出验收：Arch x86_64、Debian 13、
-Ubuntu 24.04 LTS/26.04、Linux Mint 22.3、固定的 Fedora 稳定版。macOS 尚未通过原生验收，
-本轮不发布 Mac 资产。具体输入、资产和必需检查以冻结的 release input 与报告为准。
+Ubuntu 24.04 LTS/26.04、Linux Mint 22.3、固定的 Fedora 稳定版。2026-09-23 起发版用
+`smoke` profile，多一个 `macos-arm64`（Apple Silicon、macOS 15+，只有主程序）：包在
+GitHub Actions 的 macos-15 runner 上原生构建与验收，经 Homebrew 分发（见下文）。
+具体输入、资产和必需检查以冻结的 release input 与报告为准。
 
 **2026-09-20 起 GNU 渠道的支持下限是 Ubuntu 24.04 LTS**（此前是 25.10）。下限由构建
 基座决定：GNU builder 从 Debian 13（glibc 2.41）换成 `ubuntu:24.04`（glibc 2.39），
@@ -17,12 +19,29 @@ Ubuntu 24.04 LTS/26.04、Linux Mint 22.3、固定的 Fedora 稳定版。macOS �
 稳定版 22.3（zena）。它是 Ubuntu 派生但自带一套软件源，装 DEB 时拉的依赖
 （`ripgrep`、`chafa`、`libasound2t64`）来自 Mint 自己的镜像，值得单独装一次证明。
 
-GitHub Release 附件只提供 Arch、DEB、RPM 三种格式的主包与可选 voice 包，共六个。
+GitHub Release 附件提供 Arch、DEB、RPM 三种格式的主包与可选 voice 包，外加 Homebrew
+formula 下载的 macOS 主程序 tar.gz，共七个（`linux-smoke` 为前六个）。
 Debian、两个 Ubuntu 与 Linux Mint 共用同一个 DEB，不需要为每个发行版重复上传。GNU tar、OOBE
 截图、SHA256SUMS、验收 JSON、SBOM、provenance、release input 和 release manifest
 保留在完整验证 bundle 或 CI artifact 中，不上传 Release。OOBE 截图从仓库资源嵌入
-发布说明。公开附件名单由冻结资产清单中的 `archlinux`、`deb`、`rpm` 格式集中选出；
-内部文件仍须通过完整性和验收检查，`publish.py --dry-run` 只列实际公开的六个包。
+发布说明。公开附件名单由冻结资产清单中的 `archlinux`、`deb`、`rpm` 格式与 `macos-arm64`
+构建的包选出（`lib/release_bundle.py::is_public`）；内部文件仍须通过完整性和验收检查，
+`publish.py --dry-run` 只列实际公开的包。
+
+## Homebrew（macOS）
+
+| 位置 | 用途 |
+|---|---|
+| `homebrew/Formula/miyu.rb` | formula 真相源。url / version / sha256 / revision 只由 `ci/channel_update.py` 按验收过的包写入 |
+| `homebrew/README.md` | tap 仓库的 README |
+| `SHORiN-KiWATA/homebrew-miyu` | tap 仓库，是上面两个文件的镜像；用户 `brew install shorin-kiwata/miyu/miyu` |
+
+formula 直接下载 Release 上的 `miyu-<版本>-<修订>-aarch64-apple-darwin.tar.gz`，把包里的
+`bin/`、`share/` 原样放进 Cellar；依赖 `chafa`、`ripgrep`、`onnxruntime`（对照 Arch 配方：
+alsa-lib / glibc / gcc-libs 在 macOS 上不适用，python 用 Command Line Tools 自带的 python3，
+装 Homebrew 本来就要它）。formula 经 curl 下载不带隔离标记，所以不签名不公证；Apple Silicon
+要求的签名由链接器自动加的 ad-hoc 签名满足，构建时会校验。包修订号 2 起对应 formula 的
+`revision 1`，同版本重编时 brew 也会提示升级。
 
 ## Arch 的四份真相源
 
@@ -69,7 +88,7 @@ voice，核对包内资源清单、自报版本与真实模型输出。测试包
 
 资源搜索顺序为显式 override、原本支持的用户覆盖（models）、安装前缀下的
 `share/miyu`、Linux 系统 fallback、仅 debug 的源码 fallback。release 不读当前目录
-伪造的 `src/memes` 或 `assets/models`。所有相对路径均相对安装 prefix；Arch 为 `/usr`。
+伪造的 `src/memes` 或 `assets/models`。所有相对路径均相对安装 prefix；Arch 为 `/usr`，Homebrew 为 keg（`/opt/homebrew/Cellar/miyu/<版本>`，经 `/opt/homebrew/bin` 的链接启动时同样能找到）。
 
 | 路径 | 内容 | 缺失时的行为 |
 |---|---|---|

@@ -8,7 +8,7 @@ import tomllib
 
 from lib.common import BlockedError, canonical_json, load_json, sha256_file, write_json
 from lib.manifest import COMMON, validate_manifest, validate_toolchain
-from lib.matrix import PROFILES, release_matrix, selected_targets
+from lib.matrix import PROFILES, release_matrix, selected_targets, signing_channel
 from lib.source import export_source, git, source_files, snapshot_digest
 
 REPO = Path(__file__).resolve().parents[2]
@@ -59,8 +59,7 @@ def create_manifest(repo, *, mode, source_ref, profile, revision, targets=None, 
         'builds': builds, 'assets': assets, 'checks': checks, 'workflow_commit': source,
         'release_declaration': declaration,
         'channels': {'github': 'prerelease' if profile == 'preview-core' else 'stable',
-            'macos_direct_signing': ('not-distributed' if profile == 'linux-smoke'
-                else 'unsigned-preview' if profile == 'preview-core' else 'required')}}
+            'macos_direct_signing': signing_channel(profile)}}
     return validate_manifest(manifest, repo/LOCKS['targets']), records
 
 

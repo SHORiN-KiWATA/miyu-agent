@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 from .common import load_json
-from .matrix import release_matrix, selected_targets
+from .matrix import SMOKE_PROFILES, release_matrix, selected_targets, signing_channel
 
 COMMON = Path(__file__).resolve().parents[2] / 'common'
 FIELDS = {'schema_version', 'mode', 'profile', 'version', 'package_revision', 'tag',
@@ -85,8 +85,7 @@ def validate_manifest(manifest, catalog=COMMON/'targets.json'):
     if len({asset['filename'] for asset in assets}) != len(assets):
         raise ValueError('Duplicate asset filenames.')
     channels = {'github': 'prerelease' if manifest['profile'] == 'preview-core' else 'stable',
-                'macos_direct_signing': ('not-distributed' if manifest['profile'] == 'linux-smoke'
-                    else 'unsigned-preview' if manifest['profile'] == 'preview-core' else 'required')}
+                'macos_direct_signing': signing_channel(manifest['profile'])}
     if manifest['channels'] != channels:
         raise ValueError('Channel signing policy differs from the profile.')
     if manifest['mode'] == 'release':
@@ -99,7 +98,7 @@ def validate_manifest(manifest, catalog=COMMON/'targets.json'):
                     or declaration.get('tag_commit') != manifest['tag_commit']
                     or not declaration.get('reason', '').strip()):
                 raise ValueError('Tag/source mismatch requires an explicit controlled declaration.')
-    elif (manifest['profile'] not in ('preview-core', 'linux-smoke') or manifest['tag'] is not None
+    elif (manifest['profile'] not in ('preview-core', *SMOKE_PROFILES) or manifest['tag'] is not None
             or manifest['tag_commit'] is not None or manifest['release_declaration'] is not None):
         raise ValueError('Local preview requires preview-core and no release tag/declaration.')
     return manifest

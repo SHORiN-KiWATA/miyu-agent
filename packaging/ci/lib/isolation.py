@@ -12,6 +12,18 @@ class OwnershipError(RuntimeError):
     pass
 
 
+def mock_config():
+    """No inherited provider. Port 9 fails locally until a suite owns a mock.
+
+    配置里 active_provider 是必填项,不带凭据的验收(macOS 预览)也用这一份。"""
+    return {'config_version': 3, 'oobe_done': True, 'active_provider': 'distribution-mock',
+            'active_provider_models': [{'provider_id': 'distribution-mock', 'model': 'mock'}],
+            'providers': [{'id': 'distribution-mock', 'display_name': 'Local test',
+                'base_url': 'http://127.0.0.1:9/v1', 'protocol': 'openai-chat',
+                'api_key': 'local-test-only', 'models': ['mock']}],
+            'memory': {'enabled': False}}
+
+
 class Sandbox:
     def __init__(self):
         self.run_id = uuid.uuid4().hex
@@ -28,14 +40,7 @@ class Sandbox:
             (self.root / name).mkdir(mode=0o700)
         config = self.root / 'miyu/config'
         config.mkdir(mode=0o700)
-        # No inherited provider. Port 9 fails locally until a suite owns a mock.
-        (config / 'config.jsonc').write_text(json.dumps({
-            'config_version': 3, 'oobe_done': True, 'active_provider': 'distribution-mock',
-            'active_provider_models': [{'provider_id': 'distribution-mock', 'model': 'mock'}],
-            'providers': [{'id': 'distribution-mock', 'display_name': 'Local test',
-                'base_url': 'http://127.0.0.1:9/v1', 'protocol': 'openai-chat',
-                'api_key': 'local-test-only', 'models': ['mock']}],
-            'memory': {'enabled': False}}), encoding='utf-8')
+        (config / 'config.jsonc').write_text(json.dumps(mock_config()), encoding='utf-8')
 
     def environment(self, inherited=None):
         inherited = dict(os.environ if inherited is None else inherited)

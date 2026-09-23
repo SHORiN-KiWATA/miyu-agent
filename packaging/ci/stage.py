@@ -8,6 +8,7 @@ import sys
 from lib.common import fresh_directory, load_json, sha256_file, write_json
 from lib.identity import build_identity
 from lib.inputs import verify_prepared
+from lib.native_build import NATIVE_VENDOR, cargo_command, is_native
 from prepare import verify_source
 from lib.staging import install_file, selected_files, tree_manifest, validate_assets
 
@@ -15,13 +16,38 @@ from lib.staging import install_file, selected_files, tree_manifest, validate_as
 BUILD_EVIDENCE_FIELDS = ('build_id', 'component', 'build_identity', 'binary_sha256',
     'builder_image', 'source_commit', 'source_snapshot_sha256', 'release_input_sha256',
     'rustc', 'offline', 'command')
+# macOS 原生构建没有镜像 digest,构建环境的身份是宿主系统 / Xcode / SDK(09-23)。
+# 字段集合定死:宿主记录会进公开的 provenance,多一个字段就可能多带出一条本机路径。
+HOST_FIELDS = {'kind', 'architecture', 'system', 'system_build', 'xcode', 'sdk', 'clang',
+               'deployment_target', 'runner_image'}
+
+
+def builder_field(manifest, build_id):
+    return 'builder_host' if is_native(manifest['builds'][build_id]) else 'builder_image'
+
+
+def validate_builder(value, manifest, build_id):
+    if builder_field(manifest, build_id) == 'builder_image':
+        if not isinstance(value, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
+            raise ValueError('Build evidence requires immutable image and binary SHA256 digests.')
+        return
+    lock = manifest['builders'][build_id]
+    if (not isinstance(value, dict) or set(value) != HOST_FIELDS
+            or not all(isinstance(item, str) for item in value.values())
+            or value['kind'] != 'macos-native' or value['architecture'] != lock['architecture']
+            or value['xcode'] != lock['xcode'] or value['sdk'] != lock['sdk']
+            or value['deployment_target'] != lock['deployment_target']
+            or not all(value[key] for key in ('system', 'system_build', 'clang'))):
+        raise ValueError(f'Native build evidence differs from the locked macOS builder: {build_id}')
 
 
 def validate_build_evidence(record, manifest, input_hash, build_id, component, binary_hash):
     """Validate and select portable evidence. Host Docker mounts never enter release assets."""
-    if not isinstance(record, dict) or any(key not in record for key in BUILD_EVIDENCE_FIELDS):
+    fields = tuple(builder_field(manifest, build_id) if key == 'builder_image' else key
+                   for key in BUILD_EVIDENCE_FIELDS)
+    if not isinstance(record, dict) or any(key not in record for key in fields):
         raise ValueError('Required build evidence is missing.')
-    evidence = {key: record[key] for key in BUILD_EVIDENCE_FIELDS}
+    evidence = {key: record[key] for key in fields}
     expected = {'build_id': build_id, 'component': component,
         'build_identity': build_identity(manifest, build_id, component),
         'binary_sha256': binary_hash, 'source_commit': manifest['source_commit'],
@@ -29,17 +55,12 @@ def validate_build_evidence(record, manifest, input_hash, build_id, component, b
         'release_input_sha256': input_hash}
     if any(evidence[key] != value for key, value in expected.items()):
         raise ValueError(f'Build evidence differs from frozen input or binary: {build_id}/{component}')
-    if (not isinstance(evidence['builder_image'], str)
-            or not re.fullmatch(r'sha256:[0-9a-f]{64}', evidence['builder_image'])
-            or not isinstance(binary_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', binary_hash)):
+    validate_builder(evidence[builder_field(manifest, build_id)], manifest, build_id)
+    if not isinstance(binary_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', binary_hash):
         raise ValueError('Build evidence requires immutable image and binary SHA256 digests.')
-    command = ['cargo', 'build', '--release', '--frozen', '--target',
-        manifest['builds'][build_id]['target'], '--bin', 'miyu-voice' if component == 'voice' else 'miyu',
-        '--config', 'source.crates-io.replace-with="vendored-sources"',
-        '--config', 'source.vendored-sources.directory="/inputs/vendor"']
-    features = manifest['builds'][build_id]['features'][component]
-    if features:
-        command += ['--features', ','.join(features)]
+    build = manifest['builds'][build_id]
+    command = cargo_command(build['target'], component, build['features'][component],
+                            NATIVE_VENDOR if is_native(build) else '/inputs/vendor')
     if (evidence['offline'] is not True or evidence['command'] != command
             or not isinstance(evidence['rustc'], str)
             or not evidence['rustc'].startswith('rustc '+manifest['toolchain']['rust']+' ')):

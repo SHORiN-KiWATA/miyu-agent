@@ -6,10 +6,16 @@ from .common import canonical_json, load_json, sha256_file
 from .source import safe_relative
 
 
+def is_public(asset):
+    """Native distribution packages, plus the macOS tarball that the Homebrew formula downloads.
+
+    GNU tar 仍只留在内部证据里。macOS 的 tar.gz 公开是因为 formula 要从 Release 下载它
+    (09-23 用户拍板,公开附件 6→7);它没签名,浏览器直接下载会被 Gatekeeper 拦。"""
+    return asset['format'] in ('archlinux','deb','rpm') or asset['build_id']=='macos-arm64'
+
+
 def public_asset_names(manifest):
-    """Only native distribution packages are GitHub Release attachments."""
-    names=[asset['filename'] for asset in manifest['assets']
-           if asset['format'] in ('archlinux','deb','rpm')]
+    names=[asset['filename'] for asset in manifest['assets'] if is_public(asset)]
     if not names or len(names)!=len(set(names)):
         raise ValueError('Public package allowlist is empty or duplicated.')
     return sorted(names)

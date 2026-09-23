@@ -11,6 +11,7 @@
 
 import re
 from pathlib import Path
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,6 +54,49 @@ class BuildContextTests(unittest.TestCase):
         entries = [line.strip() for line in path.read_text(encoding='utf-8').splitlines()
                    if line.strip() and not line.startswith('#')]
         self.assertEqual(entries, ['*'])
+
+
+class MacosPackageWorkflowTests(unittest.TestCase):
+    """macOS 包在 GitHub runner 上构建(09-23)。推候选分支触发:分支名就是发版请求。"""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT/'packaging/ci'))
+        from workflow import macos_parameters
+        self.parameters = macos_parameters
+        self.workflow = (ROOT/'.github/workflows/macos-package.yml').read_text(encoding='utf-8')
+
+    def test_actions_are_pinned_like_the_other_workflows(self):
+        release = (ROOT/'.github/workflows/release.yml').read_text(encoding='utf-8')
+        pins = set(re.findall(r'uses: (\S+@[0-9a-f]{40})', release))
+        used = set(re.findall(r'uses: (\S+)', self.workflow))
+        self.assertTrue(used)
+        self.assertLessEqual(used, pins, 'macOS 工作流用了没钉过 SHA 的 action')
+
+    def test_candidate_branch_names_are_the_release_request(self):
+        self.assertIn("branches: ['release/v*', 'macos-preview/**']", self.workflow)
+        self.assertEqual(self.parameters('push', 'release/v0.6.3-2', {}),
+                         {'mode': 'release', 'tag': 'v0.6.3', 'revision': '2', 'expect': ''})
+        self.assertEqual(self.parameters('push', 'macos-preview/homebrew', {})['mode'], 'preview')
+        for event, ref in (('push', 'release/v0.6.3'), ('push', 'release/v0.6.3-0'),
+                           ('push', 'release/0.6.3-1'), ('push', 'main'), ('pull_request', 'x')):
+            with self.subTest(ref=ref), self.assertRaises(ValueError):
+                self.parameters(event, ref, {})
+
+    def test_dispatch_inputs_are_validated(self):
+        ok = {'mode': 'release', 'tag': 'v0.6.3', 'revision': '1', 'expect': 'a'*64}
+        self.assertEqual(self.parameters('workflow_dispatch', 'main', ok)['tag'], 'v0.6.3')
+        for bad in ({'mode': 'release', 'tag': '', 'revision': '1'},
+                    {'mode': 'preview', 'tag': 'v0.6.3', 'revision': '1'},
+                    {'mode': 'release', 'tag': 'v0.6.3', 'revision': '0'},
+                    {'mode': 'release', 'tag': 'v0.6.3', 'revision': '1', 'expect': 'nothex'}):
+            with self.subTest(inputs=bad), self.assertRaises(ValueError):
+                self.parameters('workflow_dispatch', 'main', bad)
+
+    def test_provider_secret_only_reaches_the_verify_step(self):
+        steps = self.workflow.split('      - ')
+        with_secret = [step for step in steps if 'secrets.' in step]
+        self.assertEqual(len(with_secret), 1)
+        self.assertIn('macos-verify', with_secret[0])
 
 
 if __name__ == '__main__':

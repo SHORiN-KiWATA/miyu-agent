@@ -177,7 +177,8 @@
         "preview-core",
         "stable-core",
         "stable-full",
-        "linux-smoke"
+        "linux-smoke",
+        "smoke"
       ]
     },
     "release_declaration": {

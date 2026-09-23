@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Install candidate packages in clean containers and run the authorized provider smoke."""
+"""Install candidate packages in clean containers (Linux) or a relocated prefix plus Homebrew
+(macOS), and run the authorized provider smoke."""
 import argparse
 import json
 import os
@@ -10,6 +11,11 @@ import sys
 from lib.common import BlockedError, fresh_directory, load_json, sha256_file, write_json
 from lib.isolation import Sandbox
 from lib.manifest import read_manifest
+from lib.matrix import SMOKE_PROFILES
+from lib.native_verify import verify_macos
+from prepare import verify_source
+
+NATIVE_TARGETS = ('macos-arm64',)
 
 
 def local_provider(config_path):
@@ -56,14 +62,16 @@ def cleanup_container(name, box, out, secret):
 
 def verify(args):
     manifest=read_manifest(args.manifest)
-    if manifest['profile']!='linux-smoke':
-        raise BlockedError('This executor implements the explicitly amended linux-smoke profile only.')
+    if manifest['profile'] not in SMOKE_PROFILES:
+        raise BlockedError('This executor implements the explicitly amended smoke profiles only.')
     if args.target_id not in manifest['targets']:
         raise ValueError('Installation target is not declared in the release input.')
-    provider=local_provider(args.provider_config)
-    secret=provider['api_key']
+    native=args.target_id in NATIVE_TARGETS
+    if not native and (args.skip_provider or args.allow_homebrew_changes):
+        raise ValueError('--skip-provider and --allow-homebrew-changes only apply to macOS.')
+    # 预览构建可以不给凭据(provider-live 记 SKIPPED,报告不会是 PASS);正式发版照样要。
+    provider=None if native and args.skip_provider else local_provider(args.provider_config)
     out=fresh_directory(args.report_dir)
-    image=manifest['toolchain']['install_images'][args.target_id]
     required=[c for c in manifest['checks'] if c['target']==args.target_id]
     asset_ids={c['asset_id'] for c in required}
     records={}
@@ -76,6 +84,32 @@ def verify(args):
                 or record['sha256']!=sha256_file(directory/asset['filename'])):
             raise ValueError(f'Package identity/hash mismatch: {asset["id"]}')
         records[asset['id']]=record
+    if native:
+        source=verify_source(args.manifest)[1]
+        box=Sandbox()
+        try:
+            checks,commands,results,host=verify_macos(args,manifest,source,required,records,
+                                                      provider,out,box)
+        finally:
+            box.cleanup()
+        return write_report(args,manifest,out,checks,commands,results,image=None,host=host)
+    checks,commands,results,image=verify_container(args,manifest,required,records,provider,out)
+    return write_report(args,manifest,out,checks,commands,results,image=image)
+
+
+def write_report(args, manifest, out, checks, commands, results, **environment):
+    report={'schema_version':1,'target':args.target_id,'profile':manifest['profile'],
+        'source_commit':manifest['source_commit'],'source_snapshot_sha256':manifest['source_snapshot_sha256'],
+        'release_input_sha256':sha256_file(args.manifest),**environment,
+        'status':'PASS' if checks and all(c['status']=='PASS' for c in checks) else 'FAIL',
+        'checks':checks,'commands':commands,'results':results}
+    write_json(out/'report.json',report)
+    return report
+
+
+def verify_container(args, manifest, required, records, provider, out):
+    secret=provider['api_key']
+    image=manifest['toolchain']['install_images'][args.target_id]
     checks=[]
     commands=[]
     results={}
@@ -147,13 +181,7 @@ def verify(args):
         if 'name' not in locals():
             box.cleanup()
         raise
-    report={'schema_version':1,'target':args.target_id,'profile':manifest['profile'],
-        'source_commit':manifest['source_commit'],'source_snapshot_sha256':manifest['source_snapshot_sha256'],
-        'release_input_sha256':sha256_file(args.manifest),'image':image,
-        'status':'PASS' if checks and all(c['status']=='PASS' for c in checks) else 'FAIL',
-        'checks':checks,'commands':commands,'results':results}
-    write_json(out/'report.json',report)
-    return report
+    return checks,commands,results,image
 
 
 def main():
@@ -163,6 +191,10 @@ def main():
     parser.add_argument('--target-id',required=True)
     parser.add_argument('--report-dir',required=True,type=Path)
     parser.add_argument('--provider-config',type=Path,help='Explicit local config. Only requested provider is copied temporarily.')
+    parser.add_argument('--skip-provider',action='store_true',
+                        help='macOS preview only: record provider-live as SKIPPED instead of calling a model.')
+    parser.add_argument('--allow-homebrew-changes',action='store_true',
+                        help='macOS only: let homebrew-formula install dependencies into this Homebrew.')
     args=parser.parse_args()
     try:
         report=verify(args)

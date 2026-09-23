@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
 """Aggregate all frozen checks and create a minimal, verified publish directory."""
 import argparse
+import hashlib
 from pathlib import Path
 import shutil
 import sys
 
-from lib.common import fresh_directory, load_json, sha256_file, write_json
+from lib.common import canonical_json, fresh_directory, load_json, sha256_file, write_json
+from lib.native_verify import version_tuple
 from lib.release_bundle import bundle_checksums, output_name, sums_name, verify_bundle
 from prepare import verify_source
 from stage import payload_binary_hash, validate_build_evidence
+
+# macOS 验收报告公开哪些宿主信息:系统版本够不够低、是不是 arm64,不带机器名与路径。
+PUBLIC_HOST_FIELDS = ('kind', 'architecture', 'system', 'system_build', 'runner_image')
 
 
 def public_report(report, records, manifest, cleanup_path):
     """Publish selected successful probe fields, without commands, paths or credentials."""
     target = report['target']
-    if report.get('image') != manifest['toolchain']['install_images'][target]:
-        raise ValueError('Installation report image differs from the frozen input.')
+    images = manifest['toolchain']['install_images']
+    if target in images:
+        if report.get('image') != images[target]:
+            raise ValueError('Installation report image differs from the frozen input.')
+    else:
+        validate_native_host(report, manifest)
     selected = {key: report[key] for key in ('target', 'status', 'image', 'source_commit',
         'source_snapshot_sha256', 'release_input_sha256')}
+    if target not in images:
+        selected['host'] = {key: report['host'][key] for key in PUBLIC_HOST_FIELDS}
     selected['checks'] = [{key: check[key] for key in
         ('asset_id', 'target', 'check', 'status', 'artifact_sha256')} for check in report['checks']]
     results = report.get('results', {})
@@ -51,12 +62,28 @@ def public_report(report, records, manifest, cleanup_path):
         selected['results'][asset_id] = public
     if cleanup_path.exists():
         cleanup = load_json(cleanup_path)
+        if cleanup.get('kind') == 'native':
+            # macOS 没有容器可删;要确认的是验收用的 Homebrew tap 已经卸掉。
+            if cleanup.get('remaining') != '':
+                raise ValueError('Installation environment cleanup is not confirmed.')
+            selected['cleanup'] = {key: cleanup[key] for key in ('kind', 'remaining')}
+            return selected
         if (cleanup.get('remove_exit_code') != 0 or cleanup.get('list_exit_code') != 0
                 or cleanup.get('remaining') != ''):
             raise ValueError('Installation environment cleanup is not confirmed.')
         selected['cleanup'] = {key: cleanup[key] for key in
             ('remove_exit_code', 'list_exit_code', 'remaining')}
     return selected
+
+
+def validate_native_host(report, manifest):
+    host = report.get('host')
+    minimum = manifest['builders'][report['target']]['minimum_test_os']
+    if (report.get('image') is not None or not isinstance(host, dict)
+            or any(not isinstance(host.get(key), str) for key in PUBLIC_HOST_FIELDS)
+            or host['kind'] != 'macos-native' or host['architecture'] != 'arm64'
+            or version_tuple(host['system']) < version_tuple(minimum)):
+        raise ValueError('Native installation report host differs from the frozen macOS contract.')
 
 
 def aggregate(manifest_path,artifacts,reports,publish_dir):
@@ -131,7 +158,11 @@ def aggregate(manifest_path,artifacts,reports,publish_dir):
                 'resolvedDependencies':[{'uri':'git+https://github.com/SHORiN-KiWATA/miyu-agent',
                     'digest':{'gitCommit':manifest['source_commit'],'sourceSnapshotSha256':manifest['source_snapshot_sha256']}}]+
                     [{'uri':'docker-image:'+image,'digest':{'sha256':image.removeprefix('sha256:')}}
-                     for image in sorted({build['builder_image'] for build in builds.values()})]},
+                     for image in sorted({build['builder_image'] for build in builds.values()
+                                          if 'builder_image' in build})]+
+                    [{'uri':'macos-host:'+host['sdk'],'digest':{'sha256':hashlib.sha256(canonical_json(host)).hexdigest()}}
+                     for host in [build['builder_host'] for key,build in sorted(builds.items())
+                                  if 'builder_host' in build]]},
             'runDetails':{'builder':{'id':'miyu-distribution-local'},'metadata':{'invocationId':input_hash},
                 'byproducts':[builds[key] for key in sorted(builds)]}}})
     register(provenance,'provenance')
