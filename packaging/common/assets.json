@@ -142,6 +142,19 @@
       "exclude": []
     },
     {
+      "id": "personas",
+      "source_root": "source",
+      "source": "src/personas",
+      "destination": "share/miyu/personas",
+      "mode": "0755",
+      "component": "core",
+      "type": "tree",
+      "include": [
+        "*"
+      ],
+      "exclude": []
+    },
+    {
       "id": "default-kb",
       "source_root": "source",
       "source": "kb",

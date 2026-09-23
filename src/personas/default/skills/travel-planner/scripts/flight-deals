@@ -3,7 +3,6 @@
 # 显示名称：机票比价
 # Description: One-way flight price comparison. For a round trip search both directions; two one-ways roughly equal a round-trip fare. Returns flights by price with airline, number, times, duration and stops (the lowest 'from' fare across classes), then 'lowest per airline' and 'lowest per cabin'. Never guess origin or dest: if the user only named a destination, ask where they leave from. With no fixed date use action=sweep over a window. Zero dependencies; search ~2 s, sweep ~3 s.
 # 描述：单程机票比价：按价格排序，带航司、航班号、时刻、时长与经停；还能扫一段日期窗口找最便宜的那天。
-# Expose: skill
 # Timeout: 300
 # Group: research
 # Parameters:

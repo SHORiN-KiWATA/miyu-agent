@@ -185,7 +185,10 @@ pub struct FeatureSources {
     pub persona_reminder_available: bool,
     /// 情绪与好感度只在通讯平台层生效,QQ 没开就不摆。
     pub emotion_available: bool,
-    pub scripts: Vec<(String, String, String, bool)>,
+    /// 脚本 (id, 界面名, 界面说明, 是否内置, 带路技能)。`带路技能 = Some(名)`
+    /// 的是住在 `skills/<名>/scripts/` 里的脚本:功能表上不单独成行,开关跟着
+    /// 那份技能那一行走。
+    pub scripts: Vec<(String, String, String, bool, Option<String>)>,
     /// 技能 (id, 界面名, 界面说明, 是否内置)。界面名/说明走人槽,模型槽
     /// (`description`)是英文触发词,摆进设置页会中英混杂(AGENTS §1.5.1)。
     pub skills: Vec<(String, String, String, bool)>,
@@ -286,7 +289,11 @@ pub fn catalog(
         });
     }
 
-    for (id, name, hint, builtin) in &sources.scripts {
+    for (id, name, hint, builtin, skill) in &sources.scripts {
+        // 技能带路的脚本不单独成行:它的开关就是那份技能那一行。
+        if skill.is_some() {
+            continue;
+        }
         if unlisted(id) {
             continue;
         }
@@ -365,6 +372,7 @@ pub fn apply_machine_switches(config: &mut AppConfig, items: &[FeatureItem]) {
 pub fn apply_selection(
     manifest: &mut PersonaManifest,
     items: &[FeatureItem],
+    sources: &FeatureSources,
     default_persona: bool,
 ) {
     for item in items {
@@ -390,12 +398,70 @@ pub fn apply_selection(
             .map(str::to_string)
             .collect()
     });
-    manifest.plugins.scripts = allowlist(items, FeatureKind::Script, default_persona);
+    manifest.plugins.scripts = script_allowlist(items, sources, default_persona);
     manifest.plugins.skills = allowlist(items, FeatureKind::Skill, default_persona);
     // 表上没有 MCP 一格(机器级关着)不等于用户决定全连:手写的白名单原样保留。
     if items.iter().any(|item| item.kind == FeatureKind::Mcp) {
         manifest.plugins.mcp = allowlist(items, FeatureKind::Mcp, default_persona);
     }
+}
+
+/// 脚本白名单。技能带路的脚本没有自己的行,开关状态跟着带路技能走——技能关掉
+/// 它的脚本也视为不可用,打开则可用(09-23)。技能与脚本两边因此不会各说各话:
+/// 自定义人格下不会出现「技能开着、脚本没开」或反过来的断裂。
+fn script_allowlist(
+    items: &[FeatureItem],
+    sources: &FeatureSources,
+    default_persona: bool,
+) -> Option<Vec<String>> {
+    let skill_on = |id: &str| {
+        items
+            .iter()
+            .find(|item| item.kind == FeatureKind::Skill && item.id == id)
+            .map(|item| item.on)
+            // 表上没有的那份技能(平台级技能不进表):它不受开关管,按可用算。
+            .unwrap_or(true)
+    };
+    let mut listed: Vec<(String, bool, bool)> = items
+        .iter()
+        .filter(|item| item.kind == FeatureKind::Script)
+        .map(|item| (item.id.clone(), item.on, item.builtin))
+        .collect();
+    listed.extend(
+        sources
+            .scripts
+            .iter()
+            .filter_map(|(id, _name, _hint, builtin, skill)| {
+                skill
+                    .as_deref()
+                    .map(|skill| (id.clone(), skill_on(skill), *builtin))
+            }),
+    );
+    if listed.is_empty() {
+        return None;
+    }
+    // 默认人格:全开才留空。自定义人格:目录里的全开**且**内置一件没勾才留空。
+    let all_on = listed.iter().all(|(_, on, _)| *on);
+    let regular_all_on = listed
+        .iter()
+        .filter(|(_, _, builtin)| !builtin)
+        .all(|(_, on, _)| *on);
+    let builtin_any_on = listed.iter().any(|(_, on, builtin)| *builtin && *on);
+    let keep_none = if default_persona {
+        all_on
+    } else {
+        regular_all_on && !builtin_any_on
+    };
+    if keep_none {
+        return None;
+    }
+    Some(
+        listed
+            .into_iter()
+            .filter(|(_, on, _)| *on)
+            .map(|(id, _, _)| id)
+            .collect(),
+    )
 }
 
 fn allowlist(
@@ -442,8 +508,8 @@ mod tests {
             persona_reminder_available: true,
             emotion_available: true,
             scripts: vec![
-                ("s1".into(), "脚本一".into(), String::new(), false),
-                ("b1".into(), "内置一".into(), String::new(), true),
+                ("s1".into(), "脚本一".into(), String::new(), false, None),
+                ("b1".into(), "内置一".into(), String::new(), true, None),
             ],
             skills: vec![
                 ("k1".into(), "技能一".into(), "说明一".into(), false),
@@ -550,7 +616,7 @@ mod tests {
         let mut manifest = PersonaManifest::all();
         let items = catalog(&manifest, &sources(), true, CatalogScope::Onboarding, None);
         assert!(items.iter().all(|item| item.on));
-        apply_selection(&mut manifest, &items, true);
+        apply_selection(&mut manifest, &items, &sources(), true);
         assert_eq!(manifest, PersonaManifest::all());
     }
 
@@ -563,7 +629,7 @@ mod tests {
                 item.on = false;
             }
         }
-        apply_selection(&mut manifest, &items, true);
+        apply_selection(&mut manifest, &items, &sources(), true);
         assert!(!manifest.subsystems.voice);
         let enabled = manifest.plugins.enabled.clone().unwrap();
         assert!(!enabled.contains(&"memes".to_string()));
@@ -585,13 +651,13 @@ mod tests {
         let by_id = |id: &str| items.iter().find(|item| item.id == id).unwrap().on;
         assert!(by_id("s1") && !by_id("b1") && by_id("k1") && !by_id("bk"));
         // 什么都不动:清单不落盘,内置照样不挂。
-        apply_selection(&mut manifest, &items, false);
+        apply_selection(&mut manifest, &items, &sources(), false);
         assert_eq!(manifest.plugins.scripts, None);
         assert_eq!(manifest.plugins.skills, None);
         // 勾一个内置脚本:必须写明细,且把目录里的也一起点名。
         let mut items = items;
         items.iter_mut().find(|item| item.id == "b1").unwrap().on = true;
-        apply_selection(&mut manifest, &items, false);
+        apply_selection(&mut manifest, &items, &sources(), false);
         assert_eq!(
             manifest.plugins.scripts,
             Some(vec!["s1".to_string(), "b1".to_string()])
@@ -622,7 +688,7 @@ mod tests {
         );
 
         items.iter_mut().find(|item| item.id == "m1").unwrap().on = false;
-        apply_selection(&mut manifest, &items, true);
+        apply_selection(&mut manifest, &items, &sources(), true);
         assert_eq!(manifest.plugins.mcp, Some(vec!["m2".to_string()]));
         assert_eq!(manifest.plugins.scripts, None, "别的白名单不受影响");
         assert_eq!(
@@ -648,7 +714,7 @@ mod tests {
         hidden.mcp_servers.clear();
         let items = catalog(&manifest, &hidden, true, CatalogScope::Onboarding, None);
         assert!(items.iter().all(|item| item.kind != FeatureKind::Mcp));
-        apply_selection(&mut manifest, &items, true);
+        apply_selection(&mut manifest, &items, &hidden, true);
         assert_eq!(manifest.plugins.mcp, Some(vec!["m2".to_string()]));
     }
 
@@ -672,7 +738,7 @@ mod tests {
             manifest.subsystems.persona_reminder,
             manifest.subsystems.emotion,
         );
-        apply_selection(&mut manifest, &items, true);
+        apply_selection(&mut manifest, &items, &sources(), true);
         assert_eq!(
             (
                 manifest.subsystems.persona_reminder,
@@ -694,6 +760,69 @@ mod tests {
         assert!(items
             .iter()
             .all(|item| item.kind != FeatureKind::Subsystem || item.id == "voice"));
+    }
+
+    /// 09-23:技能带路的脚本不单独成行,它的开关跟着那份技能走——技能关掉,
+    /// 脚本白名单里也不再有它;技能打开就回来。技能与脚本两边不脱节。
+    #[test]
+    fn skill_carried_scripts_ride_the_skill_toggle() {
+        let mut sources = sources();
+        // bk 是内置技能(true),带一件脚本 g1(也内置)。
+        sources.scripts.push((
+            "g1".into(),
+            "带路脚本".into(),
+            String::new(),
+            true,
+            Some("bk".into()),
+        ));
+        // 默认人格:全开 → 脚本白名单留空(=全开),技能行那一份就是 g1 的开关。
+        let mut manifest = PersonaManifest::all();
+        let mut items = catalog(&manifest, &sources, true, CatalogScope::Onboarding, None);
+        assert!(
+            items
+                .iter()
+                .all(|item| !(item.kind == FeatureKind::Script && item.id == "g1")),
+            "技能带路的脚本不该在表上单独成行"
+        );
+        apply_selection(&mut manifest, &items, &sources, true);
+        assert_eq!(manifest.plugins.scripts, None);
+        assert_eq!(manifest.plugins.skills, None);
+        // 关掉带路技能 bk:g1 一并从脚本白名单里退出,其余照旧。
+        for item in &mut items {
+            if item.id == "bk" {
+                item.on = false;
+            }
+        }
+        apply_selection(&mut manifest, &items, &sources, true);
+        assert_eq!(manifest.plugins.skills, Some(vec!["k1".to_string()]));
+        let scripts = manifest.plugins.scripts.clone().unwrap();
+        assert!(
+            !scripts.contains(&"g1".to_string()),
+            "技能关掉,它带路的脚本也得不可用"
+        );
+        assert!(scripts.contains(&"s1".to_string()) && scripts.contains(&"b1".to_string()));
+        // 自定义人格:内置技能默认不挂,g1 也不挂;勾上技能,技能与脚本一起回来。
+        let mut custom = PersonaManifest::all();
+        let mut items = catalog(&custom, &sources, false, CatalogScope::Onboarding, None);
+        apply_selection(&mut custom, &items, &sources, false);
+        assert_eq!(custom.plugins.scripts, None, "内置不挂、目录全开 → 留空");
+        assert_eq!(custom.plugins.skills, None);
+        for item in &mut items {
+            if item.id == "bk" {
+                item.on = true;
+            }
+        }
+        apply_selection(&mut custom, &items, &sources, false);
+        // 目录技能 k1 全开、内置技能 bk 点了名 → 白名单写明细,两件都在。
+        assert_eq!(
+            custom.plugins.skills,
+            Some(vec!["k1".to_string(), "bk".to_string()])
+        );
+        let scripts = custom.plugins.scripts.clone().unwrap();
+        assert!(
+            scripts.contains(&"g1".to_string()),
+            "技能点开,脚本不该缺席(技能开着、脚本没开是断裂)"
+        );
     }
 }
 

@@ -8,9 +8,8 @@ fn parse(out: &str) -> Value {
 }
 
 fn scan_roots(config: &miyu_base::config::AppConfig, paths: &MiyuPaths) -> ScriptScanResult {
-    let roots = script_scan_roots(config, paths);
-    let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-    scan_scripts(&dirs).unwrap()
+    let roots = script_scan_root_layers(config, paths);
+    scan_scripts_at(&roots).unwrap()
 }
 
 const LOOKUP: &str = "#!/usr/bin/env python3\n\

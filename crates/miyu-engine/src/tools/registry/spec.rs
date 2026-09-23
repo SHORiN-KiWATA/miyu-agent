@@ -181,8 +181,9 @@ pub struct ToolSpec {
     /// 进不进发给模型的 tools 数组。`false` 的工具照样注册、照样可调用
     /// (`miyu tool-call` 的工具桥、run_command 里的脚本编排),只是不再占
     /// 一份常驻定义——给「重量级、低频、由技能带路」的脚本用
-    /// (脚本头 `# Expose: skill`)。这不是懒加载:没有任何机制会在会话中途
-    /// 把它加回数组,所以 tools 数组字节恒定(AGENTS §1.1)。
+    /// (住在 `skills/<技能名>/scripts/` 里的脚本一律 `false`,其余照旧进面)。
+    /// 这不是懒加载:没有任何机制会在会话中途把它加回数组,所以 tools 数组
+    /// 字节恒定(AGENTS §1.1)。
     pub exposed: bool,
     pub(crate) handler: ToolHandler,
 }
@@ -423,6 +424,9 @@ impl ToolSpec {
 pub struct UnregisteredScript {
     pub name: String,
     pub path: String,
+    /// 技能带路的脚本(`skills/<技能名>/scripts/`)所属的技能名;其余为 None。
+    /// 第二批据此不在脚本面上单独列行。
+    pub skill: Option<String>,
 }
 
 #[cfg(any(test, feature = "testkit"))]

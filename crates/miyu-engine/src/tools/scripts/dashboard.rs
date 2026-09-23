@@ -10,21 +10,35 @@ use miyu_base::config::AppConfig;
 
 const SOURCE_LINE_CAP: usize = 400;
 const SOURCE_BYTE_CAP: usize = 64 * 1024;
-const LAYER_LABELS: [&str; 4] = ["builtin", "builtin-persona", "global", "persona"];
+/// 扫描根的规范路径,连同它代表的来源层。
+///
+/// 层名跟着根走,不按位置查表:09-23 起根链随技能个数变长(每个带路技能一个
+/// 根),位置和层早已不是一一对应。
+fn canonical_roots(roots: &[ScriptScanRoot]) -> Vec<(Option<PathBuf>, &'static str)> {
+    roots
+        .iter()
+        .map(|root| (root.path.canonicalize().ok(), root.origin.label()))
+        .collect()
+}
 
-fn canonical_roots(roots: &[PathBuf]) -> Vec<Option<PathBuf>> {
-    roots.iter().map(|root| root.canonicalize().ok()).collect()
+/// 某一来源层在扫描根链里的目录(取最后一个,即优先级最高的那个)。
+fn root_of(roots: &[ScriptScanRoot], layer: ScriptLayerKind) -> String {
+    roots
+        .iter()
+        .filter(|root| root.origin.layer == layer)
+        .next_back()
+        .map(|root| root.path.display().to_string())
+        .unwrap_or_default()
 }
 
 /// 文件直接躺在哪个扫描根里。后扫的层优先:persona 目录在 global 目录之下。
-fn layer_of(canonical: &[Option<PathBuf>], path: &Path) -> &'static str {
+fn layer_of(canonical: &[(Option<PathBuf>, &'static str)], path: &Path) -> &'static str {
     let parent = path.parent().and_then(|parent| parent.canonicalize().ok());
     canonical
         .iter()
-        .enumerate()
         .rev()
-        .find(|(_, root)| root.is_some() && **root == parent)
-        .map(|(index, _)| LAYER_LABELS[index])
+        .find(|(root, _)| root.is_some() && *root == parent)
+        .map(|(_, label)| *label)
         .unwrap_or("unknown")
 }
 
@@ -94,9 +108,8 @@ fn index_overrides(
 }
 
 pub fn scripts_dashboard_overview(config: &AppConfig, paths: &MiyuPaths) -> Result<Value> {
-    let roots = script_scan_roots(config, paths);
-    let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-    let scan = scan_scripts(&dirs)?;
+    let roots = script_scan_root_layers(config, paths);
+    let scan = scan_scripts_at(&roots)?;
     let layers = user_layers(config, paths);
     let canonical = canonical_roots(&roots);
     let overrides = index_overrides(&layers)?;
@@ -188,11 +201,14 @@ pub fn scripts_dashboard_overview(config: &AppConfig, paths: &MiyuPaths) -> Resu
     Ok(json!({
         "ok": true,
         "persona": config.active_persona_scope(),
+        // 按来源层取名,不按位置——扫描根链会随布局长(09-23 多了技能带路那一层),
+        // 位置写死的话每加一层就得改一遍。
         "directories": {
-            "builtin": roots[0].display().to_string(),
-            "builtin_persona": roots[1].display().to_string(),
-            "global": roots[2].display().to_string(),
-            "persona": roots[3].display().to_string(),
+            "builtin": root_of(&roots, ScriptLayerKind::Builtin),
+            "builtin_persona": root_of(&roots, ScriptLayerKind::BuiltinPersona),
+            "builtin_skill": root_of(&roots, ScriptLayerKind::BuiltinSkill),
+            "global": root_of(&roots, ScriptLayerKind::Global),
+            "persona": root_of(&roots, ScriptLayerKind::Persona),
         },
         "counts": {
             "registered": scripts.len(),
@@ -211,7 +227,7 @@ pub fn scripts_dashboard_overview(config: &AppConfig, paths: &MiyuPaths) -> Resu
 /// 源码预览只放行扫描根顶层里的文件:面板传回来的路径来自 overview,但仍按
 /// 「(目录, 文件名)」重新解析,不接受任意路径。
 fn resolve_previewable(config: &AppConfig, paths: &MiyuPaths, requested: &str) -> Result<PathBuf> {
-    let roots = script_scan_roots(config, paths);
+    let roots = script_scan_root_layers(config, paths);
     let canonical = canonical_roots(&roots);
     let path = Path::new(requested);
     if !path.is_file() {
@@ -231,9 +247,8 @@ pub fn scripts_dashboard_source(
     max_lines: usize,
 ) -> Result<Value> {
     let path = if !id.trim().is_empty() {
-        let roots = script_scan_roots(config, paths);
-        let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-        let scan = scan_scripts(&dirs)?;
+        let roots = script_scan_root_layers(config, paths);
+        let scan = scan_scripts_at(&roots)?;
         let entry = scan
             .entries
             .iter()

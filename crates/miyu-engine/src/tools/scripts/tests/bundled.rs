@@ -14,6 +14,45 @@ fn bundled_dir() -> PathBuf {
     Path::new(miyu_base::WORKSPACE_ROOT).join("src/scripts/personas/default")
 }
 
+/// 出厂人格的资源根:`src/personas/default/`。技能带路的脚本住它下面的
+/// `skills/<技能名>/scripts/`(09-23 起三件试点搬过去了)。
+fn bundled_persona_dir() -> PathBuf {
+    Path::new(miyu_base::WORKSPACE_ROOT).join("src/personas/default")
+}
+
+/// 出厂脚本的两处家:老布局的 `src/scripts/personas/default/` 与技能树里的
+/// `skills/<技能名>/scripts/`。头部契约(描述/参数/超时/分组/显示名)两边同一套。
+fn bundled_script_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for dir in [bundled_dir(), bundled_persona_dir().join("skills")] {
+        let Ok(read_dir) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<PathBuf> = read_dir
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            if entry.is_file() {
+                paths.push(entry);
+            } else if entry.is_dir() {
+                let scripts = entry.join("scripts");
+                if scripts.is_dir() {
+                    for file in std::fs::read_dir(&scripts).unwrap() {
+                        let path = file.unwrap().path();
+                        if path.is_file() {
+                            paths.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
 fn strip_descriptions(value: &mut Value) {
     match value {
         Value::Object(map) => {
@@ -49,11 +88,11 @@ fn bundled_headers_match_the_legacy_index_contracts() {
     let legacy: ScriptIndex = serde_json::from_str(LEGACY_INDEX).unwrap();
     assert_eq!(legacy.scripts.len(), 8);
     for old in legacy.scripts {
-        let new = scan
-            .entries
-            .iter()
-            .find(|entry| entry.id == old.id)
-            .unwrap_or_else(|| panic!("{} missing from header scan", old.id));
+        // 09-23 起三件试点(机票/酒店/直播)搬进了技能树,不再在这份目录扫描里;
+        // 它们的头部契约由 `bundled_skill_carried_scripts_keep_their_contracts` 管。
+        let Some(new) = scan.entries.iter().find(|entry| entry.id == old.id) else {
+            continue;
+        };
         let mut old_params = old.parameters.clone();
         strip_descriptions(&mut old_params);
         let mut new_params = new.parameters.clone();
@@ -76,6 +115,42 @@ fn bundled_headers_match_the_legacy_index_contracts() {
     }
 }
 
+/// 搬进技能树的脚本(机票/酒店/直播)头部契约不变:参数 schema(去掉 description
+/// 文案后)逐字节相同,超时、分组、显示名不变。进不进常驻面从此只看它住在哪,
+/// 头部不再需要任何声明。
+#[test]
+fn bundled_skill_carried_scripts_keep_their_contracts() {
+    let legacy: ScriptIndex = serde_json::from_str(LEGACY_INDEX).unwrap();
+    let mut checked = 0;
+    for old in legacy.scripts {
+        let Some(path) = bundled_script_paths().into_iter().find(|path| {
+            path.file_name().and_then(|name| name.to_str()) == Some(old.path.as_str())
+        }) else {
+            continue;
+        };
+        // 只在技能树里的那一份上比——老布局的副本已经搬走。
+        if !path.starts_with(bundled_persona_dir().join("skills")) {
+            continue;
+        }
+        let metadata = metadata_from_script(&path);
+        let mut old_params = old.parameters.clone();
+        strip_descriptions(&mut old_params);
+        let mut new_params = metadata.parameters.clone().unwrap_or(Value::Null);
+        strip_descriptions(&mut new_params);
+        assert_eq!(old_params, new_params, "{}: parameters drifted", old.id);
+        assert_eq!(old.timeout_seconds, metadata.timeout_seconds, "{}", old.id);
+        assert_eq!(old.groups, metadata.groups, "{}", old.id);
+        assert_eq!(
+            metadata.display_names.zh.as_deref(),
+            Some(old.display_name.as_str()),
+            "{}",
+            old.id
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 3, "三件试点都该在技能树里找到");
+}
+
 /// 出厂脚本必须有中文显示名;英文名可选。显示名是给人看的,而工具 id 本来就是
 /// 英文,英文界面按 id 兜一个就够(`xhs_search` → `Xhs search`),不值得再维护一份
 /// 英文文案。中文名反过来是必填的:没有它,中文界面只能端出 id。
@@ -84,28 +159,29 @@ fn bundled_headers_match_the_legacy_index_contracts() {
 /// 回退才显示对,英文界面反倒露出中文。
 #[test]
 fn bundled_scripts_carry_a_chinese_display_name() {
-    let scan = scan_scripts(&[bundled_dir().as_path()]).unwrap();
-    assert!(!scan.entries.is_empty());
-    for entry in &scan.entries {
-        let names = metadata_from_script(Path::new(&entry.path)).display_names;
+    let paths = bundled_script_paths();
+    assert!(!paths.is_empty());
+    for path in &paths {
+        let names = metadata_from_script(path).display_names;
         let english = names.en.unwrap_or_default();
         let chinese = names.zh.unwrap_or_default();
+        let id = path.file_name().unwrap().to_string_lossy();
         assert!(
             !chinese.is_empty(),
             "{}: 缺中文显示名,给头部加一行 `# 显示名称：...`",
-            entry.id
+            id
         );
         assert!(
             english.is_ascii(),
             "{}: `Display name:` 是英文槽,中文名要写在 `显示名称:` 上: {english}",
-            entry.id
+            id
         );
         assert!(
             chinese
                 .chars()
                 .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)),
             "{}: `显示名称:` 该写中文: {chinese}",
-            entry.id
+            id
         );
     }
 }
@@ -114,20 +190,19 @@ fn bundled_scripts_carry_a_chinese_display_name() {
 fn bundled_descriptions_follow_the_header_style_rules() {
     let scan = scan_scripts(&[bundled_dir().as_path()]).unwrap();
     let ids: Vec<&str> = scan.entries.iter().map(|entry| entry.id.as_str()).collect();
+    // 09-23 起机票/酒店/直播三件搬进技能树(`skills/<技能名>/scripts/`),
+    // 不再出现在这层目录扫描里。
     assert_eq!(
         ids,
         vec![
             "bangumi",
             "battery_care",
-            "bilibili_live_stream",
             "codec",
             "crack_search",
             "divine",
-            "flight_deals",
             "game_compat",
             "get_weather",
             "goofish_search",
-            "hotel_deals",
             "online_man",
             "query_deepseek_status",
             "query_moegirl",
@@ -138,24 +213,23 @@ fn bundled_descriptions_follow_the_header_style_rules() {
             "zhihu_search",
         ]
     );
-    for entry in &scan.entries {
+    // 文风规则对两处家一视同仁:老布局目录 + 技能树里的脚本。
+    for path in bundled_script_paths() {
+        let metadata = metadata_from_script(&path);
+        let id = path.file_name().unwrap().to_string_lossy().to_string();
+        let description = metadata.descriptions.en.unwrap_or_default();
         assert!(
-            entry
-                .description
-                .starts_with(|character: char| character.is_ascii_alphabetic()),
-            "{}: description must be English: {}",
-            entry.id,
-            entry.description
+            description.starts_with(|character: char| character.is_ascii_alphabetic()),
+            "{id}: description must be English: {description}"
         );
         assert!(
-            first_sentence_chars(&entry.description) <= 60,
-            "{}: first sentence over 60 chars: {}",
-            entry.id,
-            entry.description
+            first_sentence_chars(&description) <= 60,
+            "{id}: first sentence over 60 chars: {description}"
         );
-        if let Some(properties) = entry
+        if let Some(properties) = metadata
             .parameters
-            .get("properties")
+            .as_ref()
+            .and_then(|parameters| parameters.get("properties"))
             .and_then(Value::as_object)
         {
             for (name, property) in properties {
@@ -167,10 +241,30 @@ fn bundled_descriptions_follow_the_header_style_rules() {
                 };
                 assert!(
                     description.starts_with(|character: char| character.is_ascii_alphabetic()),
-                    "{}.{name}: parameter description must be English: {description}",
-                    entry.id
+                    "{id}.{name}: parameter description must be English: {description}"
                 );
             }
         }
     }
+}
+
+/// 脚本是直接 exec 的(`Command::new(&script_path)`),没有可执行位就是
+/// Permission denied。09-23 搬三件试点时 git 把 755 丢成了 644,源码树里
+/// 当场全坏——安装包那边 assets.json 给整棵树补 0755,掩盖了这件事。
+#[cfg(unix)]
+#[test]
+fn bundled_scripts_are_executable() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let paths = bundled_script_paths();
+    assert!(!paths.is_empty(), "一件出厂脚本都没扫到,路径是不是变了");
+    let missing: Vec<String> = paths
+        .iter()
+        .filter(|path| {
+            std::fs::metadata(path)
+                .map(|metadata| metadata.permissions().mode() & 0o111 == 0)
+                .unwrap_or(true)
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(missing.is_empty(), "这些出厂脚本没有可执行位: {missing:?}");
 }

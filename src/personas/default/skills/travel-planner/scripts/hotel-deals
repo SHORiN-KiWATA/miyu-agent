@@ -3,7 +3,6 @@
 # 显示名称：酒店比价
 # Description: Hotel price comparison. action=search (default) prices a stay; sweep scans the next N days for the cheapest check-in; trend is price history; places lists known locations; doctor self-checks. Dates take '+7', '10-15' or '2026-10-15'. Use English place names: a CJK name only fuzzy-matches and can silently return a hotel 30 km off, so the output carries a warning when it happens. Check warnings and sources_failed before quoting a minimum. format=json returns {query, sources_ok, sources_failed, warnings, returned, total, offers[]}.
 # 描述：酒店比价：给定日期查最低价，或扫未来 N 天找最便宜的入住日；带价格历史。
-# Expose: skill
 # Timeout: 300
 # Group: research
 # Parameters:

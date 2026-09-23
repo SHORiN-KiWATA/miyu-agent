@@ -523,8 +523,8 @@ impl ToolRegistry {
                 continue;
             }
 
-            // 不进 tools 数组的工具(`# Expose: skill`)也不在 load_tools 的
-            // 可取清单里:它的入口是技能带路 + 工具桥,不是懒加载。
+            // 不进 tools 数组的技能带路脚本(`skills/<技能名>/scripts/`)也不在
+            // load_tools 的可取清单里:它的入口是技能带路 + 工具桥,不是懒加载。
             let Some(tool) = self.tools.get(target).filter(|tool| tool.exposed) else {
                 skipped.push(format!("{target}: unknown tool or script"));
                 continue;

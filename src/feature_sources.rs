@@ -52,16 +52,13 @@ pub fn mcp_server_options(config: &AppConfig) -> Vec<(String, String, String)> {
 /// 把这台机器上装着什么收齐。
 pub fn collect(config: &AppConfig, paths: &MiyuPaths) -> FeatureSources {
     // 内置脚本对每个人格都列出来：默认人格默认全勾，自定义人格默认不勾、勾了才挂。
-    let dirs = [
-        miyu_engine::tools::builtin_scripts_dir(paths),
-        paths.scripts_dir.clone(),
-    ];
-    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|dir| dir.as_path()).collect();
+    // 技能带路的脚本(住在 `skills/<技能名>/scripts/`)也收进来，但不单独成行——
+    // 它的开关是那份技能那一行，`apply_selection` 按带路技能连动脚本白名单。
     FeatureSources {
         voice_available: voice_available(),
         persona_reminder_available: config.prompt.persona_reminder,
         emotion_available: config.platforms.qq.enabled,
-        scripts: miyu_engine::tools::list_scripts_with_origin(&dir_refs, Some(paths)),
+        scripts: miyu_engine::tools::list_scripts_for_features(paths),
         skills: miyu_core::skills::persona_skill_options(config, paths),
         mcp_servers: mcp_server_options(config),
     }

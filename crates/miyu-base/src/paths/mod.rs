@@ -358,6 +358,42 @@ impl MiyuPaths {
         }
     }
 
+    /// 系统资源树里技能与脚本共用的根:`<前缀>/personas`(例如
+    /// `/usr/share/miyu/personas`)。新布局(09-23)把每个人格的东西收进
+    /// `<前缀>/personas/<人格>/{scripts,skills/<技能名>/scripts}`;`<前缀>`
+    /// 就是内置脚本目录的父目录(`system_scripts_dir=/usr/share/miyu/scripts`)。
+    ///
+    /// 从 `system_scripts_dir` 反推而不是新加字段:`MIYU_SYSTEM_SCRIPTS_DIR`
+    /// 与安装前缀两条路都已经把它定好了,再添一个字段只会多一处能对不上。
+    pub fn system_personas_dir(&self) -> Option<PathBuf> {
+        let parent = self.system_scripts_dir.parent()?;
+        Some(parent.join("personas"))
+    }
+
+    /// 系统资源树候选链里的全部 `<前缀>/personas`,优先级从高到低
+    /// (安装前缀 > 系统前缀 > debug 源码树,见 [`resources::candidates`])。
+    ///
+    /// 头一个由 [`Self::system_personas_dir`] 反推——测试把 `system_scripts_dir`
+    /// 指到临时树时,资源根就跟着落在那棵树里。后面几个来自资源候选链,好让
+    /// 开发态(debug)从源码树跑起来的 Miyu 也扫得到内置技能(09-23 技能改读盘)。
+    ///
+    /// 候选链只在 `system_scripts_dir` 就是默认资源目录时才展开:测试把它指到
+    /// 临时树,意图是「只有这一棵树」,再叠上真机的 `/usr/share/miyu` 会让
+    /// 扫描根链多出几层、断言全乱。
+    pub fn system_personas_dirs(&self) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = self.system_personas_dir().into_iter().collect();
+        if self.system_scripts_dir == resources::directory(resources::ResourceKind::Scripts) {
+            for scripts in resources::candidates(resources::ResourceKind::Scripts) {
+                if let Some(personas) = scripts.parent().map(|parent| parent.join("personas")) {
+                    if !roots.contains(&personas) {
+                        roots.push(personas);
+                    }
+                }
+            }
+        }
+        roots
+    }
+
     pub fn extensions_dir(&self) -> Option<PathBuf> {
         self.home_admin().map(|_| self.root_dir.join("extensions"))
     }

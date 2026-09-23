@@ -1,7 +1,7 @@
 # scripts(as-built)
 
 完整作者契约在 [`docs/scripts/README.md`](../scripts/README.md),模型侧同一份在内置技能
-`src/skills/script-creator.md`。本页只登记契约要素与版本规则,不复制正文。
+`src/personas/default/skills/script-creator/SKILL.md`。本页只登记契约要素与版本规则,不复制正文。
 
 ## 要素
 

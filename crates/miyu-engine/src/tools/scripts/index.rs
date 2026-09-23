@@ -28,6 +28,77 @@ pub(crate) struct DisabledScript {
     pub(crate) path: String,
 }
 
+/// 脚本的来源层(09-23)。层级由「从哪个扫描根扫到」决定,不由路径前缀反推:
+/// 新布局把内置件从 `<前缀>/scripts/personas/<人格>/` 搬到
+/// `<前缀>/personas/<人格>/`,再拿前缀猜谁是内置就会漏掉整层。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ScriptLayerKind {
+    /// 用户自己的扩展层:`<data>/scripts/` 顶层。
+    #[default]
+    Global,
+    /// 用户自己的扩展层:`<data>/scripts/personas/<人格>/`。
+    Persona,
+    /// 内置层顶层(老布局 `<系统前缀>/scripts/`,当前为空)。
+    Builtin,
+    /// 内置层的人格目录:老布局 `<系统前缀>/scripts/personas/<人格>/`,
+    /// 新布局 `<资源根>/personas/<人格>/scripts/`。
+    BuiltinPersona,
+    /// 内置层的技能带路脚本:
+    /// `<资源根>/personas/<人格>/skills/<技能名>/scripts/`。
+    BuiltinSkill,
+}
+
+impl ScriptLayerKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Persona => "persona",
+            Self::Builtin => "builtin",
+            Self::BuiltinPersona => "builtin-persona",
+            Self::BuiltinSkill => "builtin-skill",
+        }
+    }
+
+    pub(crate) fn is_builtin(self) -> bool {
+        matches!(
+            self,
+            Self::Builtin | Self::BuiltinPersona | Self::BuiltinSkill
+        )
+    }
+}
+
+/// 一条脚本的来源:层 + 带路技能。扫描时标出,不进 index.json。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ScriptOrigin {
+    pub(crate) layer: ScriptLayerKind,
+    /// 技能带路:`skills/<技能名>/scripts/` 下的脚本记下技能名,第二批据此
+    /// 「不单独列行 + 开关连动」。
+    pub(crate) skill: Option<String>,
+}
+
+impl ScriptOrigin {
+    pub(crate) fn is_builtin(&self) -> bool {
+        self.layer.is_builtin()
+    }
+
+    /// 技能带路的脚本(`skills/<技能名>/scripts/`):不进模型的常驻 tools 数组,
+    /// 由技能正文带路。09-23 起这是唯一的判据——不再看脚本头部声明。
+    pub(crate) fn is_skill_carried(&self) -> bool {
+        self.layer == ScriptLayerKind::BuiltinSkill
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        self.layer.as_str()
+    }
+}
+
+/// 一个扫描根:目录 + 它代表的来源层。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScriptScanRoot {
+    pub(crate) path: PathBuf,
+    pub(crate) origin: ScriptOrigin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ScriptEntry {
     pub(crate) id: String,
@@ -69,10 +140,10 @@ pub(crate) struct ScriptEntry {
     /// 头部 `Capabilities:`,见 `ScriptMetadata::capabilities`。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) capabilities: Vec<String>,
-    /// 头部 `Expose: skill`,见 `ScriptMetadata::expose`。缺省(false)=像别的
-    /// 脚本一样进 tools 数组。
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub(crate) skill_only: bool,
+    /// 扫描时标出的来源层与带路技能(09-23)。不进 `index.json`(`serde(skip)`):
+    /// 它是扫描的结论,不是用户可编辑的字段,每次扫描按根重算。
+    #[serde(skip)]
+    pub(crate) origin: ScriptOrigin,
 }
 
 fn is_owner_trust(trust: &ToolTrust) -> bool {
@@ -100,7 +171,7 @@ impl ScriptEntry {
             hints: Vec::new(),
             requires: Vec::new(),
             capabilities: Vec::new(),
-            skill_only: false,
+            origin: ScriptOrigin::default(),
         }
     }
 }
@@ -111,30 +182,123 @@ pub(crate) struct ScriptScanResult {
     pub(crate) unregistered: Vec<UnregisteredScript>,
 }
 
-/// 扫描根,覆盖链低→高。每个物理层(内置 system、全局 data)都是
-/// 「顶层(平台共享) + personas/<当前人格>(人格专属)」两级,四个根按此顺序扫,
-/// scan_scripts 后者同名覆盖前者。
+/// 扫描根连同来源层,覆盖链低→高(`scan_scripts_at` 后者同名覆盖前者):
 ///
-/// 内置脚本装在 `<system>/personas/default/` 下:自定义人格扫
-/// `<system>/personas/<那个人格>`——目录不存在,天然拿不到内置。人格门因此是
-/// **隐式**的,不再需要 is_default_persona 特判,四层一套逻辑贯穿,与 data 层的
-/// personas/ 约定对齐(09-01)。顶层留给将来的平台级内置脚本(当前为空)。
-pub(crate) fn script_scan_roots(
+/// ```text
+/// 老布局(09-23 前)                新布局(09-23 起)
+/// <system>/                        ← 平台级内置(当前为空)
+/// <system>/personas/default        <资源根>/personas/default/scripts
+/// <system>/personas/<人格>          <资源根>/personas/<人格>/scripts
+///                                  <资源根>/personas/<人格>/skills/<技能>/scripts
+/// <data>/scripts                   (用户自己的扩展层,不变)
+/// <data>/scripts/personas/<人格>
+/// ```
+///
+/// 内置脚本装在 `personas/` 下:自定义人格在资源树里没有自己的目录=天然拿不到,
+/// 人格门是**隐式**的(09-01)。但出厂人格 default 那一层照扫(老布局与新布局
+/// 都是),好让自定义人格按 `plugins.scripts` 白名单逐个勾回来(09-13)。老布局
+/// 保持可扫——升级后老用户的脚本不能凭空消失。
+pub(crate) fn script_scan_root_layers(
     config: &miyu_base::config::AppConfig,
     paths: &MiyuPaths,
-) -> Vec<PathBuf> {
-    // 09-13:内置脚本对自定义人格改成**可选**——目录照扫,能不能用由
-    // `prepare_script_refresh` 按人格清单的 `plugins.scripts` 白名单裁决
-    // (自定义人格没写清单 = 一件内置都不挂,纯净状态不变)。
+) -> Vec<ScriptScanRoot> {
+    let mut roots = Vec::new();
+    // 老布局。
     let builtin = builtin_scripts_dir(paths);
     let persona_system = config.active_persona_system_scripts_dir(paths);
-    let mut roots = vec![paths.system_scripts_dir.clone(), builtin.clone()];
+    push_scan_root(
+        &mut roots,
+        paths.system_scripts_dir.clone(),
+        ScriptLayerKind::Builtin,
+        None,
+    );
+    push_scan_root(
+        &mut roots,
+        builtin.clone(),
+        ScriptLayerKind::BuiltinPersona,
+        None,
+    );
     if persona_system != builtin {
-        roots.push(persona_system);
+        push_scan_root(
+            &mut roots,
+            persona_system,
+            ScriptLayerKind::BuiltinPersona,
+            None,
+        );
     }
-    roots.push(paths.scripts_dir.clone());
-    roots.push(config.active_persona_scripts_dir(paths));
+    // 新布局:候选链倒序入列,让优先级最高的候选最后覆盖(与 resources 的
+    // 「头一个候选优先」同向)。人格内部先出厂后当前,当前人格的件压过出厂件。
+    let factory = miyu_base::config::persona_scope_name("");
+    for root in paths.system_personas_dirs().into_iter().rev() {
+        let mut personas = vec![root.join(&factory)];
+        let active = root.join(config.active_persona_scope());
+        if !personas.contains(&active) {
+            personas.push(active);
+        }
+        for persona in personas {
+            push_scan_root(
+                &mut roots,
+                persona.join("scripts"),
+                ScriptLayerKind::BuiltinPersona,
+                None,
+            );
+            for (scripts, skill) in skill_script_roots(&persona.join("skills")) {
+                push_scan_root(
+                    &mut roots,
+                    scripts,
+                    ScriptLayerKind::BuiltinSkill,
+                    Some(skill),
+                );
+            }
+        }
+    }
+    // 用户自己的扩展层(最高优先级)。
+    push_scan_root(
+        &mut roots,
+        paths.scripts_dir.clone(),
+        ScriptLayerKind::Global,
+        None,
+    );
+    push_scan_root(
+        &mut roots,
+        config.active_persona_scripts_dir(paths),
+        ScriptLayerKind::Persona,
+        None,
+    );
     roots
+}
+
+fn push_scan_root(
+    roots: &mut Vec<ScriptScanRoot>,
+    path: PathBuf,
+    layer: ScriptLayerKind,
+    skill: Option<String>,
+) {
+    roots.push(ScriptScanRoot {
+        path,
+        origin: ScriptOrigin { layer, skill },
+    });
+}
+
+/// `<personas>/<人格>/skills/*/scripts`:技能带路的脚本目录,连同技能名。
+/// 只认真的有 `scripts/` 子目录的技能;目录名排序保证指纹与覆盖顺序确定。
+fn skill_script_roots(skills_dir: &Path) -> Vec<(PathBuf, String)> {
+    let Ok(read_dir) = std::fs::read_dir(skills_dir) else {
+        return Vec::new();
+    };
+    let mut skills: Vec<PathBuf> = read_dir
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join("scripts").is_dir())
+        .collect();
+    skills.sort();
+    skills
+        .into_iter()
+        .filter_map(|skill| {
+            let name = skill.file_name()?.to_str()?.to_string();
+            Some((skill.join("scripts"), name))
+        })
+        .collect()
 }
 
 /// 内置脚本的目录:`<system>/personas/default/`。
@@ -144,7 +308,54 @@ pub fn builtin_scripts_dir(paths: &MiyuPaths) -> PathBuf {
 
 /// 这条脚本是不是内置层的(装在 `<system>/` 下)。
 pub(crate) fn is_builtin_script(paths: &MiyuPaths, entry: &ScriptEntry) -> bool {
-    Path::new(&entry.path).starts_with(&paths.system_scripts_dir)
+    if entry.origin.is_builtin() {
+        return true;
+    }
+    // 兼容:直接构造 ScriptEntry 的调用方(与老布局)仍按路径前缀判。
+    // 空 system_scripts_dir 下 `Path::starts_with("")` 恒真,得挡掉。
+    let path = Path::new(&entry.path);
+    if !paths.system_scripts_dir.as_os_str().is_empty()
+        && path.starts_with(&paths.system_scripts_dir)
+    {
+        return true;
+    }
+    paths
+        .system_personas_dir()
+        .is_some_and(|root| path.starts_with(root))
+}
+
+/// 功能表要摆的脚本:内置各层(老布局出厂目录)+ 用户全局层,再加上出厂人格
+/// 技能树里带路的脚本。技能带路的那些在功能表上不单独成行(开关是它那份技能
+/// 那一行),但要把归属技能带回去,好让技能开关连动脚本白名单。
+pub fn list_scripts_for_features(
+    paths: &MiyuPaths,
+) -> Vec<(String, String, String, bool, Option<String>)> {
+    let mut rows = Vec::new();
+    let base_dirs = [builtin_scripts_dir(paths), paths.scripts_dir.clone()];
+    let base_refs: Vec<&Path> = base_dirs.iter().map(PathBuf::as_path).collect();
+    for (id, name, hint, builtin) in list_scripts_with_origin(&base_refs, Some(paths)) {
+        rows.push((id, name, hint, builtin, None));
+    }
+    if let Some(root) = paths.system_personas_dir() {
+        let skills_dir = root
+            .join(miyu_base::config::persona_scope_name(""))
+            .join("skills");
+        for (scripts_dir, skill) in skill_script_roots(&skills_dir) {
+            let Ok(scan) = scan_scripts(&[scripts_dir.as_path()]) else {
+                continue;
+            };
+            for entry in scan.entries {
+                let display = entry_display_name(&entry);
+                let hint = if entry.ui_description.trim().is_empty() {
+                    entry.description
+                } else {
+                    entry.ui_description
+                };
+                rows.push((entry.id, display, hint, true, Some(skill.clone())));
+            }
+        }
+    }
+    rows
 }
 
 pub(crate) fn script_specs(
@@ -224,19 +435,28 @@ pub(crate) fn merge_header_defaults(entry: &mut ScriptEntry, metadata: &ScriptMe
     if entry.capabilities.is_empty() {
         entry.capabilities = metadata.capabilities.clone();
     }
-    if !entry.skill_only {
-        entry.skill_only = metadata
-            .expose
-            .is_some_and(super::header::ScriptExposure::is_skill_only);
-    }
 }
 
+/// 只给路径的扫描(测试、以及只看某一层的调用方):来源层按用户层算。
 pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
+    let roots: Vec<ScriptScanRoot> = dirs
+        .iter()
+        .map(|dir| ScriptScanRoot {
+            path: dir.to_path_buf(),
+            origin: ScriptOrigin::default(),
+        })
+        .collect();
+    scan_scripts_at(&roots)
+}
+
+/// 按扫描根(带来源层)扫,`scan_scripts` 是它的无层包装。
+pub(crate) fn scan_scripts_at(roots: &[ScriptScanRoot]) -> Result<ScriptScanResult> {
     let mut entries = BTreeMap::<String, ScriptEntry>::new();
     let mut unregistered = BTreeMap::<String, UnregisteredScript>::new();
     let mut seen_paths = BTreeSet::new();
 
-    for scripts_dir in dirs {
+    for root in roots {
+        let scripts_dir = root.path.as_path();
         if !scripts_dir.is_dir() {
             continue;
         }
@@ -288,6 +508,7 @@ pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
             let mut entry = indexed_entry;
             indexed_ids.insert(entry.id.clone());
             entry.path = path.to_string_lossy().to_string();
+            entry.origin = root.origin.clone();
             merge_header_defaults(&mut entry, &metadata_from_script(&path));
             if entry.description.trim().is_empty() {
                 entries.remove(&entry.id);
@@ -296,6 +517,7 @@ pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
                     UnregisteredScript {
                         name: entry.id,
                         path: path.to_string_lossy().to_string(),
+                        skill: root.origin.skill.clone(),
                     },
                 );
             } else {
@@ -337,6 +559,7 @@ pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
                     UnregisteredScript {
                         name: detected.stem,
                         path: path_string,
+                        skill: root.origin.skill.clone(),
                     },
                 );
                 continue;
@@ -351,7 +574,8 @@ pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
                 continue;
             }
 
-            let entry = entry_from_detected(&detected, id.clone(), path_string.clone());
+            let mut entry = entry_from_detected(&detected, id.clone(), path_string.clone());
+            entry.origin = root.origin.clone();
             if entry.description.trim().is_empty() {
                 entries.remove(&id);
                 unregistered.insert(
@@ -359,6 +583,7 @@ pub(crate) fn scan_scripts(dirs: &[&Path]) -> Result<ScriptScanResult> {
                     UnregisteredScript {
                         name: id,
                         path: path_string,
+                        skill: root.origin.skill.clone(),
                     },
                 );
             } else {
@@ -592,7 +817,9 @@ pub(crate) fn entry_to_spec(
         .with_trust(entry.trust)
         .with_cross_hints(entry.hints.clone())
         .with_requires_prior(entry.requires.clone())
-        .with_exposed(!entry.skill_only)
+        // 09-23:进不进常驻工具面只看脚本住在哪——`skills/<技能名>/scripts/`
+        // 里的由技能带路(不进数组,可经工具桥调用),其余照旧进面。
+        .with_exposed(!entry.origin.is_skill_carried())
         .script();
     if let Some(example) = entry
         .stub_example

@@ -201,7 +201,7 @@ pub(in crate::config_tui) fn edit_features(
     }
 
     if dirty {
-        feature_catalog::apply_selection(&mut manifest, &items, default_persona);
+        feature_catalog::apply_selection(&mut manifest, &items, &sources, default_persona);
         feature_catalog::apply_machine_switches(config, &items);
         // 不在这儿写盘：攒起来，跟配置一起走「保存并退出」。
         pending.set_manifest(&scope, manifest);

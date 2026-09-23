@@ -73,10 +73,10 @@ pub use registry::{
     ToolProgress, ToolProgressEvent, ToolRegistry, ToolSpec, ToolTrust,
 };
 pub use scripts::{
-    apply_script_refresh, builtin_scripts_dir, list_global_scripts, list_scripts_with_origin,
-    prepare_script_refresh, scripts_dashboard_delete, scripts_dashboard_disable,
-    scripts_dashboard_enable, scripts_dashboard_overview, scripts_dashboard_register,
-    scripts_dashboard_source,
+    apply_script_refresh, builtin_scripts_dir, list_global_scripts, list_scripts_for_features,
+    list_scripts_with_origin, prepare_script_refresh, scripts_dashboard_delete,
+    scripts_dashboard_disable, scripts_dashboard_enable, scripts_dashboard_overview,
+    scripts_dashboard_register, scripts_dashboard_source,
 };
 pub(crate) use skills::{apply_skill_refresh, prepare_skill_refresh};
 pub use web::search_for_webui;
