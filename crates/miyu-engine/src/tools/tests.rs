@@ -550,7 +550,7 @@ async fn restricted_platform_can_load_the_divination_group() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let bundled =
-        std::path::Path::new(miyu_base::WORKSPACE_ROOT).join("src/scripts/personas/default");
+        std::path::Path::new(miyu_base::WORKSPACE_ROOT).join("src/personas/default/scripts");
     let system = paths.system_scripts_dir.join("personas/default");
     std::fs::create_dir_all(&system).unwrap();
     for name in ["divine", "read_clipboard"] {

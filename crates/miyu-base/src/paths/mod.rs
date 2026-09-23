@@ -132,7 +132,7 @@ impl MiyuPaths {
         // 目录,沙盒放行)照样能算出来。任何 mcp-serve 调用都走(默认 home 也可能被
         // 沙盒关着;config_dir 就算和 daemon 的旧布局不一致也无所谓,桥不读它)。
         if std::env::args().any(|arg| arg == "mcp-serve") {
-            let system_scripts_dir = resources::directory(resources::ResourceKind::Scripts);
+            let system_scripts_dir = resources::scripts_anchor();
             return Ok(Self {
                 config_file: config_dir.join("config.jsonc"),
                 skills_dir: config_dir.join("skills"),
@@ -257,7 +257,7 @@ impl MiyuPaths {
         };
         // 内置脚本目录默认在系统前缀下,`MIYU_SYSTEM_SCRIPTS_DIR` 可覆盖——
         // 打包到非标准前缀、或隔离测试时用得上。
-        let system_scripts_dir = resources::directory(resources::ResourceKind::Scripts);
+        let system_scripts_dir = resources::scripts_anchor();
 
         Ok(Self {
             // The canonical home even inside the transient legacy window: that
@@ -382,7 +382,7 @@ impl MiyuPaths {
     /// 扫描根链多出几层、断言全乱。
     pub fn system_personas_dirs(&self) -> Vec<PathBuf> {
         let mut roots: Vec<PathBuf> = self.system_personas_dir().into_iter().collect();
-        if self.system_scripts_dir == resources::directory(resources::ResourceKind::Scripts) {
+        if self.system_scripts_dir == resources::scripts_anchor() {
             for scripts in resources::candidates(resources::ResourceKind::Scripts) {
                 if let Some(personas) = scripts.parent().map(|parent| parent.join("personas")) {
                     if !roots.contains(&personas) {
@@ -651,6 +651,15 @@ impl MiyuPaths {
             t("system scripts directory", "系统 scripts 目录"),
             self.system_scripts_dir.display()
         );
+        // 09-23 起出厂脚本与技能都住人格资源树,上面那个目录多半已不存在(只剩
+        // 旧布局兼容与「资源树的锚」两个用处)。排查「脚本/技能读的是哪份」看这行。
+        if let Some(personas) = self.system_personas_dir() {
+            println!(
+                "{}: {}",
+                t("system persona resources", "系统人格资源目录"),
+                personas.display()
+            );
+        }
     }
 }
 

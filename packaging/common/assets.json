@@ -129,19 +129,6 @@
       ]
     },
     {
-      "id": "scripts",
-      "source_root": "source",
-      "source": "src/scripts",
-      "destination": "share/miyu/scripts",
-      "mode": "0755",
-      "component": "core",
-      "type": "tree",
-      "include": [
-        "*"
-      ],
-      "exclude": []
-    },
-    {
       "id": "personas",
       "source_root": "source",
       "source": "src/personas",

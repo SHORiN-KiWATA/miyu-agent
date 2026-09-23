@@ -18,7 +18,7 @@ fn main() {
     // `install_build_id` 装进来。这份脚本只对上面列出的资源文件 rerun,
     // 这样改上层 crate 一行不会从 base 起全量重编。
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
-    // 开发态资源根(src/memes、src/scripts、assets/…)是 workspace 根,不是本 crate 的目录。
+    // 开发态资源根(src/memes、src/personas、assets/…)是 workspace 根,不是本 crate 的目录。
     let workspace_root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()

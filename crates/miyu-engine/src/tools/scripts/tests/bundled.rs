@@ -10,24 +10,27 @@ const LEGACY_INDEX: &str = include_str!(
     "../../../../../../src/tools/scripts/tests/fixtures/bundled-index-2026-09-05.json"
 );
 
-fn bundled_dir() -> PathBuf {
-    Path::new(miyu_base::WORKSPACE_ROOT).join("src/scripts/personas/default")
-}
-
-/// 出厂人格的资源根:`src/personas/default/`。技能带路的脚本住它下面的
-/// `skills/<技能名>/scripts/`(09-23 起三件试点搬过去了)。
+/// 出厂人格的资源根:`src/personas/default/`。出厂脚本住 `scripts/`(09-23 从
+/// 老的 `src/scripts/personas/default/` 整批搬来),技能带路的脚本住
+/// `skills/<技能名>/scripts/`。
 fn bundled_persona_dir() -> PathBuf {
     Path::new(miyu_base::WORKSPACE_ROOT).join("src/personas/default")
 }
 
-/// 出厂脚本的两处家:老布局的 `src/scripts/personas/default/` 与技能树里的
-/// `skills/<技能名>/scripts/`。头部契约(描述/参数/超时/分组/显示名)两边同一套。
+fn bundled_dir() -> PathBuf {
+    bundled_persona_dir().join("scripts")
+}
+
+/// 出厂脚本的两处家:`scripts/` 与技能树里的 `skills/<技能名>/scripts/`。头部契约
+/// (描述/参数/超时/分组/显示名)两边同一套。
+///
+/// 两处都必须读得到:原来读不到就 `continue`,目录一搬走,依赖它的检查全都
+/// 悄悄少查一大半还照样绿。
 fn bundled_script_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for dir in [bundled_dir(), bundled_persona_dir().join("skills")] {
-        let Ok(read_dir) = std::fs::read_dir(&dir) else {
-            continue;
-        };
+        let read_dir =
+            std::fs::read_dir(&dir).unwrap_or_else(|error| panic!("{}: {error}", dir.display()));
         let mut entries: Vec<PathBuf> = read_dir
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())

@@ -10,7 +10,7 @@
 | 资源形态 | 一个可执行文件 = 一个工具;契约写在紧跟 shebang 的注释头部(`# 键: 值`,`//` 也认) |
 | 头部键 | `Id` `Description`(英文,首句 ≤60 字符)`显示名称`(中文,必填)`Display name` `Parameters` `Timeout`(默认 120,上限 300)`Group` `Argv`(`none`/`flags`)`Trust`(`owner`/`external`)`Permission`(`writes` 默认 / `read-only` / `presentation`)`Example` `Hint` `Requires` `Capabilities`(宿主查询能力,见 host-capabilities.md);别名见 `crates/miyu-engine/src/tools/scripts/header.rs::header_key` |
 | 未知键 | 跳过——新增头部键对旧版本天然向前兼容 |
-| 目录层 | 内置(`/usr/share/miyu/scripts/personas/default/`,只默认人格可见)→ 全局(`~/.miyu/data/scripts/`)→ 人格(`…/personas/<人格>/`);同 id 后者覆盖;每层可有 `index.json` 覆盖层与 `disabled` 名单 |
+| 目录层 | 内置(`/usr/share/miyu/personas/default/scripts/`,只默认人格可见;老位置 `…/scripts/personas/default/` 仍扫)→ 全局(`~/.miyu/data/scripts/`)→ 人格(`…/personas/<人格>/`);同 id 后者覆盖;每层可有 `index.json` 覆盖层与 `disabled` 名单 |
 | 传参 | stdin 一个 JSON 对象;≤64KB 时同份放 `MIYU_ARGS_JSON`;`Argv: flags` 时展开 `--key=value` |
 | 输出 | stdout 给模型;退出码 0 成功,失败非零并输出 `{"ok":false,"error","fix"}`;单流 8MiB 硬截断、20000 字符软截断 |
 | 附件 | `MIYU-IMAGE: <路径> \| <说明>` 整行摘掉交投递层 |

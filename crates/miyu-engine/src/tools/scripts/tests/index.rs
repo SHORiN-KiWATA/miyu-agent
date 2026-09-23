@@ -732,3 +732,35 @@ fn skill_carried_scripts_stay_off_the_tool_face_by_layout() {
         "技能带路的脚本连桩都不该进常驻面"
     );
 }
+
+/// 功能表收全四处的脚本(09-23 出厂脚本整批搬进 `personas/<出厂>/scripts/`):
+/// 老布局出厂目录、新布局出厂目录、技能带路、用户全局层。新布局那一处原来
+/// 没收,搬过去的脚本会从功能表上整批消失。
+#[test]
+fn feature_listing_covers_every_script_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let (_config, paths) = super::test_env(temp.path());
+    let body = "#!/bin/sh\n# Description: Demo\necho\n";
+    // 资源根 = 内置脚本目录(`<temp>/system`)的父目录 = temp。
+    let factory = temp.path().join("personas/default");
+    super::write_script(&builtin_scripts_dir(&paths), "legacy_tool.sh", body);
+    super::write_script(&factory.join("scripts"), "moved_tool.sh", body);
+    super::write_script(
+        &factory.join("skills/demo/scripts"),
+        "carried_tool.sh",
+        body,
+    );
+    super::write_script(&paths.scripts_dir, "user_tool.sh", body);
+
+    let rows = list_scripts_for_features(&paths);
+    let row = |id: &str| {
+        rows.iter()
+            .find(|row| row.0 == id)
+            .map(|row| (row.3, row.4.clone()))
+            .unwrap_or_else(|| panic!("{id} 不在功能表里: {rows:?}"))
+    };
+    assert_eq!(row("legacy_tool"), (true, None));
+    assert_eq!(row("moved_tool"), (true, None));
+    assert_eq!(row("carried_tool"), (true, Some("demo".to_string())));
+    assert_eq!(row("user_tool"), (false, None));
+}

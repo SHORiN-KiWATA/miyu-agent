@@ -55,7 +55,7 @@ pub fn build_id() -> &'static str {
 
 /// 仓库根(编译期由 base 的 `build.rs` 从自己的 manifest 目录算出):测试与开发态
 /// 资源查找用它,别用 `CARGO_MANIFEST_DIR`——拆 crate 之后那是 `crates/<crate>`,
-/// 而资源(`src/scripts`、`assets/`、测试夹具)都留在仓库根。
+/// 而资源(`src/personas`、`assets/`、测试夹具)都留在仓库根。
 pub const WORKSPACE_ROOT: &str = env!("MIYU_WORKSPACE_ROOT");
 
 /// 记忆分词用的紧凑 Jieba 词典(`build.rs` 从 assets/jieba/dict.txt 编成 FST)。

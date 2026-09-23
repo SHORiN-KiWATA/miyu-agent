@@ -153,6 +153,28 @@ impl ResourceInputs {
     }
 }
 
+impl ResourceInputs {
+    /// 内置脚本目录——也是整棵资源树的锚:人格资源根 = 它的父目录下的
+    /// `personas/`(见 `MiyuPaths::system_personas_dir`)。
+    ///
+    /// 不能照 [`Self::directory`] 挑「第一个存在的 `scripts/`」:09-23 起出厂脚本
+    /// 搬进了 `personas/<人格>/scripts/`,新包里不再有 `share/miyu/scripts/`。机器上
+    /// 残留一个旧版的 `/usr/share/miyu/scripts`(开发机上装过旧包)时,老挑法会
+    /// 选中它,人格资源根就被推到那个没有 `personas/` 的旧前缀上,技能和脚本全
+    /// 读空。所以先认「同级有 `personas/` 的」前缀,再退回老挑法。
+    pub(crate) fn scripts_anchor(&self) -> PathBuf {
+        let candidates = self.candidates(ResourceKind::Scripts);
+        candidates
+            .iter()
+            .find(|path| {
+                path.parent()
+                    .is_some_and(|prefix| prefix.join("personas").is_dir())
+            })
+            .cloned()
+            .unwrap_or_else(|| self.directory(ResourceKind::Scripts, Path::new("")))
+    }
+}
+
 pub(crate) fn installation_prefix(executable: Option<&Path>) -> Option<PathBuf> {
     executable
         .and_then(Path::parent)
@@ -169,6 +191,10 @@ pub fn directory(kind: ResourceKind) -> PathBuf {
 pub fn child_directory(kind: ResourceKind, child: &Path) -> PathBuf {
     ResourceInputs::capture().directory(kind, child)
 }
+/// 内置脚本目录(资源树的锚),见 [`ResourceInputs::scripts_anchor`]。
+pub fn scripts_anchor() -> PathBuf {
+    ResourceInputs::capture().scripts_anchor()
+}
 
 #[cfg(test)]
 mod distribution_resources {
@@ -183,6 +209,35 @@ mod distribution_resources {
             source_root: root.join("source"),
         }
     }
+    /// 09-23:出厂脚本搬进 `personas/<人格>/scripts/` 后新包里没有 `scripts/` 了。
+    /// 另一个候选前缀里残留着旧版的 `scripts/` 时,锚点仍要落在有 `personas/` 的
+    /// 那个前缀上——老挑法(第一个存在的 `scripts/`)会选中残留的那个。
+    #[test]
+    fn scripts_anchor_follows_the_prefix_that_has_personas() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut input = inputs(temp.path());
+        // 排除 `/usr/share/miyu`:那是真机路径,有没有要看是哪台机器。
+        input.platform = ResourcePlatform::Macos;
+        input.debug = true;
+        let prefix = temp.path().join("安装 prefix/share/miyu");
+        std::fs::create_dir_all(prefix.join("personas/default/scripts")).unwrap();
+        // 残留的旧版:只有 scripts/,没有 personas/。
+        std::fs::create_dir_all(input.source_root.join("src/scripts")).unwrap();
+        assert_eq!(
+            input.directory(ResourceKind::Scripts, Path::new("")),
+            input.source_root.join("src/scripts"),
+            "老挑法会选中残留的那个"
+        );
+        assert_eq!(input.scripts_anchor(), prefix.join("scripts"));
+
+        // 没有任何前缀带 personas/(还没升级的旧安装):退回老挑法。
+        std::fs::remove_dir_all(prefix.join("personas")).unwrap();
+        assert_eq!(
+            input.scripts_anchor(),
+            input.source_root.join("src/scripts")
+        );
+    }
+
     #[test]
     fn prefix_precedes_system_and_debug_source() {
         let temp = tempfile::tempdir().unwrap();

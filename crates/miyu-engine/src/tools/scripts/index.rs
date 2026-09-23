@@ -324,14 +324,24 @@ pub(crate) fn is_builtin_script(paths: &MiyuPaths, entry: &ScriptEntry) -> bool 
         .is_some_and(|root| path.starts_with(root))
 }
 
-/// 功能表要摆的脚本:内置各层(老布局出厂目录)+ 用户全局层,再加上出厂人格
-/// 技能树里带路的脚本。技能带路的那些在功能表上不单独成行(开关是它那份技能
-/// 那一行),但要把归属技能带回去,好让技能开关连动脚本白名单。
+/// 功能表要摆的脚本:出厂脚本(老布局 + 新布局 `personas/<出厂>/scripts/`)+
+/// 用户全局层,再加上出厂人格技能树里带路的脚本。技能带路的那些在功能表上
+/// 不单独成行(开关是它那份技能那一行),但要把归属技能带回去,好让技能开关
+/// 连动脚本白名单。
+///
+/// 目录顺序与 [`script_scan_root_layers`] 同向(低 → 高,后扫的覆盖先扫的)。
+/// 09-23 出厂脚本整批搬进新布局之前,这里只收老布局那一个目录——搬过去的脚本
+/// 会从功能表上整批消失。
 pub fn list_scripts_for_features(
     paths: &MiyuPaths,
 ) -> Vec<(String, String, String, bool, Option<String>)> {
     let mut rows = Vec::new();
-    let base_dirs = [builtin_scripts_dir(paths), paths.scripts_dir.clone()];
+    let factory = miyu_base::config::persona_scope_name("");
+    let mut base_dirs = vec![builtin_scripts_dir(paths)];
+    for root in paths.system_personas_dirs().into_iter().rev() {
+        base_dirs.push(root.join(&factory).join("scripts"));
+    }
+    base_dirs.push(paths.scripts_dir.clone());
     let base_refs: Vec<&Path> = base_dirs.iter().map(PathBuf::as_path).collect();
     for (id, name, hint, builtin) in list_scripts_with_origin(&base_refs, Some(paths)) {
         rows.push((id, name, hint, builtin, None));

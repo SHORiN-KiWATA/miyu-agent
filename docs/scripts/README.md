@@ -6,7 +6,7 @@
 
 | 层 | 目录 | 说明 |
 |---|---|---|
-| 内置 | `/usr/share/miyu/scripts/personas/default/` | 随包安装，只有默认人格看得到 |
+| 内置 | `/usr/share/miyu/personas/default/scripts/` | 随包安装，只有默认人格看得到（老位置 `/usr/share/miyu/scripts/personas/default/` 仍会被扫描） |
 | 全局 | `~/.miyu/data/scripts/` | 所有人格可见 |
 | 人格 | `~/.miyu/data/scripts/personas/<人格>/` | 只有该人格可见，`manage_script` 默认落在这里 |
 

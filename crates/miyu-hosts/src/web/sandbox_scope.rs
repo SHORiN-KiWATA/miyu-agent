@@ -75,6 +75,10 @@ fn system_read_only(paths: &MiyuPaths) -> Vec<PathBuf> {
     let mut read_only: Vec<PathBuf> = SYSTEM_READ_ONLY.iter().map(PathBuf::from).collect();
     read_only.push(paths.scripts_dir.clone());
     read_only.push(paths.system_scripts_dir.clone());
+    // 人格资源树(出厂脚本、技能与技能带路的脚本,09-23 起都住这儿):不放行的话
+    // 沙盒会话读不到技能、也执行不了出厂脚本。装在 `/usr`、`/opt` 下的本来就在
+    // 上面那张系统表里;`~/.local` 前缀与开发树不在,得点名。
+    read_only.extend(paths.system_personas_dirs());
     // 用 miyu_executable()(剥掉 `/proc/self/exe` 的「 (deleted)」后缀)而不是裸
     // current_exe():部署/重建把二进制换掉后,运行中 daemon 的 current_exe() 读成
     // `.../miyu (deleted)`,那条会被下面 retain(exists) 剔掉→沙盒不放行真二进制的
@@ -274,5 +278,22 @@ pub(in crate::web) fn admin_scope(
     TurnScope {
         workspace: root,
         policy: Some(Arc::new(policy)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 人格资源树(技能、出厂脚本)在沙盒里要读得到——`~/.local` 前缀与开发树
+    /// 不在系统表里,只放行老的 `scripts/` 的话,09-23 搬家后技能与出厂脚本在
+    /// 沙盒会话里全部失效。
+    #[test]
+    fn the_persona_resource_tree_is_readable_in_the_sandbox() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = MiyuPaths::new().unwrap();
+        paths.system_scripts_dir = temp.path().join("scripts");
+        let personas = paths.system_personas_dir().unwrap();
+        assert!(system_read_only(&paths).contains(&personas));
     }
 }

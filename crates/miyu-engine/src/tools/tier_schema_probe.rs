@@ -119,7 +119,7 @@ fn bundled_tool_face_stays_within_its_token_budget() {
         .collect();
 
     let scripts_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/scripts/personas/default");
+        std::path::Path::new(miyu_base::WORKSPACE_ROOT).join("src/personas/default/scripts");
     let entries = std::fs::read_dir(&scripts_dir)
         .unwrap_or_else(|error| panic!("{}: {error}", scripts_dir.display()));
     for entry in entries {

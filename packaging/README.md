@@ -78,7 +78,7 @@ voice，核对包内资源清单、自报版本与真实模型输出。测试包
 | `share/miyu/fonts/` | Noto CJK、Noto Emoji、JetBrains Mono；发布资产已包含 | 渲染可能退回文本 |
 | `share/miyu/models/<id>/` | 本地 embedding 模型及 tokenizer | 语义检索退回关键词 |
 | `share/miyu/memes/` | 内置表情库 | 内置表情不可用 |
-| `share/miyu/scripts/` | 内置脚本 | 对应脚本不可用 |
+| `share/miyu/personas/<人格>/scripts/` | 出厂脚本（09-23 起；老位置 `share/miyu/scripts/personas/<人格>/` 仍会被扫描，新包不再安装） | 对应脚本不可用 |
 | `share/miyu/personas/<人格>/skills/<技能名>/` | 内置技能（`SKILL.md` 与它带路的 `scripts/`，09-23 起读盘加载） | 对应技能静默消失，技能脚本调不到 |
 | `share/miyu/default-kb/` | 项目 kb、固定 Wiki 和来源 manifest | 默认知识库不可用 |
 | `share/licenses/miyu*/` | 项目、字体、模型及语音依赖许可证 | 包验收失败 |

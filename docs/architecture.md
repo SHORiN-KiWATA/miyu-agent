@@ -268,7 +268,7 @@ state/cache/models。目录名用用户名，账号 id 另存账号表，princip
 | `miyu-hosts` | 场所与展示 | platforms / runtime / web / daemon / render |
 
 依赖只能向下(Cargo 自己保证无环);层内规则仍由 `test_scripts/arch_dep_check.py` 的 `TIERS` 与 `FORBIDDEN` 管。
-非 rs 资源(`src/prompts/*.md`、`src/memes`、`src/scripts`、`src/personas/**`、`assets/`、`web/`)留在原处;
+非 rs 资源(`src/prompts/*.md`、`src/memes`、`src/personas/**`、`assets/`、`web/`)留在原处;
 `build.rs` 两份:根包的只算构建 id(唯一对整棵源码树 rerun 的脚本,入口 `install_build_id` 装入,下层运行时读 `miyu_base::build_id()`);`crates/miyu-base/build.rs` 只烘焙资源、只对资源文件 rerun,导出
 `JIEBA_INDEX` 与开发态资源根 `MIYU_WORKSPACE_ROOT`。前置工作:先把 12 条低层引高层的边烧尽
 (`docs/plan/2026-09-16-crate-split-burndown.md`),再按层切(`docs/plan/2026-09-16-crate-split.md`)。
