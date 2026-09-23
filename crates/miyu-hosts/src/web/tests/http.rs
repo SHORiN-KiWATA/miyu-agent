@@ -531,7 +531,10 @@ async fn session_context_reports_the_sessions_cumulative_including_subagents() {
         .unwrap();
 
     let snapshot = session_state_for(&state, &other.session_id).unwrap();
-    assert_eq!(snapshot.cumulative_tokens, 500, "子代理的花销要算进它的会话累计");
+    assert_eq!(
+        snapshot.cumulative_tokens, 500,
+        "子代理的花销要算进它的会话累计"
+    );
     let axum::Json(payload) = session_context_http(
         axum::extract::State(state.clone()),
         HeaderMap::new(),
