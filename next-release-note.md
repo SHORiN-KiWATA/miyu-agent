@@ -13,6 +13,7 @@
 
 ## 修复
 
+- 知识库设置里不会再说「未配置 Embedding」了。主页明明写着「本地 · bge-small-zh…」，「人格和功能 → 知识库」（以及网页设置 → 插件 → 知识库）却说没配置——那一行读的是早就不用的旧设置项，知识库实际一直在用主页配的那个模型。现在这一行显示的就是主页那个全局 Embedding 模型：在 `miyu config` 里回车直接进主页同一个 Embedding 菜单，网页里点「去设置」跳到「通用 → Embedding」。知识库表单里的「语义最低分」「Embedding 超时秒数」也不摆了：改了从来不生效，真正起作用的是全局 Embedding 高级设置里的同名项。`miyu kb stats` 报的也改成实际在用的模型。网页那部分**需要重启 daemon**。
 - 终端集成在 macOS 上能用了。hook 里直接调 `miyu`，PATH 上找不到它时自然语言输入会被悄悄忽略——而 macOS 上 Homebrew 装在 `/opt/homebrew/bin`，没配过 `brew shellenv` 的 shell（fish 常见）找不到。现在 PATH 上没有时 hook 会去 Homebrew、`~/.local/bin`、`~/.cargo/bin` 等常见位置找；哪儿都没有的话，装的时候会提示怎么把它加进 PATH。bash 在 macOS 上改写进 `~/.bash_profile`（macOS 的终端开的是登录 shell，不读 `~/.bashrc`，以前写进去等于没装）；zsh 跟着 `ZDOTDIR` 走。已经装过的 hook 升级后会自动更新；macOS 上用 bash 的需要重跑一次 `miyu bash-init`。
 - 受限（沙盒）会话里读得到技能和出厂脚本了。Miyu 装在 `~/.local` 这类非系统前缀下、或从源码树跑时，沙盒只放行了老的脚本目录，技能和搬进新位置的脚本在沙盒会话里都用不了。**需要重启 daemon**。
 - 机器上残留着旧版的 `/usr/share/miyu/scripts` 时，不会再把脚本和技能读错位置——会优先选带新布局的那一份。

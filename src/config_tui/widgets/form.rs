@@ -100,6 +100,27 @@ pub(in crate::config_tui) fn run_form(
     run_form_from(ui, title, fields, false)
 }
 
+/// 一张表单是怎么结束的。
+///
+/// `Link` = 回车落在了跳转行（[`Field::link`]）上。表单自己不认识那一行指向哪
+/// 个菜单，把下标交还调用方：调用方打开菜单、刷新那一行的显示值，再用
+/// [`run_form_linked`] 从同一行接着跑同一份 `fields`——没按保存的改动不会丢。
+pub(in crate::config_tui) enum FormOutcome {
+    Saved,
+    Cancelled,
+    Link(usize),
+}
+
+/// 带跳转行的表单。`selected` 是光标起始行，从跳转菜单回来时传那一行的下标。
+pub(in crate::config_tui) fn run_form_linked(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    selected: usize,
+) -> Result<FormOutcome> {
+    run_form_outcome(ui, title, fields, false, selected)
+}
+
 /// `start_editing` puts the caret in the first field straight away, for forms
 /// reached from a menu row that already showed the value: the row said what it
 /// was, Enter said "change it", so a second Enter to begin typing is a keypress
@@ -118,7 +139,20 @@ pub(in crate::config_tui) fn run_form_from(
     fields: &mut [Field],
     start_editing: bool,
 ) -> Result<bool> {
-    let mut selected = 0usize;
+    Ok(matches!(
+        run_form_outcome(ui, title, fields, start_editing, 0)?,
+        FormOutcome::Saved
+    ))
+}
+
+fn run_form_outcome(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    start_editing: bool,
+    start_selected: usize,
+) -> Result<FormOutcome> {
+    let mut selected = start_selected.min(fields.len() + 1);
     let mut fcitx = FcitxState::new();
     // Only a plain text field can be typed into directly; the others open
     // their own picker on Enter, so landing "inside" them would mean typing
@@ -128,6 +162,7 @@ pub(in crate::config_tui) fn run_form_from(
             !field.boolean
                 && !field.textarea
                 && !field.modalities
+                && !field.link
                 && field.multi_choices.is_empty()
                 && field.choices.is_empty()
         });
@@ -145,13 +180,20 @@ pub(in crate::config_tui) fn run_form_from(
                 fcitx.leave_editing();
                 editing = false;
             }
-            KeyCode::Esc | KeyCode::Char('q') if !editing => return Ok(false),
+            KeyCode::Esc | KeyCode::Char('q') if !editing => return Ok(FormOutcome::Cancelled),
             KeyCode::Enter if editing => {
                 fcitx.leave_editing();
                 editing = false;
             }
-            KeyCode::Enter if !editing && selected == fields.len() => return Ok(true),
-            KeyCode::Enter if !editing && selected == fields.len() + 1 => return Ok(false),
+            KeyCode::Enter if !editing && selected == fields.len() => {
+                return Ok(FormOutcome::Saved)
+            }
+            KeyCode::Enter if !editing && selected == fields.len() + 1 => {
+                return Ok(FormOutcome::Cancelled)
+            }
+            KeyCode::Enter if !editing && fields[selected].link => {
+                return Ok(FormOutcome::Link(selected))
+            }
             KeyCode::Enter if !editing && fields[selected].boolean => {
                 let value = select_bool(
                     ui,
@@ -205,7 +247,7 @@ pub(in crate::config_tui) fn run_form_from(
                 edit_textarea(ui, &mut fields[selected].value)?;
                 cursors[selected] = fields[selected].value.chars().count();
                 if !fields[selected].sensitive {
-                    return Ok(true);
+                    return Ok(FormOutcome::Saved);
                 }
             }
             KeyCode::Enter if !editing => {
@@ -214,7 +256,7 @@ pub(in crate::config_tui) fn run_form_from(
                     editing = true;
                 }
             }
-            KeyCode::Char('s') if !editing => return Ok(true),
+            KeyCode::Char('s') if !editing => return Ok(FormOutcome::Saved),
             KeyCode::Up | KeyCode::Char('k') if !editing => selected = selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') if !editing => {
                 selected = (selected + 1).min(fields.len() + 1)
@@ -329,6 +371,9 @@ pub(in crate::config_tui) fn run_form_without_buttons(
                     return Ok(());
                 }
             }
+            // 跳转行要调用方接手（`run_form_linked`），这里没有出口交还——至少
+            // 别把它当成可以打字的文本框。
+            KeyCode::Enter if !editing && fields[selected].link => {}
             KeyCode::Enter if !editing => {
                 if !fields[selected].boolean {
                     fcitx.enter_editing();
@@ -718,6 +763,10 @@ pub(in crate::config_tui) struct Field {
     pub(in crate::config_tui) choices: Vec<String>,
     pub(in crate::config_tui) empty_choice_label: &'static str,
     pub(in crate::config_tui) raw_choice_labels: bool,
+    /// 跳转行：值只是展示，回车交给调用方开另一个菜单（[`FormOutcome::Link`]）。
+    /// 给「真相在别处」的设置用——在这里复制一份可编辑的值，两处迟早对不上
+    /// （09-23 知识库那行 embedding 就是这么显示「未配置」的）。
+    pub(in crate::config_tui) link: bool,
 }
 
 impl Field {
@@ -735,6 +784,7 @@ impl Field {
             choices: Vec::new(),
             empty_choice_label: t("Use current provider", "使用当前 Provider"),
             raw_choice_labels: false,
+            link: false,
         }
     }
 
@@ -752,6 +802,7 @@ impl Field {
             choices: Vec::new(),
             empty_choice_label: t("Use current provider", "使用当前 Provider"),
             raw_choice_labels: false,
+            link: false,
         }
     }
 
@@ -769,6 +820,7 @@ impl Field {
             choices: Vec::new(),
             empty_choice_label: t("Use current provider", "使用当前 Provider"),
             raw_choice_labels: false,
+            link: false,
         }
     }
 
@@ -783,6 +835,13 @@ impl Field {
         Self {
             dialog_list: true,
             ..Self::textarea(label, value)
+        }
+    }
+
+    pub(in crate::config_tui) fn link(label: &'static str, value: String) -> Self {
+        Self {
+            link: true,
+            ..Self::new(label, value)
         }
     }
 
@@ -815,6 +874,7 @@ impl Field {
             choices: Vec::new(),
             empty_choice_label: t("Use current provider", "使用当前 Provider"),
             raw_choice_labels: false,
+            link: false,
         }
     }
 

@@ -855,25 +855,6 @@ pub(in crate::config_tui) fn thinking_variant_field(
     .empty_choice_label("default")
 }
 
-pub(in crate::config_tui) fn provider_model_choice_values(
-    config: &AppConfig,
-    include_current: bool,
-) -> Vec<String> {
-    let mut choices = vec![String::new()];
-    if include_current {
-        choices.push(format!(
-            "{OPENCODE_PROVIDER_ID}\t{OPENCODE_DEFAULT_VISION_MODEL}"
-        ));
-    }
-    choices.extend(
-        config
-            .provider_model_choices()
-            .into_iter()
-            .map(|choice| choice.value()),
-    );
-    choices
-}
-
 pub(in crate::config_tui) fn vision_provider_model_choice_values(
     config: &AppConfig,
 ) -> Vec<String> {
@@ -1030,20 +1011,6 @@ pub(in crate::config_tui) fn vision_provider_value(config: &AppConfig) -> String
             .unwrap_or_else(|_| vision.vision_provider_id.clone())
     } else {
         format!("{}\t{}", vision.vision_provider_id, vision.vision_model)
-    }
-}
-
-pub(in crate::config_tui) fn kb_embedding_provider_value(config: &AppConfig) -> String {
-    let kb = &config.plugins.knowledge_base;
-    if kb.embedding_provider_id.trim().is_empty() {
-        String::new()
-    } else if kb.embedding_model.trim().is_empty() {
-        config
-            .provider(Some(kb.embedding_provider_id.trim()))
-            .map(|provider| format!("{}\t{}", provider.id, provider.default_model))
-            .unwrap_or_else(|_| kb.embedding_provider_id.clone())
-    } else {
-        format!("{}\t{}", kb.embedding_provider_id, kb.embedding_model)
     }
 }
 

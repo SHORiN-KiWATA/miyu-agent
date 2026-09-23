@@ -990,6 +990,50 @@ window.MiyuSettings = (() => {
     return anchor;
   }
 
+  /* 跳转行:值的真相在别的页,这里只展示当前值 + 一个跳过去的按钮。不复制一份
+     可编辑的值——两处迟早对不上(09-23 知识库那行 embedding 就是这么显示
+     「未配置」的)。summary 与 TUI 的 embedding_model_label 同一口径。 */
+  const LINK_SUMMARIES = {
+    embedding: () => {
+      if (generalValue("embedding.enabled") === false) return t("已关闭");
+      const backend = generalValue("embedding.backend");
+      const provider = String(cfg("embedding.provider_id", "") || "").trim();
+      const model = String(cfg("embedding.model", "") || "").trim();
+      if (backend === "remote" || (backend === "auto" && provider && model)) {
+        return provider && model ? `${provider}/${model}` : t("远程:未设置");
+      }
+      return t("本地 · {model}", { model: String(generalValue("embedding.local_model") || "").trim() });
+    }
+  };
+
+  /* 通用页字段的当前值,草稿里没有就回落 schema 默认值:整段等于默认值的配置
+     不落盘(embedding 就是),新装机器的草稿里压根没有这一项。 */
+  function generalValue(path) {
+    const value = cfg(path);
+    if (value !== undefined) return value;
+    for (const section of schema().general || []) {
+      const field = [...(section.fields || []), ...(section.advanced || [])].find((item) => item.path === path);
+      if (field) return field.default;
+    }
+    return undefined;
+  }
+
+  function goToSection(target) {
+    closeDrawer();
+    ctx.setSettingsView(target.view);
+    // 切页会重放入场动画(卡片从下方飘上来),滚动按动画途中的位置算,落定后
+    // 卡片标题被切掉一截。跳转是「带去某张卡」,不放入场动画。
+    pages.get(target.view)?.root.classList.add("is-settled");
+    document.querySelector(`#settings-${target.view} [data-section="${target.section}"]`)?.scrollIntoView({ block: "start" });
+  }
+
+  function linkControl(field) {
+    const summary = LINK_SUMMARIES[field.summary]?.() || "";
+    return el("span.st-unit-wrap", null,
+      el("span.st-link-value", { text: summary, title: summary }),
+      button(t("去设置"), { small: true, onClick: () => goToSection(field.target) }));
+  }
+
   /* ───────────────────────── schema 驱动的字段 ───────────────────────── */
 
   /* binding: { get(), set(value) };field 见 settings-schema.js 顶部注释。 */
@@ -1064,6 +1108,8 @@ window.MiyuSettings = (() => {
         });
       case "model-ref":
         return modelRefControl(() => binding.get(), (next) => binding.set(next), { capability: field.capability || null, emptyLabel: field.emptyLabel });
+      case "link":
+        return linkControl(field);
       case "rate-limit":
         return rateLimitControl(() => binding.get(), (next) => binding.set(next), field);
       case "session-limits":
@@ -2112,6 +2158,8 @@ window.MiyuSettings = (() => {
       }
       const node = card(rows, { title: section.title, description: section.description || "" });
       node.style.setProperty("--i", String(index));
+      // 跳转行(kind: "link")按 section id 找落点。
+      node.dataset.section = section.id;
       root.append(node);
     });
   }

@@ -25,10 +25,33 @@ pub(in crate::config_tui) fn edit_plugin_detail(
     if fields.is_empty() {
         return Ok(());
     }
-    if !run_form(ui, &format!(" {display_name} "), &mut fields)? {
-        return Ok(());
+    let title = format!(" {display_name} ");
+    let mut selected = 0;
+    loop {
+        match run_form_linked(ui, &title, &mut fields, selected)? {
+            FormOutcome::Saved => return apply_plugin_fields(config, id, &fields),
+            FormOutcome::Cancelled => return Ok(()),
+            FormOutcome::Link(index) => {
+                follow_plugin_link(ui, config, id, &mut fields[index])?;
+                selected = index;
+            }
+        }
     }
-    apply_plugin_fields(config, id, &fields)
+}
+
+/// 跳转行指向的菜单。真相在那个菜单背后的配置里，这里只负责打开它、回来后把
+/// 这一行的显示值刷新成新的真相。
+fn follow_plugin_link(
+    ui: &mut Ui,
+    config: &mut AppConfig,
+    id: &str,
+    field: &mut Field,
+) -> Result<()> {
+    if id == "knowledge_base" {
+        edit_embedding_model(ui, config)?;
+        field.value = embedding_model_label(config);
+    }
+    Ok(())
 }
 
 pub(in crate::config_tui) fn plugin_fields(config: &AppConfig, id: &str) -> Vec<Field> {
@@ -262,12 +285,14 @@ pub(in crate::config_tui) fn plugin_fields(config: &AppConfig, id: &str) -> Vec<
                 t("Enable embedding", "启用 Embedding"),
                 config.plugins.knowledge_base.embedding_enabled,
             ),
-            Field::new(
-                t("Embedding provider/model", "Embedding Provider/模型"),
-                kb_embedding_provider_value(config),
-            )
-            .choices_owned(provider_model_choice_values(config, false))
-            .empty_choice_label(t("Embedding not configured", "未配置 Embedding")),
+            // 知识库用的就是全局那份 embedding（08-10 起，`Embedder::from_config`）。
+            // 这一行原先绑着搬家前的 `plugins.knowledge_base.embedding_*`：运行时
+            // 不读它，于是用内置 bge 时主页写着「本地 · bge」，这里却说「未配置」
+            // （09-23 用户反馈）。改成展示全局值、回车进主页同一个菜单。
+            Field::link(
+                t("Embedding model (global)", "Embedding 模型（全局）"),
+                embedding_model_label(config),
+            ),
             Field::new(
                 t("Semantic chunk size", "语义块大小"),
                 config
@@ -288,24 +313,15 @@ pub(in crate::config_tui) fn plugin_fields(config: &AppConfig, id: &str) -> Vec<
                 t("Semantic candidates", "语义候选数"),
                 config.plugins.knowledge_base.semantic_top_k.to_string(),
             ),
-            Field::new(
-                t("Minimum semantic score", "语义最低分"),
-                config.plugins.knowledge_base.semantic_min_score.to_string(),
-            ),
+            // 「语义最低分」「Embedding 超时秒数」不再摆：运行时读的是全局 embedding
+            // 高级设置里的同名项，这里改了不生效（用户 09-23 拍板隐藏，字段留着给
+            // 老配置迁移读）。
             Field::new(
                 t("Strong keyword match threshold", "关键词强命中阈值"),
                 config
                     .plugins
                     .knowledge_base
                     .keyword_strong_score_threshold
-                    .to_string(),
-            ),
-            Field::new(
-                t("Embedding timeout (seconds)", "Embedding 超时秒数"),
-                config
-                    .plugins
-                    .knowledge_base
-                    .embedding_timeout_seconds
                     .to_string(),
             ),
         ],
@@ -484,18 +500,13 @@ pub(in crate::config_tui) fn apply_plugin_fields(
             config.plugins.knowledge_base.max_file_size_kb = fields[6].value.trim().parse()?;
             config.plugins.knowledge_base.upload_tool_enabled = parse_bool_field(&fields[7].value)?;
             config.plugins.knowledge_base.embedding_enabled = parse_bool_field(&fields[8].value)?;
-            let (provider_id, model) = parse_provider_model_choice(&fields[9].value);
-            config.plugins.knowledge_base.embedding_provider_id = provider_id;
-            config.plugins.knowledge_base.embedding_model = model;
+            // fields[9] 是跳转行，只展示全局 embedding，不写回任何东西。
             config.plugins.knowledge_base.semantic_chunk_chars = fields[10].value.trim().parse()?;
             config.plugins.knowledge_base.semantic_chunk_overlap =
                 fields[11].value.trim().parse()?;
             config.plugins.knowledge_base.semantic_top_k = fields[12].value.trim().parse()?;
-            config.plugins.knowledge_base.semantic_min_score = fields[13].value.trim().parse()?;
             config.plugins.knowledge_base.keyword_strong_score_threshold =
-                fields[14].value.trim().parse()?;
-            config.plugins.knowledge_base.embedding_timeout_seconds =
-                fields[15].value.trim().parse()?;
+                fields[13].value.trim().parse()?;
         }
         "archlinux" => {
             config.plugins.archlinux.enabled = parse_bool_field(&fields[0].value)?;

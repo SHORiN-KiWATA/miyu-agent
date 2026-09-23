@@ -6,10 +6,12 @@
 // 字段描述符:
 //   { key|path, label, hint?, kind, min?, max?, step?, unit?, integer?, choices?,
 //     default, optional?, nullable?, hidden?, providerKey?, modelKey?, capability?,
-//     showWhen? }
+//     showWhen?, summary?, target? }
 // kind ∈ toggle | number | text | textarea | select | secret | secret-list |
 //        model-pool | model-ref | id-list | string-list | kv | rate-limit |
-//        session-limits | identity-mappings | u32-list | json
+//        session-limits | identity-mappings | u32-list | json | link
+// link = 值的真相在别的页:只展示 summary 算出的当前值,按钮跳到
+//        target { view, section }(settings.js 的 LINK_SUMMARIES / goToSection)。
 "use strict";
 
 (function () {
@@ -1556,15 +1558,16 @@
         },
         { key: "upload_tool_enabled", label: t("允许 AI 上传"), kind: "toggle", default: true },
         { key: "embedding_enabled", label: t("启用语义检索"), hint: t("用全局 Embedding 模型给知识库建向量索引"), kind: "toggle", default: true },
+        // 知识库用的就是全局那份 embedding。这里原先是绑着旧字段
+        // plugins.knowledge_base.embedding_* 的 model-ref:运行时不读它,用内置
+        // bge 时显示「未配置」(09-23 用户反馈)。改成展示全局值 + 跳过去。
         {
           key: "embedding_model",
-          label: t("Embedding Provider/模型"),
-          hint: t("留空 = 未配置 Embedding(回退全局 embedding)"),
-          kind: "model-ref",
-          providerKey: "embedding_provider_id",
-          modelKey: "embedding_model",
-          capability: "embedding",
-          default: { provider_id: "", model: "" },
+          label: t("Embedding 模型(全局)"),
+          hint: t("知识库、记忆联想、表情包共用这一个模型"),
+          kind: "link",
+          summary: "embedding",
+          target: { view: "general", section: "embedding" },
         },
         {
           key: "semantic_chunk_chars",
@@ -1594,10 +1597,13 @@
           unit: t("条"),
           default: 5,
         },
+        // 「语义最低分」「Embedding 超时秒数」运行时读的是全局 Embedding 里的同名项,
+        // 这里改了不生效(用户 09-23 拍板隐藏;字段留着给老配置迁移读)。
         {
           key: "semantic_min_score",
           label: t("语义最低分"),
           kind: "number",
+          hidden: true,
           min: 0,
           max: 1,
           step: 0.01,
@@ -1616,6 +1622,7 @@
           key: "embedding_timeout_seconds",
           label: t("Embedding 超时秒数"),
           kind: "number",
+          hidden: true,
           integer: true,
           min: 1,
           unit: t("秒"),

@@ -9857,6 +9857,8 @@ body.miyu-paused *::after {
 .st-input::placeholder, .st-textarea::placeholder, .st-chips-input::placeholder { color: var(--text-faint); }
 .st-unit-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .st-unit { color: var(--text-faint); font-size: var(--fs-micro); white-space: nowrap; }
+.st-link-value { min-width: 0; overflow: hidden; color: var(--text-soft); font-size: var(--fs-ui); white-space: nowrap; text-overflow: ellipsis; }
+.st-card[data-section] { scroll-margin-top: 20px; }
 .st-select-wrap { position: relative; display: inline-flex; min-width: 0; }
 .st-select { appearance: none; min-height: 34px; padding: 6px 30px 6px 10px; border: 0; border-radius: var(--radius); outline: 0; background: var(--surface-2); color: var(--text); font-size: var(--fs-ui); cursor: pointer; max-width: 260px; transition: box-shadow 160ms ease; }
 .st-select-caret { position: absolute; right: 9px; top: 50%; width: 14px; height: 14px; transform: translateY(-50%); color: var(--text-faint); pointer-events: none; }

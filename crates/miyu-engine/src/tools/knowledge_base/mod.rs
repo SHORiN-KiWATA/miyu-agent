@@ -160,6 +160,7 @@ impl KnowledgeBase {
         let semantic = self.semantic_conn()?;
         let chunks: i64 =
             semantic.query_row("SELECT COUNT(*) FROM semantic_chunks", [], |row| row.get(0))?;
+        let embedder = self.embedder();
         Ok(json!({
             "ok": true,
             "root": self.root.display().to_string(),
@@ -168,8 +169,14 @@ impl KnowledgeBase {
             "total_size_kb": (files.iter().map(|file| file.size_bytes).sum::<i64>() as f64 / 1024.0 * 10.0).round() / 10.0,
             "semantic_chunks": chunks,
             "embedding_enabled": self.config.plugins.knowledge_base.embedding_enabled,
-            "embedding_provider_id": self.config.plugins.knowledge_base.embedding_provider_id,
-            "embedding_model": self.config.plugins.knowledge_base.embedding_model,
+            // 与 WebUI 知识库面板同一口径（dashboard_overview）：能不能造出
+            // Embedder。原先报的是 `plugins.knowledge_base.embedding_*` 旧字段，
+            // 运行时不读它，用内置 bge 时这里是两个空串（09-23）。
+            "embedding_configured": embedder.is_some(),
+            "embedding_model_id": embedder
+                .as_ref()
+                .map(|embedder| embedder.model_id().to_string())
+                .unwrap_or_default(),
         }))
     }
 }
@@ -219,6 +226,26 @@ async fn tool_find_readonly(args: Value, config: AppConfig, paths: MiyuPaths) ->
 mod tests {
     use super::*;
     use miyu_base::paths::MiyuPaths;
+
+    /// `miyu kb stats` 报的是实际在用的 embedding，不是旧字段
+    /// `plugins.knowledge_base.embedding_*`（09-23：用内置 bge 时那两个是空串）。
+    #[test]
+    fn stats_report_the_effective_embedding_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let mut config = AppConfig::default();
+        let provider = config.providers[0].id.clone();
+        config.embedding.provider_id = provider.clone();
+        config.embedding.model = "bge-m3".to_string();
+        assert!(config
+            .plugins
+            .knowledge_base
+            .embedding_provider_id
+            .is_empty());
+        let stats = KnowledgeBase::new(config, paths).unwrap().stats().unwrap();
+        assert_eq!(stats["embedding_configured"], true);
+        assert_eq!(stats["embedding_model_id"], format!("{provider}/bge-m3"));
+    }
 
     #[test]
     fn upload_guard_only_blocks_miyu_own_assets() {
