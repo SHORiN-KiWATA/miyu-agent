@@ -274,10 +274,44 @@ pub const COMPACT_START_MARKER: &str = "\x1b]1337;miyu-compact-start\x07";
 /// 真终端不认得就整条吞掉。
 pub const SOFT_WRAP_MARKER: &str = "\x1b]1337;miyu-soft-wrap\x07";
 
+/// 「活动区从这儿重画」：全屏下转轮每一帧的开头。
+///
+/// 第一帧在光标所在行立锚；之后每帧回到锚、把它以下整段截掉再写。原来是「上移
+/// N 行、逐行比对重写」——N 由转轮按它以为的行数算，缓冲却只让最近 256 行可写、
+/// 改窗口宽度时又按另一套口径重新折行，两边一对不上就写歪：同一行「思考中」
+/// 画出好几份、中间大段空白，而且错位会一直留在缓冲里（用户 09-23）。回到锚点
+/// 重写，就没有行数可数错。inline 不发：真终端没有锚可回。
+pub const LIVE_REWIND_MARKER: &str = "\x1b]1337;miyu-live-rewind\x07";
+
+/// 回到锚点下第 `from` 条逻辑行重画：它上面那几行这一帧没变，原样留着，缓冲只重写
+/// 变了的那一截——整段重写的话，一轮跑到上百步时缓冲每一拍要把几百行逐字重写一遍
+/// （09-23 实测 45 步时每帧 2.6ms，debug）。`0` 就是 [`LIVE_REWIND_MARKER`]。
+pub fn live_rewind_marker_at(from: usize) -> String {
+    if from == 0 {
+        return LIVE_REWIND_MARKER.to_string();
+    }
+    format!("\x1b]1337;miyu-live-rewind={from}\x07")
+}
+
+/// 「活动区收掉」：回到锚、截掉锚以下、拔锚。转轮收尾时发，接下来的输出从锚那一行写起。
+pub const LIVE_END_MARKER: &str = "\x1b]1337;miyu-live-end\x07";
+
 /// OSC 载荷 → 块 id。`Term` 解析时用。
 pub fn parse_marker(payload: &str) -> Option<BlockMarker> {
     if payload == "miyu-block-end" {
         return Some(BlockMarker::End);
+    }
+    if payload == "miyu-live-rewind" {
+        return Some(BlockMarker::LiveRewind { from: 0 });
+    }
+    if let Some(from) = payload.strip_prefix("miyu-live-rewind=") {
+        return from
+            .parse()
+            .ok()
+            .map(|from| BlockMarker::LiveRewind { from });
+    }
+    if payload == "miyu-live-end" {
+        return Some(BlockMarker::LiveEnd);
     }
     if payload == "miyu-turn-start" {
         return Some(BlockMarker::TurnStart);
@@ -313,6 +347,12 @@ pub enum BlockMarker {
     CompactStart,
     /// 紧跟着的那个换行是折出来的。见 [`SOFT_WRAP_MARKER`]。
     SoftWrap,
+    /// 活动区回到锚点下第 `from` 条逻辑行重画。见 [`live_rewind_marker_at`]。
+    LiveRewind {
+        from: usize,
+    },
+    /// 活动区收掉。见 [`LIVE_END_MARKER`]。
+    LiveEnd,
 }
 
 /// 一段纯文本按块的样式切成行。空块返回空 `Vec`，`register` 那边会当作

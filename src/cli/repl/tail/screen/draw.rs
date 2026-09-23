@@ -73,7 +73,7 @@ impl Screen {
             .saturating_add(self.cursor_rows().saturating_sub(self.scroll))
             .min(usize::from(tail_top));
         let row = u16::try_from(bottom).unwrap_or(0);
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         // 活动区那几行擦掉，外部输出才不会跟旧的输入框叠在一起。
         for offset in row..self.rows {
             queue!(stdout, MoveTo(0, offset), Clear(ClearType::CurrentLine))?;
@@ -209,7 +209,7 @@ impl Screen {
         }
         self.row_keys.resize(usize::from(body), None);
 
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         if std::env::var_os("MIYU_SCREEN_TRACE").is_some() {
             queue!(
                 stdout,
@@ -227,25 +227,46 @@ impl Screen {
             self.needs_clear = false;
         }
         // 正文顶部对齐（`top_pad` = 0）。
-        if let Some(rows) = self.banner.clone() {
-            // 空会话:正文区就是 banner 那几行,逐行 diff 往上写。
+        if let Some(banner) = self.banner.clone() {
+            // 空会话:正文区就是 banner 那几行,逐行比对往上写。
+            //
+            // 这一行上一帧画的就是上一版大厅的同一行时,只按格子补变了的星星——
+            // 整行重写一帧 15KB、每秒三百多 KB(09-23 实测),终端被迫跟着重解析。
+            // 对不上(整屏擦过、被浮层盖过标了哨兵)就整行重写,不在不知道底色的
+            // 地方打补丁。
+            let shown = self.banner_shown.take();
+            let no_spans = Vec::new();
             for y in 0..body {
                 let slot = usize::from(y);
-                let line = rows.get(slot).cloned().unwrap_or_default();
+                let line = banner.text.get(slot).map(String::as_str).unwrap_or("");
                 if let Some(key) = self.row_keys.get_mut(slot) {
                     *key = None;
                 }
                 if self.painted[slot] == line {
                     continue;
                 }
-                queue!(
-                    stdout,
-                    MoveTo(0, y),
-                    Clear(ClearType::UntilNewLine),
-                    Print(&line)
-                )?;
-                self.painted[slot] = line;
+                let base = shown.as_ref().filter(|shown| {
+                    shown.text.get(slot).map(String::as_str).unwrap_or("") == self.painted[slot]
+                });
+                match base {
+                    Some(shown) => queue!(
+                        stdout,
+                        Print(super::cells::patch_row(
+                            shown.spans.get(slot).unwrap_or(&no_spans),
+                            banner.spans.get(slot).unwrap_or(&no_spans),
+                            y,
+                        ))
+                    )?,
+                    None => queue!(
+                        stdout,
+                        MoveTo(0, y),
+                        Clear(ClearType::UntilNewLine),
+                        Print(line)
+                    )?,
+                }
+                self.painted[slot] = line.to_string();
             }
+            self.banner_shown = Some(banner);
             self.paint_toast(&mut stdout, body)?;
             self.paint_command_hint(&mut stdout, body)?;
             stdout.flush()?;
@@ -306,7 +327,7 @@ impl Screen {
     /// `paint` 一起画，下一笔就被输入框原样盖掉，屏幕上看着像"选不中"
     /// （剪贴板其实是对的，所以走查一直是绿的，只有用眼睛看才发现）。
     pub(in crate::cli) fn paint_input_selection(&self) -> Result<()> {
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         let stdout = &mut stdout;
         self.paint_input_selection_into(stdout)?;
         use std::io::Write as _;
@@ -314,7 +335,10 @@ impl Screen {
         Ok(())
     }
 
-    fn paint_input_selection_into(&self, stdout: &mut std::io::Stdout) -> Result<()> {
+    fn paint_input_selection_into(
+        &self,
+        stdout: &mut crate::cli::repl::tail::TermOut,
+    ) -> Result<()> {
         if self.input_selection.is_none() {
             return Ok(());
         }

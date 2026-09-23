@@ -63,6 +63,13 @@ pub(crate) fn spawn_hangup_watchdog() {
 
 pub(super) fn terminal_hangup() -> bool {
     let stdin_is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+    // 对端已经关掉的伪终端：tcgetattr 报 EIO，`isatty` 因此返回假——下面会把它当
+    // 管道、改盯控制终端。进程的控制终端要不是这一个（测具起进程没设、或别的会话
+    // 起的），就永远判不出挂断，crossterm 对死 fd 全速自旋（09-23 实测一个
+    // `miyu config` 这样空转了 8 小时）。它不是管道，是一个死掉的终端。
+    if !stdin_is_tty && dead_terminal(libc::STDIN_FILENO) {
+        return true;
+    }
     match hangup_watch_fd(stdin_is_tty, controlling_tty_fd()) {
         Some(fd) => fd_hung_up(fd),
         None => false,
@@ -101,6 +108,19 @@ fn controlling_tty_fd() -> Option<libc::c_int> {
             .ok()
             .map(IntoRawFd::into_raw_fd)
     })
+}
+
+/// 这个 fd 是字符设备、而且报挂断：一个对端已经没了的终端。
+///
+/// 管道（写端关了也报 POLLHUP）不是字符设备；`/dev/null` 是字符设备但从不报挂断。
+pub(super) fn dead_terminal(fd: libc::c_int) -> bool {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: fstat 只往我们给的那块内存里写；返回 0 才读它。
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let mode = unsafe { stat.assume_init() }.st_mode;
+    (mode & libc::S_IFMT) == libc::S_IFCHR && fd_hung_up(fd)
 }
 
 pub(super) fn fd_hung_up(fd: libc::c_int) -> bool {

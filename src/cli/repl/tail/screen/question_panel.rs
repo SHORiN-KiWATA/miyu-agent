@@ -17,7 +17,7 @@ impl Screen {
             self.resize(cols, rows);
         }
         let top = self.layout_question_body(delta, panel_rows);
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         self.paint_body_above(&mut stdout, top, self.rows)?;
         // The separator belongs to neither the transcript nor the panel. Clear
         // its old contents after scrolling, changing questions, or resizing.

@@ -178,7 +178,7 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
 
 /// 把面板那几行写到屏上:每行先用空格铺满面板宽再写内容(竖条 + 行)。
 fn paint_panel(panel: &Panel, bar: &str, lines: &[String]) -> Result<()> {
-    let mut stdout = io::stdout();
+    let mut stdout = crate::cli::repl::tail::term_out();
     for (row, line) in lines.iter().enumerate() {
         let y = panel.top.saturating_add(row as u16);
         queue!(
@@ -230,7 +230,7 @@ fn prepare(live: &mut LiveReplTail, desired: u16, delta: isize) -> Result<Panel>
     if let Some(screen) = &mut live.screen {
         screen.scroll_question_body(delta, panel.rows.saturating_add(1))?;
     }
-    let mut stdout = io::stdout();
+    let mut stdout = crate::cli::repl::tail::term_out();
     for row in panel.top..rows {
         queue!(stdout, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
     }

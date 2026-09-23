@@ -56,6 +56,19 @@ pub struct WaitSpinner {
     rendered_lines: Vec<String>,
     style: SpinnerStyle,
     frame: usize,
+    /// 块模式上一帧每一行「原样 → 画好的样子」。见 [`WaitSpinner::block_rows`]。
+    row_cache: Vec<CachedRow>,
+    /// `row_cache` 是按多宽裁的。宽度一变整份作废。
+    row_cache_width: usize,
+    /// 上一帧是按多宽的终端出的。全屏下宽度一变就整段重写，不按行比对。
+    rendered_width: usize,
+}
+
+/// 块模式的一行：进来时什么样、画出去什么样、占几列。
+struct CachedRow {
+    source: String,
+    painted: String,
+    width: usize,
 }
 
 impl WaitSpinner {
@@ -73,6 +86,9 @@ impl WaitSpinner {
             rendered_lines: Vec::new(),
             style,
             frame: 0,
+            row_cache: Vec::new(),
+            row_cache_width: 0,
+            rendered_width: 0,
         }
     }
 
@@ -100,7 +116,9 @@ impl WaitSpinner {
         terminal_width: usize,
     ) -> Result<bool> {
         let total = self.rendered_lines.len();
-        if rows.is_empty() || rows.len() >= total {
+        // 全屏按锚点整段重写（见 `tick_in`），没有「就地交接」这回事；这条路本来
+        // 也只有点不开的面（inline、静态时间线）才走。
+        if rows.is_empty() || rows.len() >= total || crate::render::blocks::enabled() {
             return Ok(false);
         }
         let fits = |width: &usize| *width <= terminal_width;
@@ -136,13 +154,9 @@ impl WaitSpinner {
     /// 画一帧。`synchronized` = 自己裹一对同步输出标记；调用方已经在块里就传假。
     pub fn tick_in(&mut self, writer: &mut impl Write, synchronized: bool) -> Result<()> {
         let terminal_width = crate::render::terminal_cols(120);
-        let (output, _) = render_frame_at_width(self.frame, self, terminal_width);
-        if !output.is_empty() {
-            let lines = output.lines().map(str::to_string).collect::<Vec<_>>();
-            let widths = lines
-                .iter()
-                .map(|line| super::command_ansi_width(line))
-                .collect::<Vec<_>>();
+        let (lines, widths) = self.frame_rows(terminal_width);
+        if !lines.is_empty() {
+            let output = lines.join("\n");
             // live 区里挂着一整段正在长的思考正文时，每帧整片擦了重画既费字节又闪
             // （用户实测「流式输出的时候一闪一闪的」）：一帧裹进同步输出块，终端一次
             // 成帧；行数没变或只在末尾长了、又没有软折行，就只重写变了的行、追加新行。
@@ -152,24 +166,128 @@ impl WaitSpinner {
                     .iter()
                     .chain(widths.iter())
                     .all(|width| *width <= terminal_width);
-            if synchronized {
-                queue!(writer, BeginSynchronizedUpdate)?;
-            }
-            if diffable {
-                rewrite_changed_spinner_lines(writer, &self.rendered_lines, &lines)?;
+            if crate::render::blocks::enabled() {
+                self.write_anchored(writer, &lines, terminal_width)?;
             } else {
-                write_spinner_lines(writer, &output, &self.rendered_line_widths, terminal_width)?;
-            }
-            if synchronized {
-                queue!(writer, EndSynchronizedUpdate)?;
+                if synchronized {
+                    queue!(writer, BeginSynchronizedUpdate)?;
+                }
+                if diffable {
+                    rewrite_changed_spinner_lines(writer, &self.rendered_lines, &lines)?;
+                } else {
+                    write_spinner_lines(
+                        writer,
+                        &output,
+                        &self.rendered_line_widths,
+                        terminal_width,
+                    )?;
+                }
+                if synchronized {
+                    queue!(writer, EndSynchronizedUpdate)?;
+                }
             }
             writer.flush()?;
             self.rendered_line_widths = widths;
             self.rendered_lines = lines;
+            self.rendered_width = terminal_width;
         }
         let total = total_frames_for_style(self.style);
         self.frame = (self.frame + 1) % total.max(1);
         Ok(())
+    }
+
+    /// 全屏：回到锚点重写，不数行（见 `blocks::LIVE_REWIND_MARKER`）。
+    ///
+    /// 只重写从第一处变化起的那一截；宽度变了就整段重写——缓冲会按新宽度重排，
+    /// 行和行对不上了。一模一样的一帧一个字节都不发：缓冲不用动，画面也不用重画。
+    /// 不裹同步标记：这些字节进的是全屏的缓冲，不是终端（成帧由画面那一层管）。
+    fn write_anchored(
+        &self,
+        writer: &mut impl Write,
+        lines: &[String],
+        terminal_width: usize,
+    ) -> Result<()> {
+        let same_width = self.rendered_width == terminal_width;
+        if same_width && lines == self.rendered_lines {
+            return Ok(());
+        }
+        let from = if same_width {
+            live_rewrite_from(&self.rendered_lines, lines)
+        } else {
+            0
+        };
+        write!(
+            writer,
+            "{}{}",
+            crate::render::blocks::live_rewind_marker_at(from),
+            lines[from..].join("\n")
+        )?;
+        Ok(())
+    }
+
+    /// 这一帧的每一行（含转义）与各自的显示宽度。
+    fn frame_rows(&mut self, terminal_width: usize) -> (Vec<String>, Vec<usize>) {
+        let block = self
+            .sub_phase
+            .take()
+            .filter(|sub| sub.contains(BLOCK_MARKER) || sub.contains(BLOCK_MARKER_IDLE));
+        if let Some(sub) = block {
+            let rows = self.block_rows(&sub, terminal_width);
+            self.sub_phase = Some(sub);
+            return rows;
+        }
+        let (output, _) = render_frame_at_width(self.frame, self, terminal_width);
+        let lines = output.lines().map(str::to_string).collect::<Vec<_>>();
+        let widths = lines
+            .iter()
+            .map(|line| super::command_ansi_width(line))
+            .collect();
+        (lines, widths)
+    }
+
+    /// 块模式（全屏时间线）的每一行。
+    ///
+    /// 全屏下这一段是整条时间线：一轮跑上百步就是几百行，每一拍（40ms）都要裁宽、
+    /// 上色、量宽度——09-23 量尺 150 步时这一项一拍 3.3ms（debug），占了拼帧的八成。
+    /// 可一拍里真变的只有挂转轮字形的那一行和正在长的那几行：其余行和上一帧同一
+    /// 位置、同样宽度下一模一样，直接用上一帧画好的。
+    fn block_rows(&mut self, sub: &str, terminal_width: usize) -> (Vec<String>, Vec<usize>) {
+        let usable = terminal_width.saturating_sub(1).max(1);
+        if self.row_cache_width != usable {
+            self.row_cache.clear();
+            self.row_cache_width = usable;
+        }
+        let glyph = paint_secondary(braille_frame(self.frame));
+        let mut lines = Vec::new();
+        let mut widths = Vec::new();
+        for (index, source) in sub.lines().enumerate() {
+            // 挂转轮字形的行每一帧都不一样，照算。
+            let animated = source.contains(BLOCK_MARKER);
+            let hit = self
+                .row_cache
+                .get(index)
+                .filter(|cached| !animated && cached.source == source);
+            if let Some(cached) = hit {
+                lines.push(cached.painted.clone());
+                widths.push(cached.width);
+                continue;
+            }
+            let painted = block_row(source, usable, &glyph);
+            let width = super::command_ansi_width(&painted);
+            let row = CachedRow {
+                source: source.to_string(),
+                painted: painted.clone(),
+                width,
+            };
+            match self.row_cache.get_mut(index) {
+                Some(slot) => *slot = row,
+                None => self.row_cache.push(row),
+            }
+            lines.push(painted);
+            widths.push(width);
+        }
+        self.row_cache.truncate(lines.len());
+        (lines, widths)
     }
 
     pub fn stop(&mut self, writer: &mut impl Write) -> Result<()> {
@@ -179,12 +297,19 @@ impl WaitSpinner {
     /// 收掉转轮那几行。`synchronized` = 自己裹一对同步输出标记；调用方已经在块里
     /// 就传假（2026 是布尔不是栈，里层的结束会把外层提前结掉）。
     pub fn stop_in(&mut self, writer: &mut impl Write, synchronized: bool) -> Result<()> {
-        if synchronized {
-            queue!(writer, BeginSynchronizedUpdate)?;
-        }
-        clear_spinner_lines(writer, &self.rendered_line_widths)?;
-        if synchronized {
-            queue!(writer, EndSynchronizedUpdate)?;
+        if crate::render::blocks::enabled() {
+            // 全屏：回到锚、截掉锚以下、拔锚。一帧都没画过就没有锚可拔。
+            if !self.rendered_lines.is_empty() {
+                write!(writer, "{}", crate::render::blocks::LIVE_END_MARKER)?;
+            }
+        } else {
+            if synchronized {
+                queue!(writer, BeginSynchronizedUpdate)?;
+            }
+            clear_spinner_lines(writer, &self.rendered_line_widths)?;
+            if synchronized {
+                queue!(writer, EndSynchronizedUpdate)?;
+            }
         }
         writer.flush()?;
         self.rendered_line_widths.clear();
@@ -251,38 +376,72 @@ fn render_frame_at_width(
 fn render_block_frame(frame: usize, sub: &str, terminal_width: usize) -> (String, u16) {
     let usable = terminal_width.saturating_sub(1).max(1);
     let glyph = paint_secondary(braille_frame(frame));
-    let mut lines = Vec::new();
-    for line in sub.lines() {
-        // 标记前面的缩进要留着：点阵转轮得落在 logo 那一列上，而不是行首。
-        // 时间线就靠这个让「正在跑的那一步」原地把图标换成进度点阵。
-        if let Some(index) = line.find(BLOCK_MARKER) {
-            let (indent, rest) = line.split_at(index);
-            let rest = &rest[BLOCK_MARKER.len_utf8()..];
-            let width = usable.saturating_sub(indent.chars().count() + 2);
-            let rest = clip_to_display_width(rest, width);
-            lines.push(format!(
-                "{indent}{glyph} {}",
-                paint_for_style(&rest, SpinnerStyle::Braille)
-            ));
-        } else if let Some(index) = line.find(BLOCK_MARKER_IDLE) {
-            // 转轮那一格留空：列位和带转轮的行一样，只是这一帧没有它。
-            let (indent, rest) = line.split_at(index);
-            let rest = &rest[BLOCK_MARKER_IDLE.len_utf8()..];
-            let width = usable.saturating_sub(indent.chars().count() + 2);
-            let rest = clip_to_display_width(rest, width);
-            lines.push(format!(
-                "{indent}  {}",
-                paint_for_style(&rest, SpinnerStyle::Braille)
-            ));
-        } else if line.trim().is_empty() {
-            lines.push(String::new());
-        } else {
-            let clipped = clip_to_display_width(line, usable);
-            lines.push(paint_for_style(&clipped, SpinnerStyle::Braille));
-        }
-    }
+    let lines = sub
+        .lines()
+        .map(|line| block_row(line, usable, &glyph))
+        .collect::<Vec<_>>();
     let count = lines.len().min(u16::MAX as usize) as u16;
     (lines.join("\n"), count)
+}
+
+/// 全屏重写从第几行起：和上一帧第一处不一样的那一行，往前退到它所在块的开头——
+/// 块的起止标记得成对重写，从块中间截的话缓冲里那一块就只剩半截。至少重写上一帧
+/// 的最后一行：缓冲里它后面没有行可以「回到」。
+fn live_rewrite_from(previous: &[String], lines: &[String]) -> usize {
+    if previous.is_empty() {
+        return 0;
+    }
+    let changed = previous
+        .iter()
+        .zip(lines)
+        .position(|(old, new)| old != new)
+        .unwrap_or_else(|| previous.len().min(lines.len()))
+        .min(previous.len() - 1);
+    let mut open = None;
+    for (index, line) in lines[..changed].iter().enumerate() {
+        for (at, _) in line.match_indices(BLOCK_OSC) {
+            if line[at + BLOCK_OSC.len()..].starts_with("-end") {
+                open = None;
+            } else {
+                open = Some(index);
+            }
+        }
+    }
+    open.unwrap_or(changed)
+}
+
+/// 块标记（起始 `miyu-block=` / `miyu-block-open=`，结束 `miyu-block-end`）的共同前缀。
+const BLOCK_OSC: &str = "\x1b]1337;miyu-block";
+
+/// 块模式的一行画成什么样。`glyph` 是这一帧的转轮字形（已上色）。
+fn block_row(line: &str, usable: usize, glyph: &str) -> String {
+    // 标记前面的缩进要留着：点阵转轮得落在 logo 那一列上，而不是行首。
+    // 时间线就靠这个让「正在跑的那一步」原地把图标换成进度点阵。
+    if let Some(index) = line.find(BLOCK_MARKER) {
+        let (indent, rest) = line.split_at(index);
+        let rest = &rest[BLOCK_MARKER.len_utf8()..];
+        let width = usable.saturating_sub(indent.chars().count() + 2);
+        let rest = clip_to_display_width(rest, width);
+        format!(
+            "{indent}{glyph} {}",
+            paint_for_style(&rest, SpinnerStyle::Braille)
+        )
+    } else if let Some(index) = line.find(BLOCK_MARKER_IDLE) {
+        // 转轮那一格留空：列位和带转轮的行一样，只是这一帧没有它。
+        let (indent, rest) = line.split_at(index);
+        let rest = &rest[BLOCK_MARKER_IDLE.len_utf8()..];
+        let width = usable.saturating_sub(indent.chars().count() + 2);
+        let rest = clip_to_display_width(rest, width);
+        format!(
+            "{indent}  {}",
+            paint_for_style(&rest, SpinnerStyle::Braille)
+        )
+    } else if line.trim().is_empty() {
+        String::new()
+    } else {
+        let clipped = clip_to_display_width(line, usable);
+        paint_for_style(&clipped, SpinnerStyle::Braille)
+    }
 }
 
 fn render_cell(char_index: usize, state: ScannerState) -> String {
@@ -600,6 +759,40 @@ mod tests {
         assert!(text.contains("  \x1b[2m\x1b[36m│ one"), "{text:?}");
     }
 
+    /// 全屏重写起点：第一处变化；落在一个块中间就退回块头（起止标记得成对重写）；
+    /// 至少重写上一帧的最后一行。
+    #[test]
+    fn a_partial_rewrite_starts_at_the_first_change_but_never_inside_a_block() {
+        let lines = |tail: &str| -> Vec<String> {
+            vec![
+                "  step 0".into(),
+                format!("\x1b]1337;miyu-block=7\x07  step 1"),
+                "  │ out a".into(),
+                format!("  │ {tail}\x1b]1337;miyu-block-end\x07"),
+                "  head".into(),
+            ]
+        };
+        let before = lines("out b");
+        assert_eq!(live_rewrite_from(&before, &lines("out B")), 1, "退到块头");
+        let mut changed_head = before.clone();
+        changed_head[4] = "  head 2".into();
+        assert_eq!(live_rewrite_from(&before, &changed_head), 4);
+        assert_eq!(
+            live_rewrite_from(&before, &before),
+            4,
+            "一样也至少重写最后一行"
+        );
+        let mut longer = before.clone();
+        longer.push("  new".into());
+        assert_eq!(live_rewrite_from(&before, &longer), 4);
+        assert_eq!(
+            live_rewrite_from(&before, &before[..2]),
+            1,
+            "变短：从截断处起"
+        );
+        assert_eq!(live_rewrite_from(&[], &before), 0);
+    }
+
     #[test]
     fn spinner_runs_at_least_twenty_four_frames_per_second() {
         assert!(SPINNER_INTERVAL <= std::time::Duration::from_millis(41));
@@ -613,6 +806,9 @@ mod tests {
             rendered_lines: Vec::new(),
             style,
             frame: 0,
+            row_cache: Vec::new(),
+            row_cache_width: 0,
+            rendered_width: 0,
         }
     }
 

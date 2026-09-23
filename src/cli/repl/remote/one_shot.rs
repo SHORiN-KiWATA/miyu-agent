@@ -274,6 +274,7 @@ async fn run_remote_chat_inner(
                     let Some(event) = pending else {
                         continue;
                     };
+                    crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
                     let Some(live_tail) = live.as_deref_mut() else {
                         continue;
                     };

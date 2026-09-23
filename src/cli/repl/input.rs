@@ -199,6 +199,10 @@ pub(in crate::cli) fn read_live_repl_input(
         // **这条循环出不来时也要推帧**：按住键时按键来得比处理得快（每下都要
         // 重画一次活动区），`poll(ZERO)` 一直报就绪，这里能连转很久都回不到
         // 循环顶端。只在循环顶端放一处挡不住这种情形。
+        //
+        // 编辑引起的重画攒到抽干之后画一次（09-23）：输入法一次上屏一串字，
+        // crossterm 拆成一串按键，原来一个键一帧，终端被迫连收连画好几帧。
+        let mut redraw_pending = false;
         while event::poll(Duration::ZERO)? {
             tick_banner_if_due!();
             // read 前再验挂断:HUP 的 fd 会让 poll 报就绪却读不出事件,
@@ -261,9 +265,7 @@ pub(in crate::cli) fn read_live_repl_input(
             }
             match live.editor.handle_event(event, paths, false)? {
                 LiveEditorAction::None => {}
-                LiveEditorAction::Redraw => {
-                    synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?
-                }
+                LiveEditorAction::Redraw => redraw_pending = true,
                 LiveEditorAction::ClearScreen => {
                     synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
                         live.clear_screen()
@@ -337,7 +339,23 @@ pub(in crate::cli) fn read_live_repl_input(
                 }
             }
         }
+        if redraw_pending {
+            synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
+        }
     }
+}
+
+/// 回合跑着时的输入泵：后面还排着输入，就让下一拍立刻到。
+///
+/// 三条回合泵（自己起的轮、挂上去跟的轮、直连）都是 16ms 一拍、一拍只收一个键。
+/// 输入法一次上屏一串字，crossterm 拆成一串按键，于是六个字要九十毫秒才出全
+/// （09-23 实测，空闲时 1.5ms）；按住键不放也会越攒越多。一拍收一个的逻辑不动，
+/// 只是不再白等下一拍。
+pub(in crate::cli) fn hurry_pending_input(tick: &mut tokio::time::Interval) -> Result<()> {
+    if event::poll(Duration::ZERO)? {
+        tick.reset_immediately();
+    }
+    Ok(())
 }
 
 pub(in crate::cli) fn read_repl_input(
@@ -873,7 +891,7 @@ pub(in crate::cli) fn read_repl_input(
 }
 
 pub(in crate::cli) fn render_repl_input_with_footer(
-    stdout: &mut io::Stdout,
+    stdout: &mut impl Write,
     input_row: &mut u16,
     rendered_rows: &mut u16,
     // `drawn`：画出去的输入行（屏幕行号 + 这一行的文字）。全屏下拿它做选区——

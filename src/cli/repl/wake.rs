@@ -160,6 +160,7 @@ pub(in crate::cli) async fn follow_wake_run(
                         continue;
                     }
                     let event = event::read()?;
+                    crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
                     // 斜杠命令在**编辑器处理回车之前**拦：编辑器一旦处理
                     // Enter 就会清空缓冲区，「输入原样留着」就成了空话——
                     // 显示滞留旧文本，下一次按键才暴露缓冲区其实已经空了。

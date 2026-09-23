@@ -39,6 +39,7 @@ impl Screen {
             hint_dismissed: false,
             force: true,
             banner: None,
+            banner_shown: None,
             float_anchor: None,
         }
     }

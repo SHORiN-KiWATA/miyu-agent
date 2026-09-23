@@ -18,6 +18,7 @@
 //! 一个字都不用改。
 
 pub(in crate::cli) mod ansi;
+pub(in crate::cli) mod cells;
 mod draw;
 pub(in crate::cli) mod expand;
 pub(in crate::cli) mod overlay;
@@ -115,6 +116,13 @@ pub(in crate::cli) fn split_graphics(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)>
     Some((graphics, rest))
 }
 
+/// 大厅的一帧交给正文层的样子：每行的 ANSI（按行比对）与同一份的片段（按格子补丁）。
+#[derive(Clone)]
+pub(in crate::cli) struct BannerRows {
+    pub(in crate::cli) text: std::rc::Rc<Vec<String>>,
+    pub(in crate::cli) spans: std::rc::Rc<Vec<Vec<ansi::AnsiSpan>>>,
+}
+
 /// 正文最多留多少行。再多就从头丢，`Term` 里那份也一起丢。
 const MAX_LINES: usize = 20_000;
 
@@ -191,8 +199,10 @@ pub(in crate::cli) struct Screen {
     /// （Ctrl+L 之后视口清不干净就是这么来的）。
     force: bool,
     /// 空会话的画面:正文区不画正文(反正是空的),画这几行。`Some` 时每帧由
-    /// 活动区那边重新生成(星星在动),这里只按行 diff 往屏上写。
-    banner: Option<Vec<String>>,
+    /// 活动区那边重新生成(星星在动),这里比对着往屏上写。
+    banner: Option<BannerRows>,
+    /// 屏上现在是哪一版大厅。按格子补丁要以它为底（见 `draw.rs`）。
+    banner_shown: Option<BannerRows>,
     /// 大厅里浮层(斜杠命令候选)的落点:(顶行, 左列)。None = 贴正文底部。
     float_anchor: Option<(u16, u16)>,
 }
@@ -302,6 +312,7 @@ impl Screen {
             hint_dismissed: false,
             force: true,
             banner: None,
+            banner_shown: None,
             float_anchor: None,
         })
     }
@@ -345,9 +356,10 @@ impl Screen {
         self.body_height(tail_height)
     }
 
-    pub(in crate::cli) fn set_banner(&mut self, rows: Option<Vec<String>>) {
+    pub(in crate::cli) fn set_banner(&mut self, rows: Option<BannerRows>) {
         if rows.is_some() != self.banner.is_some() {
             self.invalidate();
+            self.banner_shown = None;
         }
         self.banner = rows;
     }

@@ -14,7 +14,7 @@ mod queue;
 pub(in crate::cli) mod screen;
 mod update;
 
-pub(in crate::cli) use update::synchronized_terminal_update;
+pub(in crate::cli) use update::{synchronized_terminal_update, term_out, TermOut};
 
 #[cfg(test)]
 pub(in crate::cli) use frame::queue_lifted_frame;
@@ -823,7 +823,7 @@ impl LiveReplTail {
         );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-            let mut stdout = io::stdout();
+            let mut stdout = term_out();
             queue!(stdout, MoveTo(0, row), Print(line))?;
             queue!(stdout, MoveTo(input_cursor.0, input_cursor.1))?;
             stdout.flush()?;
@@ -975,7 +975,7 @@ impl LiveReplTail {
         // suffice — no Clear, no intermediate blank state. The synchronized
         // block keeps the cursor hop invisible over slow links (SSH).
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-            let mut stdout = io::stdout();
+            let mut stdout = term_out();
             let mut row = start;
             for line in &lines {
                 queue!(stdout, MoveTo(0, row), Print(line))?;
@@ -1069,7 +1069,7 @@ impl LiveReplTail {
         );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-            let mut stdout = io::stdout();
+            let mut stdout = term_out();
             queue!(stdout, MoveTo(0, row), Print(line))?;
             queue!(stdout, MoveTo(input_cursor.0, input_cursor.1))?;
             stdout.flush()?;

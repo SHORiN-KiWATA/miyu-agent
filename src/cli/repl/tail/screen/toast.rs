@@ -102,7 +102,7 @@ impl Screen {
     /// 屏幕上最空的一块。
     pub(in crate::cli) fn paint_toast(
         &mut self,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut crate::cli::repl::tail::TermOut,
         body: u16,
     ) -> anyhow::Result<()> {
         let Some(toast) = &self.toast else {
@@ -159,7 +159,7 @@ impl Screen {
     /// 画候选面板。浮在输入框上方——和通知条（右上角）各占各的地方，不打架。
     pub(in crate::cli) fn paint_command_hint(
         &mut self,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut crate::cli::repl::tail::TermOut,
         body: u16,
     ) -> anyhow::Result<()> {
         if self.command_hint.is_empty() {
@@ -175,7 +175,7 @@ impl Screen {
     /// 浮层的通用画法：细线框 + 暗色，贴着正文底部。
     fn paint_float(
         &mut self,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut crate::cli::repl::tail::TermOut,
         body: u16,
         lines: &[String],
     ) -> anyhow::Result<()> {
@@ -189,7 +189,7 @@ impl Screen {
     /// 在指定行画一个浮层框，左对齐或右对齐。
     fn paint_float_at(
         &mut self,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut crate::cli::repl::tail::TermOut,
         top: u16,
         lines: &[String],
         align: FloatAlign,

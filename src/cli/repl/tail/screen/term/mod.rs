@@ -17,6 +17,8 @@ use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
+mod live;
+
 /// 一格。宽字符占两格，第二格是 `continuation`，画的时候跳过。
 #[derive(Clone, PartialEq)]
 struct Cell {
@@ -59,9 +61,10 @@ impl Cell {
 
 /// 只有最近这么多行保持「可随机写入」的格子形态。
 ///
-/// spinner 一帧最多上移十几行，命令块的原地刷新也只动尾巴，所以更早的行
-/// 永远不会再被改。把它们压成 span 存档能省一个数量级的内存：一格 `Cell`
-/// 要带一份完整 `Style`（约 32 字节），而一整行中文压成 span 通常只有一两段。
+/// 命令块的原地刷新只动尾巴，更早的行永远不会再被改。把它们压成 span 存档能省
+/// 一个数量级的内存：一格 `Cell` 要带一份完整 `Style`（约 32 字节），而一整行
+/// 中文压成 span 通常只有一两段。转轮那一段（活动区）例外：一轮里工具一多它能
+/// 高过这个数，而它每帧都要重写——锚点及以下不管多高都留在可写段里（见 [`live`]）。
 const LIVE_ROWS: usize = 256;
 
 /// 行缓冲 + 光标 + 当前样式。
@@ -109,6 +112,11 @@ pub(in crate::cli) struct Term {
     turn_starts: Vec<usize>,
     /// 各块压缩结果的起始行(`COMPACT_START_MARKER`),撤压缩时按它截。
     compact_starts: Vec<usize>,
+    /// 活动区（转轮那一段）从第几行开始。见 [`live`]：每一帧回到这儿整段重写，
+    /// 这一行及以下永远留在可写段里。`None` = 眼下没有活动区。
+    live_anchor: Option<usize>,
+    /// 这一次 `feed` 里回到锚点之前活动区的样子，吃完之后拿来比对、还回没变的行的版本号。
+    live_stash: Option<live::Stash>,
 }
 
 /// 压进存档的一行：压好的 span + 「它是折下来的吗」。
@@ -153,6 +161,8 @@ impl Default for Term {
             pending_soft_wrap: false,
             turn_starts: Vec::new(),
             compact_starts: Vec::new(),
+            live_anchor: None,
+            live_stash: None,
             cols: 80,
         }
     }
@@ -165,6 +175,7 @@ impl Term {
         let mut parser = std::mem::take(&mut self.parser);
         parser.advance(self, bytes);
         self.parser = parser;
+        self.settle_live_rows();
     }
 
     /// 最后一行**有内容**的行号 + 1。
@@ -292,6 +303,7 @@ impl Term {
         for start in &mut self.compact_starts {
             *start -= count;
         }
+        self.live_anchor = self.live_anchor.map(|anchor| anchor.saturating_sub(count));
     }
 
     /// 最后一轮从第几行开始（并把这个标记拿掉）。没有标记就 `None`。
@@ -342,6 +354,10 @@ impl Term {
         self.pending_block = None;
         self.turn_starts.retain(|start| *start < keep);
         self.compact_starts.retain(|start| *start < keep);
+        // 活动区整个被截掉了（`/undo` 之类）：锚也不作数。
+        if self.live_anchor.is_some_and(|anchor| anchor > keep) {
+            self.live_anchor = None;
+        }
     }
 
     /// 收尾一块：结束标记发出来时光标停在最后一行上，那一行算在块里。
@@ -455,7 +471,10 @@ impl Term {
             // 才和resize 之后新写进来的内容一样宽；没有装订边的是缓冲自己按屏幕
             // 边折的，按屏幕宽度重排。判据用缩进而不用「当初是谁折的」：一条
             // 逻辑行在宽窗口里并成一行之后，后者就丢了，再收窄回去宽度会不一致。
-            let budget = if indent > 0 {
+            // 活动区（锚点及以下）的行是转轮按屏宽裁好的，按屏宽折：按正文区宽度
+            // 折的话，刚好贴边的行会被拆成两行，转轮下一帧按行数回来就对不上了。
+            let live = self.live_anchor.is_some_and(|anchor| start >= anchor);
+            let budget = if indent > 0 && !live {
                 (indent + self.content_cols).min(self.cols)
             } else {
                 self.cols
@@ -489,9 +508,16 @@ impl Term {
             }
         }
         old_to_new[total] = rows.len();
+        let anchor = self
+            .live_anchor
+            .map(|anchor| old_to_new.get(anchor).copied().unwrap_or(rows.len()));
 
         // 3. 重建两段缓冲：最近 LIVE_ROWS 行留成可写的格子，其余压进存档。
-        let live_from = rows.len().saturating_sub(LIVE_ROWS.max(1));
+        //    活动区（锚点及以下）不管多高都得留在可写段里。
+        let live_from = rows
+            .len()
+            .saturating_sub(LIVE_ROWS.max(1))
+            .min(anchor.unwrap_or(usize::MAX));
         let (archived, live) = rows.split_at(live_from);
         self.archive = archived
             .iter()
@@ -527,6 +553,8 @@ impl Term {
         for start in &mut self.compact_starts {
             *start = remap(start);
         }
+        self.live_anchor = anchor;
+        self.live_stash = None;
         let (row, col) = cursor_at.unwrap_or((rows.len().saturating_sub(1), 0));
         self.row = row.saturating_sub(self.archive.len());
         self.col = col;
@@ -710,7 +738,9 @@ impl Term {
 
     /// 把 `live` 里跑远的行压进存档，只留最近 [`LIVE_ROWS`] 行可写。
     fn archive_old(&mut self) {
-        while self.lines.len() > LIVE_ROWS && self.row > 0 {
+        // 活动区（锚点及以下）每一帧都要回头改写，不进存档。
+        let writable_from = self.live_anchor.unwrap_or(usize::MAX);
+        while self.lines.len() > LIVE_ROWS && self.row > 0 && self.archive.len() < writable_from {
             let line = self.lines.remove(0);
             if !self.stamps.is_empty() {
                 self.stamps.remove(0);
@@ -1069,6 +1099,10 @@ impl Perform for Term {
                 Some(miyu_hosts::render::blocks::BlockMarker::SoftWrap) => {
                     self.pending_soft_wrap = true;
                 }
+                Some(miyu_hosts::render::blocks::BlockMarker::LiveRewind { from }) => {
+                    self.live_rewind(from)
+                }
+                Some(miyu_hosts::render::blocks::BlockMarker::LiveEnd) => self.live_end(),
                 Some(miyu_hosts::render::blocks::BlockMarker::CompactStart) => {
                     let start = if self.col == 0 {
                         self.cursor_row()

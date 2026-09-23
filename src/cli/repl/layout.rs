@@ -72,7 +72,7 @@ pub(in crate::cli) fn repl_visible_input_lines(
 }
 
 pub(in crate::cli) fn ensure_repl_space(
-    stdout: &mut io::Stdout,
+    stdout: &mut impl Write,
     input_row: &mut u16,
     needed_rows: u16,
 ) -> Result<()> {

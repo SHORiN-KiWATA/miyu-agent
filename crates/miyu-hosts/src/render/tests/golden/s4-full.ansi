@@ -1,7 +1,7 @@
-[?2026h[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰝨 思考中 · <N> 词元 · <DUR>[0m
-[1G[2K[2m[36m[2m  │[0m [2m[38;5;10m先看一眼需求，[0m]1337;miyu-block-end[0m[?2026l[?2026h[1A[1G[2K[1B[1G[2K[1A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  󰝨 已思考 · <N> 词元 · <DUR>[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 任务列表 · <DUR>]1337;miyu-block-end[0m[?2026l[?2026h[2A[1G[2K[1B[1G[2K[1B[1G[2K[2A[?2026l]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 1 tool · 1 thought[0m
+]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰝨 思考中 · <N> 词元 · <DUR>[0m
+[2m[36m[2m  │[0m [2m[38;5;10m先看一眼需求，[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  󰝨 已思考 · <N> 词元 · <DUR>[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 任务列表 · <DUR>]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 1 tool · 1 thought[0m
 ]1337;miyu-block-end
   [2m┌──────────────────┐[0m
   [2m│[0m 任务列表         [2m│[0m
@@ -13,60 +13,60 @@
   [2m│[0m [ ] 收尾         [2m│[0m
   [2m└──────────────────┘[0m
 
-[?2026h[1G[2K[2m[36m⠋[0m[?2026l[?2026h[1G[2K[?2026l[?2026h[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 看看输出[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m[?2026l[?2026h[4A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[4A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m⠋[0m [2m[36m│[0m[?2026l[?2026h[5A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[5A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 编辑文件 · <DUR> · /tmp/golden.txt]1337;miyu-block-end[0m[?2026l[?2026h[6A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[6A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m⠋[0m [2m[36m│[0m[?2026l[?2026h[7A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[7A[?2026l  [2m[90m┃[0m [2m[90m已回答 2 个问题[0m
+]1337;miyu-live-rewind[2m[36m⠋[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 看看输出[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 编辑文件 · <DUR> · /tmp/golden.txt]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end  [2m[90m┃[0m [2m[90m已回答 2 个问题[0m
   [2m[90m┃[0m [2m[90m今晚的打算：只是测工具[0m
   [2m[90m┃[0m [2m[90m要不要提交：先看看[0m
 
-[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR> ·  提示词 · 去看看那个目录里有什么]1337;miyu-block-end[0m[?2026l[?2026h[10A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[10A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
-[1G[2K[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m[2m  │[0m[0m
-[1G[2K[2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · <DUR>[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m⠋[0m [2m[36m│[0m[?2026l[?2026h[11A[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[1B[1G[2K[11A[?2026l]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 4 tools[0m
+]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR> ·  提示词 · 去看看那个目录里有什么]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m[0m
+[2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
+[2m[36m[2m  │[0m [2m'[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m   编辑文件 · <DUR> · /tmp/golden.txt · [32m+2[39m [31m-1[39m[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
+[2m[36m[2m  │[0m[0m
+[2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · <DUR>[0m]1337;miyu-block-end[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 4 tools[0m
 
 ]1337;miyu-block-end  跑完了，结果如上。
 
-[?2026h[1G[2K[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 故意跑砸[0m
-[1G[2K[2m[36m[2m  │[0m [2mexit 3[0m]1337;miyu-block-end[0m[?2026l[?2026h[1A[1G[2K[1B[1G[2K[1A[?2026l[?2026h[1G[2K[2m[36m]1337;miyu-block=<ID>[31m   运行命令 · <DUR> · 故意跑砸[0m[0m
-[1G[2K[2m[36m[2m  │[0m [31mexit 3[0m]1337;miyu-block-end[0m
-[1G[2K[2m[36m⠋[0m [2m[36m│[0m[?2026l[?2026h[2A[1G[2K[1B[1G[2K[1B[1G[2K[2A[?2026l]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 1 tool · 1 err[0m
+]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 故意跑砸[0m
+[2m[36m[2m  │[0m [2mexit 3[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[31m   运行命令 · <DUR> · 故意跑砸[0m[0m
+[2m[36m[2m  │[0m [31mexit 3[0m]1337;miyu-block-end[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 1 tool · 1 err[0m
 
 ]1337;miyu-block-end

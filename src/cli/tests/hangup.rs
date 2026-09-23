@@ -5,9 +5,9 @@
 //! 根因是看门狗裸 poll stdin——管道写端退出后 stdin 常驻 POLLHUP，被当成
 //! 「终端没了」，5 秒后 `exit(1)`，daemon 又把一次性客户端的断线当取消。
 
-#[cfg(target_os = "linux")]
-use crate::cli::fd_hung_up;
 use crate::cli::hangup_watch_fd;
+#[cfg(target_os = "linux")]
+use crate::cli::{dead_terminal, fd_hung_up};
 
 /// stdin 是终端时盯 stdin；stdin 被管道占用时盯控制终端。
 #[test]
@@ -44,4 +44,44 @@ fn a_pipe_with_a_closed_writer_reports_hangup() {
         "写端一关就是 POLLHUP——所以不能拿它判终端"
     );
     assert_eq!(unsafe { libc::close(read_fd) }, 0);
+}
+
+/// 09-23：对端关掉的伪终端要认得出来。
+///
+/// 这时 `isatty` 返回假（tcgetattr 报 EIO），老判据把它当管道、改盯控制终端；进程
+/// 的控制终端不是它的话就永远不退——一个 `miyu config` 这样全速空转了 8 小时。
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pty_whose_master_closed_is_a_dead_terminal() {
+    let (mut master, mut slave) = (0, 0);
+    let opened = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(opened, 0);
+    assert!(!dead_terminal(slave), "对端还开着：活终端");
+    assert_eq!(unsafe { libc::close(master) }, 0);
+    assert_eq!(
+        unsafe { libc::isatty(slave) },
+        0,
+        "对端关了之后 isatty 返回假——老判据就是在这儿走岔的"
+    );
+    assert!(dead_terminal(slave), "字符设备 + 挂断 = 死终端");
+    assert_eq!(unsafe { libc::close(slave) }, 0);
+
+    // 写端关掉的管道也报挂断，但它不是终端。
+    let mut fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    assert_eq!(unsafe { libc::close(fds[1]) }, 0);
+    assert!(!dead_terminal(fds[0]), "管道不是终端");
+    assert_eq!(unsafe { libc::close(fds[0]) }, 0);
+
+    // /dev/null 是字符设备，但从不报挂断。
+    let null = std::fs::File::open("/dev/null").unwrap();
+    assert!(!dead_terminal(std::os::unix::io::AsRawFd::as_raw_fd(&null)));
 }

@@ -60,11 +60,21 @@ def main():
             assert completed is not None, f"direct warmup did not finish: {h.OUT}"
             h.drain(master, 0.5, sink)
         else:
-            # Leave the empty lobby before exercising the notification lifetime.
-            os.write(master, b"/help\r")
+            # Run one command before exercising the notification lifetime.
+            #
+            # 原来是 `/help\r` 一次写进去、等屏上出现 `Ctrl+D`——等到的其实是敲 `/`
+            # 那一帧弹出的命令候选（「/session … 菜单内 Ctrl+D 删除」），不是帮助
+            # （大厅里 /help 的输出被大厅盖着，看不见）。09-23 起编辑重画攒到一批
+            # 按键处理完再画，一次到达的 `/help\r` 不再逐键出帧，候选框没机会闪
+            # 出来。所以先等回显、再回车、再等输入框清空——这才是「命令被收下了」。
+            os.write(master, b"/help")
+            echoed = q.wait_screen(master, sink,
+                                   lambda lines: any("┃ /help" in line for line in lines), 5)
+            assert echoed is not None, f"/help was not echoed: {h.OUT}"
+            os.write(master, b"\r")
             help_screen = q.wait_screen(master, sink,
-                                        lambda lines: any("Ctrl+D" in line for line in lines), 5)
-            assert help_screen is not None, f"help did not render: {h.OUT}"
+                                        lambda lines: not any("┃ /help" in line for line in lines), 5)
+            assert help_screen is not None, f"/help was not submitted: {h.OUT}"
 
         # Ctrl+C on an empty idle editor shows a harmless exit hint.
         os.write(master, b"\x03")

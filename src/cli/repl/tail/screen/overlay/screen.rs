@@ -490,7 +490,7 @@ impl Screen {
         if self.follow {
             self.scroll = self.follow_target();
         }
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         queue!(stdout, crossterm::cursor::Hide)?;
         if self.needs_clear {
             queue!(stdout, Clear(ClearType::All))?;
@@ -571,7 +571,7 @@ impl Screen {
         self.scroll = next.min(max);
         self.follow = self.scroll >= max;
         self.invalidate();
-        let mut stdout = std::io::stdout();
+        let mut stdout = crate::cli::repl::tail::term_out();
         let rows = self.rows;
         self.paint_body_above(&mut stdout, top, rows)?;
         stdout.flush()?;
@@ -581,12 +581,12 @@ impl Screen {
     /// 面板上方那截正文。
     pub(in super::super) fn paint_body_above(
         &mut self,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut crate::cli::repl::tail::TermOut,
         top: u16,
         bottom: u16,
     ) -> anyhow::Result<()> {
         let pad = self.top_pad();
-        let paint = |stdout: &mut std::io::Stdout, y: u16| -> anyhow::Result<()> {
+        let paint = |stdout: &mut crate::cli::repl::tail::TermOut, y: u16| -> anyhow::Result<()> {
             let line = match usize::from(y).checked_sub(pad) {
                 Some(offset) => spans_to_ansi(&self.view_row(self.scroll_of() + offset)),
                 None => String::new(),

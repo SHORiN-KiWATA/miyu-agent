@@ -10,6 +10,7 @@
 //! 渐变、星空、扫光照给；`display.banner = false` 整个关掉。
 
 use crate::cli::repl::tail::screen::ansi::{spans_to_ansi, AnsiSpan};
+use crate::cli::repl::tail::screen::cells::trim_end_spans;
 use miyu_base::config::AppConfig;
 use miyu_base::config::PersonaLane;
 use miyu_base::i18n::text as t;
@@ -22,6 +23,7 @@ use miyu_base::terminal::starfield::{
 pub(in crate::cli) mod preview;
 use ratatui::style::Modifier;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// 用户自带艺术字的文件名（放在配置目录下）。
 pub(in crate::cli) use miyu_base::terminal::chrome::BANNER_FILE;
@@ -464,17 +466,21 @@ impl BannerScene {
             }
             out.push(row);
         }
-        Lobby {
-            rows: out
-                .into_iter()
-                .map(|segs| {
-                    let spans: Vec<AnsiSpan> = segs
-                        .into_iter()
+        // 行尾的空白先去掉再画：省字节，也让按行比对更容易命中「没变」。片段和
+        // ANSI 是同一份东西的两种样子——按格子补丁用前者，按行比对用后者。
+        let spans: Vec<Vec<AnsiSpan>> = out
+            .into_iter()
+            .map(|segs| {
+                trim_end_spans(
+                    segs.into_iter()
                         .map(|seg| AnsiSpan::styled(seg.text, seg.style))
-                        .collect();
-                    spans_to_ansi(&spans).trim_end().to_string()
-                })
-                .collect(),
+                        .collect(),
+                )
+            })
+            .collect();
+        Lobby {
+            rows: Rc::new(spans.iter().map(|row| spans_to_ansi(row)).collect()),
+            spans: Rc::new(spans),
             tail_start: tail_start.min(u16::MAX as usize) as u16,
             left: left.min(u16::MAX as usize) as u16,
             width: width.min(u16::MAX as usize) as u16,
@@ -508,7 +514,10 @@ fn mode_name(mode: PersonaLane) -> &'static str {
 /// 全屏大厅的一帧：整屏的行，加上输入框该落在哪。
 #[derive(Clone)]
 pub(in crate::cli) struct Lobby {
-    pub rows: Vec<String>,
+    /// 每行一串带 SGR 的 ANSI。共享着传：一帧要在缓存、活动区、正文层之间递好几手。
+    pub rows: Rc<Vec<String>>,
+    /// 同一帧的片段。正文层拿它按格子补丁（见 `screen::cells`）。
+    pub spans: Rc<Vec<Vec<AnsiSpan>>>,
     /// 活动区（空行 + 输入框 + footer）从第几行开始。
     pub tail_start: u16,
     /// 输入框的左边距与宽度。

@@ -211,6 +211,7 @@ pub(in crate::cli) async fn run_live_agent_turn(
                     let Some(event) = pending else {
                         continue;
                     };
+                    crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
                     let mut live = live_cell.borrow_mut();
                     if matches!(
                         &event,

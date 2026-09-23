@@ -45,6 +45,20 @@ OUT = Path.home() / ".cache" / "miyu-bg-latency"
 THOUGHT = "先把这一段想清楚再动手，不然后面要返工。" * 40
 
 
+def drain_now(master, sink):
+    """把 PTY 里已经到的字节收走，不等。"""
+    import select
+
+    while select.select([master], [], [], 0)[0]:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            return
+        if not chunk:
+            return
+        sink.extend(chunk)
+
+
 def job_logs():
     """沙箱里所有任务日志。"""
     root = h.HOME / "cache" / "jobs"
@@ -107,10 +121,15 @@ def main():
     os.write(master, b"\r")
 
     # 每 20ms 看一次日志：新出现的每一行记下时刻。
+    #
+    # **PTY 要一直读着**：不读的话 TUI 写屏写满缓冲就卡在 write 上，回车那一下
+    # 还没来得及发给 daemon（离开大厅要先整屏重画）。能不能赶在卡住前发出去全
+    # 凭时序——09-23 新旧两版二进制在 strace 下都 0 行落地。
     seen = 0
     events = []
     deadline = started + 60
     while time.time() < deadline:
+        drain_now(master, sink)
         logs = job_logs()
         if logs:
             text = logs[-1].read_text(encoding="utf-8", errors="replace")

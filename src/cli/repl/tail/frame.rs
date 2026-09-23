@@ -258,7 +258,10 @@ impl LiveReplTail {
                     )
                 }
             });
-            screen.set_banner(lobby.as_ref().map(|lobby| lobby.rows.clone()));
+            screen.set_banner(lobby.as_ref().map(|lobby| screen::BannerRows {
+                text: lobby.rows.clone(),
+                spans: lobby.spans.clone(),
+            }));
             if std::env::var_os("MIYU_LOBBY_TRACE").is_some() {
                 if let Some(lobby) = &lobby {
                     if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -345,7 +348,7 @@ impl LiveReplTail {
         let output_row = placement.output_row;
         let tail_start = placement.tail_start;
 
-        let mut stdout = io::stdout();
+        let mut stdout = term_out();
         let box_left = box_left(layout_box);
         match layout_box {
             // 窄框只擦自己那一段,两侧的星空归 banner。
@@ -432,7 +435,7 @@ impl LiveReplTail {
         // 状态行在屏幕上的位置：点它要能对上是哪一个后台任务。
         self.job_strip_start = input_row.saturating_add(rendered_rows);
         self.job_strip_rows = job_rows;
-        let mut stdout = io::stdout();
+        let mut stdout = term_out();
         if !job_lines.is_empty() {
             let mut job_row = input_row.saturating_add(rendered_rows);
             for line in &job_lines {
@@ -451,7 +454,7 @@ impl LiveReplTail {
         // 那儿。这一句不能挪进任何 if 里。
         queue!(stdout, MoveTo(self.input_cursor.0, self.input_cursor.1))?;
         stdout.flush()?;
-        execute!(io::stdout(), crossterm::cursor::Show)?;
+        execute!(stdout, crossterm::cursor::Show)?;
         self.output_cursor = (output_col, output_row);
         self.tail_start = tail_start;
         self.tail_rows = total_rows;
