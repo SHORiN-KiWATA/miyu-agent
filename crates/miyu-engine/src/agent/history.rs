@@ -401,7 +401,8 @@ impl Agent {
         if !self.core.tools_enabled {
             return Ok(Vec::new());
         }
-        let tools = self.tools.lock().unwrap();
+        let mut tools = self.tools.lock().unwrap();
+        self.enforce_turn_restrictions(&mut tools);
         Ok(tools.request_definitions(tools::is_stub_loading_mode(
             &tools::effective_tools_loading_mode(&self.core.config),
         )))

@@ -72,7 +72,8 @@ impl Agent {
         tool_limit_reached: bool,
     ) -> Vec<miyu_core::llm::ToolDefinition> {
         if self.core.tools_enabled && !tool_limit_reached {
-            let tools = self.tools.lock().unwrap();
+            let mut tools = self.tools.lock().unwrap();
+            self.enforce_turn_restrictions(&mut tools);
             // 有效模式按候选模型池解析(模型级覆盖,任一成员要 full 则整池
             // full)——约束解码型模型吃不下空壳 stub(09-01)。
             tools.request_definitions(tools::is_stub_loading_mode(
@@ -81,5 +82,18 @@ impl Agent {
         } else {
             Vec::new()
         }
+    }
+
+    /// 把这一轮登记的单轮覆盖项(工具白名单、不写记忆)再落一遍到自己的工具表上。
+    ///
+    /// 回合装配已经按它裁过,但 Agent 自己还会晚注册几件——本会话用量
+    /// (`bind_session_usage`,09-22)、带图时的看图工具——它们绕过了那一道,普通
+    /// 模型的 `miyu ask --no-tools` 照样拿得到(09-23 CLI 黑盒)。每次取定义前过一遍,
+    /// 谁什么时候注册进来都拦得住;摘掉之后模型硬调也只会得到「没有这件工具」。
+    /// 不带覆盖项时什么都不做,工具表一个字节都不动。
+    pub(in crate::agent) fn enforce_turn_restrictions(&self, tools: &mut tools::ToolRegistry) {
+        let restrictions =
+            miyu_base::host_ports::live_turn_tool_restrictions(&self.state.session_id());
+        tools::apply_turn_restrictions(tools, &restrictions);
     }
 }

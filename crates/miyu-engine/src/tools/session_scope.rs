@@ -47,3 +47,22 @@ pub fn apply_session_kind_scope(
         register_ask_question(registry);
     }
 }
+
+/// 把这一轮的单轮覆盖项（工具白名单、不写记忆）落到 `registry` 上。
+///
+/// 和上面那道一样，回合装配与 MCP 桥共用：桥原来一样都不认，中转线的模型照样拿到
+/// 全部工具，`--no-memory` 的回合还摆着 remember_fact（09-23）。回合那边按
+/// 「先摘 remember_fact、再按白名单留」写过一遍，这里是同一个集合。
+pub fn apply_turn_restrictions(
+    registry: &mut ToolRegistry,
+    restrictions: &miyu_base::host_ports::TurnToolRestrictions,
+) {
+    if restrictions.is_empty() {
+        return;
+    }
+    for name in registry.tool_names() {
+        if !restrictions.allows(&name) {
+            registry.unregister(&name);
+        }
+    }
+}

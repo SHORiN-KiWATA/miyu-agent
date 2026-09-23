@@ -48,3 +48,50 @@ fn normal_agent_keeps_both_usage_tools() {
         assert!(names.contains(&name.to_string()), "缺 {name}: {names:?}");
     }
 }
+
+/// 单轮覆盖项(09-23):本会话用量是 Agent 自己晚注册的,回合装配那道裁剪拦不住它,
+/// 普通模型的 `miyu ask --no-tools` 原来照样把它发给模型(CLI 黑盒「--no-tools →
+/// tools 空」一直红)。Agent 取定义前按登记表再落一遍。
+#[test]
+fn a_restricted_turn_does_not_leak_the_late_registered_usage_tool() {
+    use miyu_base::host_ports::{LiveTurnToolRestrictionsGuard, TurnToolRestrictions};
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let agent = agent_with(PersonaLane::Active, AppConfig::default(), &paths);
+    let session = agent.state.session_id();
+    assert!(!session.is_empty(), "用例前提:Agent 绑着会话");
+    let names = |agent: &Agent| {
+        agent
+            .live_tool_definitions()
+            .unwrap()
+            .into_iter()
+            .map(|definition| definition.function.name)
+            .collect::<Vec<_>>()
+    };
+    assert!(names(&agent).contains(&"query_session_token_usage".to_string()));
+    {
+        let _turn = LiveTurnToolRestrictionsGuard::register(
+            &session,
+            TurnToolRestrictions {
+                allowlist: Some(Vec::new()),
+                no_memory_writes: false,
+            },
+        );
+        assert_eq!(names(&agent), Vec::<String>::new());
+    }
+    let agent = agent_with(PersonaLane::Active, AppConfig::default(), &paths);
+    let session = agent.state.session_id();
+    let _turn = LiveTurnToolRestrictionsGuard::register(
+        &session,
+        TurnToolRestrictions {
+            allowlist: Some(vec!["read".into()]),
+            no_memory_writes: false,
+        },
+    );
+    let left = names(&agent);
+    assert!(
+        !left.contains(&"query_session_token_usage".to_string()),
+        "{left:?}"
+    );
+    assert!(left.iter().all(|name| name == "read"), "{left:?}");
+}

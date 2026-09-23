@@ -710,6 +710,23 @@ pub(in crate::web) fn attach_owner_turn_tools(
     mode: PersonaLane,
     session_id: &str,
 ) {
+    attach_turn_tools_by_session(registry, state, config, mode, session_id);
+    // 正在跑的那一轮带的单轮覆盖项(工具白名单、不写记忆)最后落:回合装配也是
+    // 在所有注册之后才裁,两边共用 `apply_turn_restrictions`(09-23:桥原来一样
+    // 都不认,中转线的模型照样拿到全部工具)。
+    miyu_engine::tools::apply_turn_restrictions(
+        registry,
+        &miyu_base::host_ports::live_turn_tool_restrictions(session_id),
+    );
+}
+
+fn attach_turn_tools_by_session(
+    registry: &mut miyu_engine::tools::ToolRegistry,
+    state: &DaemonState,
+    config: &AppConfig,
+    mode: PersonaLane,
+    session_id: &str,
+) {
     if !config.tools.enabled {
         return;
     }

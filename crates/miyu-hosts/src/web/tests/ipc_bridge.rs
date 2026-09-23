@@ -1048,6 +1048,69 @@ async fn the_bridge_hands_out_artifact_tools_only_to_webui_turns() {
     assert!(!tools_with_running_audience(None));
 }
 
+/// 单轮覆盖项(09-23):中转线的 Miyu 工具只从桥拿,桥要认正在跑的那一轮登记的
+/// 工具白名单与「不写记忆」——原来一样都不认,`miyu ask --tools read` 的回合里模型
+/// 照样拿到全部工具,`--no-memory` 的回合还摆着 remember_fact。回合一结束限制跟着撤。
+#[tokio::test]
+async fn the_bridge_honours_the_running_turns_tool_restrictions() {
+    use miyu_base::host_ports::{LiveTurnToolRestrictionsGuard, TurnToolRestrictions};
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let persona = active_persona_scope(&state);
+    state
+        .state_store
+        .adopt_sessions_for_persona(&persona)
+        .unwrap();
+    let session_id = state.state_store.session_id().to_string();
+    let config = { state.manager.lock().unwrap().config.clone() };
+    let bridge_tools = || {
+        let mut registry = miyu_engine::tools::build_tool_registry(
+            &config,
+            &state.paths,
+            PersonaLane::Active,
+            false,
+        )
+        .unwrap();
+        attach_owner_turn_tools(
+            &mut registry,
+            &state,
+            &config,
+            PersonaLane::Active,
+            &session_id,
+        );
+        let mut names = registry.tool_names();
+        names.sort();
+        names
+    };
+    let full = bridge_tools();
+    assert!(full.iter().any(|name| name == "read"), "{full:?}");
+    assert!(full.iter().any(|name| name == "remember_fact"), "{full:?}");
+
+    {
+        let _turn = LiveTurnToolRestrictionsGuard::register(
+            &session_id,
+            TurnToolRestrictions {
+                allowlist: Some(vec!["read".into(), "no_such_tool".into()]),
+                no_memory_writes: false,
+            },
+        );
+        assert_eq!(bridge_tools(), vec!["read".to_string()]);
+    }
+    {
+        let _turn = LiveTurnToolRestrictionsGuard::register(
+            &session_id,
+            TurnToolRestrictions {
+                allowlist: None,
+                no_memory_writes: true,
+            },
+        );
+        let tools = bridge_tools();
+        assert!(!tools.iter().any(|name| name == "remember_fact"));
+        assert_eq!(tools.len(), full.len() - 1, "只摘 remember_fact,别的不动");
+    }
+    assert_eq!(bridge_tools(), full, "回合结束,限制跟着撤掉");
+}
+
 /// 脚本查宿主信息的一次往返(09-16):令牌不认识 → permission_denied;daemon 签了
 /// 令牌 → 拿到脱敏的供应商摘要;能力不在授权集里照样拒。
 #[tokio::test]

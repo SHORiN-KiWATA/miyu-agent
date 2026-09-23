@@ -98,11 +98,13 @@ impl OpenAiCompatibleClient {
         let miyu_session = miyu_base::workspace::try_session();
         let miyu_session = miyu_session.as_deref();
         let host_tools = cli_relay::host_tools_face(miyu_session);
+        let restrictions = cli_relay::turn_restrictions(miyu_session);
         let scopes = cli_relay::tool_scopes(
             self.request_scope,
             &runtime.native_tools,
             &runtime.miyu_tools,
             self.claude_code_dev_mode,
+            &restrictions,
         );
         let prompt = cli_relay::compose_prompt(
             &system_prompt,
@@ -118,6 +120,7 @@ impl OpenAiCompatibleClient {
             self.request_scope,
             miyu_session,
             host_tools,
+            &restrictions,
         );
         let instructions = ensure_instructions_file(&runtime.instructions_dir, &prompt)?;
         let overrides = self.codex_overrides(&runtime, scopes, miyu_session, &instructions);

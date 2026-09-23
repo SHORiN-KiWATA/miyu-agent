@@ -10,6 +10,7 @@
 //! - [`host_grants`]:进程外扩展的一次性能力令牌;
 //! - [`host_query`]:凭令牌问宿主的只读方法(脱敏 DTO);
 //! - [`live_turn`]:平台回合登记的宿主工具位,给中转线桥读;
+//! - [`turn_restrictions`]:回合登记的工具白名单与「不写记忆」,给桥和中转线读(09-23);
 //! - [`subagent`]:子代理会话化(09-18):工具层请 daemon 建子会话、起回合、等任务终态。
 //!
 //! `runtime` 里一行 `pub use crate::host_ports::*;` 保留了老路径,web / pm
@@ -20,12 +21,14 @@ mod host_query;
 mod live_turn;
 mod ports;
 mod subagent;
+mod turn_restrictions;
 
 pub use host_grants::*;
 pub use host_query::*;
 pub use live_turn::*;
 pub use ports::*;
 pub use subagent::*;
+pub use turn_restrictions::*;
 
 // `host_grants` 签令牌用的 `random_token` 已归位到基础层 `crate::random_id`
 // (它与宿主端口无关,只是 id 生成器)。这条再导出让 `host_grants.rs` 里的

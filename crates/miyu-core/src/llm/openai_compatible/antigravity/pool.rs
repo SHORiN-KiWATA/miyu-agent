@@ -39,7 +39,11 @@ struct Parked {
 static POOL: Mutex<Vec<Parked>> = Mutex::new(Vec::new());
 
 /// 一个进程「能不能接着用」的指纹:启动参数(不含 `--conversation`)、环境、
-/// 二进制、工作目录、工具面档位、桥的 eager 名单、沙盒策略。
+/// 二进制、工作目录、工具面档位、单轮限制、桥的 eager 名单、沙盒策略。
+///
+/// 单轮限制(`miyu ask --tools / --no-memory`,09-23)改的是桥的工具面,而进程里的
+/// MCP 桥在进程活着时一直挂着:不算进来,带白名单的那一轮就会借到一个工具面是
+/// 全量的进程,之后不带限制的一轮又借到一个清单被裁过的进程。
 ///
 /// 沙盒是起进程时装上的、装上就撤不掉。09-23 之前策略变了总会连带改掉提示词
 /// (进 `--agent`)或工作目录,指纹间接跟着变;沙盒说明挪出系统提示词、又能按 Tab
@@ -50,6 +54,7 @@ pub(super) fn fingerprint(
     env: &[(String, Option<String>)],
     workdir: &std::path::Path,
     host_tools: bool,
+    restrictions: &str,
     eager_tools: &[String],
     sandbox: Option<&miyu_base::sandbox::SandboxPolicy>,
 ) -> String {
@@ -70,6 +75,8 @@ pub(super) fn fingerprint(
     hasher.update(b"\0workdir\0");
     hasher.update(workdir.display().to_string().as_bytes());
     hasher.update(if host_tools { b"\0host=1" } else { b"\0host=0" });
+    hasher.update(b"\0restrictions\0");
+    hasher.update(restrictions.as_bytes());
     hasher.update(b"\0eager\0");
     for tool in eager_tools {
         hasher.update(tool.as_bytes());
@@ -322,14 +329,14 @@ mod tests {
     fn fingerprint_changes_with_any_ingredient() {
         let bin = std::path::Path::new("agy");
         let wd = std::path::Path::new("/w");
-        let base = fingerprint(bin, &["--a".into()], &[], wd, true, &[], None);
+        let base = fingerprint(bin, &["--a".into()], &[], wd, true, "", &[], None);
         assert_eq!(
             base,
-            fingerprint(bin, &["--a".into()], &[], wd, true, &[], None)
+            fingerprint(bin, &["--a".into()], &[], wd, true, "", &[], None)
         );
         assert_ne!(
             base,
-            fingerprint(bin, &["--b".into()], &[], wd, true, &[], None)
+            fingerprint(bin, &["--b".into()], &[], wd, true, "", &[], None)
         );
         assert_ne!(
             base,
@@ -339,17 +346,18 @@ mod tests {
                 &[("K".into(), Some("v".into()))],
                 wd,
                 true,
+                "",
                 &[],
                 None
             )
         );
         assert_ne!(
             base,
-            fingerprint(bin, &["--a".into()], &[], wd, false, &[], None)
+            fingerprint(bin, &["--a".into()], &[], wd, false, "", &[], None)
         );
         assert_ne!(
             base,
-            fingerprint(bin, &["--a".into()], &[], wd, true, &["t".into()], None)
+            fingerprint(bin, &["--a".into()], &[], wd, true, "", &["t".into()], None)
         );
         assert_ne!(
             base,
@@ -359,6 +367,21 @@ mod tests {
                 &[],
                 std::path::Path::new("/x"),
                 true,
+                "",
+                &[],
+                None
+            )
+        );
+        // 单轮限制不同(09-23):桥的工具面不同,不能复用同一个进程。
+        assert_ne!(
+            base,
+            fingerprint(
+                bin,
+                &["--a".into()],
+                &[],
+                wd,
+                true,
+                "tools=read;memory=on",
                 &[],
                 None
             )
@@ -370,7 +393,16 @@ mod tests {
         };
         assert_ne!(
             base,
-            fingerprint(bin, &["--a".into()], &[], wd, true, &[], Some(&readonly))
+            fingerprint(
+                bin,
+                &["--a".into()],
+                &[],
+                wd,
+                true,
+                "",
+                &[],
+                Some(&readonly)
+            )
         );
     }
 

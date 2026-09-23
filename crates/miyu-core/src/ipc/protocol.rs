@@ -137,6 +137,15 @@ impl TurnOverrides {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+
+    /// 其中改变工具面的那两样。回合装配、MCP 桥、中转线三处读的是同一份,
+    /// 所以从这里一处转换(09-23:中转线原来一样都不认)。
+    pub fn tool_restrictions(&self) -> miyu_base::host_ports::TurnToolRestrictions {
+        miyu_base::host_ports::TurnToolRestrictions {
+            allowlist: self.tool_allowlist.clone(),
+            no_memory_writes: self.memory_writes == Some(false),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

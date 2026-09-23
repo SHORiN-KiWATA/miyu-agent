@@ -37,15 +37,33 @@ pub(in crate::llm::openai_compatible) fn tool_scopes(
     native_scope: &str,
     miyu_scope: &str,
     dev_mode: bool,
+    restrictions: &miyu_base::host_ports::TurnToolRestrictions,
 ) -> ToolScopes {
     let tool_capable = matches!(request_scope, "chat" | "subagent");
+    // 这一轮带了工具白名单(含 `--no-tools`):CLI 自带的原生工具一律关。调用方要的
+    // 是「精确就这几样」,留着 Bash 等于绕过(Bash 能做 run_command 能做的一切,用户
+    // 09-23 拍板)。白名单是空的就连桥也不挂:挂上去也是一张空表,还白起一个 MCP
+    // 子进程、往提示词里写一段 Miyu 工具说明。只带 `--no-memory` 不碰原生工具。
+    let allowlisted = restrictions.allowlist.is_some();
+    let no_tools = restrictions.allowlist.as_ref().is_some_and(Vec::is_empty);
     // 沙盒回合(成员)里 CLI 自带的工具照开:整个 CLI 进程关在 Landlock 里
     // (`RelayProcess::spawn` → `sandbox::confine_relay`),它起的 Bash/Edit 子进程
     // 继承规则。09-11 用户拍板:关进沙盒,不是关掉工具。
     ToolScopes {
-        native_on: tool_capable && scope_allows(native_scope, dev_mode),
-        miyu_on: tool_capable && scope_allows(miyu_scope, dev_mode),
+        native_on: tool_capable && !allowlisted && scope_allows(native_scope, dev_mode),
+        miyu_on: tool_capable && !no_tools && scope_allows(miyu_scope, dev_mode),
     }
+}
+
+/// 这一轮的单轮覆盖项限制(`miyu ask --tools / --no-tools / --no-memory`),回合装配时
+/// 按会话登记。每轮只读一次、交给 [`tool_scopes`] 与 [`ResumePlan`] 共用:分两次读,
+/// 中间有别的回合登记或撤掉,两边就对不上。回合作用域外(没有会话)= 不限制。
+pub(in crate::llm::openai_compatible) fn turn_restrictions(
+    miyu_session: Option<&str>,
+) -> miyu_base::host_ports::TurnToolRestrictions {
+    miyu_session
+        .map(miyu_base::host_ports::live_turn_tool_restrictions)
+        .unwrap_or_default()
 }
 
 /// 本轮经 MCP 桥暴露的工具面档位。判据与桥完全同源:桥问工具时走
@@ -165,6 +183,8 @@ pub(in crate::llm::openai_compatible) struct ResumePlan {
     model: String,
     miyu_session: Option<String>,
     host_tools: bool,
+    /// 本轮单轮限制的签名:和 `host_tools` 一样是工具面档位的一维(续传、进程复用)。
+    restrictions: String,
     ephemeral: bool,
     conversation: Vec<ChatMessage>,
     chain: Vec<u64>,
@@ -184,8 +204,10 @@ impl ResumePlan {
         request_scope: &str,
         miyu_session: Option<&str>,
         host_tools: bool,
+        restrictions: &miyu_base::host_ports::TurnToolRestrictions,
     ) -> Self {
         let ephemeral = request_scope != "chat";
+        let restrictions = restrictions.signature();
         let chain = session::prefix_chain(provider_id, model, prompt_seed, &conversation);
         let resumable = if ephemeral {
             None
@@ -195,6 +217,7 @@ impl ResumePlan {
                 model,
                 miyu_session,
                 host_tools,
+                &restrictions,
                 &chain,
                 conversation.len(),
             ) {
@@ -205,6 +228,7 @@ impl ResumePlan {
                     tracing::info!(
                         provider = provider_id,
                         host_tools,
+                        restrictions = %restrictions,
                         messages = conversation.len(),
                         reason = ?miss,
                         "relay resume miss; replaying the full conversation in a fresh session"
@@ -218,6 +242,7 @@ impl ResumePlan {
             model: model.to_string(),
             miyu_session: miyu_session.map(str::to_string),
             host_tools,
+            restrictions,
             ephemeral,
             conversation,
             chain,
@@ -232,6 +257,11 @@ impl ResumePlan {
     /// 本轮的工具面档位(进程复用的钥匙要带它:换脸就换进程)。
     pub(in crate::llm::openai_compatible) fn host_tools(&self) -> bool {
         self.host_tools
+    }
+
+    /// 本轮单轮限制的签名(进程复用的钥匙同样要带:限制变了工具面就变了)。
+    pub(in crate::llm::openai_compatible) fn restrictions(&self) -> &str {
+        &self.restrictions
     }
 
     /// 命中的 CLI 会话 id(要 `--resume`/`--conversation`/`resume` 的目标)。
@@ -300,6 +330,7 @@ impl ResumePlan {
             &self.model,
             self.miyu_session.as_deref(),
             self.host_tools,
+            &self.restrictions,
             self.conversation.len() + 1,
             next_hash,
             session_id.clone(),
@@ -333,12 +364,38 @@ mod tests {
 
     #[test]
     fn scopes_follow_request_scope_and_mode() {
-        let scopes = tool_scopes("chat", "all", "dev", false);
+        let free = miyu_base::host_ports::TurnToolRestrictions::default();
+        let scopes = tool_scopes("chat", "all", "dev", false, &free);
         assert!(scopes.native_on && !scopes.miyu_on);
-        let scopes = tool_scopes("subagent", "normal", "all", true);
+        let scopes = tool_scopes("subagent", "normal", "all", true, &free);
         assert!(!scopes.native_on && scopes.miyu_on);
-        let scopes = tool_scopes("compact", "all", "all", false);
+        let scopes = tool_scopes("compact", "all", "all", false, &free);
         assert!(!scopes.native_on && !scopes.miyu_on);
+    }
+
+    /// 单轮覆盖项(09-23 用户拍板):带了白名单就关原生工具;白名单为空连桥也不挂;
+    /// 只带 `--no-memory` 两样都照开(remember_fact 由桥那头摘)。
+    #[test]
+    fn a_turn_allowlist_switches_native_tools_off() {
+        use miyu_base::host_ports::TurnToolRestrictions;
+        let only_read = TurnToolRestrictions {
+            allowlist: Some(vec!["read".into()]),
+            no_memory_writes: false,
+        };
+        let scopes = tool_scopes("chat", "all", "all", false, &only_read);
+        assert!(!scopes.native_on && scopes.miyu_on);
+        let nothing = TurnToolRestrictions {
+            allowlist: Some(Vec::new()),
+            no_memory_writes: false,
+        };
+        let scopes = tool_scopes("chat", "all", "all", false, &nothing);
+        assert!(!scopes.native_on && !scopes.miyu_on);
+        let no_memory = TurnToolRestrictions {
+            allowlist: None,
+            no_memory_writes: true,
+        };
+        let scopes = tool_scopes("chat", "all", "all", false, &no_memory);
+        assert!(scopes.native_on && scopes.miyu_on);
     }
 
     #[test]
@@ -353,7 +410,16 @@ mod tests {
     #[test]
     fn plan_prefers_full_replay_for_auxiliary_scopes() {
         let conversation = vec![ChatMessage::plain("user", "hi")];
-        let plan = ResumePlan::new("p", "m", "seed", conversation, "compact", None, true);
+        let plan = ResumePlan::new(
+            "p",
+            "m",
+            "seed",
+            conversation,
+            "compact",
+            None,
+            true,
+            &miyu_base::host_ports::TurnToolRestrictions::default(),
+        );
         assert!(plan.ephemeral());
         assert!(plan.resume_id().is_none());
         assert_eq!(plan.delta().len(), 1);

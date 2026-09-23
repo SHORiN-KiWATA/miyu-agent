@@ -159,11 +159,13 @@ impl OpenAiCompatibleClient {
         let miyu_session = miyu_base::workspace::try_session();
         let miyu_session = miyu_session.as_deref();
         let host_tools = cli_relay::host_tools_face(miyu_session);
+        let restrictions = cli_relay::turn_restrictions(miyu_session);
         let scopes = cli_relay::tool_scopes(
             self.request_scope,
             &runtime.native_tools,
             &runtime.miyu_tools,
             self.claude_code_dev_mode,
+            &restrictions,
         );
         let agent_prompt = cli_relay::compose_prompt(
             &system_prompt,
@@ -179,6 +181,7 @@ impl OpenAiCompatibleClient {
             self.request_scope,
             miyu_session,
             host_tools,
+            &restrictions,
         );
         // 人格代理落盘(按内容哈希,内容不变就不写)。桥只在「作用域开着且有
         // 会话身份」时才注册:没有会话(回合作用域外/后台子代理)时桥本就应答空
@@ -296,6 +299,7 @@ impl OpenAiCompatibleClient {
                 env,
                 workdir,
                 plan.host_tools(),
+                plan.restrictions(),
                 eager_tools,
                 miyu_base::sandbox::current_sandbox().as_deref(),
             )

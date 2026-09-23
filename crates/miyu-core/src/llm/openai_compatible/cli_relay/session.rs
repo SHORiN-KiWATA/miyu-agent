@@ -37,6 +37,12 @@ struct SessionEntry {
     /// 本会话经 MCP 桥暴露的工具面档位(true=宿主工具全量底座)。跨档
     /// 复用同一条 claude 会话正是"工具掉线"误判的成因,见模块头。
     host_tools: bool,
+    /// 本会话那几轮带的单轮覆盖项限制(工具白名单/不写记忆)的签名。限制改的也是
+    /// MCP 桥的工具面,和 `host_tools` 同一个道理:不同限制共用一条 CLI 会话,
+    /// 清单就会逐轮增删、被读成工具掉线(09-23)。空串 = 不限制,也是此前落盘
+    /// 的条目读回来的缺省值——老映射照常续传。
+    #[serde(default)]
+    restrictions: String,
     /// 该 claude 会话已覆盖的会话消息数(含预测的 assistant 回填)。
     prefix_len: usize,
     prefix_hash: u64,
@@ -261,6 +267,7 @@ fn find_in(
     model: &str,
     miyu_session: Option<&str>,
     host_tools: bool,
+    restrictions: &str,
     chain: &[u64],
     conversation_len: usize,
 ) -> Result<(String, usize), ResumeMiss> {
@@ -275,7 +282,7 @@ fn find_in(
     let tier: Vec<&SessionEntry> = mine
         .iter()
         .copied()
-        .filter(|entry| entry.host_tools == host_tools)
+        .filter(|entry| entry.host_tools == host_tools && entry.restrictions == restrictions)
         .collect();
     if tier.is_empty() {
         return Err(ResumeMiss::OtherTierOnly);
@@ -309,6 +316,7 @@ pub(in crate::llm::openai_compatible) fn find_resumable(
     model: &str,
     miyu_session: Option<&str>,
     host_tools: bool,
+    restrictions: &str,
     chain: &[u64],
     conversation_len: usize,
 ) -> Result<(String, usize), ResumeMiss> {
@@ -319,6 +327,7 @@ pub(in crate::llm::openai_compatible) fn find_resumable(
         model,
         miyu_session,
         host_tools,
+        restrictions,
         chain,
         conversation_len,
     )
@@ -329,6 +338,7 @@ pub(in crate::llm::openai_compatible) fn record_session(
     model: &str,
     miyu_session: Option<&str>,
     host_tools: bool,
+    restrictions: &str,
     prefix_len: usize,
     prefix_hash: u64,
     claude_session: String,
@@ -348,6 +358,7 @@ pub(in crate::llm::openai_compatible) fn record_session(
         model: model.to_string(),
         miyu_session: miyu_session.map(str::to_string),
         host_tools,
+        restrictions: restrictions.to_string(),
         prefix_len,
         prefix_hash,
         claude_session,
@@ -406,6 +417,7 @@ mod tests {
             "m",
             Some("miyu-a"),
             true,
+            "",
             2,
             chain[2],
             "sess-1".to_string(),
@@ -416,13 +428,13 @@ mod tests {
         extended.push(message("user", "next"));
         let chain = prefix_chain("p", "m", "sys", &extended);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-a"), true, &chain, extended.len()),
+            find_resumable("p", "m", Some("miyu-a"), true, "", &chain, extended.len()),
             Ok(("sess-1".to_string(), 2))
         );
 
         // 别的 Miyu 会话即使字节级同前缀,也绝不共用 claude 会话。
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-b"), true, &chain, extended.len()),
+            find_resumable("p", "m", Some("miyu-b"), true, "", &chain, extended.len()),
             Err(ResumeMiss::NoEntry)
         );
 
@@ -431,21 +443,21 @@ mod tests {
         rewritten.push(message("user", "next"));
         let chain = prefix_chain("p", "m", "sys", &rewritten);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-a"), true, &chain, rewritten.len()),
+            find_resumable("p", "m", Some("miyu-a"), true, "", &chain, rewritten.len()),
             Err(ResumeMiss::PrefixMismatch { recorded_len: 2 })
         );
 
         // 系统提示词变更:种子不同,匹配不上。
         let chain = prefix_chain("p", "m", "other-sys", &extended);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-a"), true, &chain, extended.len()),
+            find_resumable("p", "m", Some("miyu-a"), true, "", &chain, extended.len()),
             Err(ResumeMiss::PrefixMismatch { recorded_len: 2 })
         );
 
         // 增量为空(长度相同)不算续传。
         let chain = prefix_chain("p", "m", "sys", &base);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-a"), true, &chain, base.len()),
+            find_resumable("p", "m", Some("miyu-a"), true, "", &chain, base.len()),
             Err(ResumeMiss::NoDelta)
         );
 
@@ -453,7 +465,7 @@ mod tests {
         assert_eq!(forget_miyu_session("miyu-a"), vec!["sess-1".to_string()]);
         let chain = prefix_chain("p", "m", "sys", &extended);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-a"), true, &chain, extended.len()),
+            find_resumable("p", "m", Some("miyu-a"), true, "", &chain, extended.len()),
             Err(ResumeMiss::NoEntry)
         );
         forget_session("sess-1");
@@ -483,6 +495,7 @@ mod tests {
             "m",
             Some("miyu-img"),
             true,
+            "",
             2,
             extend_chain(live_chain[1], &reply),
             "sess-img".to_string(),
@@ -491,7 +504,7 @@ mod tests {
         let next = vec![fossil, reply, message("user", "再看看")];
         let chain = prefix_chain("p", "m", "sys", &next);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-img"), true, &chain, next.len()),
+            find_resumable("p", "m", Some("miyu-img"), true, "", &chain, next.len()),
             Ok(("sess-img".to_string(), 2))
         );
         forget_session("sess-img");
@@ -512,6 +525,7 @@ mod tests {
             "m",
             Some("miyu-t"),
             false,
+            "",
             2,
             chain[2],
             "guest-1".to_string(),
@@ -523,11 +537,19 @@ mod tests {
         admin_turn.push(message("user", "管理员问"));
         let chain = prefix_chain("p", "m", "sys", &admin_turn);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-t"), true, &chain, admin_turn.len()),
+            find_resumable("p", "m", Some("miyu-t"), true, "", &chain, admin_turn.len()),
             Err(ResumeMiss::OtherTierOnly)
         );
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-t"), false, &chain, admin_turn.len()),
+            find_resumable(
+                "p",
+                "m",
+                Some("miyu-t"),
+                false,
+                "",
+                &chain,
+                admin_turn.len()
+            ),
             Ok(("guest-1".to_string(), 2))
         );
         let admin_reply = message("assistant", "管理员答");
@@ -536,6 +558,7 @@ mod tests {
             "m",
             Some("miyu-t"),
             true,
+            "",
             4,
             extend_chain(chain[3], &admin_reply),
             "admin-1".to_string(),
@@ -548,12 +571,12 @@ mod tests {
         back.push(message("user", "群友再问"));
         let chain = prefix_chain("p", "m", "sys", &back);
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-t"), false, &chain, back.len()),
+            find_resumable("p", "m", Some("miyu-t"), false, "", &chain, back.len()),
             Ok(("guest-1".to_string(), 2))
         );
         // 两档并存,各认各的:管理员档从自己上次覆盖点(4)续。
         assert_eq!(
-            find_resumable("p", "m", Some("miyu-t"), true, &chain, back.len()),
+            find_resumable("p", "m", Some("miyu-t"), true, "", &chain, back.len()),
             Ok(("admin-1".to_string(), 4))
         );
 
@@ -578,6 +601,7 @@ mod tests {
                 model: "m".into(),
                 miyu_session: Some("miyu-persist".into()),
                 host_tools: true,
+                restrictions: String::new(),
                 prefix_len: 2,
                 prefix_hash: chain[2],
                 claude_session: "sess-disk".into(),
@@ -588,6 +612,7 @@ mod tests {
                 model: "m".into(),
                 miyu_session: None,
                 host_tools: true,
+                restrictions: String::new(),
                 prefix_len: 2,
                 prefix_hash: chain[2],
                 claude_session: "sess-direct".into(),
@@ -611,6 +636,7 @@ mod tests {
                 "m",
                 Some("miyu-persist"),
                 true,
+                "",
                 &chain,
                 extended.len()
             ),
@@ -639,5 +665,59 @@ mod tests {
         );
         assert_ne!(chain[0], chain[1]);
         assert_ne!(chain[0], prefix_chain("p", "m", "sys2", &[])[0]);
+    }
+
+    /// 带不同单轮限制的回合各续各的 CLI 会话(09-23):限制改的是桥的工具面,混用一条
+    /// 会话,清单逐轮增删就会被读成工具掉线。回到不限制时,原来那条照常续上。
+    #[test]
+    fn restriction_tiers_never_share_a_cli_session() {
+        let plain = vec![message("user", "问"), message("assistant", "答")];
+        let chain = prefix_chain("p", "m", "sys", &plain);
+        record_session(
+            "p",
+            "m",
+            Some("miyu-r"),
+            true,
+            "",
+            2,
+            chain[2],
+            "plain-1".to_string(),
+        );
+        let mut restricted = plain.clone();
+        restricted.push(message("user", "只许读文件"));
+        let chain = prefix_chain("p", "m", "sys", &restricted);
+        assert_eq!(
+            find_resumable(
+                "p",
+                "m",
+                Some("miyu-r"),
+                true,
+                "tools=read;memory=on",
+                &chain,
+                restricted.len()
+            ),
+            Err(ResumeMiss::OtherTierOnly)
+        );
+        assert_eq!(
+            find_resumable("p", "m", Some("miyu-r"), true, "", &chain, restricted.len()),
+            Ok(("plain-1".to_string(), 2))
+        );
+        forget_miyu_session("miyu-r");
+    }
+
+    /// 09-23 之前落盘的条目没有 `restrictions` 字段:读回来是空串 = 不限制,照常续传。
+    #[test]
+    fn entries_saved_before_restrictions_still_resume_unrestricted() {
+        let legacy = serde_json::json!({
+            "provider_id": "p",
+            "model": "m",
+            "miyu_session": "miyu-old",
+            "host_tools": true,
+            "prefix_len": 2,
+            "prefix_hash": 7,
+            "claude_session": "old-1"
+        });
+        let entry: SessionEntry = serde_json::from_value(legacy).unwrap();
+        assert_eq!(entry.restrictions, "");
     }
 }

@@ -86,11 +86,13 @@ impl OpenAiCompatibleClient {
         // 续传按工具面档位隔离:桥每轮按触发者身份重算工具面,两档共用一条
         // CLI 会话会让清单逐轮增删,模型读成「工具掉线」(见 session 模块头)。
         let host_tools = cli_relay::host_tools_face(miyu_session);
+        let restrictions = cli_relay::turn_restrictions(miyu_session);
         let scopes = cli_relay::tool_scopes(
             self.request_scope,
             &runtime.native_tools,
             &runtime.miyu_tools,
             self.claude_code_dev_mode,
+            &restrictions,
         );
         let prompt = cli_relay::compose_prompt(
             &system_prompt,
@@ -106,6 +108,7 @@ impl OpenAiCompatibleClient {
             self.request_scope,
             miyu_session,
             host_tools,
+            &restrictions,
         );
         let mut outcome = self
             .codebuddy_turn(

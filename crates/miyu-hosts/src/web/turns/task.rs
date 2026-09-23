@@ -164,6 +164,19 @@ async fn run_turn_task_inner(
         TurnTaskInput::Create { overrides, .. } => overrides.as_deref().cloned(),
         TurnTaskInput::Redo { .. } => None,
     };
+    // 其中改工具面的两样(白名单、不写记忆)登记到这一轮结束:中转线的 Miyu 工具从
+    // MCP 桥拿,桥按会话另建工具面,原生工具开不开、续传走哪一档也由中转线自己
+    // 定——这一轮带了什么限制,它们只能从这张登记表上看到(09-23:原来一样都
+    // 不认)。守卫必须立在这一层:下面的 setup 闭包一返回就散场,立在里面等于
+    // 回合开跑前就撤掉了。
+    let restrictions = overrides
+        .as_ref()
+        .map(|overrides| overrides.tool_restrictions())
+        .unwrap_or_default();
+    let _restrictions_guard = miyu_base::host_ports::LiveTurnToolRestrictionsGuard::register(
+        &session_id,
+        restrictions.clone(),
+    );
     let mut override_error = None;
     if let Some(models) = overrides
         .as_ref()
@@ -311,17 +324,9 @@ async fn run_turn_task_inner(
             }
         }
         // 回合级工具面裁剪放在所有注册之后:两张表同裁,中途切模式白名单
-        // 才不失效(AgentTurnControl 拿的也是这两张表)。
-        if let Some(overrides) = overrides.as_ref() {
-            if overrides.memory_writes == Some(false) {
-                normal_tools.unregister("remember_fact");
-                dev_tools.unregister("remember_fact");
-            }
-            if let Some(allow) = overrides.tool_allowlist.as_deref() {
-                normal_tools.retain_named(allow);
-                dev_tools.retain_named(allow);
-            }
-        }
+        // 才不失效(AgentTurnControl 拿的也是这两张表)。和 MCP 桥共用一道。
+        tools::apply_turn_restrictions(&mut normal_tools, &restrictions);
+        tools::apply_turn_restrictions(&mut dev_tools, &restrictions);
         let active_tools = match mode {
             PersonaLane::Active => normal_tools.clone(),
             PersonaLane::Dev => dev_tools.clone(),
