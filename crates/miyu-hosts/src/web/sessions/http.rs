@@ -334,10 +334,15 @@ pub(in crate::web) async fn session_context_http(
     require_local_web_session(&state, &headers, &session_id)?;
     let snapshot = session_state_for(&state, &session_id).map_err(ApiError::internal)?;
     // 沙盒三件顺路带上:WebUI 的 `/sandbox`(不带参数)就靠这条看根与放行摘要。
+    // 会话累计也带上:WebUI 换会话后「累计」要按这条会话的权威值(含子代理花销)
+    // 重新起算,光靠回合求和会漏掉子代理(09-23)。
     Ok(Json(json!({
         "context_tokens": snapshot.context_tokens,
         "context_window": snapshot.context_window,
         "context_window_assumed": snapshot.context_window_assumed,
+        "cumulative_tokens": snapshot.cumulative_tokens,
+        "cumulative_prompt_tokens": snapshot.cumulative_prompt_tokens,
+        "cumulative_cache_read_tokens": snapshot.cumulative_cache_read_tokens,
         "sandbox": snapshot.sandbox,
         "sandbox_writable": snapshot.sandbox_writable,
         "sandbox_readable": snapshot.sandbox_readable,

@@ -1459,7 +1459,14 @@
         && Object.prototype.hasOwnProperty.call(declared, String(model?.model || "")));
     });
     if (payload?.display && typeof payload.display === "object") state.display = payload.display;
-    if (payload?.context && typeof payload.context === "object") state.context = payload.context;
+    if (payload?.context && typeof payload.context === "object") {
+      // /api/config 的上下文是 daemon 当前会话的。「累计」按会话记，别拿它盖掉正在看的
+      // 那条的——拉回来之前恰好重绘一次，max 就会把别的会话的数锁成基线（09-23）。
+      const { cumulative_tokens, cumulative_prompt_tokens, cumulative_cache_read_tokens } = state.context || {};
+      state.context = state.viewSessionId
+        ? { ...payload.context, cumulative_tokens, cumulative_prompt_tokens, cumulative_cache_read_tokens }
+        : payload.context;
+    }
     if (payload?.persona) applyPersona(payload.persona);
     renderConfigEditors();
     renderModelMenu();
@@ -1831,6 +1838,15 @@
         elements.composerCumulative.hidden = true;
       }
     }
+  }
+
+  // 换会话时把「累计」按会话记的几样清零（见 applySessionView）。
+  function resetSessionCumulative() {
+    state.cumulativeBase = null;
+    state.liveSubagentTokens.clear();
+    state.context.cumulative_tokens = 0;
+    state.context.cumulative_prompt_tokens = 0;
+    state.context.cumulative_cache_read_tokens = 0;
   }
 
   function updateRuntimeUsage() {}
@@ -2828,6 +2844,11 @@
     }
     retireLiveRunsForSwitch();
     clearViewSyncTimer();
+    // 「累计」的基线与子代理估算是按会话记的「只升不降」(#131)：换了会话不清，max 会
+    // 把上一条会话的高值锁在这条上——删掉正在看的会话、自动切过去后「累计」还是被删
+    // 那条的数（09-23 用户报；点侧栏切换也一样）。这条会话的权威累计由下面的
+    // refreshSessionContext 取回。
+    if (state.viewSessionId !== sessionId) resetSessionCumulative();
     state.viewSessionId = sessionId;
     // 记住浏览位置，刷新后回到这里而不是跳去终端车道（见 preferredBootSession）。
     if (!isTerminalSession(sessionId)) safeStorageSet(VIEW_SESSION_KEY, sessionId);
@@ -5601,7 +5622,20 @@
       state.context.window = payload?.context_window == null
         ? null
         : Math.max(0, asFiniteNumber(payload.context_window));
+      // 「累计」按这条会话的权威值（含子代理花销）起算：基线只升不降，换会话时已清零。
+      const cumulative = Math.max(0, asFiniteNumber(payload?.cumulative_tokens));
+      state.context.cumulative_tokens = cumulative;
+      state.context.cumulative_prompt_tokens = Math.max(0, asFiniteNumber(payload?.cumulative_prompt_tokens));
+      state.context.cumulative_cache_read_tokens = Math.max(0, asFiniteNumber(payload?.cumulative_cache_read_tokens));
+      if (cumulative > 0 && !(asFiniteNumber(state.cumulativeBase?.total) >= cumulative)) {
+        state.cumulativeBase = {
+          total: cumulative,
+          prompt: state.context.cumulative_prompt_tokens,
+          cached: state.context.cumulative_cache_read_tokens,
+        };
+      }
       updateContext();
+      refreshComposerCumulative();
     } catch (_) {
       // 拉不到就保持现状，等 run 事件里的增量。
     }

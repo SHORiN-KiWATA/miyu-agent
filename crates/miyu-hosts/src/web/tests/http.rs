@@ -505,3 +505,49 @@ sys.stdin.readline()  # 等 Rust 侧完成死后判定
     stdin.write_all(b"done\n").unwrap();
     let _ = child.wait();
 }
+
+/// WebUI 换会话后「累计」要按这条会话的权威值(含子代理花销)重新起算,靠 /context 带
+/// 回来。09-23 之前它只给上下文与窗口,换会话后信息行的「累计」一直是上一条会话的数。
+#[tokio::test]
+async fn session_context_reports_the_sessions_cumulative_including_subagents() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let persona = active_persona_scope(&state);
+    state
+        .state_store
+        .adopt_sessions_for_persona(&persona)
+        .unwrap();
+    let other = state
+        .state_store
+        .create_session(&persona, "别的会话", "user", None)
+        .unwrap();
+    let child = state
+        .state_store
+        .create_session(&persona, "深挖", "subagent", Some(&other.session_id))
+        .unwrap();
+    state
+        .state_store
+        .record_subagent_usage(&child.session_id, None, None, None, 400, 100, 500, 200)
+        .unwrap();
+
+    let snapshot = session_state_for(&state, &other.session_id).unwrap();
+    assert_eq!(snapshot.cumulative_tokens, 500, "子代理的花销要算进它的会话累计");
+    let axum::Json(payload) = session_context_http(
+        axum::extract::State(state.clone()),
+        HeaderMap::new(),
+        axum::extract::Path(other.session_id.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(payload["cumulative_tokens"], 500, "{payload}");
+    assert_eq!(
+        payload["cumulative_prompt_tokens"],
+        serde_json::json!(snapshot.cumulative_prompt_tokens),
+        "{payload}"
+    );
+    assert_eq!(
+        payload["cumulative_cache_read_tokens"],
+        serde_json::json!(snapshot.cumulative_cache_read_tokens),
+        "{payload}"
+    );
+}
