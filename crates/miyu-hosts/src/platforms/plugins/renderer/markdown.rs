@@ -183,7 +183,6 @@ pub(in crate::platforms::plugins::renderer) struct MarkdownCollector {
     pub(in crate::platforms::plugins::renderer) table_header: bool,
     pub(in crate::platforms::plugins::renderer) strong_depth: usize,
     pub(in crate::platforms::plugins::renderer) emphasis_depth: usize,
-    pub(in crate::platforms::plugins::renderer) link_depth: usize,
     /// 未闭合链接的目标地址栈（可嵌套：图片可以套在链接里）。
     pub(in crate::platforms::plugins::renderer) link_urls: Vec<String>,
     /// 与上面一一对应的可见文字，用来判断「标题本身就是网址」。
@@ -194,17 +193,16 @@ pub(in crate::platforms::plugins::renderer) struct MarkdownCollector {
 /// `[标题](链接)` 和 `![alt](图片地址)` 画成图之后地址会整个消失——图里点不了
 /// 也复制不了，读者连它指向哪都无从知道。所以在可见文字后面补一段 ` (地址)`；
 /// 可见文字为空（`![](url)` 这种）时整块只剩地址，那就单独把它放出来。
-fn link_suffix(url: &str, shown: &str) -> Option<String> {
+///
+/// 返回补段的开头（` (` 或 `(`）。地址与收尾的 `)` 由调用方推：只有地址上链接
+/// 色，标题和括号都是正文色（用户 09-23）。
+fn link_suffix_lead(url: &str, shown: &str) -> Option<&'static str> {
     let url = url.trim();
     let shown = shown.trim();
     if url.is_empty() || same_target(url, shown) {
         return None;
     }
-    Some(if shown.is_empty() {
-        format!("({url})")
-    } else {
-        format!(" ({url})")
-    })
+    Some(if shown.is_empty() { "(" } else { " (" })
 }
 
 /// 自动链接（`<https://x>` 或 `[https://x](https://x)`）的标题本身就是网址，
@@ -227,6 +225,24 @@ impl MarkdownCollector {
             self.event(event);
         }
         self.finish_current();
+        for block in &mut self.blocks {
+            if matches!(
+                block.kind,
+                BlockKind::Code | BlockKind::Image | BlockKind::Rule
+            ) {
+                continue;
+            }
+            mark_links(&mut block.spans);
+            if let Some(table) = block.table.as_mut() {
+                for cell in table
+                    .header
+                    .iter_mut()
+                    .chain(table.rows.iter_mut().flatten())
+                {
+                    mark_links(cell);
+                }
+            }
+        }
         self.blocks
     }
 
@@ -234,7 +250,16 @@ impl MarkdownCollector {
         match event {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
-            Event::Text(text) => self.push_text(&text, self.style()),
+            Event::Text(text) => {
+                // 链接里的字只有「可见文字本身就是地址」（`<https://x>` 这类自动
+                // 链接）才上链接色；标题是正文（用户 09-23）。
+                let mut style = self.style();
+                style.link = self
+                    .link_urls
+                    .last()
+                    .is_some_and(|url| same_target(url.trim(), text.trim()));
+                self.push_text(&text, style);
+            }
             Event::Code(text) => {
                 let mut style = self.style();
                 style.code = true;
@@ -245,14 +270,11 @@ impl MarkdownCollector {
                 style.code = true;
                 self.push_text(&text, style);
             }
-            Event::SoftBreak => {
-                let separator = if self.code_block || self.table.is_some() {
-                    "\n"
-                } else {
-                    " "
-                };
-                self.push_text(separator, self.style());
-            }
+            // 段落里的单个换行也照画成换行（用户 09-23 拍板）。CommonMark 把它
+            // 并成空格，可终端、WebUI、QQ 短回复都是一行一行显示的——同一段话
+            // 一长到被转成图就挤成一坨，提示词要求「每个来源一行」的那几行
+            // 也首尾相接。
+            Event::SoftBreak => self.push_text("\n", self.style()),
             Event::HardBreak => self.push_text("\n", self.style()),
             Event::Rule => {
                 self.finish_current();
@@ -342,7 +364,6 @@ impl MarkdownCollector {
             // 图片和链接在这里是同一件事:图渲染器画不出图片,`![alt](url)`
             // 只剩 alt、`![](url)` 什么都不剩,读者更够不到那张图。
             Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. } => {
-                self.link_depth = self.link_depth.saturating_add(1);
                 self.link_urls.push(dest_url.to_string());
                 self.link_texts.push(String::new());
             }
@@ -412,13 +433,17 @@ impl MarkdownCollector {
             TagEnd::Emphasis => self.emphasis_depth = self.emphasis_depth.saturating_sub(1),
             TagEnd::Strikethrough => self.strike_depth = self.strike_depth.saturating_sub(1),
             TagEnd::Link | TagEnd::Image => {
-                self.link_depth = self.link_depth.saturating_sub(1);
                 let url = self.link_urls.pop().unwrap_or_default();
                 let text = self.link_texts.pop().unwrap_or_default();
-                if let Some(suffix) = link_suffix(&url, &text) {
-                    let mut style = self.style();
-                    style.link = true;
-                    self.push_text(&suffix, style);
+                if let Some(lead) = link_suffix_lead(&url, &text) {
+                    let plain = self.style();
+                    let link = InlineStyle {
+                        link: true,
+                        ..plain
+                    };
+                    self.push_text(lead, plain);
+                    self.push_text(url.trim(), link);
+                    self.push_text(")", plain);
                 }
             }
             _ => {}
@@ -504,7 +529,7 @@ impl MarkdownCollector {
             bold: self.strong_depth > 0 || self.table_header,
             italic: self.emphasis_depth > 0,
             code: self.code_block,
-            link: self.link_depth > 0,
+            link: false,
             muted: self.strike_depth > 0,
         }
     }

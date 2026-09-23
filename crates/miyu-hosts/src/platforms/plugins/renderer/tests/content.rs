@@ -507,6 +507,132 @@ fn documents_over_the_pixel_budget_fail_instead_of_truncating() {
     assert!(error.to_string().contains("pixel limit"));
 }
 
+/// 所有被标成链接的连续文字(正文与表格单元格都算)。
+fn link_runs(markdown: &str) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut collect = |spans: &[RichSpan]| {
+        for span in spans.iter().filter(|span| span.style.link) {
+            runs.push(span.text.clone());
+        }
+    };
+    for block in collect_blocks(markdown) {
+        collect(&block.spans);
+        if let Some(table) = block.table.as_ref() {
+            for cell in table.header.iter().chain(table.rows.iter().flatten()) {
+                collect(cell);
+            }
+        }
+    }
+    runs
+}
+
+/// 09-23「长文转图的链接颜色又没了」:提示词要她给来源写 `title (url)`(09-22 起
+/// 括号里带空格),这是纯文本,图渲染器只认 Markdown 链接,整行和正文同色。
+/// 只有地址上色,标题不染(用户 09-23)。退回修复前这条报红。
+#[test]
+fn source_lines_in_title_url_form_link_only_the_url() {
+    let runs = link_runs(
+        "正文一句。\n\n模型 & 价格 | DeepSeek API Docs (https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)\nSilverhairfx/DictaPulse ( https://github.com/Silverhairfx/DictaPulse )\n",
+    );
+    assert_eq!(
+        runs,
+        vec![
+            "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+            "https://github.com/Silverhairfx/DictaPulse",
+        ]
+    );
+}
+
+#[test]
+fn bare_urls_in_prose_are_links_without_the_sentence_punctuation() {
+    let runs = link_runs("价格表见 https://a.example/pricing/。另见(https://b.example/x)。");
+    assert_eq!(
+        runs,
+        vec!["https://a.example/pricing/", "https://b.example/x"]
+    );
+}
+
+#[test]
+fn code_list_markers_and_tables_are_handled() {
+    // 行内代码里的地址是给人抄的字面量。
+    assert!(link_runs("见 `https://a.example/x` 这个地址").is_empty());
+    assert_eq!(
+        link_runs("- Miyu 主页 (https://github.com/shorinkiwata/Miyu)\n"),
+        vec!["https://github.com/shorinkiwata/Miyu"]
+    );
+    assert_eq!(
+        link_runs("| 名字 | 地址 |\n| --- | --- |\n| 首页 | https://a.example |\n"),
+        vec!["https://a.example"]
+    );
+    // Markdown 链接同一口径:标题与括号是正文色,只有补上的地址是链接;
+    // 自动链接可见文字本身就是地址,照旧是链接。
+    assert_eq!(
+        link_runs("[Miyu 主页](https://github.com/shorinkiwata/Miyu)"),
+        vec!["https://github.com/shorinkiwata/Miyu"]
+    );
+    assert_eq!(
+        link_runs("见 <https://example.com/> 与 [https://a.example](https://a.example)"),
+        vec!["https://example.com/", "https://a.example"]
+    );
+}
+
+/// 单个换行照画成换行(用户 09-23 拍板):终端、WebUI、QQ 短回复都一行一行显示,
+/// 图里不该把「每个来源一行」挤成一段。
+#[test]
+fn single_newlines_stay_line_breaks() {
+    let blocks = collect_blocks("第一行\n第二行\n\n- 列表第一行\n  列表第二行\n");
+    let text: Vec<String> = blocks
+        .iter()
+        .map(|block| block.spans.iter().map(|span| span.text.as_str()).collect())
+        .collect();
+    assert_eq!(text[0], "第一行\n第二行");
+    assert_eq!(text[1], "• 列表第一行\n列表第二行");
+}
+
+/// 走到像素:默认主题下,纯文本来源行在成图里确实是链接色。
+#[test]
+fn title_url_line_is_painted_in_the_link_colour() {
+    let palette = Palette::for_theme(&RenderConfig::default().theme);
+    let count_link_pixels = |markdown: &str| {
+        let page = render(markdown, &RenderConfig::default())
+            .unwrap()
+            .remove(0);
+        let image = image::load_from_memory(&page.png).unwrap().to_rgba8();
+        image
+            .pixels()
+            .filter(|pixel| pixel.0 == palette.link)
+            .count()
+    };
+    assert!(count_link_pixels("DictaPulse (https://github.com/Silverhairfx/DictaPulse)") > 50);
+    assert_eq!(count_link_pixels("只是一段普通的正文,没有地址。"), 0);
+}
+
+/// 链接样张(人工看效果用,不进 CI):cargo test render_link_sample -- --ignored
+///
+/// 来源行照提示词的格式写(`title (url)` 每个一行,09-22 起括号内带空格),
+/// 取自 QQ 里的真实回复。
+#[test]
+#[ignore]
+fn render_link_sample() {
+    let markdown = r#"按 token 单价算,Flash 便宜到离谱。Opus 5 走 API 是 $5/$25 每百万,开了 fast mode 还要全线翻倍。价格表见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing/。
+
+模型 & 价格 | DeepSeek API Docs (https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
+Claude Opus 5 价格出炉:模型没涨价,「快」要加钱 | VibeCafé (https://vibecafe.ai/blogs/claude-opus-5-fast-mode-cost)
+Silverhairfx/DictaPulse ( https://github.com/Silverhairfx/DictaPulse )
+
+写成 Markdown 的也照旧:[Miyu 主页](https://github.com/shorinkiwata/Miyu)。代码里的 `https://example.com` 不算链接。
+"#;
+    let pages = render(markdown, &RenderConfig::default()).unwrap();
+    let out = std::env::temp_dir().join("miyu-link-sample.png");
+    std::fs::write(&out, &pages[0].png).unwrap();
+    eprintln!(
+        "sample: {} ({}x{})",
+        out.display(),
+        pages[0].width,
+        pages[0].height
+    );
+}
+
 /// 表格样张(人工看效果用,不进 CI):cargo test render_table_sample -- --ignored
 #[test]
 #[ignore]

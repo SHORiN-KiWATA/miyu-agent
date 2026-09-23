@@ -1,11 +1,13 @@
 mod fonts;
 mod layout;
+mod links;
 mod markdown;
 mod paint;
 mod table_width;
 mod worker;
 use fonts::*;
 use layout::*;
+use links::*;
 use markdown::*;
 use paint::*;
 use table_width::*;
