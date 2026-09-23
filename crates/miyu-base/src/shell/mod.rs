@@ -506,7 +506,8 @@ pub(super) fn command_exists_in_path(command: &str) -> bool {
     if command.is_empty() || command.contains('/') {
         return false;
     }
-    let Some(paths) = env::var_os("PATH") else {
+    // 问的是「用户的 shell 找不找得到」:看继承来的 PATH,不看补过程序目录的那份。
+    let Some(paths) = crate::paths::inherited_path() else {
         return false;
     };
     env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(command)))

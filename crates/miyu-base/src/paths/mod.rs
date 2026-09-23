@@ -2,9 +2,11 @@ mod home_layout;
 mod legacy_migration;
 mod resource_migration;
 pub mod resources;
+mod search_path;
 pub use home_layout::*;
 pub use legacy_migration::*;
 pub(crate) use resource_migration::*;
+pub use search_path::*;
 
 /// Miyu 自己这个可执行文件的路径，**在它可能被替换之前**记下来。
 ///

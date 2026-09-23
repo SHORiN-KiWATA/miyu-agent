@@ -24,6 +24,12 @@ pub async fn run() -> Result<()> {
     // 读出来的是 `".../miyu (deleted)"`，再想 spawn 自己就 ENOENT 了
     // （长图渲染器、闹钟、知识库索引都靠这条路）。
     miyu_base::paths::prime_miyu_executable();
+    // 经 hook 在 PATH 之外兜底找到的 miyu(没配 brew shellenv 的 shell),子进程照样
+    // 按 PATH 找 rg/chafa——把自己所在的 bin 目录补到 PATH 末尾(09-23 macOS 真机)。
+    // current_thread 运行时:这里还没有别的线程,改环境变量是安全的。
+    if let Ok(executable) = miyu_base::paths::miyu_executable() {
+        miyu_base::paths::extend_path_with_executable_dir(&executable);
+    }
     if miyu_hosts::platforms::plugins::renderer_worker_requested() {
         return miyu_hosts::platforms::plugins::run_renderer_worker().await;
     }
