@@ -287,6 +287,12 @@ git -C ~/Documents/github/homebrew-miyu push
 这一个 formula，说明里一律写全名。第一个带 macOS 包的版本发布后，README 的「如何安装？」与
 `docs/wiki/01-快速开始.md` 补上 macOS 段落（tap 上线前写进去，用户照着装会失败）。
 
+macOS 段还要写明两件事（09-23 定）：macOS 版**不带语音**，用嘴代替打字用系统听写（连按两下
+Fn）；想用 Siri 免手跟 Miyu 说话，就在「快捷指令」里串「听写 → 运行 shell 脚本 → 朗读」，
+shell 里写绝对路径 `/opt/homebrew/bin/miyu ask "…"`（快捷指令的 shell 没有 Homebrew 的
+PATH），回复里的 Markdown 符号 Siri 会照着念；据记忆还要在快捷指令设置 → 高级里打开「允许
+运行脚本」，写之前在真 Mac 上核实。
+
 ## 8. 升级本机与清理覆盖文件（任务已授权时）
 
 升级使用正式回读通过的包，不能把未验收候选装进生产机。先记录 pacman 版本、PATH
