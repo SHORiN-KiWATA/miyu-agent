@@ -283,40 +283,20 @@ async fn run_turn_task_inner(
             normal_tools.unregister("remember_fact");
             dev_tools.unregister("remember_fact");
         }
-        // 子会话的工具面(09-18 会话化):父车道那张表减排除表——与老循环里模型看到
-        // 的一致;孙代理再摘掉 subagent 本身(深度写死到 2)。ask_question 也不给:
-        // 子代理的回话对象是父回合,没有人来答。
+        // 按会话种类的那几道(end_voice_chat 只留给唤醒对话、子代理减排除表、
+        // ask_question 只给有人来答的会话)收在 tools::apply_session_kind_scope,
+        // 与 MCP 桥共用:桥上原来一道都没有,中转线的工具面就这么漂开了(09-23)。
         let session_record = store.session_record(&session_id).ok().flatten();
-        // end_voice_chat 只在唤醒对话那条会话里有意义。别的会话里它是一件
-        // 模型每回合都读一遍、却永远不会调用的常驻工具——机器级开关
-        // (config.voice.enabled)管不到这一层。一条会话的种类终身不变,所以
-        // 这条分叉不会让 tools 数组在会话中途变字节(AGENTS §1.1)。
-        if session_record
-            .as_ref()
-            .map(|record| record.kind.as_str())
-            .is_none_or(|kind| kind != miyu_core::state::VOICE_SESSION_KIND)
-        {
-            normal_tools.unregister(tools::END_VOICE_CHAT_TOOL);
-            dev_tools.unregister(tools::END_VOICE_CHAT_TOOL);
+        for registry in [&mut normal_tools, &mut dev_tools] {
+            tools::apply_session_kind_scope(
+                registry,
+                session_record.as_ref(),
+                platform_context.is_some(),
+                config.tools.enabled,
+            );
         }
         let subagent_record =
             session_record.filter(|record| record.kind == miyu_core::state::SUBAGENT_SESSION_KIND);
-        if let Some(record) = subagent_record.as_ref() {
-            for name in tools::SUBAGENT_SESSION_EXCLUDED {
-                normal_tools.unregister(name);
-                dev_tools.unregister(name);
-            }
-            if record.depth >= 2 {
-                for name in ["subagent", "send_subagent_message"] {
-                    normal_tools.unregister(name);
-                    dev_tools.unregister(name);
-                }
-            }
-        }
-        if platform_context.is_none() && config.tools.enabled && subagent_record.is_none() {
-            tools::register_ask_question(&mut normal_tools);
-            tools::register_ask_question(&mut dev_tools);
-        }
         if config.tools.enabled {
             if let Some(context) = profile
                 .as_ref()

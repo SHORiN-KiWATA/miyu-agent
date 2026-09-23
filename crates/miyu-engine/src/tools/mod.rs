@@ -38,6 +38,8 @@ mod registry;
 #[cfg(test)]
 mod relay_tests;
 mod scripts;
+mod session_scope;
+pub use session_scope::apply_session_kind_scope;
 mod skills;
 pub mod subagent;
 /// 渲染层要认它:认不出的子代理标记不能原样打到屏幕上(hosts 那边的兜底分支)。

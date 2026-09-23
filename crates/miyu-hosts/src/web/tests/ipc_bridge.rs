@@ -374,6 +374,110 @@ async fn tool_catalog_matches_the_bridge_callable_set() {
     assert!(described["tool"]["parameters"]["properties"]["command"].is_object());
 }
 
+async fn bridge_catalog_names(state: &DaemonState, session: &str) -> Vec<String> {
+    let catalog = handle_session_command(
+        state,
+        IpcCommand::ToolCatalog {
+            full: false,
+            session: Some(session.to_string()),
+            name: None,
+        },
+    )
+    .await
+    .unwrap();
+    catalog["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// 中转线(claude-code 等)的工具只从 MCP 桥拿,桥的目录必须和回合装配按会话种类
+/// 裁出来的一样。09-23 之前桥上一道都没有:语音唤醒开着时每条会话都挂着
+/// end_voice_chat,子代理在中转线上拿得到排除表里的工具和 ask_question,孙代理
+/// 还能再开子代理。
+#[tokio::test]
+async fn the_bridge_scopes_tools_by_session_kind_like_the_turn_does() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    state.manager.lock().unwrap().config.voice.enabled = true;
+    let persona = active_persona_scope(&state);
+    state
+        .state_store
+        .adopt_sessions_for_persona(&persona)
+        .unwrap();
+    let main_id = state.state_store.session_id().to_string();
+    let has = |names: &[String], name: &str| names.iter().any(|known| known == name);
+    // 漏出来的一次收齐再报:四类会话各漏什么一眼看全,不在第一处就停。
+    let mut leaks = Vec::new();
+
+    let main = bridge_catalog_names(&state, &main_id).await;
+    if has(&main, "end_voice_chat") {
+        leaks.push("普通会话挂着 end_voice_chat".to_string());
+    }
+    assert!(has(&main, "ask_question"), "{main:?}");
+    assert!(
+        has(&main, "subagent"),
+        "夹具里得有 subagent,孙代理那条断言才不空转: {main:?}"
+    );
+
+    let voice = state
+        .state_store
+        .create_session(
+            &persona,
+            "唤醒对话",
+            miyu_core::state::VOICE_SESSION_KIND,
+            None,
+        )
+        .unwrap();
+    let voice_names = bridge_catalog_names(&state, &voice.session_id).await;
+    assert!(
+        has(&voice_names, "end_voice_chat"),
+        "唤醒对话那条会话要有它: {voice_names:?}"
+    );
+
+    let excluded: Vec<&str> = miyu_engine::tools::SUBAGENT_SESSION_EXCLUDED
+        .iter()
+        .copied()
+        .filter(|name| has(&main, name))
+        .collect();
+    assert!(
+        !excluded.is_empty(),
+        "夹具里至少要有一件排除项,否则子代理那条断言是空转: {main:?}"
+    );
+    let child = state
+        .state_store
+        .create_subagent_session(&persona, "子代理", &main_id, "", 1, None, false)
+        .unwrap();
+    let child_names = bridge_catalog_names(&state, &child.session_id).await;
+    for name in excluded
+        .iter()
+        .copied()
+        .chain(["ask_question", "end_voice_chat"])
+    {
+        if has(&child_names, name) {
+            leaks.push(format!("子代理拿到 {name}"));
+        }
+    }
+    assert!(
+        has(&child_names, "subagent"),
+        "子代理(深度 1)还能再开一层: {child_names:?}"
+    );
+
+    let grandchild = state
+        .state_store
+        .create_subagent_session(&persona, "孙代理", &child.session_id, "", 2, None, false)
+        .unwrap();
+    let grandchild_names = bridge_catalog_names(&state, &grandchild.session_id).await;
+    for name in ["subagent", "send_subagent_message"] {
+        if has(&grandchild_names, name) {
+            leaks.push(format!("孙代理拿到 {name}"));
+        }
+    }
+    assert!(leaks.is_empty(), "桥的工具目录漏了:\n{}", leaks.join("\n"));
+}
+
 #[tokio::test]
 async fn dev_sessions_live_under_the_reserved_persona_and_pin_dev_mode() {
     let temp = tempfile::tempdir().unwrap();

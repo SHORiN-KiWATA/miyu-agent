@@ -675,7 +675,8 @@ pub(in crate::web) async fn handle_session_command(
 /// 与回合装配同源的本机加料(task.rs 同条件):artifact 与 share 工具是
 /// 每回合注册进 normal 表的,基础注册表里没有;桥的目录与调用两边都要补,
 /// 否则 claude 经桥看到的世界与回合内不同源。平台会话进不了桥(解析器已
-/// 拒),dev 表与回合装配一样不含这两组。
+/// 拒),dev 表与回合装配一样不含这两组。按会话种类的裁剪(语音会话、子代理)
+/// 也在这里补,与回合共用 `apply_session_kind_scope`。
 pub(in crate::web) fn attach_owner_turn_tools(
     registry: &mut miyu_engine::tools::ToolRegistry,
     state: &DaemonState,
@@ -686,6 +687,15 @@ pub(in crate::web) fn attach_owner_turn_tools(
     if !config.tools.enabled {
         return;
     }
+    // 按会话种类的那几道与回合装配共用 tools::apply_session_kind_scope。这里原来
+    // 只挂 ask_question:语音唤醒开着时每条会话都挂着 end_voice_chat,子代理在
+    // 中转线上拿得到排除表里的工具和 ask_question,孙代理还能再开子代理(09-23)。
+    let session = state
+        .stores
+        .for_session(session_id)
+        .session_record(session_id)
+        .ok()
+        .flatten();
     // 平台会话:把正在跑的那一轮的上下文取回来注册平台工具。claude-code
     // 供应商忽略请求里的 tools,全靠这条 MCP 桥——不挂上去,群管理/撤回/
     // 艾特/发送在群聊里整套消失(08-26 用户点名)。权限判定同源:用的就是
@@ -728,10 +738,21 @@ pub(in crate::web) fn attach_owner_turn_tools(
                 platform.clone(),
             );
         }
+        miyu_engine::tools::apply_session_kind_scope(
+            registry,
+            session.as_ref(),
+            true,
+            config.tools.enabled,
+        );
         crate::platforms::register_platform_tools_for(registry, platform, mode);
         return;
     }
-    miyu_engine::tools::register_ask_question(registry);
+    miyu_engine::tools::apply_session_kind_scope(
+        registry,
+        session.as_ref(),
+        false,
+        config.tools.enabled,
+    );
     // artifact / 分享是 WebUI 专有:预览文件要网页端才渲染得出来。REPL 里
     // 拿到它,模型就会把文档"扔进 artifact"——那地方你根本看不见
     // (08-29 用户实测,东京攻略写进了 data/artifacts 没人知道)。

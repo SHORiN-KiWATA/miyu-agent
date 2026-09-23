@@ -580,3 +580,43 @@ async fn restricted_platform_can_load_the_divination_group() {
         .expect("loaded_tools line");
     assert!(loaded.split(',').any(|name| name.trim() == "divine"));
 }
+
+/// 按会话种类收工具面(回合装配与 MCP 桥共用,09-23)。桥那条路在 miyu-hosts 的
+/// ipc_bridge 测试里按普通/语音/子代理/孙代理四种会话验;这里钉住桥测不到的
+/// 分支:平台回合、工具总开关关着时不挂 ask_question,查不到会话记录按普通会话算。
+#[test]
+fn session_kind_scope_gives_ask_question_only_to_sessions_someone_answers() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let mut config = AppConfig::default();
+    config.voice.enabled = true;
+    let base = build_tool_registry(&config, &paths, PersonaLane::Active, false).unwrap();
+    assert!(
+        base.contains(END_VOICE_CHAT_TOOL),
+        "夹具得挂着 end_voice_chat,摘它的断言才不空转"
+    );
+    let store = miyu_core::state::StateStore::new(&paths).unwrap();
+    store.init_files().unwrap();
+    let user = store
+        .create_session("default", "user", miyu_core::state::USER_SESSION_KIND, None)
+        .unwrap();
+    let names = |session: Option<&miyu_core::state::SessionRecord>, platform, tools_enabled| {
+        let mut registry = base.clone();
+        apply_session_kind_scope(&mut registry, session, platform, tools_enabled);
+        registry.tool_names()
+    };
+    let has = |names: &[String], name: &str| names.iter().any(|known| known == name);
+
+    assert!(has(&names(Some(&user), false, true), "ask_question"));
+    assert!(
+        !has(&names(Some(&user), true, true), "ask_question"),
+        "平台回合没人来答"
+    );
+    assert!(
+        !has(&names(Some(&user), false, false), "ask_question"),
+        "工具总开关关着"
+    );
+    let unknown = names(None, false, true);
+    assert!(!has(&unknown, END_VOICE_CHAT_TOOL), "{unknown:?}");
+    assert!(has(&unknown, "ask_question"), "{unknown:?}");
+}
