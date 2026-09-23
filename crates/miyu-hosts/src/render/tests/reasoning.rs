@@ -229,6 +229,11 @@ fn reasoning_elapsed_uses_milliseconds_then_decimal_seconds() {
         format_reasoning_elapsed(std::time::Duration::from_millis(11_700)),
         "11.7s"
     );
+    // 过了一分钟与其它用时同一个写法(09-23)。
+    assert_eq!(
+        format_reasoning_elapsed(std::time::Duration::from_secs(3_725)),
+        "1h 02m 05s"
+    );
 }
 
 #[test]

@@ -118,15 +118,9 @@ pub(crate) fn tool_result_status(status: &str, elapsed: Option<std::time::Durati
     )
 }
 
+/// 工具与子代理用时:整秒的时分秒(过了一小时也带秒,09-23 统一)。
 pub(crate) fn format_elapsed(elapsed: std::time::Duration) -> String {
-    let seconds = elapsed.as_secs();
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else if seconds < 3_600 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{}h {:02}m", seconds / 3_600, (seconds % 3_600) / 60)
-    }
+    miyu_base::durations::format_hms(elapsed)
 }
 
 pub(crate) fn format_reasoning_elapsed(elapsed: std::time::Duration) -> String {
@@ -136,14 +130,8 @@ pub(crate) fn format_reasoning_elapsed(elapsed: std::time::Duration) -> String {
         format!("{}ms", elapsed.as_millis())
     } else if elapsed < std::time::Duration::from_secs(60) {
         format!("{:.1}s", elapsed.as_secs_f64())
-    } else if elapsed < std::time::Duration::from_secs(3_600) {
-        format!("{}m {:02}s", elapsed.as_secs() / 60, elapsed.as_secs() % 60)
     } else {
-        format!(
-            "{}h {:02}m",
-            elapsed.as_secs() / 3_600,
-            (elapsed.as_secs() % 3_600) / 60
-        )
+        miyu_base::durations::format_hms(elapsed)
     }
 }
 

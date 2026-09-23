@@ -243,7 +243,7 @@ fn subagent_status_shows_live_and_frozen_elapsed_time() {
     };
     assert_eq!(
         tool_status_text("subagent", &completed, true),
-        "subagent×1 ok · 1h 02m"
+        "subagent×1 ok · 1h 02m 00s"
     );
 }
 
@@ -253,7 +253,7 @@ fn elapsed_time_formats_seconds_minutes_and_hours() {
     assert_eq!(format_elapsed(std::time::Duration::from_secs(65)), "1m 05s");
     assert_eq!(
         format_elapsed(std::time::Duration::from_secs(7_380)),
-        "2h 03m"
+        "2h 03m 00s"
     );
 }
 

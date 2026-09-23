@@ -9,14 +9,9 @@ use crate::cli::*;
 pub(in crate::cli) const JOB_SPINNER_FRAMES: [char; 10] =
     ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// 后台任务条的用时:时分秒(过了一小时也带秒,09-23 与其它用时统一)。
 pub(in crate::cli) fn format_job_duration(seconds: u64) -> String {
-    if seconds >= 3600 {
-        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
-    } else if seconds >= 60 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{seconds}s")
-    }
+    miyu_base::durations::format_hms(std::time::Duration::from_secs(seconds))
 }
 
 /// Status strip under the footer: a leading blank line, then one line per

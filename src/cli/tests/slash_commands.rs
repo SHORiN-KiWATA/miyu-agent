@@ -367,6 +367,17 @@ fn the_goal_hint_says_state_rounds_and_elapsed() {
     assert!(text.contains("第 3 轮"), "{text}");
     assert!(text.contains("12s"), "{text}");
 
+    // 跑久了是时分秒,不是一串秒数(用户 09-23 截图:`· 1407s`)。测试与被测各取一次
+    // 「现在」,跨秒时差一秒,只比到十秒位。
+    let long = GoalHint {
+        since_unix: now - 3_725,
+        ..running.clone()
+    };
+    let text = goal_hint_text(Some(&long));
+    assert!(text.contains(" · 1h 02m 0"), "{text}");
+    assert!(!text.contains("3725s") && !text.contains("3726s"), "{text}");
+    assert_eq!(format_job_duration(3_725), "1h 02m 05s");
+
     // 上一轮一个工具都没调，驱动器停下来等人开口了：armed 还挂着，但它不会
     // 自己往前跑——说成 running 就是在骗人，这正是这行提示要治的病。
     let awaiting = GoalHint {

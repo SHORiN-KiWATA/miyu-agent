@@ -82,7 +82,9 @@ pub(in crate::cli) fn goal_hint_text(goal: Option<&miyu_core::ipc::GoalHint>) ->
             .unwrap_or_default();
         let elapsed = now.saturating_sub(goal.since_unix);
         if (0..86_400).contains(&elapsed) {
-            text.push_str(&format!(" · {elapsed}s"));
+            // 时分秒(用户 09-23:原来写成 `1407s`,跑久了读不出是多久)。
+            let elapsed = std::time::Duration::from_secs(elapsed as u64);
+            text.push_str(&format!(" · {}", miyu_base::durations::format_hms(elapsed)));
         }
     }
     text

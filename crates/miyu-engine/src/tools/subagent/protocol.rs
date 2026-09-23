@@ -468,13 +468,22 @@ fn split_elapsed(text: &str) -> (String, Option<Duration>) {
     (stripped, Some(elapsed))
 }
 
-/// `format_seconds` 的逆：`0.3s` / `12s` / `1m 05s`。
+/// `format_seconds` 的逆：`0.3s` / `12s` / `1m 05s` / `1h 02m 05s`。
+///
+/// 09-23 之前过了一小时写成 `125m 03s`,老日志里的这种照样认(没有小时那一截)。
 pub fn parse_seconds(text: &str) -> Option<Duration> {
     let text = text.trim();
+    let (hours, text) = match text.split_once("h ") {
+        Some((hours, rest)) => (hours.parse::<u64>().ok()?, rest),
+        None => (0, text),
+    };
     if let Some((minutes, seconds)) = text.split_once("m ") {
         let minutes: u64 = minutes.parse().ok()?;
         let seconds: u64 = seconds.strip_suffix('s')?.parse().ok()?;
-        return Some(Duration::from_secs(minutes * 60 + seconds));
+        return Some(Duration::from_secs(hours * 3_600 + minutes * 60 + seconds));
+    }
+    if hours > 0 {
+        return None;
     }
     let seconds: f64 = text.strip_suffix('s')?.parse().ok()?;
     (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
@@ -809,16 +818,31 @@ mod tests {
         }
     }
 
+    /// 带小时的新写法(09-23)与老日志里没有小时的写法都认。
+    #[test]
+    fn parse_seconds_reads_hours_and_the_old_minutes_only_form() {
+        assert_eq!(
+            parse_seconds("1h 02m 05s"),
+            Some(Duration::from_secs(3_725))
+        );
+        assert_eq!(parse_seconds("125m 03s"), Some(Duration::from_secs(7_503)));
+        assert_eq!(parse_seconds("1h 5s"), None);
+    }
+
     /// `format_seconds` 的逆要认得它写出来的每一种形状。
     #[test]
     fn seconds_round_trip_through_the_formatter() {
-        for millis in [1_u64, 340, 1_200, 12_000, 65_000, 3_600_000] {
+        for millis in [
+            1_u64, 340, 1_200, 12_000, 65_000, 3_600_000, 3_725_000, 90_061_000,
+        ] {
             let source = Duration::from_millis(millis);
             let text = miyu_base::durations::format_seconds(source);
-            let Some(parsed) = parse_seconds(&text) else {
-                // 毫秒那一档（`340ms`）不在 `format_seconds` 的值域里，跳过。
+            // 毫秒那一档（`340ms`）不在 `parse_seconds` 的值域里，跳过。其余解不回来
+            // 就是红——原来一律跳过，09-23 加了小时那一档、解析器没跟上时它照样绿。
+            if text.ends_with("ms") {
                 continue;
-            };
+            }
+            let parsed = parse_seconds(&text).unwrap_or_else(|| panic!("{text} 解不回来"));
             let drift = parsed.as_secs_f64() - source.as_secs_f64();
             assert!(
                 drift.abs() < 1.0,
