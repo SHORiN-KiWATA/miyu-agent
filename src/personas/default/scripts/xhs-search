@@ -115,24 +115,43 @@ def kill_orphan_chrome():
     不存在其它合法实例, 还活着的 chrome 一定是孤儿, 可以安全清掉。
     """
     killed = []
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit():
-            continue
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmd = f.read().decode("utf-8", "replace")
-        except OSError:
-            continue
-        if PROFILE_DIR in cmd and "chrome" in cmd:
+    for pid, cmd in _browser_processes():
+        # macOS 上进程叫 "Google Chrome" / "Chromium", 不分大小写地认。
+        low = cmd.lower()
+        if pid != os.getpid() and PROFILE_DIR in cmd and ("chrome" in low or "chromium" in low):
             try:
-                os.kill(int(pid), signal.SIGKILL)
-                killed.append(pid)
+                os.kill(pid, signal.SIGKILL)
+                killed.append(str(pid))
             except OSError:
                 pass
     if killed:
         log(f"清掉 {len(killed)} 个占着 profile 的孤儿 Chrome 进程")
         time.sleep(1)
     return killed
+
+
+def _browser_processes():
+    """(pid, 命令行)。Linux 读 /proc; macOS 没有 /proc —— 这里原来直接抛
+    FileNotFoundError, 小红书在 macOS 上一次都跑不起来(09-23 真机) —— 改问 ps。"""
+    if os.path.isdir("/proc"):
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    yield int(pid), f.read().decode("utf-8", "replace")
+            except OSError:
+                continue
+        return
+    try:
+        out = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if pid.isdigit():
+            yield int(pid), cmd
 
 
 def install_signal_handlers():
@@ -144,6 +163,8 @@ def install_signal_handlers():
     def bail(signum, _frame):
         try:
             kill_orphan_chrome()
+            # os._exit 不跑 atexit, 虚拟屏得自己关, 不然每次被 kill 都漏一个 Xvfb(09-23 实测)。
+            _stop_display()
         finally:
             print(json.dumps({"error": f"被信号 {signum} 中断"}, ensure_ascii=False),
                   flush=True)
@@ -155,6 +176,7 @@ def install_signal_handlers():
         # 看门狗: 任何路径都不允许无限期挂住
         def timeout(_signum, _frame):
             kill_orphan_chrome()
+            _stop_display()
             print(json.dumps({"error": f"超过 {DEADLINE}s 未完成, 已中止",
                               "fix": "重跑一次; 一直如此就 XHS_DEADLINE=300 加大上限"},
                              ensure_ascii=False), flush=True)
@@ -217,8 +239,14 @@ def playwright_available():
 
 
 def chromium_bundled():
-    cache = os.path.expanduser("~/.cache/ms-playwright")
-    return os.path.isdir(cache) and any(d.startswith("chromium") for d in os.listdir(cache))
+    # Playwright 的浏览器缓存: Linux 在 ~/.cache, macOS 在 ~/Library/Caches,
+    # 都可以被 PLAYWRIGHT_BROWSERS_PATH 改掉。
+    for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "~/.cache/ms-playwright",
+                 "~/Library/Caches/ms-playwright"):
+        cache = os.path.expanduser(root or "")
+        if root and os.path.isdir(cache) and any(d.startswith("chromium") for d in os.listdir(cache)):
+            return True
+    return False
 
 
 _XVFB = None
@@ -236,15 +264,17 @@ def _stop_display():
         _XVFB = None
 
 
-def ensure_display():
+def ensure_display(for_login=False):
     """返回 True 表示可以按 headed 启动浏览器。
 
     headless 模式有两个躲不掉的硬特征: WebGL 回落到 SwiftShader 软件渲染,
     以及 outerWidth/outerHeight 等于 inner。所以默认起一块 Xvfb 虚拟屏跑真
     headed —— 浏览器以为自己有屏幕, 用户桌面上却看不到窗口。
-    XHS_HEADED=1 时改用真实显示, 让人能看见窗口(排查登录用)。
+    XHS_HEADED=1 时改用真实显示, 让人能看见窗口(排查登录用)。macOS 见 _macos_headed。
     """
     global _XVFB, _ON_XVFB
+    if sys.platform == "darwin":
+        return _macos_headed(for_login)
     if os.environ.get("XHS_HEADED") == "1":
         return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     if _XVFB is not None:
@@ -283,6 +313,23 @@ def ensure_display():
             pass
         break
     return bool(os.environ.get("DISPLAY"))
+
+
+def _macos_headed(for_login):
+    """macOS 没有 Xvfb 这种看不见的虚拟屏, 有头就是桌面上真弹一个窗口, 还会抢走焦点。
+    所以只有登录开窗口: 站点不给无头浏览器发二维码, 人也得对着窗口扫码。搜索和看笔记
+    走无头(09-23 拍板): 显卡照样是真的(Metal), 代价是 UA 带 HeadlessChrome、屏幕报
+    800×600, 风控看得出来。开窗口要这台 Mac 的桌面是当前用户在用, 从 ssh 起的也一样
+    出在那个桌面上(09-23 真机)。XHS_HEADED=1 / 0 强制有头 / 无头。"""
+    flag = os.environ.get("XHS_HEADED")
+    if flag in ("0", "1"):
+        return flag == "1"
+    if not for_login:
+        return False
+    try:
+        return os.stat("/dev/console").st_uid == os.getuid()
+    except OSError:
+        return False
 
 
 # ---- 行为层 ----------------------------------------------------------------
@@ -345,10 +392,14 @@ def _has_render_node():
         return False
 
 
-def launch_kwargs():
-    headed = ensure_display()
-    args = ["--no-sandbox", "--disable-blink-features=AutomationControlled",
+def launch_kwargs(for_login=False):
+    headed = ensure_display(for_login)
+    args = ["--disable-blink-features=AutomationControlled",
             "--window-size=%d,%d" % WINDOW_SIZE]
+    if sys.platform.startswith("linux"):
+        # Linux 上常以 root / 在容器里跑, Chrome 自己的沙箱起不来。macOS 上沙箱好好的,
+        # 加了反而弹「不受支持的命令行标记」提示条 —— 有头窗口里这本身就是自动化特征。
+        args.insert(0, "--no-sandbox")
     if _ON_XVFB:
         # 虚拟屏上必须锁死 x11 后端(见 ensure_display 里摘 WAYLAND_DISPLAY 的原因)。
         args.append("--ozone-platform=x11")
@@ -361,6 +412,10 @@ def launch_kwargs():
         kw["channel"] = "chrome"
     elif shutil.which("microsoft-edge") or shutil.which("microsoft-edge-stable"):
         kw["channel"] = "msedge"
+    elif sys.platform == "darwin" and find_system_chromium()[0] in ("google-chrome", "microsoft-edge"):
+        # macOS 的浏览器在 app 包里、不在 PATH 上, Playwright 的 channel 认得 app 包的固定
+        # 位置。不先认它的话, 装过 Playwright 自带的 Chromium 就会退到那个旧版上(指纹可疑)。
+        kw["channel"] = "chrome" if find_system_chromium()[0] == "google-chrome" else "msedge"
     elif chromium_bundled():
         kw["channel"] = "chromium"
     else:
@@ -375,7 +430,8 @@ def launch_kwargs():
 class Browser:
     """带登录态的持久化浏览器上下文。登录态存 profile 目录, cookie 会自己续期。"""
 
-    def __init__(self):
+    def __init__(self, for_login=False):
+        self.for_login = for_login
         self._lockf = None
         self._pw = None
         self.ctx = None
@@ -430,7 +486,7 @@ class Browser:
         # 必须先算好 launch_kwargs: 它内部会起虚拟屏并改写 DISPLAY/WAYLAND_DISPLAY,
         # 而 driver 进程在 start() 那一刻就把环境拷贝走了 —— 顺序反了的话 Chrome
         # 继承的还是旧环境, 会绕开虚拟屏跑到用户真实桌面上。
-        kwargs = launch_kwargs()
+        kwargs = launch_kwargs(self.for_login)
         self._pw = sync_playwright().start()
         self.ctx = self._pw.chromium.launch_persistent_context(
             user_data_dir=PROFILE_DIR, locale="zh-CN",
@@ -868,7 +924,9 @@ def do_login(timeout_s=600):
     qr = {}
 
     def on_resp(r):
-        if "/login/qrcode/create" in r.url and not qr:
+        # 站点会重新申请二维码(过期、反自动化刷新页面), 一律取最新的一张: 只留第一张的话,
+        # 记下的码和页面上显示的对不上, 用户扫了也登不上(09-23)。
+        if "/login/qrcode/create" in r.url:
             try:
                 d = r.json().get("data") or {}
             except Exception:
@@ -876,7 +934,7 @@ def do_login(timeout_s=600):
             if d.get("url"):
                 qr["url"] = d["url"]
 
-    with Browser() as b:
+    with Browser(for_login=True) as b:
         me = _whoami(b)
         if me.get("user_id") and not me.get("guest"):
             print(f"已是登录态: {me.get('nickname')} ({me.get('user_id')})", file=sys.stderr)
@@ -887,6 +945,10 @@ def do_login(timeout_s=600):
             if qr:
                 break
             b.page.wait_for_timeout(1000)
+        # 游客也有 web_session, 登录成功的信号是它换了值。原来只看「有没有」, 等扫码时
+        # 每秒都去 _whoami —— 它要重开 explore, 页面一刷就换一张新码, 人根本来不及扫
+        # (09-23: 90 秒换了 22 张)。
+        guest_session = _session_cookie(b)
         print("\n用小红书 App 扫码登录:\n", file=sys.stderr)
         matrix = None
         try:
@@ -900,18 +962,45 @@ def do_login(timeout_s=600):
         png = _save_qr_png(b.page)
         if png:
             print(f"\n二维码图片: {png}", file=sys.stderr)
+        if not png and not qr:
+            # 截图和链接都没拿到还报 qr_ready, 调用方会以为有码可发(09-23 macOS 实测)。
+            # macOS 的无头浏览器里站点不给登录二维码, 只能开窗口登(见 _macos_headed)。
+            hint = ("登录要开浏览器窗口扫码: 在桌面登录着的 Mac 上运行, 别设 XHS_HEADED=0"
+                    if sys.platform == "darwin" else "试试有头模式: XHS_HEADED=1 xhs-search login")
+            _write_login_status(state="failed", logged_in=False, message="没抓到二维码 → " + hint)
+            raise RuntimeError("没抓到二维码 → " + hint)
         _write_login_status(state="qr_ready", qr_png=png or None,
                             qr_url=(qr or {}).get("url"),
                             message="扫这个二维码登录小红书，或在手机上打开链接")
         if qr:
             # 手机上直接点开这个链接也能登录, 不一定非要扫码
             print(f"或在手机上打开: {qr['url']}\n", file=sys.stderr)
-        if not matrix and not png:
-            print("[!] 没抓到二维码, 试试有头模式: XHS_HEADED=1 xhs-search login", file=sys.stderr)
         print(f"等待扫码({timeout_s}s)...", file=sys.stderr)
+        shown = (qr or {}).get("url")
         for _ in range(timeout_s):
             b.page.wait_for_timeout(1000)
-            if _has_session_cookie(b) and not _login_modal_visible(b.page):
+            if qr.get("url") and qr["url"] != shown:
+                # 页面换了新码: 重截一张、同步状态文件, 终端里也重画, 外面拿到的始终是
+                # 屏幕上现在这一张。
+                shown = qr["url"]
+                b.page.wait_for_timeout(800)  # 等新图渲染出来再截
+                png = _save_qr_png(b.page)
+                _write_login_status(state="qr_ready", qr_png=png or None, qr_url=shown,
+                                    message="二维码已刷新，扫这个新的，或在手机上打开链接")
+                print("\n二维码已刷新，扫这个新的:\n", file=sys.stderr)
+                try:
+                    fresh = b.page.evaluate(_QR_MATRIX_JS)
+                except Exception:
+                    fresh = None
+                if fresh:
+                    _print_qr_matrix(fresh)
+                else:
+                    _print_qr(shown)
+            session = _session_cookie(b)
+            if session and session != guest_session:
+                # 还是游客(站点轮换了游客会话)就记下新值接着等, _whoami 刷出来的新码
+                # 下一圈由上面那段接住重画。
+                guest_session = session
                 info = _whoami(b)
                 if info.get("user_id") and not info.get("guest"):
                     print(f"\n登录成功: {info.get('nickname')} ({info.get('user_id')})", file=sys.stderr)
@@ -924,20 +1013,14 @@ def do_login(timeout_s=600):
         raise RuntimeError("超时未完成扫码")
 
 
-def _has_session_cookie(b):
+def _session_cookie(b):
     """web_session 带 HttpOnly, document.cookie 里永远读不到 —— 拿页面 JS 判断登录
     会恒为假, 扫码明明成功了也只会一路等到超时。只能从浏览器上下文取。"""
     try:
-        return any(c.get("name") == "web_session" and c.get("value") for c in b.ctx.cookies())
+        return next((c.get("value") for c in b.ctx.cookies()
+                     if c.get("name") == "web_session" and c.get("value")), None)
     except Exception:
-        return False
-
-
-def _login_modal_visible(page):
-    try:
-        return "登录后查看" in page.evaluate("document.body.innerText")
-    except Exception:
-        return False
+        return None
 
 
 def _save_qr_png(page):
@@ -1043,10 +1126,14 @@ def _print_qr(url):
 
 def preflight():
     problems = []
+    macos = sys.platform == "darwin"
     if not playwright_available():
-        problems.append("playwright 未安装 → 运行: xhs-search setup (Arch 上也可以 sudo pacman -S python-playwright)")
+        problems.append("playwright 未安装 → 运行: xhs-search setup"
+                        + ("" if macos else " (Arch 上也可以 sudo pacman -S python-playwright)"))
     if not chromium_bundled() and not find_system_chromium()[0]:
-        problems.append("没有可用浏览器(需 Chromium 系) → 运行: xhs-search setup (Arch 上也可以 sudo pacman -S chromium)")
+        problems.append("没有可用浏览器(需 Chromium 系) → "
+                        + ("装 Google Chrome, 或运行: xhs-search setup" if macos else
+                           "运行: xhs-search setup (Arch 上也可以 sudo pacman -S chromium)"))
     return not problems, problems
 
 
@@ -1056,13 +1143,21 @@ def stealth_warnings():
     if driver_name() != "patchright":
         warns.append("用的是 playwright 而非 patchright: CDP Runtime.enable 会暴露自动化特征 "
                      "→ pip install --user patchright")
-    if not shutil.which("Xvfb") and not os.environ.get("DISPLAY"):
-        warns.append("没有 Xvfb 也没有显示器, 只能 headless 运行: WebGL 会回落到 SwiftShader "
-                     "软件渲染, 是明显的自动化特征 → 安装 xorg-server-xvfb")
-    if shutil.which("Xvfb") and not _has_render_node():
-        warns.append("/dev/dri 下没有渲染节点: 虚拟屏里 WebGL 会创建失败, 这本身是异常特征")
-    if not (shutil.which("google-chrome") or shutil.which("google-chrome-stable")):
-        warns.append("没装 Google Chrome, 退回 Chromium: 指纹与普通用户不同 → 建议装 google-chrome")
+    if sys.platform == "darwin":
+        # macOS 没有 Xvfb 这条路, 搜索默认无头(见 _macos_headed)。
+        if not _macos_headed(for_login=False):
+            warns.append("搜索走无头浏览器(不弹窗): UA 带 HeadlessChrome、屏幕报 800×600, "
+                         "风控看得出来 → 被拦时设 XHS_HEADED=1 改有头(会弹窗、抢焦点)")
+    else:
+        if not shutil.which("Xvfb") and not os.environ.get("DISPLAY"):
+            warns.append("没有 Xvfb 也没有显示器, 只能 headless 运行: WebGL 会回落到 SwiftShader "
+                         "软件渲染, 是明显的自动化特征 → 安装 xorg-server-xvfb")
+        if shutil.which("Xvfb") and not _has_render_node():
+            warns.append("/dev/dri 下没有渲染节点: 虚拟屏里 WebGL 会创建失败, 这本身是异常特征")
+    has_chrome = (shutil.which("google-chrome") or shutil.which("google-chrome-stable")
+                  or find_system_chromium()[0] == "google-chrome")
+    if not has_chrome:
+        warns.append("没装 Google Chrome, 退回 Chromium: 指纹与普通用户不同 → 建议装 Google Chrome")
     return warns
 
 
