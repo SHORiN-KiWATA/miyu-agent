@@ -72,37 +72,9 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
     herdr::set_terminal_title_for_session(paths, &active_session_id);
 
     // Terminal closed (SIGHUP) or process killed (SIGTERM): the graceful
-    // exit path at the bottom never runs, so stop this session's background
-    // jobs from a signal task before dying. SIGKILL still leaks them — the
-    // daemon keeps those running and their completion wakes queue up.
-    {
-        let paths = paths.clone();
-        let feed = jobs_shared.clone();
-        tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
-            let (Ok(mut hangup), Ok(mut terminate)) = (
-                signal(SignalKind::hangup()),
-                signal(SignalKind::terminate()),
-            ) else {
-                return;
-            };
-            tokio::select! {
-                _ = hangup.recv() => {}
-                _ = terminate.recv() => {}
-            }
-            // 后台任务归 daemon 管:前端死了任务照跑,完成后有唤醒
-            // (验收:dsh 语义,前端退出不拖死会话任务)。
-            let _ = (&paths, &feed);
-            // 死之前把 herdr 那个 pane 的权威还回去，否则侧栏上一直挂着一个
-            // 不存在的 miyu。`release` 是起进程、不等，这里要等它真的跑完再
-            // `exit`——所以同步调一次而不是丢给线程。
-            herdr::release_blocking();
-            // SIGTERM 时终端往往还活着:process::exit 绕过 Drop,先尽力
-            // 恢复 raw mode,否则用户的 shell 停在原始模式里。
-            let _ = crossterm::terminal::disable_raw_mode();
-            std::process::exit(0);
-        });
-    }
+    // exit path at the bottom never runs. 收尾（把 herdr 的 pane 还回去、恢复
+    // raw mode）交给一根专门的线程，理由见 `exit_on_termination_signals`。
+    crate::cli::exit_on_termination_signals();
 
     // Redraw the tail of the session we just resumed. The tail is not on
     // screen yet (`rendered == false`), so `apply_output_frame` writes the

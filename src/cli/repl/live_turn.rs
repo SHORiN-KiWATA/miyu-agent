@@ -191,7 +191,7 @@ pub(in crate::cli) async fn run_live_agent_turn(
                 biased;
                 _ = input_tick.tick() => {
                     if terminal_hangup() {
-                        std::process::exit(0);
+                        crate::cli::exit_after_terminal_gone(0);
                     }
                     if !event::poll(Duration::ZERO)? {
                         continue;

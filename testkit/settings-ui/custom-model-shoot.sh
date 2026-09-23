@@ -1,6 +1,9 @@
 #!/bin/bash
 # 自定义模型（n 添加 / Tab 激活 / Enter 编辑 / d 删除）的逐屏抓图。
 # 用法: MIYU_BIN=<二进制> custom-model-shoot.sh <lang> <outdir> <home>
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 LANG_ARG="${1:-zh_CN.UTF-8}"
 OUT="${2:-/tmp/custom-model-shots}"
 HOME_DIR="${3:-$OUT/home}"

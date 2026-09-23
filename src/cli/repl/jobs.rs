@@ -126,7 +126,7 @@ pub(in crate::cli) fn notify_if_unfocused(
     if !config.notifications.enabled || focused.is_none() {
         return;
     }
-    let tone = config.notifications.tone(sound);
+    let tone = notification_tone(config, sound, miyu_base::terminal::herdr::in_pane());
     let body = miyu_base::notify::clip_body(body, 120);
     if miyu_base::notify::notify_via_kitty(title, &body, &tone) {
         // 自定义音频文件 kitty 放不了（`s=` 只认声音主题里的名字），得我们自己
@@ -141,6 +141,22 @@ pub(in crate::cli) fn notify_if_unfocused(
         return;
     }
     miyu_base::notify::notify_with_sound(title, &body, &tone);
+}
+
+/// 这一声由谁来放。
+///
+/// 在 herdr 的 pane 里交给 herdr（用户 09-23 拍板）：它按 tab 可见性自己放
+/// 「完成」「在等你」两声（`[ui.sound]`，默认开），跟 Claude 在 herdr 里的体验
+/// 一致；Miyu 再响一声就成了两声。弹窗不受影响，照走系统通知。
+pub(in crate::cli) fn notification_tone(
+    config: &AppConfig,
+    sound: miyu_base::notify::NotifySound,
+    in_herdr: bool,
+) -> miyu_base::notify::NotifyTone {
+    if in_herdr {
+        return miyu_base::notify::NotifyTone::Silent;
+    }
+    config.notifications.tone(sound)
 }
 
 /// Shared feed state between the remote REPL and its IPC poll thread.

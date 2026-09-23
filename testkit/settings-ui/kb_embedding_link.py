@@ -20,6 +20,11 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
+    del os.environ[_herdr_key]
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "webui-fixes"))
 import authlib  # noqa: E402

@@ -30,6 +30,16 @@ pub async fn run() -> Result<()> {
     if let Ok(executable) = miyu_base::paths::miyu_executable() {
         miyu_base::paths::extend_path_with_executable_dir(&executable);
     }
+    // daemon 不坐在任何 herdr pane 里，得忘掉拉起它的那个 pane 的坐标：不然它起
+    // 的中转线 CLI（agy / claude / codex 装着 herdr 钩子）会拿着坐标去认领那个
+    // pane，herdr 从此丢掉 Miyu 的上报，侧栏卡在「进行中」（用户 09-23）。同上，
+    // 这里还没有别的线程；再往下日志一初始化就有写线程了。
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == "__daemon")
+    {
+        miyu_base::terminal::herdr::forget_pane_coordinates();
+    }
     if miyu_hosts::platforms::plugins::renderer_worker_requested() {
         return miyu_hosts::platforms::plugins::run_renderer_worker().await;
     }

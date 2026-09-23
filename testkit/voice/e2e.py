@@ -22,6 +22,11 @@
 import argparse, base64, json, os, shutil, socket, subprocess, sys, time, threading
 from pathlib import Path
 
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
+    del os.environ[_herdr_key]
+
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "testkit" / "persona-ab"))
 from run import strip_jsonc  # noqa: E402

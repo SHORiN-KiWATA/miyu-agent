@@ -245,7 +245,7 @@ async fn run_remote_chat_inner(
                 _ = input_tick.tick(), if live.is_some() => {
                     if terminal_hangup() {
                         // 终端没了但回合是 daemon 的:观众离席,戏照演。
-                        std::process::exit(0);
+                        crate::cli::exit_after_terminal_gone(0);
                     }
                     if !event::poll(Duration::ZERO)? {
                         continue;

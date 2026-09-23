@@ -12,6 +12,8 @@
 pub mod chafa;
 /// 全屏 TUI 的共享版面（引导与设置界面同一张脸）。
 pub mod chrome;
+/// herdr 注入 pane 的环境变量：谁该带着坐标、谁得忘掉。
+pub mod herdr;
 pub mod kitty;
 mod text;
 pub use text::*;

@@ -7,6 +7,9 @@
 #     testkit/kitty-image/run_headless.sh python3 testkit/kitty-image/ghost_probe.py
 #     OUT=~/.cache/miyu-kitty-probe testkit/kitty-image/run_headless.sh <cmd...>
 set -u
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 export OUT="${OUT:-$HOME/.cache/miyu-kitty-probe}"
 mkdir -p "$OUT"
 export WLR_BACKENDS=headless

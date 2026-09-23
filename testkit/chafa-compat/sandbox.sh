@@ -10,6 +10,9 @@
 #   ~/.cache/miyu-chafa-sandbox/with-chafa 1.14.5 ~/.cache/miyu-chafa-sandbox/miyu-sb
 #                                              # 换用旧版 chafa 再测一遍
 set -euo pipefail
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 ROOT=/home/shorin/.cache/miyu-chafa-sandbox
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$(cd "$HERE/../.." && pwd)/target/release/miyu"

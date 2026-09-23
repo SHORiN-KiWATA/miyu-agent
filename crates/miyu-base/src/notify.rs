@@ -148,11 +148,12 @@ pub fn notify_with_sound(title: &str, body: &str, tone: &NotifyTone) {
 ///   不支持声音（mako 就不支持）。
 ///
 /// 只认原生 kitty（`TERM=xterm-kitty`）：别的终端要么不认这串转义，要么直接把
-/// 它当正文打出来。stdout 不是终端时同理不发。
+/// 它当正文打出来。stdout 不是终端时同理不发。herdr 里也不发：它转得了 kitty
+/// 的图，却吞掉这串通知（见 `is_kitty_itself`）。
 pub fn notify_via_kitty(title: &str, body: &str, tone: &NotifyTone) -> bool {
     use std::io::{IsTerminal, Write};
 
-    if !crate::terminal::kitty::is_native_kitty_terminal() {
+    if !crate::terminal::kitty::is_kitty_itself() {
         return false;
     }
     let mut stdout = std::io::stdout();

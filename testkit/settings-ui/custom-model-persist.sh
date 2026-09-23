@@ -1,6 +1,9 @@
 #!/bin/bash
 # 自定义模型的落盘往返：加两个 → 取消激活其中一个 → 保存退出 → 重进看还在不在。
 # 用法: MIYU_BIN=<二进制> custom-model-persist.sh <outdir>
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 OUT="${1:-/tmp/custom-model-persist}"
 HOME_DIR="$OUT/home"
 mkdir -p "$OUT" "$HOME_DIR"

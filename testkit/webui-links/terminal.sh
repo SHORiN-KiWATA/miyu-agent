@@ -13,6 +13,9 @@
 #
 # 前置：cargo build（渲染代码编进二进制）。
 set -u
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 export MIYU_HOME=${MIYU_HOME:-/tmp/miyu-term-links/home}

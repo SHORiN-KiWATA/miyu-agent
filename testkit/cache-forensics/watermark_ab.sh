@@ -17,6 +17,9 @@
 #   bash testkit/cache-forensics/watermark_ab.sh report
 #   bash testkit/cache-forensics/watermark_ab.sh stop
 set -euo pipefail
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 
 BIN=${MIYU_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/target/debug/miyu}
 MODEL=${MIYU_AB_MODEL:-opencodego/mimo-v2.6-flash}

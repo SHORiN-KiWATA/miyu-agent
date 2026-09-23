@@ -9,8 +9,17 @@ const MAX_TRANSFER_DIMENSION: u32 = 2048;
 const RAW_CHUNK_BYTES: usize = 3072;
 
 pub fn is_native_kitty_terminal() -> bool {
+    is_kitty_itself() || herdr_renders_kitty_graphics()
+}
+
+/// 直接跟我们对话的终端就是 kitty 本身，中间没有隔一层多路复用器。
+///
+/// 和 [`is_native_kitty_terminal`] 的区别在 herdr：它把 kitty 的**图形协议**
+/// 转给外层，却把 kitty 的**通知协议**（OSC 99）连同 OSC 9 / 777 一起吞掉——
+/// herdr 0.8.2 的 `src/pane/osc.rs` 只留 OSC 0/2 标题。在 herdr 里照发 OSC 99，
+/// 弹窗就凭空没了（09-23 真 herdr 实测），所以发通知只认这一条。
+pub fn is_kitty_itself() -> bool {
     is_native_kitty(std::env::var("TERM").as_deref().unwrap_or_default())
-        || herdr_renders_kitty_graphics()
 }
 
 /// 跑在 herdr 的 pane 里、而 herdr 自己开着 kitty 图形协议。

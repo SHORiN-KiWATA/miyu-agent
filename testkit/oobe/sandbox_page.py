@@ -24,6 +24,11 @@ import time
 
 import pyte
 
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
+    del os.environ[_herdr_key]
+
 BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "target", "debug", "miyu"
 )

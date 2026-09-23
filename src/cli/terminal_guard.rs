@@ -54,7 +54,7 @@ pub(crate) fn spawn_hangup_watchdog() {
             if terminal_hangup() {
                 std::thread::sleep(Duration::from_secs(5));
                 if terminal_hangup() {
-                    std::process::exit(1);
+                    exit_after_terminal_gone(1);
                 }
             }
         });
@@ -111,4 +111,40 @@ pub(super) fn fd_hung_up(fd: libc::c_int) -> bool {
     };
     let ready = unsafe { libc::poll(&mut pollfd, 1, 0) };
     ready == 1 && (pollfd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL)) != 0
+}
+
+/// 终端没了（挂断）或者收到终止信号：先把 herdr 那个 pane 的权威还回去，再退。
+///
+/// `process::exit` 绕过所有 Drop——回合守卫收尾时报 idle / release 的那条路走
+/// 不到，侧栏上就一直挂着一个已经不在了的 miyu（09-20 记下、09-23 补上）。
+/// 不在 herdr 里时 `release_blocking` 什么都不做。
+pub(crate) fn exit_after_terminal_gone(code: i32) -> ! {
+    crate::cli::repl::herdr::release_blocking();
+    std::process::exit(code)
+}
+
+/// 收到 SIGHUP / SIGTERM 就收尾退出。常驻 REPL 起来时调一次。
+///
+/// 原来这是 `tokio::spawn` 出去的一个异步任务——而运行时是 `current_thread`，
+/// REPL 空闲时同步阻塞在读键盘上，任务根本轮不到：一轮都没跑过时信号还没注册，
+/// 进程被默认动作杀掉，退出码 -15（09-20 记下）；跑过一轮之后信号注册上了却
+/// 没人处理，SIGTERM 被一直憋着，进程杀不掉（09-23 真 herdr 实测）。
+/// 改成当场同步注册、另起一根线程等：两件事都不再依赖主循环让不让出。
+pub(crate) fn exit_on_termination_signals() {
+    use signal_hook::consts::{SIGHUP, SIGTERM};
+    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGHUP, SIGTERM]) else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("miyu-signals".to_string())
+        .spawn(move || {
+            if signals.forever().next().is_none() {
+                return;
+            }
+            // 后台任务归 daemon 管：前端死了任务照跑，完成后有唤醒（dsh 语义）。
+            // SIGTERM 时终端往往还活着：先尽力恢复 raw mode，否则用户的 shell
+            // 停在原始模式里。
+            let _ = crossterm::terminal::disable_raw_mode();
+            exit_after_terminal_gone(0);
+        });
 }

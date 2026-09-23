@@ -8,6 +8,7 @@ mod footer_tail;
 mod footer_width;
 mod golden_panel;
 mod hangup;
+mod herdr_notify;
 mod input_editing;
 mod lobby_anim;
 mod lobby_layout;

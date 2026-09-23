@@ -4,6 +4,11 @@
 用法: measure.py <miyu-bin> <label> [--cpus 0,1] [--quick] [--sub test]
 --sub 指定子命令形态(旧分支 voice-test;新 miyu-voice 用 test)。"""
 import subprocess, sys, os, time, threading, json, argparse, statistics as st
+
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
+    del os.environ[_herdr_key]
 ap = argparse.ArgumentParser()
 ap.add_argument('bin'); ap.add_argument('label')
 ap.add_argument('--cpus'); ap.add_argument('--quick', action='store_true')

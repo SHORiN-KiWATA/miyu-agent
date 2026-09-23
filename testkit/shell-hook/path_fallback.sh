@@ -9,6 +9,9 @@
 # macOS 上跑的是系统自带的 bash 3.2 与登录 shell(读 .bash_profile)。
 # 09-23 基线:main 6 FAIL / 修复后 12 PASS(macOS 真机)。
 set -u
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 BIN=$1
 PLATFORM=$2
 T=$(mktemp -d /tmp/miyu-hook-e2e.XXXXXX)

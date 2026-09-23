@@ -187,6 +187,13 @@ impl RelayProcess {
                 }
             }
         }
+        // CLI 不坐在任何 herdr pane 里：带着 pane 坐标的话，它装的 herdr 钩子一启动
+        // 就把那个 pane 认领成自己的会话，herdr 从此丢掉 Miyu 的上报，侧栏卡在
+        // 「进行中」（用户 09-23）。daemon 启动时已经忘掉坐标，这里再去一遍，直连
+        // 模式（CLI 从 pane 里的 TUI 进程直接起）也兜住。
+        for key in miyu_base::terminal::herdr::detached_child_removals() {
+            command.env_remove(key);
+        }
         // 沙盒回合(成员):CLI 进程整个关进 Landlock,它自带的 Bash/Edit 子进程一并
         // 继承;CLI 自己的配置目录(登录态、会话文件)放行读写。
         miyu_base::sandbox::confine_relay(&mut command, &relay_config_grants());

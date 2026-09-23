@@ -3,6 +3,9 @@
 # 检索(关键词 vs 融合)、知识库语义检索、以及「运行库缺失 / 总开关关闭」两种退化。
 # 用法: testkit/embedding/run.sh [miyu 二进制路径]   默认 target/release/miyu
 set -u
+# 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
+# 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
+for __herdr_var in $(env | sed -n 's/^\(HERDR_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$__herdr_var"; done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MIYU="${1:-$ROOT/target/release/miyu}"
