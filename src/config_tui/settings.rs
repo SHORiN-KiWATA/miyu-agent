@@ -128,6 +128,14 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
             t("Sandbox mode on by default", "默认开启沙盒模式"),
             config.tools.sandbox.default_enabled,
         ),
+        // 09-23:跨会话 AI 消息(收到的、发出去的)先露几行正文。
+        Field::new(
+            t(
+                "Cross-session AI message preview lines",
+                "跨会话AI消息预览行数",
+            ),
+            config.display.cross_session_preview_lines.to_string(),
+        ),
     ];
     // The read-back below is by index, so an insert in the middle silently
     // writes every later value into the wrong setting. This catches that in
@@ -135,7 +143,7 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     // 提到第一行,后面的索引一并重排,见下面逐行对应)。
     debug_assert_eq!(
         fields.len(),
-        19,
+        20,
         "global settings fields changed: update the positional read-back below"
     );
     run_form_without_buttons(ui, t(" GLOBAL SETTINGS ", " 全局设置 "), &mut fields)?;
@@ -177,6 +185,11 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     }
     .to_string();
     config.tools.sandbox.default_enabled = parse_bool_field(&fields[18].value)?;
+    config.display.cross_session_preview_lines = fields[19]
+        .value
+        .trim()
+        .parse::<usize>()?
+        .min(MAX_CROSS_SESSION_PREVIEW_LINES);
     Ok(())
 }
 

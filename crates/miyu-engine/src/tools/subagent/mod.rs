@@ -136,6 +136,8 @@ pub(in crate::tools) const SUBAGENT_EXCLUDED: &[&str] = &[
 /// 会话化子代理(09-18)的工具面排除表:与 [`SUBAGENT_EXCLUDED`] 同一份口径,只是
 /// 不摘 subagent 本身——子会话能再开一层,孙代理由场所按深度摘(`web/turns/task.rs`)。
 pub const SUBAGENT_SESSION_EXCLUDED: &[&str] = &[
+    // 快照之后才注册,老循环本来就拿不到;会话化的子代理走的是完整工具面,得在这摘。
+    crate::tools::cross_session::TOOL_NAME,
     "load_skill",
     "manage_skill",
     "alarm",
@@ -224,21 +226,22 @@ pub fn register(
         registry.remove_parameter("subagent", "resume_id");
     }
 
-    // 给正在运行的后台子代理发一条 follow-up 排队指令(像给主会话排队消息),
-    // 子代理下一步开始前取走、并入对话——用于运行途中调整任务目标。
+    // 给开过的子代理追话:跑着就排进它这一轮(下一步开始前取走),跑完了就在它的
+    // 子会话里另起一轮后台跑(09-18 会话化)。描述 09-23 按这个行为重写:原来还写着
+    // 改名前的 task(background=true)、「只能发给还在跑的」。
     registry.register(ToolSpec::new_with_progress(
         "send_subagent_message",
-        "Queue a follow-up instruction to a RUNNING background subagent (one you started with task(background=true)). It works like queuing a message to the main agent mid-run: the subagent picks it up before its next step, so you can steer or adjust its goal while it works. Pass the job_id from the background task's result. Only works while that subagent is still running.",
+        "Send a follow-up to a subagent you started, by its job_id or session id. A running subagent reads it before its next step. A finished one starts a new background turn with it, and you are woken when that turn ends.",
         json!({
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "The background subagent's job_id, from the task(background=true) result."
+                    "description": "The job_id or session id from the subagent result."
                 },
                 "message": {
                     "type": "string",
-                    "description": "The follow-up instruction to inject into the running subagent."
+                    "description": "The follow-up message."
                 }
             },
             "required": ["job_id", "message"],

@@ -428,6 +428,11 @@ pub(in crate::web) fn maybe_auto_name_session(
     events: &EventHub,
     seed: &str,
 ) -> Option<String> {
+    // daemon 合成的轮（后台汇报、目标续轮、跨会话消息）不拿来起名：会话会被叫成
+    // 「<background-job-report>…」（09-23）。等用户自己说第一句话再起。
+    if miyu_core::state::is_synthetic_user_content(seed) {
+        return None;
+    }
     let session_id = state_store.session_id();
     let record = state_store.session_record(&session_id).ok().flatten()?;
     if !record.name.trim().is_empty() {

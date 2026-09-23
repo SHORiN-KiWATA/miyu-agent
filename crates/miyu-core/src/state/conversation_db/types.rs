@@ -331,6 +331,14 @@ pub enum QueuedPromptAttachment {
     Path { path: String },
 }
 
+/// 回合结束时还排在队列里的一条合成消息（后台汇报、跨会话消息），取出来另起一轮去回
+/// （见 `ConversationDb::take_queued_synthetic_prompts`，09-23）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedSyntheticPrompt {
+    pub content: String,
+    pub display_content: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedPrompt {
     pub prompt_id: String,

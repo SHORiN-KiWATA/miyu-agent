@@ -154,6 +154,11 @@ pub(crate) fn default_thinking_scroll_lines() -> usize {
     10
 }
 
+/// 跨会话 AI 消息先露几行(用户 09-23 定默认 10)。
+pub(crate) fn default_cross_session_preview_lines() -> usize {
+    10
+}
+
 pub(crate) fn default_repl_replay_turns() -> usize {
     3
 }

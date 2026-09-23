@@ -348,3 +348,37 @@ pub(in crate::web) async fn session_context_http(
         "sandbox_readable": snapshot.sandbox_readable,
     })))
 }
+
+#[derive(Deserialize)]
+pub(in crate::web) struct PresenceRequest {
+    viewer: String,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+/// 网页标签页的在线登记（09-23，跨会话消息的「开着的会话」名单）。
+///
+/// 标签页约 20 秒报一次心跳，浏览器会把后台标签的定时器放慢到一分钟一次，所以
+/// 过期时间放宽到 150 秒（终端是 15 秒）。关页面时不带 `session_id` 来一次，当场注销。
+pub(in crate::web) async fn presence_http(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Json(request): Json<PresenceRequest>,
+) -> std::result::Result<Response, ApiError> {
+    require_mutation(&headers, &state)?;
+    let viewer = request.viewer.trim();
+    if viewer.is_empty() || viewer.len() > 64 {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid viewer id"));
+    }
+    let session = request.session_id.as_deref().filter(|id| !id.is_empty());
+    if let Some(session_id) = session {
+        require_local_web_session(&state, &headers, session_id)?;
+    }
+    // 加前缀：网页报的编号撞不到终端那一份。
+    state.presence.report(
+        &format!("web-{viewer}"),
+        session,
+        crate::runtime::WEB_PRESENCE_TTL,
+    );
+    Ok(StatusCode::NO_CONTENT.into_response())
+}

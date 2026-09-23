@@ -194,6 +194,10 @@ pub(in crate::web) async fn index_asset(
                 &format!("src=\"/todos.js?v={}\"", miyu_base::build_id()),
             )
             .replace(
+                "src=\"/crosssession.js\"",
+                &format!("src=\"/crosssession.js?v={}\"", miyu_base::build_id()),
+            )
+            .replace(
                 "src=\"/selectionmenu.js\"",
                 &format!("src=\"/selectionmenu.js?v={}\"", miyu_base::build_id()),
             )
@@ -407,6 +411,14 @@ pub(in crate::web) async fn todos_js_asset(headers: HeaderMap) -> Response {
     embedded_asset(
         &headers,
         TODOS_JS.as_bytes(),
+        "application/javascript; charset=utf-8",
+    )
+}
+
+pub(in crate::web) async fn crosssession_js_asset(headers: HeaderMap) -> Response {
+    embedded_asset(
+        &headers,
+        CROSS_SESSION_JS.as_bytes(),
         "application/javascript; charset=utf-8",
     )
 }

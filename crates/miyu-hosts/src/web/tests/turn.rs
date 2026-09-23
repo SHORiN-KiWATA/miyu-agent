@@ -335,3 +335,29 @@ fn closing_question_resumes_run_without_answers() {
     ));
     assert!(!broker.pending.lock().unwrap().contains_key(&question_id));
 }
+
+/// 自动起名只认人发的话:daemon 合成的轮(后台汇报、跨会话消息)不拿来起名,不然会话会
+/// 被叫成「<cross-session-message …」(09-23)。
+#[test]
+fn auto_naming_skips_synthetic_turns() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let persona = active_persona_scope(&state);
+    let session = state
+        .state_store
+        .create_session(&persona, "", "user", None)
+        .unwrap();
+    let store = state.state_store.pinned(&session.session_id);
+    let synthetic = "<cross-session-message from=\"写代码\" session=\"s-2\">\n构建好了";
+    assert_eq!(
+        maybe_auto_name_session(&store, &state.events, synthetic),
+        None
+    );
+    assert!(store
+        .session_record(&session.session_id)
+        .unwrap()
+        .unwrap()
+        .name
+        .is_empty());
+    assert!(maybe_auto_name_session(&store, &state.events, "帮我整理一下笔记").is_some());
+}

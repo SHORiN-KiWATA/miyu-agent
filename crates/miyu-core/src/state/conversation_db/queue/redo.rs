@@ -13,7 +13,7 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
         let last = conn
             .query_row(
-                "SELECT turn_id, revision, display_content, status
+                "SELECT turn_id, revision, display_content, status, user_content
                  FROM turns
                  WHERE session_id = ?1 AND hidden = 0 AND is_summary = 0
                  ORDER BY seq DESC LIMIT 1",
@@ -24,14 +24,17 @@ impl ConversationDb {
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((turn_id, revision, display_content, status)) = last else {
+        let Some((turn_id, revision, display_content, status, user_content)) = last else {
             return Ok(None);
         };
-        if status == "running" {
+        // 最后一轮是 daemon 合成的（后台汇报、目标续轮、跨会话消息）就没有可重做的：
+        // 那不是用户发的，重做等于替用户重发一条系统消息，还会把它之后的历史退回去（09-23）。
+        if status == "running" || crate::state::is_synthetic_user_content(&user_content) {
             return Ok(None);
         }
 

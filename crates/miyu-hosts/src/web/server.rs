@@ -153,6 +153,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
         shutdown_tx,
         turn_engine,
         platforms: PlatformRuntime::new()?,
+        presence: crate::runtime::Presence::default(),
     };
     let initial_qq = state.manager.lock().unwrap().config.platforms.qq.clone();
     state
@@ -163,6 +164,9 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
         .commit();
     let (ipc_lease, ipc_task) = start_ipc_server(&state)?;
     install_background_job_hook(&state);
+    // 回合结束时队列里剩下的合成消息要另起一轮去回,清理路径手上没有 DaemonState(09-23)。
+    install_delivery_state(&state);
+    install_cross_session_host(&state);
     // 语音前端(独立 miyu-voice 进程):只在 voice.enabled 时拉起。
     voice_bridge::install_state(&state);
     // 语音桥与 QQ 直发以端口交给下层:工具层、平台层调 `runtime` 的窄 trait,
@@ -383,6 +387,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/preview.js", get(preview_js_asset))
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
+        .route("/crosssession.js", get(crosssession_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))
         .route("/highlight.js", get(highlight_js_asset))
         // artifact 的沙箱 iframe 也来这里取库,而它是不透明源——浏览器会为此强制
@@ -665,6 +670,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
             get(list_sessions_http).post(create_session_http),
         )
         .route("/api/sessions/order", put(reorder_sessions_http))
+        .route("/api/presence", post(presence_http))
         .route(
             "/api/sessions/{session_id}",
             patch(update_session_http).delete(delete_session_http),
@@ -966,6 +972,7 @@ pub(in crate::web) async fn bootstrap(
     let mut response = Json(BootstrapResponse {
         version: env!("CARGO_PKG_VERSION"),
         boot_id: state.boot_id.to_string(),
+        build_id: miyu_base::build_id().to_string(),
         latest_event_id: state.events.latest_id(),
         active_run_id,
         running_turn_id,

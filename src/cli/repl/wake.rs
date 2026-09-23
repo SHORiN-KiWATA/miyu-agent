@@ -65,6 +65,7 @@ pub(in crate::cli) async fn follow_wake_run(
     );
     renderer.fold_timeline = config.display.fold_timeline;
     renderer.thinking_scroll_lines = config.display.thinking_scroll_lines;
+    renderer.cross_session_preview_lines = config.display.cross_session_preview_lines;
     renderer.use_external_cursor_control();
     renderer.use_buffered_output();
     live.external_output_active = false;
@@ -422,7 +423,14 @@ pub(in crate::cli) async fn follow_wake_run(
                 // 提交时早就画过了。
                 if from_start {
                     let said = ipc_text(&data, "display_content").trim_end().to_string();
-                    if !said.trim().is_empty() {
+                    // 另一个会话里的 AI 发来的那条（09-23）起的这一轮：开头画成
+                    // 「从 xxx 收到消息」那一块，不是这个会话里谁说的话。
+                    if let Some(message) = miyu_core::state::parse_cross_session_message(&said) {
+                        live.show_cross_session_message(
+                            &message,
+                            config.display.cross_session_preview_lines,
+                        )?;
+                    } else if !said.trim().is_empty() {
                         let cols = crate::cli::terminal_cols();
                         let mut echo = submitted_echo_lines(live.mode(), &said, cols).join("\r\n");
                         echo.push_str("\r\n\r\n");
@@ -629,7 +637,7 @@ pub(in crate::cli) async fn follow_wake_run(
                     live.apply_renderer_frame(&mut renderer)?;
                 }
                 for notice in &notices {
-                    live.show_job_wake_notice(notice)?;
+                    live.show_queued_notice(notice, config.display.cross_session_preview_lines)?;
                 }
                 if visible {
                     synchronized_terminal_update(CursorAfterUpdate::Preserve, || {

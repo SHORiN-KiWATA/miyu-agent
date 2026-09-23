@@ -107,6 +107,9 @@
     "lock-keyhole": [["circle", { cx: "12", cy: "16", r: "1" }], ["rect", { x: "3", y: "10", width: "18", height: "12", rx: "2" }], ["path", { d: "M7 10V7a5 5 0 0 1 10 0v3" }]],
     "log-in": [["path", { d: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" }], ["polyline", { points: "10 17 15 12 10 7" }], ["line", { x1: "15", x2: "3", y1: "12", y2: "12" }]],
     "message-circle": [["path", { d: "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" }]],
+    // 跨会话消息(09-23):收到的那条挂铃铛,发出去的那张工具签挂纸飞机。
+    bell: [["path", { d: "M10.268 21a2 2 0 0 0 3.464 0" }], ["path", { d: "M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" }]],
+    send: [["path", { d: "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" }], ["path", { d: "m21.854 2.147-10.94 10.939" }]],
     "messages-square": [["path", { d: "M14 9a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" }], ["path", { d: "M18 9h2a2 2 0 0 1 2 2v10l-4-4h-6a2 2 0 0 1-2-2v-1" }]],
     moon: [["path", { d: "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" }]],
     "image-search": [["rect", { x: "3", y: "3", width: "14", height: "14", rx: "2" }], ["circle", { cx: "11", cy: "9", r: "2" }], ["path", { d: "m3 15 4-4 5 5" }], ["circle", { cx: "18", cy: "18", r: "3" }], ["path", { d: "m20.2 20.2 1.8 1.8" }]],
@@ -399,6 +402,7 @@
     commandPeekLine: new Map(),
     commandPeekTimers: new Map(),
     bootId: null,
+    buildId: null,
     latestEventId: 0,
     lastEventId: 0,
     replayRunIds: null,
@@ -450,6 +454,7 @@
       readable_tool_names: true,
       command_output_lines: 8,
       thinking_scroll_lines: 10,
+      cross_session_preview_lines: 10,
       mixed_model_endpoint_display: "interactive",
       show_mixed_model_endpoint: false
     },
@@ -853,7 +858,7 @@
           })
         : null;
     const trailing = lastStep
-      ? [...lastStep.querySelectorAll(":scope > .tool-command-preview, :scope > .tool-command-more")]
+      ? [...lastStep.querySelectorAll(":scope > .tool-command-preview, :scope > .tool-command-more, :scope > .xs-send-preview, :scope > .xs-send-more")]
           .filter((el) => !el.hidden && el.getBoundingClientRect().height > 0)
       : [];
     for (const el of trailing) {
@@ -4874,7 +4879,8 @@
       || text.startsWith("[后台命令完成]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
       || text.startsWith("[目标续轮]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
       || text.startsWith("<background-job-report>")
-      || text.startsWith("<goal_round>");
+      || text.startsWith("<goal_round>")
+      || text.startsWith("<cross-session-message");
   }
 
   /// `createUserMessage` 对目标续轮返回 null（那一轮在时间线里不画）。
@@ -5015,6 +5021,16 @@
       label.title = formatDateTime(timestamp);
       notice.appendChild(label);
       return notice;
+    }
+    // 另一个会话里的 AI 发来的那条(09-23):铃铛 + 「从 xxx 收到消息」,底下露正文。
+    // 实时插进来的、唤醒起的一轮、刷新回看都走这里。
+    const crossSession = window.MiyuCrossSession?.parse(rawContent);
+    if (crossSession) {
+      return window.MiyuCrossSession.createReceived(crossSession, {
+        timestamp,
+        turnId: attributes.turnId,
+        followupId: attributes.followupId
+      });
     }
     if (isSyntheticTurnContent(rawContent)) {
       const notice = document.createElement("div");
@@ -7245,6 +7261,8 @@
     // 命令回执不是回合，不在 state.turns 里；timeline 每次重建都要补回来。
     window.MiyuCommands?.renderNotices(elements.timeline, state.viewSessionId);
     reattachLiveArticles();
+    // 跨会话收到的消息并进紧跟着的那段 AI 回复(09-24 定的版式)。
+    window.MiyuCrossSession?.foldInto(elements.timeline);
     // 落盘回合数为 0 不等于屏幕上没内容：回执和正在流式输出的气泡都不在
     // state.turns 里。只按 turns 判空的话，运行中一次重绘就把画面整个换成
     // 欢迎页，气泡瞬间蒸发。
@@ -7491,6 +7509,7 @@
     if (message) {
       if (live.article?.isConnected) elements.timeline.insertBefore(message, live.article);
       else elements.timeline.appendChild(message);
+      window.MiyuCrossSession?.foldInto(elements.timeline);
     }
     live.userRendered = true;
     updateConversationChrome();
@@ -7758,6 +7777,8 @@
     }
     live.article = article;
     live.blocks = blocks;
+    // 刚收到的跨会话消息挪进这段回复的最前面(09-24 定的版式)。
+    if (viewed) window.MiyuCrossSession?.foldInto(elements.timeline);
     live.headerStatus = status;
     live.stopButton = stop;
     live.meta = metaText;
@@ -8082,6 +8103,10 @@
     if (toolName === "generate_image") return compactLine(args.prompt);
     if (isSubagentTool(toolName)) return compactLine(args.description || args.prompt);
     if (toolName === "load_skill") return compactLine(args.name);
+    if (window.MiyuCrossSession?.isSendTool(toolName)) {
+      const target = findSession(String(args.session_id || ""));
+      return window.MiyuCrossSession.sendSubject(args, target ? sessionDisplayName(target) : "");
+    }
     const preferred = ["query", "command", "path", "filePath", "url", "name", "id", "target"];
     for (const key of preferred) {
       if (typeof args[key] === "string" && args[key].trim()) return compactLine(args[key]);
@@ -8367,6 +8392,7 @@
     // 文件编辑:把 patchText 参数画成 diff(增删配色),而不是摊一坨补丁 JSON。
     // patchText 随 tool_flow 落库,回看/刷新走同一份。渲不出(解析失败)再退回原始参数。
     const diffView = window.MiyuDiff?.renderFromCall?.(call) || null;
+    let argumentsDetail = null;
     if (diffView) {
       body.appendChild(diffView);
     } else {
@@ -8376,6 +8402,7 @@
         detail.content.textContent = argumentText;
         detail.wrapper.hidden = false;
         body.appendChild(detail.wrapper);
+        argumentsDetail = detail;
       }
     }
     const output = String(call?.output || "");
@@ -8412,6 +8439,14 @@
     if (commandRows) {
       card.insertBefore(commandRows.preview, fold);
       card.insertBefore(commandRows.more, fold);
+    }
+    // 跨会话发话(09-23):和实时那张同一个样子;抬头右边的会话名用结果里报的。
+    if (window.MiyuCrossSession?.isSendTool(name)) {
+      window.MiyuCrossSession.decorateSendCard({
+        card, head, body, argumentsDetail, argumentsValue: call?.arguments
+      });
+      const target = window.MiyuCrossSession.targetName(output);
+      if (target) summary.textContent = window.MiyuCrossSession.sendSubject(call?.arguments, target);
     }
     // 待办列表挂在签外面,收起态也看得见——那是给人看的产出,不是调试信息。
     const todos = window.MiyuTodos?.isTodoTool(name) ? window.MiyuTodos.render(output) : null;
@@ -8505,6 +8540,7 @@
     if (isSubagentTool(n)) return "bot";
     if (n.includes("knowledge_base")) return "book-open";
     if (n === "ask_question") return "circle-help";
+    if (n === "send_to_other_running_session") return "send";
     if (n === "generate_image") return "paintbrush";
     if (["analyze_image", "vision_analyze", "print_image"].includes(n)) return "image";
     if (n.includes("meme")) return "smile";
@@ -8734,6 +8770,12 @@
       fold.className = "tool-fold";
       fold.appendChild(body);
       card.appendChild(fold);
+      // 跨会话发话(09-23):抬头底下露正文前几行,展开区顶上放全文。
+      if (window.MiyuCrossSession?.isSendTool(toolName)) {
+        window.MiyuCrossSession.decorateSendCard({
+          card, head, body, argumentsDetail, argumentsValue: data?.arguments
+        });
+      }
     }
     const tool = {
       id: toolId,
@@ -8772,6 +8814,7 @@
       pendingCall: null,
       titleText: String(data?.display_name || data?.name || t("未命名工具")),
       subject: subjectText,
+      argumentsValue: data?.arguments,
       startedAt: performance.now(),
       finishedAt: null,
       imageCount: 0,
@@ -9069,6 +9112,14 @@
         if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       }
       const output = String(data?.output || "");
+      // 跨会话发话:抬头右边补上对方报的会话名(侧栏里不一定认得它)。
+      if (window.MiyuCrossSession?.isSendTool(tool.name)) {
+        const target = window.MiyuCrossSession.targetName(output);
+        if (target) {
+          tool.subject = window.MiyuCrossSession.sendSubject(tool.argumentsValue, target);
+          updateToolSummary(tool);
+        }
+      }
       tool.resultDetail.raw = output.length > MAX_TOOL_OUTPUT_CHARS ? t("[较早输出已省略]\n{tail}", {tail: output.slice(-MAX_TOOL_OUTPUT_CHARS)}) : output;
       tool.resultDetail.content.textContent = tool.resultDetail.raw;
       // 子代理的最终输出要显示出来(#6:用户要看 AI 的最终输出,上批误删了)。
@@ -10899,6 +10950,15 @@
   }
 
   function applyBootstrap(snapshot) {
+    // 守护进程换了构建(升级后重启):这一页跑的还是旧前端,整页刷新一次(用户 09-24
+    // 拍板自动刷新)。旧页少了新功能不会报错,只会悄悄不对——比如没有在线心跳,
+    // 别的会话看不见它。重启但没换构建时不刷。
+    const buildId = String(snapshot?.build_id || "");
+    if (state.buildId && buildId && buildId !== state.buildId) {
+      location.reload();
+      return;
+    }
+    if (buildId) state.buildId = buildId;
     if (snapshot?.account?.setup_pending) {
       state.account = snapshot.account;
       showSetupAdmin();
@@ -13551,6 +13611,15 @@
     // 高亮和链接卡片的 settle 通道会在流停下来之后才改正文高度,那时已经没有
     // 下一条 delta 来触发滚动了,得让它们自己叫一声。
     window.MiyuHighlight?.init({ contentAdded });
+    // 跨会话消息(09-23):在线登记(别的会话里的 AI 列「开着的会话」靠它,没登录不报),
+    // 以及收到/发出那两种块的画法要用的几样东西。
+    window.MiyuCrossSession?.init({
+      makeIconSlot,
+      renderMarkdown,
+      formatDateTime,
+      previewLines: () => state.display?.cross_session_preview_lines ?? 10
+    });
+    window.MiyuCrossSession?.startPresence(() => (state.blocked ? null : state.viewSessionId));
     startBrailleTicker();
     // G2:页面不可见时给 body 挂 miyu-paused,CSS 据此暂停全部装饰动画。
     // 实测(Xvfb+Chrome)不挂这个时隐藏窗口的合成负载与可见时完全一样。

@@ -138,6 +138,12 @@ impl StateStore {
             .delete_queued_prompts(&self.session(), &self.queue_session_id)
     }
 
+    /// 见 [`ConversationDb::take_queued_synthetic_prompts`]。
+    pub fn take_queued_synthetic_prompts(&self) -> Result<Vec<QueuedSyntheticPrompt>> {
+        self.conv_db
+            .take_queued_synthetic_prompts(&self.session(), &self.queue_session_id)
+    }
+
     pub fn discard_queued_prompts(&self) -> Result<usize> {
         self.conv_db
             .discard_queued_prompts(&self.session(), &self.queue_session_id)

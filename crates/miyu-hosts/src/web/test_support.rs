@@ -52,6 +52,7 @@ impl DaemonState {
                 shutdown_tx,
                 turn_engine,
                 platforms: PlatformRuntime::new()?,
+                presence: crate::runtime::Presence::default(),
             },
             actor_join,
         ))

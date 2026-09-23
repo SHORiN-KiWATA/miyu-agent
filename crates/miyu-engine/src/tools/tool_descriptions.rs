@@ -77,6 +77,7 @@ macro_rules! tool_description_files {
             include_str!("../../../../src/tools/descriptions/search_evicted_context.json"),
             include_str!("../../../../src/tools/descriptions/search_knowledge_base.json"),
             include_str!("../../../../src/tools/descriptions/search_web_images.json"),
+            include_str!("../../../../src/tools/descriptions/send_to_other_running_session.json"),
             include_str!("../../../../src/tools/descriptions/share_file.json"),
             include_str!("../../../../src/tools/descriptions/subagent.json"),
             include_str!("../../../../src/tools/descriptions/todowrite.json"),

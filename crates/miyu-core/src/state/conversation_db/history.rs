@@ -678,15 +678,17 @@ impl ConversationDb {
     }
 
     #[allow(dead_code)]
-    /// Completed background-command wake turns after `after_seq`, oldest
-    /// first: (seq, user display content, assistant reply).
+    /// Completed daemon wake turns after `after_seq`, oldest first: background
+    /// job reports and cross-session messages (09-23).
+    /// (seq, turn id, user display content, assistant reply).
     pub fn background_report_replies_after(
         &self,
         session_id: &str,
         after_seq: i64,
     ) -> Result<Vec<(i64, String, String, String)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
+        let cross_session = crate::state::CROSS_SESSION_MESSAGE_TAG;
+        let mut stmt = conn.prepare(&format!(
             "SELECT seq, turn_id, display_content,
                     CASE WHEN status = 'completed' THEN assistant_content
                          WHEN length(trim(assistant_content)) > 0 THEN assistant_content
@@ -694,9 +696,11 @@ impl ConversationDb {
                     END
              FROM turns
              WHERE session_id = ?1 AND seq > ?2 AND status IN ('completed', 'failed', 'interrupted')
-               AND user_content LIKE '<background-job-report>%'
+               AND (user_content LIKE '<background-job-report>%'
+                    OR substr(user_content, 1, {}) = '{cross_session}')
              ORDER BY seq ASC LIMIT 8",
-        )?;
+            cross_session.chars().count()
+        ))?;
         let rows = stmt
             .query_map(params![session_id, after_seq], |row| {
                 Ok((

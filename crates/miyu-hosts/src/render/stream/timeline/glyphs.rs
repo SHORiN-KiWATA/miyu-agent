@@ -47,6 +47,8 @@ pub(crate) fn tool_glyph(name: &str) -> &'static str {
         "web_search" | "web_fetch" | "search_web_images" => "\u{f0ac}",
         // 机器人：派出去的那个也是个"它"，不是一条连线。
         "subagent" | "task" => "\u{f06a9}",
+        // 纸飞机：给另一个会话里的 AI 递话（09-23）。
+        "send_to_other_running_session" => "\u{f1d8}",
         // 眼睛：看图和"贴一张图"是两件事——它是在**读**。
         "vision_analyze" => "\u{f0208}",
         // 图片

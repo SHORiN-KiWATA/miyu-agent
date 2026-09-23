@@ -273,6 +273,9 @@ impl ConversationDb {
         local_only: bool,
         owner: Option<&str>,
     ) -> Result<Vec<SessionOverview>> {
+        // 摘要取最后一条人发的消息:后台汇报、目标续轮、跨会话消息是 daemon 合成的,
+        // 列表里显示「[后台任务完成] …」没有意义(09-23)。
+        let synthetic = crate::state::synthetic_user_content_sql("user_content");
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
             "SELECT {SESSION_COLUMNS},
@@ -282,6 +285,7 @@ impl ConversationDb {
                     (SELECT display_content FROM turns
                       WHERE turns.session_id = sessions.session_id
                         AND hidden = 0 AND is_summary = 0
+                        AND NOT ({synthetic})
                       ORDER BY seq DESC LIMIT 1) AS last_user_content,
                     sessions.context_tokens AS context_tokens
              FROM sessions
@@ -448,6 +452,7 @@ impl ConversationDb {
     /// 某会话的直系子代理会话,按创建先后(09-18)。带 turn_count / 上下文,
     /// 好让 `/subagent` 面板与任务条一次拿齐。
     pub fn child_sessions(&self, parent_session_id: &str) -> Result<Vec<SessionOverview>> {
+        let synthetic = crate::state::synthetic_user_content_sql("user_content");
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
             "SELECT {SESSION_COLUMNS},
@@ -457,6 +462,7 @@ impl ConversationDb {
                     (SELECT display_content FROM turns
                       WHERE turns.session_id = sessions.session_id
                         AND hidden = 0 AND is_summary = 0
+                        AND NOT ({synthetic})
                       ORDER BY seq DESC LIMIT 1) AS last_user_content,
                     sessions.context_tokens AS context_tokens
              FROM sessions

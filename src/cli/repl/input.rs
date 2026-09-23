@@ -85,10 +85,17 @@ pub(in crate::cli) fn read_live_repl_input(
             // Idle tick: structural changes redraw the whole tail; otherwise
             // only the strip repaints. While the user is actively typing the
             // animation pauses so the two repaint sources never interleave.
-            for report in jobs_feed.take_reports() {
-                synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-                    live.show_background_report(&report)
-                })?;
+            let reports = jobs_feed.take_reports();
+            if !reports.is_empty() {
+                // 补印难得一次，现读配置就够（跨会话消息露几行正文要看它）。
+                let preview_lines = AppConfig::load_or_default(paths)
+                    .map(|config| config.display.cross_session_preview_lines)
+                    .unwrap_or(10);
+                for report in reports {
+                    synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                        live.show_background_report(&report, preview_lines)
+                    })?;
+                }
             }
             // 听写:识别出的句子填进编辑框(或按配置直接提交)。
             for (event, auto_submit) in crate::cli::repl::dictation::poll() {
@@ -149,11 +156,11 @@ pub(in crate::cli) fn read_live_repl_input(
                 continue;
             }
             if let Some(session) = repl_session {
-                if let Some((run_id, label)) = jobs_feed.claim_wake_run(session) {
+                if let Some(run) = jobs_feed.claim_wake_run(session) {
                     return Ok(LiveReplOutcome::FollowWake {
-                        run_id,
-                        label,
-                        from_start: false,
+                        run_id: run.run_id,
+                        label: run.label,
+                        from_start: run.from_start,
                     });
                 }
                 // 同一个会话里**别人**起的轮（第二个 TUI、另一个终端的

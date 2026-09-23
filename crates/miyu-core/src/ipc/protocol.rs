@@ -175,6 +175,14 @@ pub enum Command {
     GetStatus,
     /// Lightweight poll for the REPL background-command status strip.
     JobsOverview,
+    /// 这个窗口此刻在看哪条会话（09-23，跨会话消息的「开着的会话」名单）。
+    /// 终端顺着任务轮询一秒报一次，过期即算关了；`session` 缺省 = 这个窗口
+    /// 关了。`viewer` 是客户端自己起的窗口编号。
+    Presence {
+        viewer: String,
+        #[serde(default)]
+        session: Option<String>,
+    },
     /// Attach to a running turn and stream its event frames until it finishes.
     ///
     /// `from_start` = 把这一轮**从头**补一遍再接实时。同一个会话开第二个 TUI

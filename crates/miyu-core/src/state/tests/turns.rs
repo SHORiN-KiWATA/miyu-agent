@@ -1022,18 +1022,77 @@ fn loading_one_turn_by_id_matches_the_full_scan() {
     assert!(store.load_turn("turn_zzz").unwrap().is_none());
 }
 
-/// 回放 SQL 里写死的两个 LIKE 前缀要和常量一致：产出方、上键历史都按常量来，SQL
-/// 是唯一没法引用常量的地方，靠这条钉住。
+/// 合成轮的开头标签一处登记（`SYNTHETIC_USER_CONTENT_TAGS`），识别函数与回放 SQL 都从
+/// 它生成。字面值钉死：库里已经存着带这些开头的轮，改了标签旧数据就认不出来。
 #[test]
 fn synthetic_turn_markers_match_the_replay_sql() {
-    use crate::state::{is_synthetic_user_content, BACKGROUND_JOB_REPORT_TAG, GOAL_ROUND_TAG};
+    use crate::state::{
+        is_synthetic_user_content, synthetic_user_content_sql, BACKGROUND_JOB_REPORT_TAG,
+        CROSS_SESSION_MESSAGE_TAG, GOAL_ROUND_TAG,
+    };
     assert_eq!(BACKGROUND_JOB_REPORT_TAG, "<background-job-report>");
     assert_eq!(GOAL_ROUND_TAG, "<goal_round>");
+    assert_eq!(CROSS_SESSION_MESSAGE_TAG, "<cross-session-message");
     assert!(is_synthetic_user_content("<background-job-report>x"));
     assert!(is_synthetic_user_content("<goal_round>\nRound 1"));
+    assert!(is_synthetic_user_content(
+        "<cross-session-message from=\"写代码\" session=\"s-2\">\nhi"
+    ));
     assert!(!is_synthetic_user_content(
         "帮我看看 <background-job-report> 这个标签"
     ));
+    let sql = synthetic_user_content_sql("user_content");
+    for tag in [
+        BACKGROUND_JOB_REPORT_TAG,
+        GOAL_ROUND_TAG,
+        CROSS_SESSION_MESSAGE_TAG,
+    ] {
+        assert!(sql.contains(&format!("'{tag}'")), "{sql}");
+    }
+}
+
+/// 会话列表的摘要、重做候选只认人发的消息：最后一轮是 daemon 合成的（这里用跨会话
+/// 消息），摘要退回上一条用户消息，也没有可重做的；回放把它标成合成轮（09-23）。
+#[test]
+fn synthetic_last_turn_is_neither_the_list_snippet_nor_a_redo_candidate() {
+    let (_temp, store) = test_store();
+    store.start_turn("t1", "帮我整理一下笔记", 999_999).unwrap();
+    store.complete_turn("t1", "好的。", None).unwrap();
+    assert!(
+        store.redo_candidate().unwrap().is_some(),
+        "人发的最后一轮可以重做"
+    );
+
+    let message = "<cross-session-message from=\"写代码\" session=\"s-2\">\nSent by the AI in another session, not by the user.\n构建好了\n</cross-session-message>";
+    store
+        .start_turn_with_display("t2", message, message, 999_999, None)
+        .unwrap();
+    store.complete_turn("t2", "收到。", None).unwrap();
+
+    let session_id = store.session_id();
+    let persona = store.session_record(&session_id).unwrap().unwrap().persona;
+    let overview = store
+        .list_sessions(&persona)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.record.session_id == *session_id)
+        .expect("默认会话在列表里");
+    assert_eq!(
+        overview.last_user_content.as_deref(),
+        Some("帮我整理一下笔记")
+    );
+    assert!(
+        store.redo_candidate().unwrap().is_none(),
+        "最后一轮是跨会话消息，没有可重做的"
+    );
+    assert!(
+        store
+            .session_replay(5)
+            .unwrap()
+            .last()
+            .unwrap()
+            .is_synthetic
+    );
 }
 
 /// 被内容策略拦下的那一轮要能**踢出上下文**，但仍留在库里可查。

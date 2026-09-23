@@ -235,6 +235,9 @@ pub(crate) fn apply_platform_turn_scope(
     // (BUG-14,09-18)。发回当前会话仍是 send_message_to_user。
     registry.unregister(miyu_engine::tools::platform_outreach::TOOL_NAME);
     registry.unregister(miyu_engine::tools::platform_outreach::CONTACTS_TOOL_NAME);
+    // 跨会话消息(09-23)只给本地会话:QQ 里的回合(管理员也一样)不往终端和网页
+    // 开着的会话里递话。
+    registry.unregister(miyu_engine::tools::cross_session::TOOL_NAME);
 }
 
 pub(crate) use assets::platform_asset;

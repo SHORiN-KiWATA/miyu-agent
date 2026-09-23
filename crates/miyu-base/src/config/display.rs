@@ -36,6 +36,10 @@ pub struct DisplayConfig {
     /// 时不走这个窗：全屏 TUI 直接把正文展开、shellhook 边想边往下流。
     #[serde(default = "default_thinking_scroll_lines")]
     pub thinking_scroll_lines: usize,
+    /// 跨会话 AI 消息（09-23，收到的那条与发出去的那次工具调用）先露几行正文，
+    /// 其余点开看。0 = 只留抬头。
+    #[serde(default = "default_cross_session_preview_lines")]
+    pub cross_session_preview_lines: usize,
     /// 一段过程跑完收成一行 `Worked for …` 吗。关掉就每一步就地留着——和 shell
     /// 无缝对话那条路一个样子（用户 todolist:21）。
     ///
@@ -90,6 +94,8 @@ struct RawDisplayConfig {
     command_output_lines: Option<usize>,
     #[serde(default)]
     thinking_scroll_lines: Option<usize>,
+    #[serde(default)]
+    cross_session_preview_lines: Option<usize>,
     #[serde(default)]
     keep_timeline_open: Option<bool>,
     #[serde(default)]
@@ -149,6 +155,9 @@ impl<'de> Deserialize<'de> for DisplayConfig {
             thinking_scroll_lines: raw
                 .thinking_scroll_lines
                 .unwrap_or_else(default_thinking_scroll_lines),
+            cross_session_preview_lines: raw
+                .cross_session_preview_lines
+                .unwrap_or_else(default_cross_session_preview_lines),
             fold_timeline,
             repl_replay_turns: raw
                 .repl_replay_turns
@@ -170,6 +179,7 @@ impl Default for DisplayConfig {
             mixed_model_endpoint_display: default_mixed_model_endpoint_display(),
             command_output_lines: default_command_output_lines(),
             thinking_scroll_lines: default_thinking_scroll_lines(),
+            cross_session_preview_lines: default_cross_session_preview_lines(),
             fold_timeline: true,
             repl_replay_turns: default_repl_replay_turns(),
             banner: true,

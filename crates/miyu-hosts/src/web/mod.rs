@@ -26,6 +26,7 @@ mod bridge_progress;
 mod bridge_question;
 mod commands_api;
 mod config_api;
+mod cross_session;
 mod dashboards;
 mod dto;
 mod event_map;
@@ -67,6 +68,7 @@ use bridge_progress::*;
 use bridge_question::*;
 use commands_api::*;
 use config_api::*;
+use cross_session::*;
 use dashboards::affection::*;
 use dashboards::kb::*;
 use dashboards::ledger::*;
@@ -164,6 +166,8 @@ const LIGHTBOX_JS: &str = include_str!("../../../../web/lightbox.js");
 const PREVIEW_JS: &str = include_str!("../../../../web/preview.js");
 const LINKCARDS_JS: &str = include_str!("../../../../web/linkcards.js");
 const TODOS_JS: &str = include_str!("../../../../web/todos.js");
+// 跨会话消息(09-23):在线登记心跳与消息外壳的显示。
+const CROSS_SESSION_JS: &str = include_str!("../../../../web/crosssession.js");
 // 聊天正文选中文字的右键菜单(2026-09-14)。
 const SELECTION_MENU_JS: &str = include_str!("../../../../web/selectionmenu.js");
 // 代码块语法高亮:只用 Prism 的分词器,上色的 DOM 由这个文件亲手搭。

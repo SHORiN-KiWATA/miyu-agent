@@ -61,6 +61,9 @@ pub(in crate::web) struct SetThinkingVariantsRequest {
 pub(in crate::web) struct BootstrapResponse {
     pub(in crate::web) version: &'static str,
     pub(in crate::web) boot_id: String,
+    /// 这个 daemon 的构建号。网页发现它变了（升级后重启）就整页刷新，免得旧前端
+    /// 接着跑（09-24：旧页没有在线心跳，别的会话看不见它）。
+    pub(in crate::web) build_id: String,
     pub(in crate::web) latest_event_id: u64,
     pub(in crate::web) active_run_id: Option<String>,
     pub(in crate::web) running_turn_id: Option<String>,

@@ -371,6 +371,11 @@ impl AppConfig {
                 "display.thinking_scroll_lines must be between 0 and {MAX_THINKING_SCROLL_LINES}"
             );
         }
+        if self.display.cross_session_preview_lines > MAX_CROSS_SESSION_PREVIEW_LINES {
+            bail!(
+                "display.cross_session_preview_lines must be between 0 and {MAX_CROSS_SESSION_PREVIEW_LINES}"
+            );
+        }
         if self.plugins.print_image.width_percent == 0
             || self.plugins.print_image.width_percent > 100
         {

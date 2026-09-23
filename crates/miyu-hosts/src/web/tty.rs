@@ -31,6 +31,7 @@ pub(in crate::web) struct TtyRenderSetup {
     pub(in crate::web) readable_tool_names: bool,
     pub(in crate::web) command_output_lines: usize,
     pub(in crate::web) thinking_scroll_lines: usize,
+    pub(in crate::web) cross_session_preview_lines: usize,
     pub(in crate::web) cols: u16,
     /// 抬头上的任务名。
     pub(in crate::web) title: String,
@@ -52,6 +53,7 @@ impl TtyRenderSetup {
             readable_tool_names: config.display.readable_tool_names,
             command_output_lines: config.display.command_output_lines,
             thinking_scroll_lines: config.display.thinking_scroll_lines,
+            cross_session_preview_lines: config.display.cross_session_preview_lines,
             cols,
             title,
         }

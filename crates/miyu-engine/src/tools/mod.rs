@@ -11,6 +11,7 @@ mod compose;
 mod compose_core;
 mod compose_providers;
 mod cross_hints;
+pub mod cross_session;
 mod default_tools;
 pub use default_tools::TOOL_SUMMARY_PREFIX;
 pub(crate) mod exchange_rate;

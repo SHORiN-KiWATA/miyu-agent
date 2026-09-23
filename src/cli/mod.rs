@@ -656,8 +656,8 @@ fn queued_prompt_lines(prompts: &[QueuedPrompt], mode: PersonaLane, cols: usize)
     for prompt in prompts {
         // 后台任务的报告不是「有人排着队等说话」：它排在队里不该占一条气泡
         // 加一行「排队中」。这一轮吃进它的时候，它会作为时间线上的一条通知
-        // 出现（用户 09-21 截图）。
-        if repl::jobs::is_job_wake_headline(&prompt.display_content) {
+        // 出现（用户 09-21 截图）。跨会话消息同理（09-23）。
+        if repl::jobs::is_daemon_notice(&prompt.display_content) {
             continue;
         }
         if !lines.is_empty() {

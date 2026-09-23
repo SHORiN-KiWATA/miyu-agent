@@ -103,6 +103,8 @@ pub fn preparing_phase(name: &str) -> Option<&'static str> {
         "ask_question" => t("Preparing question", "准备问题"),
         // 整张清单都在参数里,条目一多就是几百字节,和批量删是同一个窗口。
         "todowrite" => t("Preparing list", "准备清单"),
+        // 给别的会话递的话在参数里,长消息也是几百字节往上(09-23)。
+        "send_to_other_running_session" => t("Preparing message", "准备消息"),
         _ => return None,
     })
 }
@@ -134,6 +136,7 @@ pub(crate) fn builtin_readable_tool_name(name: &str) -> Option<&'static str> {
         // 「子代理」,不然翻旧会话看到的是裸工具名。
         "subagent" | "task" => t("Subagent", "子代理"),
         "send_subagent_message" => t("Message subagent", "给子代理留言"),
+        "send_to_other_running_session" => t("Message another session", "给其他会话发送消息"),
         // 显示名的真相源是这张表，不是 `ToolSpec::with_display_name`——那一份
         // 只进工具目录，时间线画的是这里（09-22：这两件工具界面上是裸 id）。
         // `query_token_usage` 是 09-22 拆成两件之前的旧名，同 "task" 的理由

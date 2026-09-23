@@ -158,6 +158,9 @@ pub enum TurnOrigin {
     },
     /// 父会话的 subagent 工具开的子会话回合(09-18 会话化)。带父会话 id。
     Subagent { parent_session: String },
+    /// 另一个会话里的 AI 用 send_to_other_running_session 发来消息、替本会话
+    /// 起的一轮(09-23)。带发件会话 id。
+    CrossSession { from_session: String },
 }
 
 tokio::task_local! {

@@ -35,6 +35,7 @@ impl DaemonState {
             shutdown_tx,
             turn_engine: TurnEngineState::default(),
             platforms: PlatformRuntime::new()?,
+            presence: Presence::default(),
         })
     }
 }

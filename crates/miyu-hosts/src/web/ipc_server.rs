@@ -149,6 +149,13 @@ async fn dispatch_ipc_connection(
                             "run_id": run_id,
                             "session_id": &*info.session_id,
                             "label": info.job_wake_label,
+                            // 跨会话消息起的轮:开头那条消息就是要看的内容,终端
+                            // 挂上来要从头补(`turn.started` 带着它,09-23)。
+                            "from_start": info.first_event_id.is_some()
+                                && matches!(
+                                    info.turn_origin,
+                                    miyu_base::workspace::TurnOrigin::CrossSession { .. }
+                                ),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -183,6 +190,14 @@ async fn dispatch_ipc_connection(
                 },
             )
             .await?;
+        }
+        IpcCommand::Presence { viewer, session } => {
+            state.presence.report(
+                &viewer,
+                session.as_deref(),
+                crate::runtime::TERMINAL_PRESENCE_TTL,
+            );
+            ipc::send(&mut stream, &IpcFrame::Ack).await?;
         }
         IpcCommand::FollowRun {
             run_id,

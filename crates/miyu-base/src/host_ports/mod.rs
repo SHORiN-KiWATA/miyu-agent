@@ -11,11 +11,13 @@
 //! - [`host_query`]:凭令牌问宿主的只读方法(脱敏 DTO);
 //! - [`live_turn`]:平台回合登记的宿主工具位,给中转线桥读;
 //! - [`turn_restrictions`]:回合登记的工具白名单与「不写记忆」,给桥和中转线读(09-23);
-//! - [`subagent`]:子代理会话化(09-18):工具层请 daemon 建子会话、起回合、等任务终态。
+//! - [`subagent`]:子代理会话化(09-18):工具层请 daemon 建子会话、起回合、等任务终态;
+//! - [`cross_session`]:跨会话消息(09-23):列同一个人开着的会话、往里投话。
 //!
 //! `runtime` 里一行 `pub use crate::host_ports::*;` 保留了老路径,web / pm
 //! 这些同层或更高层的调用方写 `miyu_hosts::runtime::…` 照旧能编译。
 
+mod cross_session;
 mod host_grants;
 mod host_query;
 mod live_turn;
@@ -23,6 +25,7 @@ mod ports;
 mod subagent;
 mod turn_restrictions;
 
+pub use cross_session::*;
 pub use host_grants::*;
 pub use host_query::*;
 pub use live_turn::*;

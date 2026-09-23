@@ -172,6 +172,7 @@ impl RemoteRepl {
         );
         renderer.fold_timeline = self.config.display.fold_timeline;
         renderer.thinking_scroll_lines = self.config.display.thinking_scroll_lines;
+        renderer.cross_session_preview_lines = self.config.display.cross_session_preview_lines;
         renderer.use_external_cursor_control();
         renderer.use_buffered_output();
         renderer.start_waiting()?;

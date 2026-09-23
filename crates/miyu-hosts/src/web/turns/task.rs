@@ -830,6 +830,16 @@ pub(in crate::web) fn finish_turn_task(
         }
         let _ = store.touch_session(&store.session_id());
     }
+    // 队列里剩下的合成消息（后台汇报、跨会话消息）另起一轮去回，不并进刚结束的这一轮
+    // （09-23）。被停止的那一轮走不到这里：取消路径先把队列删了，停了就不再自己跑起来。
+    // 只替本地会话重投：平台会话（QQ）的后台汇报有 onebot 自己那条路，这里按本地会话
+    // 起一轮就是拿属主身份替群聊起回合。
+    let session = store.session_id();
+    if !store.is_platform_session(&session).unwrap_or(true) {
+        if let Ok(leftovers) = store.take_queued_synthetic_prompts() {
+            redeliver_leftovers(session, leftovers);
+        }
+    }
     let _ = store.discard_queued_prompts();
     trim_process_memory();
 }

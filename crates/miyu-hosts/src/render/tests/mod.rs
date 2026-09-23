@@ -5,6 +5,7 @@
 
 mod command;
 mod command_step;
+mod cross_session;
 mod golden;
 mod markdown;
 mod math;

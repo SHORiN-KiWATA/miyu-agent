@@ -458,6 +458,7 @@ sys.stdin.readline()  # 等 Rust 侧完成死后判定
             readable_tool_names: true,
             command_output_lines: 10,
             thinking_scroll_lines: 10,
+            cross_session_preview_lines: 10,
             cols: 80,
             title: "走查".to_string(),
         };

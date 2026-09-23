@@ -45,6 +45,8 @@ pub(crate) struct DaemonState {
     pub(crate) shutdown_tx: broadcast::Sender<()>,
     pub(crate) turn_engine: TurnEngineState,
     pub(crate) platforms: PlatformRuntime,
+    /// 哪些会话此刻有窗口开着(09-23,跨会话消息的名单用)。
+    pub(crate) presence: Presence,
 }
 
 #[derive(Clone, Default)]

@@ -317,3 +317,36 @@ fn followup_context_messages_round_trip() {
         Some(crate::llm::ChatContent::Text(text)) if text.contains("img_1")
     ));
 }
+
+/// 回合结束时队列里剩下的合成消息被单独取走（交给 daemon 另起一轮去回），人发的照旧
+/// 并进刚结束的那一轮（09-23）。
+#[test]
+fn leftover_synthetic_prompts_are_taken_out_before_the_fold() {
+    let (_temp, store) = test_store();
+    store.start_turn("t1", "initial", 999999).unwrap();
+    store
+        .enqueue_prompt("q1", "用户补一句", "用户补一句", &[])
+        .unwrap();
+    let message = "<cross-session-message from=\"写代码\" session=\"s-2\">\nSent by the AI in another session, not by the user.\n构建好了\n</cross-session-message>";
+    store.enqueue_prompt("q2", message, message, &[]).unwrap();
+    store.complete_turn("t1", "final answer", None).unwrap();
+
+    let taken = store.take_queued_synthetic_prompts().unwrap();
+    assert_eq!(
+        taken,
+        vec![QueuedSyntheticPrompt {
+            content: message.to_string(),
+            display_content: message.to_string(),
+        }]
+    );
+    assert!(
+        store.take_queued_synthetic_prompts().unwrap().is_empty(),
+        "取过就没了"
+    );
+    assert_eq!(
+        store.discard_queued_prompts().unwrap(),
+        1,
+        "剩下人发的那条照旧并进去"
+    );
+    assert!(store.load_queued_prompts().unwrap().is_empty());
+}

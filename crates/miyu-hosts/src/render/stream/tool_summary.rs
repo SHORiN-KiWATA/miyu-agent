@@ -63,6 +63,9 @@ impl StreamRenderer {
             // `Worked for` 要把它算进去——原来普通工具不掐，一段里只有普通工具时
             // 收缩行就成了光秃秃的 `1 tool · 1 err`（用户实测）。
             stats.started_at.get_or_insert_with(std::time::Instant::now);
+            if self.timeline_enabled() && tool_event_base_name(name) == timeline::SEND_TOOL {
+                self.note_cross_session_send(name, arguments);
+            }
             self.ensure_tool_waiting_phase()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Full {
             let display_name = self.display_tool_name(name);
@@ -260,6 +263,9 @@ impl StreamRenderer {
                 }
             }
             stats.progress = None;
+            if self.timeline_enabled() && tool_event_base_name(name) == timeline::SEND_TOOL {
+                self.note_cross_session_result(name, ok, output);
+            }
             self.settle_tool_batch()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Full {
             self.release_transient_output()?;

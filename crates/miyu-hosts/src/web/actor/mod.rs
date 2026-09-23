@@ -6,7 +6,9 @@
 //! 后台任务完成后的唤醒也在这里：子代理跑完、闹钟到点，要把结果送回发起它的
 //! 那个终端或平台会话，而那个会话可能早就换了、关了、或者正在跑别的回合。
 
+mod delivery;
 mod job_wake;
+pub(in crate::web) use delivery::*;
 pub(in crate::web) use job_wake::*;
 
 use crate::web::*;

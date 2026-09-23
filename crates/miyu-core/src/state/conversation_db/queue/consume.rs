@@ -221,6 +221,51 @@ impl ConversationDb {
         Ok(())
     }
 
+    /// 回合结束时队列里还没被读到的合成消息（后台汇报、跨会话消息）：从队列里拿走、
+    /// 交给调用方另起一轮去回，不再随 `discard_queued_prompts` 并进刚结束的那一轮——
+    /// 原来当时没人回，要等用户下次开口才被顺带看到（09-23）。按入队先后。
+    pub fn take_queued_synthetic_prompts(
+        &self,
+        session_id: &str,
+        queue_session_id: &str,
+    ) -> Result<Vec<QueuedSyntheticPrompt>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let rows = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT prompt_id, content, display_content FROM queued_prompts
+                 WHERE status = 'queued' AND session_id = ?1 AND queue_session_id = ?2
+                   AND ({})
+                 ORDER BY seq",
+                crate::state::synthetic_user_content_sql("content")
+            ))?;
+            let rows = stmt
+                .query_map(params![session_id, queue_session_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        for (prompt_id, _, _) in &rows {
+            tx.execute(
+                "DELETE FROM queued_prompts WHERE prompt_id = ?1 AND status = 'queued'",
+                params![prompt_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(rows
+            .into_iter()
+            .map(|(_, content, display_content)| QueuedSyntheticPrompt {
+                content,
+                display_content,
+            })
+            .collect())
+    }
+
     pub fn discard_queued_prompts(
         &self,
         session_id: &str,

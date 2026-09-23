@@ -121,6 +121,7 @@ impl LiveReplTail {
     pub(in crate::cli) fn show_background_report(
         &mut self,
         report: &BackgroundReport,
+        preview_lines: usize,
     ) -> Result<()> {
         let fullscreen = render::blocks::enabled();
         // 全屏下**不让屏**。
@@ -137,10 +138,33 @@ impl LiveReplTail {
         } else {
             "⚙"
         };
-        let mut text = format!(
-            "\x1b[2m{glyph} {}\x1b[0m\r\n\r\n",
-            job_wake_headline(&report.headline)
-        );
+        let mut text = match miyu_core::state::parse_cross_session_message(&report.headline) {
+            // 另一个会话里的 AI 发来的那条（09-23）：先画它那一块，再接这边的回话。
+            Some(message) => {
+                let mut block = Vec::new();
+                render::timeline::write_cross_session_message(
+                    &mut block,
+                    &miyu_core::state::cross_session_headline(
+                        &message.from_name,
+                        &message.from_session,
+                    ),
+                    &message.body,
+                    preview_lines,
+                )?;
+                let block = String::from_utf8_lossy(&block).replace('\n', "\r\n");
+                if fullscreen {
+                    // 这一块自带缩进与竖线，不能再过 `indent_body`。
+                    self.apply_output_frame(block.as_bytes())?;
+                    String::new()
+                } else {
+                    block
+                }
+            }
+            None => format!(
+                "\x1b[2m{glyph} {}\x1b[0m\r\n\r\n",
+                job_wake_headline(&report.headline)
+            ),
+        };
         for line in report.reply.lines() {
             text.push_str(&render::render_markdown_line(line));
             text.push_str("\r\n");
@@ -211,20 +235,62 @@ impl LiveReplTail {
         self.resume_at(output_cursor)
     }
 
-    /// 这批排队消息里，哪几条是 daemon 合成的后台任务报告。把它们从队列里摘
-    /// 走并返回抬头——它们不是谁敲的话，要走时间线上的通知那条路，而不是画成
-    /// 用户气泡、顺带把这一轮收尾（用户 09-21）。
-    pub(in crate::cli) fn take_queued_notices(&mut self, prompt_ids: &[String]) -> Vec<String> {
+    /// 这批排队消息里，哪几条是 daemon 合成的通知（后台任务报告、跨会话消息）。
+    /// 把它们从队列里摘走并返回——它们不是谁敲的话，要走时间线上的通知那条路，
+    /// 而不是画成用户气泡、顺带把这一轮收尾（用户 09-21）。
+    pub(in crate::cli) fn take_queued_notices(
+        &mut self,
+        prompt_ids: &[String],
+    ) -> Vec<QueuedNotice> {
         let ids = prompt_ids.iter().collect::<std::collections::HashSet<_>>();
         let mut notices = Vec::new();
         self.queued.retain(|prompt| {
-            if !ids.contains(&prompt.prompt_id) || !is_job_wake_headline(&prompt.display_content) {
+            if !ids.contains(&prompt.prompt_id) {
                 return true;
             }
-            notices.push(job_wake_headline(&prompt.display_content));
-            false
+            let display = &prompt.display_content;
+            if let Some(message) = miyu_core::state::parse_cross_session_message(display) {
+                notices.push(QueuedNotice::CrossSession(message));
+                return false;
+            }
+            if is_job_wake_headline(display) {
+                notices.push(QueuedNotice::JobReport(job_wake_headline(display)));
+                return false;
+            }
+            true
         });
         notices
+    }
+
+    /// 把一条通知落进正文：后台任务报告是一行抬头，跨会话消息是抬头加正文预览。
+    pub(in crate::cli) fn show_queued_notice(
+        &mut self,
+        notice: &QueuedNotice,
+        preview_lines: usize,
+    ) -> Result<()> {
+        match notice {
+            QueuedNotice::JobReport(headline) => self.show_job_wake_notice(headline),
+            QueuedNotice::CrossSession(message) => {
+                self.show_cross_session_message(message, preview_lines)
+            }
+        }
+    }
+
+    /// 另一个会话里的 AI 发来的那条（09-23）：铃铛 +「从 xxx 收到消息」，底下
+    /// 竖线串着正文，先露 `preview_lines` 行，全屏下点开看全文。
+    pub(in crate::cli) fn show_cross_session_message(
+        &mut self,
+        message: &miyu_core::state::CrossSessionMessage,
+        preview_lines: usize,
+    ) -> Result<()> {
+        let mut frame = Vec::new();
+        render::timeline::write_cross_session_message(
+            &mut frame,
+            &miyu_core::state::cross_session_headline(&message.from_name, &message.from_session),
+            &message.body,
+            preview_lines,
+        )?;
+        self.apply_output_frame(&frame)
     }
 
     /// 这批里还有要画成气泡的吗。没有的话就别为它收尾时间线。
@@ -281,4 +347,12 @@ impl LiveReplTail {
         self.queued = state.load_queued_prompts()?;
         self.resume_at(output_cursor)
     }
+}
+
+/// 排队消息里 daemon 合成的那几种（判据见 `jobs::is_daemon_notice`）。
+pub(in crate::cli) enum QueuedNotice {
+    /// 后台任务报告：一行抬头。
+    JobReport(String),
+    /// 另一个会话里的 AI 发来的跨会话消息（09-23）。
+    CrossSession(miyu_core::state::CrossSessionMessage),
 }

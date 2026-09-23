@@ -100,6 +100,14 @@ pub(in crate::cli) fn is_job_wake_headline(headline: &str) -> bool {
     headline.starts_with("[后台任务完成] ") || headline.starts_with("[后台命令完成] ")
 }
 
+/// 这条排队消息是不是 daemon 合成的通知：后台任务报告，或另一个会话里的 AI 发来的
+/// 跨会话消息（09-23）。它们不是谁敲的话，排在队里不占气泡，被读到时走时间线上的
+/// 通知那条路。
+pub(in crate::cli) fn is_daemon_notice(display: &str) -> bool {
+    is_job_wake_headline(display)
+        || miyu_core::state::parse_cross_session_message(display).is_some()
+}
+
 pub(in crate::cli) fn job_wake_headline(headline: &str) -> String {
     headline
         .strip_prefix("[后台任务完成] ")
@@ -177,8 +185,8 @@ pub(in crate::cli) struct SharedJobsFeed {
     /// 输入框右上角那行 `/goal …` 靠它自己往前走（轮次、暂停、受阻、上一轮
     /// 空转停下来等人），不必等下一条命令或下一个回合。
     pub(in crate::cli) goal: std::sync::Mutex<Option<miyu_core::ipc::GoalHint>>,
-    /// Active daemon-initiated wake runs: (run_id, session_id, label).
-    pub(in crate::cli) wake_runs: std::sync::Mutex<Vec<(String, String, String)>>,
+    /// Active daemon-initiated wake runs.
+    pub(in crate::cli) wake_runs: std::sync::Mutex<Vec<WakeRun>>,
     /// 人起的活跃轮 `(run_id, session_id)`：同一个会话的**别的**客户端起的。
     pub(in crate::cli) peer_runs: std::sync::Mutex<Vec<(String, String)>>,
     /// **我自己**起的轮。回合刚结束到 daemon 把它从活跃表里摘掉之间有个窗口，
@@ -337,19 +345,19 @@ impl JobsFeed {
 
     /// Next wake run in `session` that has not been followed yet; marks it
     /// followed so the caller attaches exactly once.
-    pub(in crate::cli) fn claim_wake_run(&self, session: &str) -> Option<(String, String)> {
+    pub(in crate::cli) fn claim_wake_run(&self, session: &str) -> Option<WakeRun> {
         let JobsFeed::Shared(shared) = self else {
             return None;
         };
         let wake_runs = shared.wake_runs.lock().unwrap();
         let mut followed = shared.followed_runs.lock().unwrap();
-        for (run_id, run_session, label) in wake_runs.iter() {
-            if run_session == session && !followed.contains(run_id) {
+        for run in wake_runs.iter() {
+            if run.session_id == session && !followed.contains(&run.run_id) {
                 if followed.len() >= JOBS_FEED_MARK_LIMIT {
-                    followed.retain(|id| wake_runs.iter().any(|(r, _, _)| r == id));
+                    followed.retain(|id| wake_runs.iter().any(|run| &run.run_id == id));
                 }
-                followed.insert(run_id.clone());
-                return Some((run_id.clone(), label.clone()));
+                followed.insert(run.run_id.clone());
+                return Some(run.clone());
             }
         }
         None
@@ -373,6 +381,7 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
         // Track per-session watermarks so wake replies print exactly once,
         // and never replay history from before this REPL started.
         let mut seen: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let viewer = presence_viewer_id();
         // The store open can lose a race against daemon writes (SQLITE_BUSY);
         // retry every cycle instead of deciding at startup forever.
         let mut store: Option<StateStore> = None;
@@ -380,7 +389,7 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
             if store.is_none() {
                 store = StateStore::new(&paths).ok();
             }
-            let (jobs, session_id, wake_runs, peer_runs) = runtime
+            let (jobs, _daemon_session, wake_runs, peer_runs) = runtime
                 .block_on(async {
                     tokio::time::timeout(
                         std::time::Duration::from_millis(500),
@@ -400,6 +409,15 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
             // `SessionState` 说的是 daemon 的当前会话，跟 REPL 的会话常常不是
             // 一条（`GetReplSession` 不动当前会话指针）。
             if let Some(session) = repl_session.as_deref() {
+                // 在线登记：这个终端开着这条会话，别的会话里的 AI 发消息时列得出它。
+                // 退出不用注销，daemon 那边十几秒没收到就算关了。
+                let _ = runtime.block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        report_presence(&paths, &viewer, session),
+                    )
+                    .await
+                });
                 let goal = runtime.block_on(async {
                     tokio::time::timeout(
                         std::time::Duration::from_millis(500),
@@ -417,7 +435,11 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
                     *feed.cumulative.lock().unwrap() = Some(totals);
                 }
             }
-            if let (Some(store), Some(session_id)) = (store.as_ref(), session_id) {
+            // 唤醒轮在这个终端挂上去之前就跑完了：从库里补印。按**这个 REPL 的
+            // 会话**查——任务总览回的会话是 daemon 的当前指针，终端开着别的会话时
+            // 两者不是一条，按它查会把别的会话的汇报（09-23 起还有跨会话消息）
+            // 印进这里。
+            if let (Some(store), Some(session_id)) = (store.as_ref(), repl_session.clone()) {
                 let watermark = match seen.entry(session_id.clone()) {
                     std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
                     std::collections::hash_map::Entry::Vacant(entry) => {
@@ -486,9 +508,20 @@ const TRACE_TICKS_PER_POLL: usize = 7;
 pub(in crate::cli) type JobsOverviewSnapshot = (
     Vec<miyu_engine::tools::jobs::JobOverview>,
     Option<String>,
-    Vec<(String, String, String)>,
+    Vec<WakeRun>,
     Vec<(String, String)>,
 );
+
+/// daemon 替会话起的一轮（后台任务跑完、目标续轮、跨会话消息）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::cli) struct WakeRun {
+    pub(in crate::cli) run_id: String,
+    pub(in crate::cli) session_id: String,
+    pub(in crate::cli) label: String,
+    /// 挂上去时从这一轮开头补：跨会话消息起的轮，开头那条消息就是要看的内容
+    /// （09-23）。后台任务汇报照旧只接实时，抬头由 `label` 画。
+    pub(in crate::cli) from_start: bool,
+}
 
 /// 后台子代理的原始进度标记，从绝对序号 `after` 之后取。
 ///
@@ -555,6 +588,29 @@ pub(in crate::cli) async fn fetch_goal_status(
     }
 }
 
+/// 这个终端的窗口编号：进程号加启动时刻，同一台机器上不会撞。
+fn presence_viewer_id() -> String {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    format!("tui-{}-{started:x}", std::process::id())
+}
+
+async fn report_presence(paths: &MiyuPaths, viewer: &str, session_id: &str) -> Result<()> {
+    let mut stream = ipc::connect(&paths.ipc_socket()).await?;
+    ipc::send(
+        &mut stream,
+        &IpcRequest::new(IpcCommand::Presence {
+            viewer: viewer.to_string(),
+            session: Some(session_id.to_string()),
+        }),
+    )
+    .await?;
+    let _ = ipc::receive::<IpcFrame>(&mut stream).await?;
+    Ok(())
+}
+
 /// `AdminResult` 的 data 里那份目标状态。`/goal` 命令的回执也带同一个键——
 /// 解析只此一处，两条路的形状不会分叉。
 pub(in crate::cli) fn goal_hint_from_admin_data(
@@ -588,14 +644,19 @@ pub(in crate::cli) async fn fetch_jobs_overview(paths: &MiyuPaths) -> Result<Job
                 .map(|rows| {
                     rows.iter()
                         .filter_map(|row| {
-                            Some((
-                                row.get("run_id")?.as_str()?.to_string(),
-                                row.get("session_id")?.as_str()?.to_string(),
-                                row.get("label")
+                            Some(WakeRun {
+                                run_id: row.get("run_id")?.as_str()?.to_string(),
+                                session_id: row.get("session_id")?.as_str()?.to_string(),
+                                label: row
+                                    .get("label")
                                     .and_then(serde_json::Value::as_str)
                                     .unwrap_or_default()
                                     .to_string(),
-                            ))
+                                from_start: row
+                                    .get("from_start")
+                                    .and_then(serde_json::Value::as_bool)
+                                    .unwrap_or(false),
+                            })
                         })
                         .collect::<Vec<_>>()
                 })

@@ -6,6 +6,8 @@ mod shared_files;
 pub use conversation_db::interrupted_prefix;
 pub use conversation_db::SharedFile;
 mod conversation_db;
+mod cross_session;
+pub use cross_session::*;
 mod migrations;
 mod queue;
 mod sessions;
@@ -38,14 +40,14 @@ pub use conversation_db::{
     ConversationDb, GoalDenied, GoalPhase, GoalRecord, ImageAsset, ImageAssetData,
     NewSponsorRecord, PlatformAccessActor, PlatformAccessGrant, PlatformAccessGrantKey,
     PlatformMemeRefRecord, PlatformPluginScopeKey, PlatformSessionBinding,
-    PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, RedoCandidate, RedoInputKind,
-    RedoStart, ReplayEntry, SessionOverview, SessionRecord, SponsorOrder, SponsorRecord,
-    SponsorSummary, SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnFollowup,
-    TurnInlineMedia, TurnJournalEvent, TurnRedoCheckpointPayload, TurnReplay, TurnStatus,
-    UserAttachment, UserAttachmentData, DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE,
-    INLINE_MEDIA_KIND_IMAGE, INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT,
-    INLINE_MEDIA_KIND_VIDEO, USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE,
-    USER_ATTACHMENT_KIND_TEXT,
+    PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,
+    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, SessionOverview, SessionRecord,
+    SponsorOrder, SponsorRecord, SponsorSummary, SponsorTotal, ToolFlowCall, ToolFlowRound,
+    ToolFootprint, Turn, TurnFollowup, TurnInlineMedia, TurnJournalEvent,
+    TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment, UserAttachmentData,
+    DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE, INLINE_MEDIA_KIND_IMAGE,
+    INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT, INLINE_MEDIA_KIND_VIDEO,
+    USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE, USER_ATTACHMENT_KIND_TEXT,
 };
 pub use usage::{
     UsageMeta, UsageRange, UsageSnapshot, UsageStats, USAGE_KIND_AFFECTION, USAGE_KIND_GROUP_JOIN,
@@ -455,10 +457,30 @@ impl SubagentTaskState {
 }
 pub const GOAL_ROUND_TAG: &str = "<goal_round>";
 
-/// 这条「用户消息」是不是 daemon 合成的（后台任务唤醒 / 目标续轮），不是谁敲的。
+/// daemon 合成的「用户消息」开头标签，一处登记：识别函数与回放等 SQL 都从这张表生成，
+/// 再加一种不会漏掉某一处（09-23 加跨会话消息时收拢；原来 SQL 里各抄一份）。
+pub const SYNTHETIC_USER_CONTENT_TAGS: [&str; 3] = [
+    BACKGROUND_JOB_REPORT_TAG,
+    GOAL_ROUND_TAG,
+    CROSS_SESSION_MESSAGE_TAG,
+];
+
+/// 这条「用户消息」是不是 daemon 合成的（后台任务唤醒 / 目标续轮 / 跨会话消息），不是谁敲的。
 pub fn is_synthetic_user_content(content: &str) -> bool {
     let content = content.trim_start();
-    content.starts_with(BACKGROUND_JOB_REPORT_TAG) || content.starts_with(GOAL_ROUND_TAG)
+    SYNTHETIC_USER_CONTENT_TAGS
+        .iter()
+        .any(|tag| content.starts_with(tag))
+}
+
+/// SQL 里认合成轮的条件：`column` 以任一合成标签开头。按开头若干字符整段比较，
+/// 不用 LIKE——标签里的 `_` 在 LIKE 里是通配符。
+pub fn synthetic_user_content_sql(column: &str) -> String {
+    SYNTHETIC_USER_CONTENT_TAGS
+        .iter()
+        .map(|tag| format!("substr({column}, 1, {}) = '{tag}'", tag.chars().count()))
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 fn turns_to_entries(turns: Vec<Turn>) -> Vec<StoredConversationEntry> {

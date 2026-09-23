@@ -116,6 +116,21 @@ pub(super) fn session_replay_frame(
         if replay.display_content.starts_with("[目标续轮]") {
             // 目标续轮什么都不画——实时渲染也不打表头。一个长任务几十轮，
             // 每轮一行只会把真正的输出挤散。
+        } else if let Some(message) =
+            miyu_core::state::parse_cross_session_message(&replay.display_content)
+        {
+            // 另一个会话里的 AI 发来的那条（09-23）：和实时渲染同一块，整段外壳
+            // 当一行提示印出来就是一屏标签。
+            frame.push(b'\n');
+            render::timeline::write_cross_session_message(
+                &mut frame,
+                &miyu_core::state::cross_session_headline(
+                    &message.from_name,
+                    &message.from_session,
+                ),
+                &message.body,
+                config.display.cross_session_preview_lines,
+            )?;
         } else if replay.is_synthetic {
             // daemon 自己合成的轮：实时渲染画的是一条暗色 `⚙` 提示，回放要
             // 对齐，不能变成用户气泡。
@@ -155,6 +170,7 @@ pub(super) fn session_replay_frame(
         );
         renderer.fold_timeline = config.display.fold_timeline;
         renderer.thinking_scroll_lines = config.display.thinking_scroll_lines;
+        renderer.cross_session_preview_lines = config.display.cross_session_preview_lines;
         renderer.use_external_cursor_control();
         renderer.use_buffered_output();
         // 流水账里带着思考就按它的位置放，别再用 `assistant_reasoning` 那一列

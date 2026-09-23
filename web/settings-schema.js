@@ -245,6 +245,17 @@
           default: 8,
         },
         {
+          path: "display.cross_session_preview_lines",
+          label: t("跨会话AI消息预览行数"),
+          hint: t("别的会话里的 AI 发来的、这边发给别的会话的消息,先露几行正文,点开看全文;0 = 只留抬头"),
+          kind: "number",
+          integer: true,
+          min: 0,
+          max: 200,
+          unit: t("行"),
+          default: 10,
+        },
+        {
           path: "display.repl_replay_turns",
           label: t("重开 TUI 回放的轮数"),
           hint: t("0 = 不回放"),

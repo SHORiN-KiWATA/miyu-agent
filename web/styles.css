@@ -1369,6 +1369,135 @@ body[data-theme="graphite"] .session-unread-dot {
   white-space: nowrap;
 }
 
+/* 跨会话消息（09-23）：另一个会话里的 AI 发来的那条。铃铛 +「从 xxx 收到消息」，
+   底下一根竖线串着正文，先露 --xs-rows 行，点开看全文——和终端里 `│` 串着的那
+   一块同一个样子。竖线画成背景（同 .reasoning-window），不随内容滚走。 */
+.xs-message {
+  --proc-col: 16px;
+  /* 与时间线的 --proc-soft 同一个配方(这一块不在 .proc-line 里,要自己定义)。 */
+  --xs-soft: color-mix(in srgb, var(--text) 62%, var(--app-bg));
+  margin: 0 0 18px;
+}
+
+.xs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: var(--fs-meta);
+}
+
+.xs-head .icon-slot {
+  width: var(--proc-col);
+  height: var(--proc-col);
+  flex-basis: var(--proc-col);
+}
+
+/* 截到第几行由 crosssession.js 量出来填 --xs-clip(按实际行盒量,行内代码与中文
+   回退字体会把行盒撑高);量出来之前先按十行估。 */
+.xs-body {
+  max-height: var(--xs-clip, 17em);
+  overflow: hidden;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.xs-message > .xs-body {
+  margin: 4px 0 0;
+  padding-left: calc(var(--proc-col) + 6px);
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--line-strong) 75%, var(--line)),
+    color-mix(in srgb, var(--line-strong) 75%, var(--line))
+  );
+  background-repeat: no-repeat;
+  background-size: 1px 100%;
+  background-position: calc(var(--proc-col) / 2 - 0.5px) 0;
+}
+
+.xs-body > :first-child {
+  margin-top: 0;
+}
+
+
+.xs-body > :last-child {
+  margin-bottom: 0;
+}
+
+.xs-message.is-expanded > .xs-body {
+  max-height: none;
+}
+
+/* 收着时露的那几行是附注,跟抬头一起淡;点开的全文才是正常色(和命令预览同一个
+   规矩,用户 09-24:「消息预览的颜色不对」)。里面的加粗、代码、链接跟着淡。 */
+.xs-message:not(.is-expanded) > .xs-body,
+.xs-message:not(.is-expanded) > .xs-body *,
+.tool-card.is-xs-send > .xs-send-preview * {
+  color: var(--xs-soft, var(--proc-soft, var(--text-soft)));
+}
+
+.xs-more {
+  display: block;
+  color: var(--text-faint);
+  line-height: 1.7;
+  letter-spacing: 0.1em;
+}
+
+.xs-message > .xs-more {
+  padding-left: calc(var(--proc-col) + 6px);
+}
+
+.xs-message.is-clipped,
+.xs-message.is-expanded {
+  cursor: pointer;
+}
+
+/* 并进 AI 回复之后（09-24 定的版式）：是这段回复的第一步，正文用附注字号，
+   和时间线里点开的步同一个量级；离下面的「Worked for」/正文留一点空。 */
+.assistant-blocks > .xs-message {
+  margin: 2px 0 10px;
+}
+
+.assistant-blocks > .xs-message > .xs-body,
+.assistant-blocks > .xs-message > .xs-more {
+  font-size: var(--fs-meta);
+}
+
+/* 发出去的那张工具签：正文前几行排在抬头底下，缩进到文字列（同命令签）；展开后
+   它退场，全文在展开区顶上。 */
+.tool-card.is-xs-send > .xs-send-preview,
+.tool-card.is-xs-send > .xs-send-more {
+  margin: 0 0 4px var(--proc-indent, 0);
+  color: var(--proc-soft, var(--text-soft));
+  font-size: var(--fs-meta);
+}
+
+.tool-card.is-xs-send:not(.collapsed) > .xs-send-preview,
+.tool-card.is-xs-send:not(.collapsed) > .xs-send-more {
+  display: none;
+}
+
+.assistant-blocks .proc-steps > .tool-card > .xs-send-preview,
+.assistant-blocks .proc-steps > .tool-card > .xs-send-more {
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.assistant-blocks .proc-steps > .tool-card > .xs-send-preview:hover,
+.assistant-blocks .proc-steps > .tool-card > .xs-send-more:hover,
+.assistant-blocks .proc-steps > .tool-card:has(> .xs-send-preview:hover, > .xs-send-more:hover) > .tool-head,
+.assistant-blocks .proc-steps > .tool-card:has(> .tool-head:hover) > .xs-send-preview,
+.assistant-blocks .proc-steps > .tool-card:has(> .tool-head:hover) > .xs-send-more {
+  background: var(--surface-2);
+}
+
+.xs-send-full {
+  margin: 0 0 8px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
 /* 目标状态行：贴在输入框上方，跟着阶段变样。目标是会话级的长期状态，
    放在对话流里会被后面几十轮顶到看不见的地方。 */
 .goal-bar {

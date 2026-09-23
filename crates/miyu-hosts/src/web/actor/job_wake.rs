@@ -91,7 +91,8 @@ pub(in crate::web) async fn handle_job_completion(
             }
             Ok(false) => {
                 pending_wake_run =
-                    wake_local_session_for_job(&state, session_id, &completion, &command_short);
+                    wake_local_session_for_job(&state, session_id, &completion, &command_short)
+                        .await;
             }
             Err(error) => {
                 tracing::warn!(
@@ -339,6 +340,7 @@ pub(in crate::web) fn origin_tty_writer(
         setup.command_output_lines,
     );
     renderer.thinking_scroll_lines = setup.thinking_scroll_lines;
+    renderer.cross_session_preview_lines = setup.cross_session_preview_lines;
     // daemon 的 stdout 是管道，可这些字节要进 shellhook 那个 tty——选的是那一面。
     renderer.use_terminal_surface();
     renderer.use_external_cursor_control();
@@ -438,7 +440,7 @@ pub(in crate::web) fn origin_tty_writer(
     }
 }
 
-pub(in crate::web) fn wake_local_session_for_job(
+pub(in crate::web) async fn wake_local_session_for_job(
     state: &DaemonState,
     session_id: Arc<str>,
     completion: &tools::jobs::JobCompletion,
@@ -488,115 +490,37 @@ pub(in crate::web) fn wake_local_session_for_job(
         completion.title
     );
 
-    // Mid-turn session: ride the queue so the model reacts within the
-    // running reply instead of colliding with it.
-    let queued = {
-        let manager = state.manager.lock().unwrap();
-        manager
-            .active_runs
-            .iter()
-            .find(|(_, info)| &*info.session_id == &*session_id)
-            .map(|(run_id, info)| (run_id.clone(), info.queue_target.clone(), info.audience))
-    };
-    if let Some((run_id, queue_target, audience)) = queued {
-        tracing::info!(
-            job_id = %completion.job_id,
-            run_id = %run_id,
-            has_queue_target = queue_target.is_some(),
-            "job wake joining the session's active run"
-        );
-        let Some(target) = queue_target else {
-            // Turn is still starting; report on the next completion poll
-            // rather than racing its queue setup.
-            tracing::debug!(job_id = %completion.job_id, "job wake skipped: turn starting");
-            return None;
-        };
-        let request = TurnUpdateRequest {
-            run_id,
-            turn_id: target.turn_id,
-            session_id: Some(session_id.clone()),
-            audience,
-            content,
-            display_content,
-            attachments: Vec::new(),
-            uploaded_attachment_ids: Vec::new(),
-            mode: TurnUpdateMode::Followup,
-        };
-        if let Err(error) = enqueue_turn_update(state, request) {
-            tracing::debug!(
-                job_id = %completion.job_id,
-                error = %error,
-                "job wake could not join the running turn"
-            );
-        }
-        return None;
-    }
-
-    let run_id = random_id("run", 18);
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    {
-        let mut manager = state.manager.lock().unwrap();
-        if manager.admin_blocks_session(&session_id) {
-            tracing::debug!(job_id = %completion.job_id, "job wake skipped: admin busy");
-            return None;
-        }
-        manager.active_runs.insert(
-            run_id.clone(),
-            RunInfo {
-                session_id: session_id.clone(),
-                mode: PersonaLane::Active,
-                audience: PromptAudience::Owner,
-                cancel: cancel_tx,
-                turn_id: None,
-                queue_target: None,
-                supersede: Arc::new(miyu_engine::agent::TurnSupersedeSignal::default()),
-                platform_followup: None,
-                operation: RunOperation::Create,
-                job_wake: true,
-                turn_origin: miyu_base::workspace::TurnOrigin::JobWake,
-                first_event_id: None,
-                job_wake_label: Some(format!(
-                    "{} {} · {}",
-                    if completion.is_subagent {
-                        t("Subagent finished", "子代理完成")
-                    } else {
-                        t("Command finished", "命令完成")
-                    },
-                    completion.job_id,
-                    completion.title
-                )),
+    let delivery = Delivery {
+        content,
+        display_content,
+        wake_label: format!(
+            "{} {} · {}",
+            if completion.is_subagent {
+                t("Subagent finished", "子代理完成")
+            } else {
+                t("Command finished", "命令完成")
             },
-        );
+            completion.job_id,
+            completion.title
+        ),
+        turn_origin: miyu_base::workspace::TurnOrigin::JobWake,
+        cwd: Some(completion.workspace.clone()),
+        origin_tty: completion.origin_tty.clone(),
+    };
+    // 正在跑就排进那一轮，闲着就替它起一轮；那一轮刚起步或正在结束时等它，不再直接
+    // 放弃（09-23：原来一轮刚起步时这条汇报被静默丢掉，而任务只报这一次）。
+    match deliver(state, session_id, delivery).await {
+        Delivered::Woke(run) => Some(run),
+        Delivered::Queued => {
+            // 走查 `testkit/tui/bg_followup.py` 认这一句判「走的是插进正在跑的那一轮」。
+            tracing::info!(job_id = %completion.job_id, "job wake joining the session's active run");
+            None
+        }
+        Delivered::Failed(reason) => {
+            tracing::warn!(job_id = %completion.job_id, %reason, "job wake not delivered");
+            None
+        }
     }
-    // 订阅起点在入队前取:回合的 turn.started 起所有事件都不漏给流式回写。
-    let events_after = state.events.latest_id();
-    if state
-        .actor_tx
-        .send(ActorCommand::StartTurn {
-            run_id: run_id.clone(),
-            session_id,
-            content,
-            display_content,
-            attachment_run_id: None,
-            mode: PersonaLane::Active,
-            images: Vec::new(),
-            cwd: Some(completion.workspace.clone()),
-            origin_tty: completion.origin_tty.clone().map(Box::new),
-            audience: PromptAudience::Owner,
-            profile: None,
-            overrides: None,
-            cancel: cancel_rx,
-            turn_origin: Box::new(miyu_base::workspace::TurnOrigin::JobWake),
-        })
-        .is_err()
-    {
-        finish_run(&state.manager, &run_id, None);
-        return None;
-    }
-    Some(JobWakeRun {
-        run_id,
-        events_after,
-    })
 }
 
 pub(in crate::web) async fn wake_platform_session_for_job(

@@ -1,0 +1,34 @@
+{
+  "name": "send_to_other_running_session",
+  "display_name": "给其他会话发送消息",
+  "description": "Talk to the AI in another open session of the same user. Use action=list to see which sessions are open or running, then action=send with a session_id. That AI has not seen this conversation, so make the message stand on its own.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "send"
+        ]
+      },
+      "session_id": {
+        "type": "string",
+        "description": "send: a session_id from list."
+      },
+      "message": {
+        "type": "string",
+        "description": "send: the text for that AI."
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
+  "permission": "writes",
+  "always_loaded": false,
+  "load_policy": "group",
+  "groups": [
+    "agent"
+  ]
+}

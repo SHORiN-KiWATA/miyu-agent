@@ -33,6 +33,8 @@ pub fn compose_registry(
     subagent::register(&mut registry, config.clone(), paths.clone(), subagent_tools);
     // 子代理快照之后才挂的内置插件(记账:注册位置就是权限边界)。
     builtin_plugins::register_enabled(&mut registry, config, paths, manifest, true);
+    // 跨会话消息(09-23)同理:子代理的回话对象是父回合,不给它往别的会话发话。
+    cross_session::register(&mut registry);
     compose_providers::register(
         &mut registry,
         config,

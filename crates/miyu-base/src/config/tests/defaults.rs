@@ -93,6 +93,16 @@ fn display_readable_tool_names_defaults_enabled() {
     config.display.command_output_lines = MAX_COMMAND_OUTPUT_LINES + 1;
     assert!(config.validate().is_err());
 
+    // 09-23:跨会话 AI 消息先露几行,默认 10,同样有上限。
+    let display: DisplayConfig = serde_json::from_str("{}").unwrap();
+    assert_eq!(display.cross_session_preview_lines, 10);
+    let display: DisplayConfig =
+        serde_json::from_str(r#"{"cross_session_preview_lines":0}"#).unwrap();
+    assert_eq!(display.cross_session_preview_lines, 0);
+    let mut config = AppConfig::default();
+    config.display.cross_session_preview_lines = MAX_CROSS_SESSION_PREVIEW_LINES + 1;
+    assert!(config.validate().is_err());
+
     let display: DisplayConfig = serde_json::from_str(r#"{"show_token_usage":true}"#).unwrap();
     assert!(display.show_token_usage);
 

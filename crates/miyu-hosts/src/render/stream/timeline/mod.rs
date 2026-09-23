@@ -30,6 +30,7 @@
 //!
 //! 一共几个面、各自谁在用，见 [`super::surface`] 的表。
 
+mod cross_session;
 mod glyphs;
 mod live;
 mod question;
@@ -37,6 +38,8 @@ mod subagent;
 
 // 后台子代理面板（根包 `cli::repl::tail::screen::overlay`）要按名字用这几样：
 // 它和前台面板**共用**排版、收缩、点开的规则，取数的地方不同，长相不该不同。
+pub use cross_session::write_cross_session_message;
+pub(crate) use cross_session::SEND_TOOL;
 pub use glyphs::{fold_open_lines, step_detail_lines, step_rows};
 pub use subagent::{fold_block_lines, thread_panel, PanelEntry};
 

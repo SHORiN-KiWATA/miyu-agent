@@ -74,6 +74,8 @@ pub struct ConversationDb {
     /// 落盘附件的根目录(`<state_dir>/attachments`),布局
     /// `<attachment_id>/<file_name>`;路径完全由行数据推导,表里不存。
     attachments_dir: PathBuf,
+    /// 库文件本身。跨会话消息的名单把它报给模型,好让它只读地翻别的会话(09-23)。
+    db_path: PathBuf,
 }
 
 impl std::fmt::Debug for ConversationDb {
@@ -249,7 +251,13 @@ impl ConversationDb {
         Ok(Self {
             conn: Mutex::new(conn),
             attachments_dir: state_dir.join("attachments"),
+            db_path,
         })
+    }
+
+    /// 库文件路径(`<db_dir>/conversation.db`)。
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
     }
 
     /// 某个附件在磁盘上的目录(`<root>/<attachment_id>`)。
@@ -848,17 +856,16 @@ impl ConversationDb {
             return Ok(Vec::new());
         }
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            // 这个 LIKE 标出 daemon 自己合成的轮：后台任务唤醒和目标续轮。
-            // 它们不是用户输入，回放时不能画成用户气泡——判据取 `user_content`
-            // 的开头标签，因为那是模型真正收到的东西，而 `display_content`
-            // 是给人看的、随时可能改文案。
-            // 被中断的轮也回放：它已经进了上下文（模型下一轮看得见它），
-            // `/history` 里也有，重开之后正文里却没有，看着像丢了一轮
-            //（用户实测：明明有历史记录，但是没有回放）。
+        // 第四列标出 daemon 自己合成的轮（后台任务唤醒、目标续轮、跨会话消息）。
+        // 它们不是用户输入，回放时不能画成用户气泡——判据取 `user_content`
+        // 的开头标签，因为那是模型真正收到的东西，而 `display_content`
+        // 是给人看的、随时可能改文案。
+        // 被中断的轮也回放：它已经进了上下文（模型下一轮看得见它），
+        // `/history` 里也有，重开之后正文里却没有，看着像丢了一轮
+        //（用户实测：明明有历史记录，但是没有回放）。
+        let mut stmt = conn.prepare(&format!(
             "SELECT display_content, assistant_content, replay_journal,
-                    (user_content LIKE '<background-job-report>%'
-                     OR user_content LIKE '<goal_round>%'),
+                    ({synthetic}),
                     assistant_reasoning,
                     status = 'interrupted',
                     assistant_provider_id, assistant_model,
@@ -868,7 +875,8 @@ impl ConversationDb {
                 AND status IN ('completed', 'interrupted')
               ORDER BY seq DESC
               LIMIT ?2",
-        )?;
+            synthetic = crate::state::synthetic_user_content_sql("user_content"),
+        ))?;
         let mut rows = stmt
             .query_map(params![session_id, limit as i64], |row| {
                 Ok((
