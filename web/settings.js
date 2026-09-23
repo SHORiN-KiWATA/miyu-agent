@@ -237,7 +237,7 @@ window.MiyuSettings = (() => {
     const heading = el("div.st-drawer-title", null,
       el("strong", { text: options.title }),
       options.subtitle ? el("small", { text: options.subtitle }) : null);
-    const head = el("header.st-drawer-head", null, heading, iconButton("x", "关闭", () => closeDrawer()));
+    const head = el("header.st-drawer-head", null, heading, iconButton("x", t("关闭"), () => closeDrawer()));
     const body = el("div.st-drawer-body");
     panel.append(head);
     const state = { overlay, panel, body, tab: null, options, tabsBar: null };
@@ -428,7 +428,7 @@ window.MiyuSettings = (() => {
     const pop = el("div.st-popover", { role: "dialog", "aria-label": options.title || "" });
     pop.style.setProperty("width", options.width || "320px");
     const body = el("div.st-popover-body");
-    if (options.title) pop.append(el("header.st-popover-head", null, el("strong", { text: options.title }), iconButton("x", "关闭", () => closePopover())));
+    if (options.title) pop.append(el("header.st-popover-head", null, el("strong", { text: options.title }), iconButton("x", t("关闭"), () => closePopover())));
     pop.append(body);
     document.body.appendChild(pop);
     build(body, () => closePopover());
@@ -479,7 +479,7 @@ window.MiyuSettings = (() => {
     const close = () => { if (dialog.open) dialog.close(); };
     const head = el("header.st-dialog-head", null,
       el("div.st-drawer-title", null, el("strong", { text: title }), subtitle ? el("small", { text: subtitle }) : null),
-      iconButton("x", "关闭", close));
+      iconButton("x", t("关闭"), close));
     dialog.append(head, content);
     if (actions?.length) dialog.append(el("footer.st-dialog-foot", null, actions));
     dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") event.stopPropagation(); });
@@ -491,7 +491,7 @@ window.MiyuSettings = (() => {
     return { dialog, close, body: content };
   }
 
-  function confirmAction(message, label = "删除") {
+  function confirmAction(message, label = t("删除")) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (value) => { if (settled) return; settled = true; resolve(value); handle.close(); };
@@ -499,7 +499,7 @@ window.MiyuSettings = (() => {
         title: label,
         body: el("p.st-dialog-text", { text: message }),
         actions: [
-          button("取消", { onClick: () => finish(false) }),
+          button(t("取消"), { onClick: () => finish(false) }),
           button(label, { kind: "primary", danger: true, onClick: () => finish(true) })
         ],
         width: "380px",
@@ -543,14 +543,14 @@ window.MiyuSettings = (() => {
       const raw = node.value.trim();
       if (!raw) {
         if (field.nullable) { onCommit(null); return; }
-        setInvalid(node, "不能为空");
+        setInvalid(node, t("不能为空"));
         return;
       }
       const number = Number(raw);
-      if (!Number.isFinite(number)) return setInvalid(node, "请输入有效数字");
-      if (field.integer && !Number.isInteger(number)) return setInvalid(node, "必须是整数");
-      if (field.min != null && number < field.min) return setInvalid(node, `不能小于 ${field.min}`);
-      if (field.max != null && number > field.max) return setInvalid(node, `不能大于 ${field.max}`);
+      if (!Number.isFinite(number)) return setInvalid(node, t("请输入有效数字"));
+      if (field.integer && !Number.isInteger(number)) return setInvalid(node, t("必须是整数"));
+      if (field.min != null && number < field.min) return setInvalid(node, t("不能小于 {min}", { min: field.min }));
+      if (field.max != null && number > field.max) return setInvalid(node, t("不能大于 {max}", { max: field.max }));
       onCommit(number);
       ctx.updateSettingsControls();
     });
@@ -637,7 +637,7 @@ window.MiyuSettings = (() => {
     const paint = () => {
       for (const node of wrap.querySelectorAll(".st-chip-item")) node.remove();
       list.forEach((value, index) => {
-        const item = el("span.st-chip-item", null, el("span", { text: String(value) }), iconButton("x", "移除", () => {
+        const item = el("span.st-chip-item", null, el("span", { text: String(value) }), iconButton("x", t("移除"), () => {
           list.splice(index, 1);
           onChange([...list]);
           paint();
@@ -660,7 +660,7 @@ window.MiyuSettings = (() => {
       if (changed) { onChange([...list]); paint(); }
     };
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === "," || event.key === "，") { event.preventDefault(); commit(input.value); }
+      if (event.key === "Enter" || event.key === "," || event.key === "，") { event.preventDefault(); commit(input.value); } // i18n-allow: event.key 的按键值(全角逗号),不是给人读的文案
       else if (event.key === "Backspace" && !input.value && list.length) { list.pop(); onChange([...list]); paint(); }
     });
     input.addEventListener("blur", () => { if (input.value.trim()) commit(input.value); });
@@ -675,12 +675,12 @@ window.MiyuSettings = (() => {
   }
 
   const parseQqId = (text) => {
-    if (!/^\d{5,12}$/.test(text)) throw new Error(`无效号码：${text}`);
+    if (!/^\d{5,12}$/.test(text)) throw new Error(t("无效号码：{value}", { value: text }));
     return Number(text);
   };
 
   /* 键值表编辑器:值是对象;valueKind = "text" | "json"(值按 JSON 字面量解析,不合法退回字符串) */
-  function kvTable(object, onChange, { keyPlaceholder = "键", valuePlaceholder = "值", valueKind = "text", secretValues = false } = {}) {
+  function kvTable(object, onChange, { keyPlaceholder = t("键"), valuePlaceholder = t("值"), valueKind = "text", secretValues = false } = {}) {
     const entries = Object.entries(object && typeof object === "object" ? object : {});
     const wrap = el("div.st-kv");
     const emit = () => {
@@ -700,9 +700,9 @@ window.MiyuSettings = (() => {
       entries.forEach((entry, index) => {
         const keyInput = textInput(entry[0], (value) => { entry[0] = value; emit(); }, { placeholder: keyPlaceholder, mono: true, ariaLabel: keyPlaceholder });
         const valueInput = textInput(format(entry[1]), (value) => { entry[1] = parse(value); emit(); }, { placeholder: valuePlaceholder, mono: true, ariaLabel: valuePlaceholder, type: secretValues ? "password" : "text" });
-        wrap.append(el("div.st-kv-row", null, keyInput, el("span.st-kv-eq", { text: "=" }), valueInput, iconButton("trash-2", "删除", () => { entries.splice(index, 1); emit(); paint(); }, "is-danger")));
+        wrap.append(el("div.st-kv-row", null, keyInput, el("span.st-kv-eq", { text: "=" }), valueInput, iconButton("trash-2", t("删除"), () => { entries.splice(index, 1); emit(); paint(); }, "is-danger")));
       });
-      wrap.append(button("添加一项", { iconName: "plus", small: true, onClick: () => { entries.push(["", ""]); paint(); wrap.querySelector(".st-kv-row:last-of-type input")?.focus(); } }));
+      wrap.append(button(t("添加一项"), { iconName: "plus", small: true, onClick: () => { entries.push(["", ""]); paint(); wrap.querySelector(".st-kv-row:last-of-type input")?.focus(); } }));
     };
     paint();
     return wrap;
@@ -716,18 +716,18 @@ window.MiyuSettings = (() => {
     const paint = () => {
       wrap.replaceChildren();
       list.forEach((value, index) => {
-        const input = textInput(value, (next) => { list[index] = next; emit(); }, { placeholder, mono, ariaLabel: `${placeholder || "项目"} ${index + 1}` });
+        const input = textInput(value, (next) => { list[index] = next; emit(); }, { placeholder, mono, ariaLabel: t("{label} {index}", { label: placeholder || t("项目"), index: index + 1 }) });
         input.addEventListener("keydown", (event) => {
           if (event.key === "Enter") { event.preventDefault(); list.splice(index + 1, 0, ""); emit(); paint(); wrap.querySelectorAll("input")[index + 1]?.focus(); }
           if (event.key === "Backspace" && !input.value && list.length > 0) { event.preventDefault(); list.splice(index, 1); emit(); paint(); wrap.querySelectorAll("input")[Math.max(0, index - 1)]?.focus(); }
         });
         const rowNode = el("div.st-list-row", null,
           input,
-          iconButton("arrow-up", "上移", () => { if (index === 0) return; [list[index - 1], list[index]] = [list[index], list[index - 1]]; emit(); paint(); }),
-          iconButton("trash-2", "删除", () => { list.splice(index, 1); emit(); paint(); }, "is-danger"));
+          iconButton("arrow-up", t("上移"), () => { if (index === 0) return; [list[index - 1], list[index]] = [list[index], list[index - 1]]; emit(); paint(); }),
+          iconButton("trash-2", t("删除"), () => { list.splice(index, 1); emit(); paint(); }, "is-danger"));
         wrap.append(rowNode);
       });
-      wrap.append(button("添加一项", { iconName: "plus", small: true, onClick: () => { list.push(""); emit(); paint(); wrap.querySelector(".st-list-row:last-of-type input")?.focus(); } }));
+      wrap.append(button(t("添加一项"), { iconName: "plus", small: true, onClick: () => { list.push(""); emit(); paint(); wrap.querySelector(".st-list-row:last-of-type input")?.focus(); } }));
     };
     paint();
     return wrap;
@@ -737,9 +737,9 @@ window.MiyuSettings = (() => {
 
   function secretStatus(key) {
     const change = S().secretChanges[key];
-    if (change?.action === "clear") return { text: "将清空", cls: "is-warn" };
-    if (change?.action === "set") return { text: "已输入新值", cls: "is-ok" };
-    return S().secretStates[key] ? { text: "已配置", cls: "is-ok" } : { text: "未配置", cls: "" };
+    if (change?.action === "clear") return { text: t("将清空"), cls: "is-warn" };
+    if (change?.action === "set") return { text: t("已输入新值"), cls: "is-ok" };
+    return S().secretStates[key] ? { text: t("已配置"), cls: "is-ok" } : { text: t("未配置"), cls: "" };
   }
 
   /* 单个密钥:密码框 + 状态签 + 清空/保留;留空即保留服务器上的现有值。 */
@@ -748,21 +748,21 @@ window.MiyuSettings = (() => {
     const paintStatus = () => { const info = secretStatus(key); status.textContent = info.text; status.className = `st-secret-status ${info.cls}`; };
     const current = S().secretChanges[key]?.action === "set" ? S().secretChanges[key].value : "";
     const input = list
-      ? textarea(current, null, { rows: 3, placeholder: placeholder || (S().secretStates[key] ? "留空保留现有值；每行一个" : "每行一个密钥"), mono: true, ariaLabel: key })
-      : el("input.st-input.is-mono", { type: "password", autocomplete: "new-password", "aria-label": key, placeholder: placeholder || (S().secretStates[key] ? "留空保留现有值" : "输入新值"), value: current });
+      ? textarea(current, null, { rows: 3, placeholder: placeholder || (S().secretStates[key] ? t("留空保留现有值；每行一个") : t("每行一个密钥")), mono: true, ariaLabel: key })
+      : el("input.st-input.is-mono", { type: "password", autocomplete: "new-password", "aria-label": key, placeholder: placeholder || (S().secretStates[key] ? t("留空保留现有值") : t("输入新值")), value: current });
     input.addEventListener("input", () => {
       if (input.value) S().secretChanges[key] = { action: "set", value: input.value };
       else delete S().secretChanges[key];
       ctx.markConfigDirty();
       paintStatus();
     });
-    const clear = button("清空", { kind: "text", small: true, danger: true, onClick: () => {
+    const clear = button(t("清空"), { kind: "text", small: true, danger: true, onClick: () => {
       input.value = "";
       S().secretChanges[key] = { action: "clear" };
       ctx.markConfigDirty();
       paintStatus();
     } });
-    const keep = button("保留", { kind: "text", small: true, onClick: () => {
+    const keep = button(t("保留"), { kind: "text", small: true, onClick: () => {
       input.value = "";
       delete S().secretChanges[key];
       ctx.markConfigDirty();
@@ -814,9 +814,9 @@ window.MiyuSettings = (() => {
       const value = getValue();
       anchor.replaceChildren();
       if (value === null || value === undefined) {
-        anchor.append(el("span.st-picker-text.is-muted", { text: options.inherit?.label || "未设置" }));
+        anchor.append(el("span.st-picker-text.is-muted", { text: options.inherit?.label || t("未设置") }));
       } else if (!value.length) {
-        anchor.append(el("span.st-picker-text.is-muted", { text: options.emptyLabel || "未选择模型" }));
+        anchor.append(el("span.st-picker-text.is-muted", { text: options.emptyLabel || t("未选择模型") }));
       } else {
         const visible = value.slice(0, 3);
         for (const item of visible) anchor.append(chip(item.model, "is-model"));
@@ -848,7 +848,7 @@ window.MiyuSettings = (() => {
           if (!groups.has(choice.provider_id)) groups.set(choice.provider_id, { name: choice.provider_name, items: [] });
           groups.get(choice.provider_id).items.push(choice);
         }
-        if (!groups.size) body.append(el("p.st-hint", { text: options.capability ? "没有具备该能力的模型，先去供应商里标注模态。" : "请先在供应商中配置模型。" }));
+        if (!groups.size) body.append(el("p.st-hint", { text: options.capability ? t("没有具备该能力的模型，先去供应商里标注模态。") : t("请先在供应商中配置模型。") }));
         for (const [providerId, group] of groups) {
           const groupNode = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: group.name }));
           for (const choice of group.items) {
@@ -863,7 +863,7 @@ window.MiyuSettings = (() => {
           }
           body.append(groupNode);
         }
-      }, { title: options.title || "选择模型", width: "340px" });
+      }, { title: options.title || t("选择模型"), width: "340px" });
     });
     paint();
     return anchor;
@@ -874,9 +874,9 @@ window.MiyuSettings = (() => {
      值形态:字符串 = 池名,数组 = 显式列表(长度 1 即"指定模型"),空 = inherit。
      界面只显示中文名,不露 inherit/global/lite 这些配置 id;"继承"写成"继承 xx 池"。 */
   const TIER_NAMES = ["lite", "cheap", "standard", "flagship"];
-  const TIER_HINTS = { lite: "轻量", cheap: "便宜", standard: "普通", flagship: "旗舰" };
-  const inheritLabelOf = (options) => `继承${options.parentLabel || "上一层"}`;
-  const globalPoolLabelOf = (options) => options.capability === "image" ? "全局多模态池" : "全局文本池";
+  const TIER_HINTS = { lite: t("轻量"), cheap: t("便宜"), standard: t("标准"), flagship: t("旗舰") };
+  const inheritLabelOf = (options) => t("继承{name}", { name: options.parentLabel || t("上一层") });
+  const globalPoolLabelOf = (options) => options.capability === "image" ? t("全局多模态池") : t("全局文本池");
 
   function poolRefKind(value) {
     if (Array.isArray(value)) return value.length ? "models" : "inherit";
@@ -927,7 +927,7 @@ window.MiyuSettings = (() => {
         const named = [["inherit", inheritLabelOf(options)]];
         if (!options.parentIsGlobal) named.push(["global", globalPoolLabelOf(options)]);
         if (options.capability !== "image") for (const tier of TIER_NAMES) named.push([tier, TIER_HINTS[tier]]);
-        const poolGroup = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: "池" }));
+        const poolGroup = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: t("池") }));
         for (const [name, label] of named) {
           const input = el("input", { type: "radio", name: "st-pool-ref", checked: kind === name });
           input.addEventListener("change", () => { if (input.checked) { kind = name; selected = []; commit(); } });
@@ -941,9 +941,9 @@ window.MiyuSettings = (() => {
           if (!groups.has(choice.provider_id)) groups.set(choice.provider_id, { name: choice.provider_name, items: [] });
           groups.get(choice.provider_id).items.push(choice);
         }
-        if (!groups.size) body.append(el("p.st-hint", { text: options.capability ? "没有具备该能力的模型，先去供应商里标注模态。" : "请先在供应商中配置模型。" }));
+        if (!groups.size) body.append(el("p.st-hint", { text: options.capability ? t("没有具备该能力的模型，先去供应商里标注模态。") : t("请先在供应商中配置模型。") }));
         for (const [providerId, group] of groups) {
-          const groupNode = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: `模型 · ${group.name}` }));
+          const groupNode = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: t("模型 · {name}", { name: group.name }) }));
           for (const choice of group.items) {
             const ref = { provider_id: providerId, model: choice.model };
             const input = el("input", { type: "checkbox", checked: kind === "models" && selected.some((item) => sameRef(item, ref)) });
@@ -957,7 +957,7 @@ window.MiyuSettings = (() => {
           }
           body.append(groupNode);
         }
-      }, { title: options.title || "选择模型", width: "360px" });
+      }, { title: options.title || t("选择模型"), width: "360px" });
     });
     paint();
     return anchor;
@@ -969,13 +969,13 @@ window.MiyuSettings = (() => {
     const paint = () => {
       const value = getValue();
       anchor.replaceChildren();
-      if (!value?.provider_id) anchor.append(el("span.st-picker-text.is-muted", { text: options.emptyLabel || "未设置（自动）" }));
+      if (!value?.provider_id) anchor.append(el("span.st-picker-text.is-muted", { text: options.emptyLabel || t("未设置（自动）") }));
       else anchor.append(el("span.st-picker-text", null, el("strong", { text: value.model || providerById(value.provider_id)?.default_model || "" }), el("small", { text: providerById(value.provider_id)?.display_name || value.provider_id })));
       anchor.append(icon("chevron-down", "st-picker-caret"));
     };
     anchor.addEventListener("click", () => {
       const value = getValue();
-      const items = [{ label: options.emptyLabel || "未设置（自动）", checked: !value?.provider_id, onSelect: () => { setValue(null); paint(); } }, "-"];
+      const items = [{ label: options.emptyLabel || t("未设置（自动）"), checked: !value?.provider_id, onSelect: () => { setValue(null); paint(); } }, "-"];
       let lastProvider = null;
       for (const choice of modelChoices()) {
         if (options.capability === "image" && !supportsMedia(choice.provider, choice.model)) continue;
@@ -983,7 +983,7 @@ window.MiyuSettings = (() => {
         if (lastProvider !== choice.provider_id) { items.push({ heading: choice.provider_name }); lastProvider = choice.provider_id; }
         items.push({ label: choice.model, checked: value?.provider_id === choice.provider_id && value?.model === choice.model, onSelect: () => { setValue({ provider_id: choice.provider_id, model: choice.model }); paint(); } });
       }
-      if (items.length === 2) items.push({ label: "没有可选模型", disabled: true });
+      if (items.length === 2) items.push({ label: t("没有可选模型"), disabled: true });
       openMenu(anchor, items, { width: "300px" });
     });
     paint();
@@ -1039,26 +1039,26 @@ window.MiyuSettings = (() => {
       case "secret-list":
         return secretControl(field.secretKey || binding.secretKey, { list: true });
       case "id-list":
-        return chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || "输入号码后回车", parse: parseQqId, mono: true, ariaLabel: field.label });
+        return chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || t("输入号码后回车"), parse: parseQqId, mono: true, ariaLabel: field.label });
       case "string-list":
         if (Array.isArray(field.choices) && field.choices.length) return choiceChips(field.choices, Array.isArray(current) ? current : [], (next) => binding.set(next));
         return field.inline
-          ? chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || "输入后回车", ariaLabel: field.label })
+          ? chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || t("输入后回车"), ariaLabel: field.label })
           : stringList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || "", mono: Boolean(field.mono) });
       case "u32-list":
-        return chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || "输入数字后回车", parse: (text) => { if (!/^\d{1,9}$/.test(text)) throw new Error(`无效数字：${text}`); return Number(text); }, mono: true, ariaLabel: field.label });
+        return chipList(Array.isArray(current) ? current : [], (next) => binding.set(next), { placeholder: field.placeholder || t("输入数字后回车"), parse: (text) => { if (!/^\d{1,9}$/.test(text)) throw new Error(t("无效数字：{value}", { value: text })); return Number(text); }, mono: true, ariaLabel: field.label });
       case "kv":
-        return kvTable(current, (next) => binding.set(next), { keyPlaceholder: field.keyPlaceholder || "键", valuePlaceholder: field.valuePlaceholder || "值", valueKind: field.valueKind || "text" });
+        return kvTable(current, (next) => binding.set(next), { keyPlaceholder: field.keyPlaceholder || t("键"), valuePlaceholder: field.valuePlaceholder || t("值"), valueKind: field.valueKind || "text" });
       case "model-pool":
         return modelPoolControl(() => binding.get(), (next) => binding.set(next), {
           capability: field.capability || null,
-          inherit: field.optional ? { label: field.inheritLabel || "继承", hint: field.inheritHint || "" } : null,
+          inherit: field.optional ? { label: field.inheritLabel || t("继承"), hint: field.inheritHint || "" } : null,
           title: field.label
         });
       case "pool-ref":
         return poolRefControl(() => binding.get(), (next) => binding.set(next), {
           capability: field.capability || null,
-          parentLabel: field.parentLabel || "上一层",
+          parentLabel: field.parentLabel || t("上一层"),
           parentIsGlobal: Boolean(field.parentIsGlobal),
           title: field.label
         });
@@ -1076,7 +1076,7 @@ window.MiyuSettings = (() => {
         input.addEventListener("input", () => {
           clearInvalid(input);
           try { binding.set(input.value.trim() ? JSON.parse(input.value) : null); ctx.updateSettingsControls(); }
-          catch (_) { setInvalid(input, "请输入有效 JSON"); }
+          catch (_) { setInvalid(input, t("请输入有效 JSON")); }
         });
         return input;
       }
@@ -1170,14 +1170,14 @@ window.MiyuSettings = (() => {
     const anchor = el("button.st-picker.is-compact", { type: "button" });
     const paint = () => {
       const value = getValue() || field.default || { max_messages: 0, window_seconds: 0 };
-      anchor.replaceChildren(el("span.st-picker-text", null, el("strong", { text: `${value.max_messages} 条` }), el("small", { text: `/ ${value.window_seconds} 秒` })), icon("pencil", "st-picker-caret"));
+      anchor.replaceChildren(el("span.st-picker-text", null, el("strong", { text: t("{count} 条", { count: value.max_messages }) }), el("small", { text: t("/ {seconds} 秒", { seconds: value.window_seconds }) })), icon("pencil", "st-picker-caret"));
     };
     anchor.addEventListener("click", () => {
       openPopover(anchor, (body) => {
         const value = { ...(field.default || { max_messages: 2, window_seconds: 600 }), ...(getValue() || {}) };
         body.append(
-          row("窗口内最多条数", numberInput({ label: "条数", min: 1, max: 100000, integer: true }, value.max_messages, (next) => { value.max_messages = next; setValue({ ...value }); paint(); })),
-          row("窗口秒数", numberInput({ label: "秒数", min: 1, max: 86400, integer: true }, value.window_seconds, (next) => { value.window_seconds = next; setValue({ ...value }); paint(); }))
+          row(t("窗口内最多条数"), numberInput({ label: t("条数"), min: 1, max: 100000, integer: true }, value.max_messages, (next) => { value.max_messages = next; setValue({ ...value }); paint(); })),
+          row(t("窗口秒数"), numberInput({ label: t("秒数"), min: 1, max: 86400, integer: true }, value.window_seconds, (next) => { value.window_seconds = next; setValue({ ...value }); paint(); }))
         );
       }, { title: field.label, width: "300px" });
     });
@@ -1190,10 +1190,10 @@ window.MiyuSettings = (() => {
     const paint = () => {
       const value = getValue();
       anchor.replaceChildren();
-      if (!value && field.optional) anchor.append(el("span.st-picker-text.is-muted", { text: field.inheritLabel || "继承" }));
+      if (!value && field.optional) anchor.append(el("span.st-picker-text.is-muted", { text: field.inheritLabel || t("继承") }));
       else {
         const limits = value || field.default || { running: 1, queued: 8 };
-        anchor.append(el("span.st-picker-text", null, el("strong", { text: `并行 ${limits.running}` }), el("small", { text: `/ 排队 ${limits.queued}` })));
+        anchor.append(el("span.st-picker-text", null, el("strong", { text: t("并行 {count}", { count: limits.running }) }), el("small", { text: t("/ 排队 {count}", { count: limits.queued }) })));
       }
       anchor.append(icon("pencil", "st-picker-caret"));
     };
@@ -1205,8 +1205,8 @@ window.MiyuSettings = (() => {
           form.replaceChildren();
           if (!value) return;
           form.append(
-            row("并行运行数量", numberInput({ label: "并行", min: 1, max: 16, integer: true }, value.running, (next) => { value.running = next; setValue({ ...value }); paint(); })),
-            row("等待队列数量", numberInput({ label: "排队", min: 0, max: 64, integer: true }, value.queued, (next) => { value.queued = next; setValue({ ...value }); paint(); }))
+            row(t("并行运行数量"), numberInput({ label: t("并行"), min: 1, max: 16, integer: true }, value.running, (next) => { value.running = next; setValue({ ...value }); paint(); })),
+            row(t("等待队列数量"), numberInput({ label: t("排队"), min: 0, max: 64, integer: true }, value.queued, (next) => { value.queued = next; setValue({ ...value }); paint(); }))
           );
         };
         if (field.optional) {
@@ -1217,7 +1217,7 @@ window.MiyuSettings = (() => {
             paint();
             paintForm();
           });
-          body.append(el("label.st-check-row.is-strong", null, check, el("span", null, el("strong", { text: "覆盖并发配置" }), el("small", { text: field.inheritHint || "不勾选则继承上层设置" }))));
+          body.append(el("label.st-check-row.is-strong", null, check, el("span", null, el("strong", { text: t("覆盖并发配置") }), el("small", { text: field.inheritHint || t("不勾选则继承上层设置") }))));
         }
         body.append(form);
         paintForm();
@@ -1235,15 +1235,15 @@ window.MiyuSettings = (() => {
     const paint = () => {
       wrap.replaceChildren();
       list.forEach((item, index) => {
-        const nick = textInput(item.nickname, (next) => { item.nickname = next; emit(); }, { placeholder: "昵称", ariaLabel: "昵称" });
+        const nick = textInput(item.nickname, (next) => { item.nickname = next; emit(); }, { placeholder: t("昵称"), ariaLabel: t("昵称") });
         const id = textInput(item.user_id, (next, node) => {
           clearInvalid(node);
-          if (next && !/^\d{5,12}$/.test(next)) return setInvalid(node, "QQ 号应为 5–12 位数字");
+          if (next && !/^\d{5,12}$/.test(next)) return setInvalid(node, t("QQ 号应为 5–12 位数字"));
           item.user_id = next; emit();
-        }, { placeholder: "QQ 号", mono: true, ariaLabel: "QQ 号" });
-        wrap.append(el("div.st-kv-row", null, nick, el("span.st-kv-eq", { text: "→" }), id, iconButton("trash-2", "删除", () => { list.splice(index, 1); emit(); paint(); }, "is-danger")));
+        }, { placeholder: t("QQ 号"), mono: true, ariaLabel: t("QQ 号") });
+        wrap.append(el("div.st-kv-row", null, nick, el("span.st-kv-eq", { text: "→" }), id, iconButton("trash-2", t("删除"), () => { list.splice(index, 1); emit(); paint(); }, "is-danger")));
       });
-      wrap.append(button("添加映射", { iconName: "plus", small: true, onClick: () => { list.push({ nickname: "", user_id: "" }); paint(); wrap.querySelector(".st-kv-row:last-of-type input")?.focus(); } }));
+      wrap.append(button(t("添加映射"), { iconName: "plus", small: true, onClick: () => { list.push({ nickname: "", user_id: "" }); paint(); wrap.querySelector(".st-kv-row:last-of-type input")?.focus(); } }));
     };
     paint();
     return wrap;
@@ -1368,8 +1368,8 @@ window.MiyuSettings = (() => {
     const draft = S().configDraft;
     const ref = { provider_id: providerId, model };
     const result = [];
-    if ((draft.active_provider_models || []).some((item) => sameRef(item, ref))) result.push("文本");
-    if ((draft.active_multimodal_provider_models || []).some((item) => sameRef(item, ref))) result.push("多模态");
+    if ((draft.active_provider_models || []).some((item) => sameRef(item, ref))) result.push(t("文本"));
+    if ((draft.active_multimodal_provider_models || []).some((item) => sameRef(item, ref))) result.push(t("多模态"));
     forEachTierPool((_tiers, name, pool) => { if (pool.some((item) => sameRef(item, ref))) result.push(name); });
     return result;
   }
@@ -1377,14 +1377,14 @@ window.MiyuSettings = (() => {
   /* ───────────────────────── 供应商页 ───────────────────────── */
 
   const PROTOCOLS = [
-    { value: "auto", label: "自动识别" },
+    { value: "auto", label: t("自动识别") },
     { value: "openai-chat", label: "OpenAI Chat Completions" },
     { value: "openai-responses", label: "OpenAI Responses" },
     { value: "anthropic", label: "Anthropic Messages" }
   ];
   const BUILTIN_PROTOCOLS = { "claude-code": "Claude Code", antigravity: "Antigravity", codex: "Codex" };
   const MODALITY_ICONS = { text: "file-text", image: "image", audio: "mic", video: "film", pdf: "file-type" };
-  const MODALITY_LABELS = { text: "文本", image: "图片", audio: "音频", video: "视频", pdf: "PDF" };
+  const MODALITY_LABELS = { text: t("文本"), image: t("图片"), audio: t("音频"), video: t("视频"), pdf: "PDF" };
   function isBuiltinProvider(provider) { return Boolean(BUILTIN_PROTOCOLS[String(provider?.protocol || "").trim()]); }
 
   function providerDefaults(provider = {}) {
@@ -1399,15 +1399,15 @@ window.MiyuSettings = (() => {
     node.style.setProperty("--i", String(index));
     const status = secretStatus(secretKey);
     const chips = [chip(BUILTIN_PROTOCOLS[provider.protocol] || PROTOCOLS.find((item) => item.value === provider.protocol)?.label || provider.protocol || "auto", "is-soft")];
-    chips.push(chip(`${models.length} 个模型`, "is-soft"));
-    if (active) chips.push(chip(`${active} 在池中`, "is-accent"));
-    if (!isBuiltinProvider(provider)) chips.push(chip(status.text === "未配置" ? "无密钥" : "密钥 ✓", status.text === "未配置" ? "is-warn" : "is-ok"));
-    if (provider.enabled === false) chips.push(chip("已停用", "is-warn"));
+    chips.push(chip(t("{count} 个模型", { count: models.length }), "is-soft"));
+    if (active) chips.push(chip(t("{count} 在池中", { count: active }), "is-accent"));
+    if (!isBuiltinProvider(provider)) chips.push(chip(status.text === t("未配置") ? t("无密钥") : t("密钥 ✓"), status.text === t("未配置") ? "is-warn" : "is-ok"));
+    if (provider.enabled === false) chips.push(chip(t("已停用"), "is-warn"));
     node.append(
       mark(provider.display_name || provider.id),
       el("span.st-provider-copy", null,
-        el("strong", { text: provider.display_name || provider.id || `供应商 ${index + 1}` }),
-        el("small", { text: provider.id || "尚未命名" }),
+        el("strong", { text: provider.display_name || provider.id || t("供应商 {index}", { index: index + 1 }) }),
+        el("small", { text: provider.id || t("尚未命名") }),
         el("span.st-provider-chips", null, chips)),
       icon("chevron-right", "st-card-caret")
     );
@@ -1416,7 +1416,7 @@ window.MiyuSettings = (() => {
 
   function renderProvidersPage(root) {
     const list = providers();
-    const add = button("添加供应商", { kind: "primary", iconName: "plus", onClick: () => {
+    const add = button(t("添加供应商"), { kind: "primary", iconName: "plus", onClick: () => {
       const draft = S().configDraft;
       draft.providers = Array.isArray(draft.providers) ? draft.providers : [];
       draft.providers.push(providerDefaults({ protocol: "auto" }));
@@ -1426,8 +1426,8 @@ window.MiyuSettings = (() => {
       rerender("providers");
       openProviderDrawer(draft.providers.length - 1, { isNew: true });
     } });
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "供应商" }), el("p.st-page-desc", { text: "每张卡是一个 API 端点。点开配置连接、拉取模型、标注能力与价格。" })), add));
-    if (!list.length) { root.append(empty("还没有供应商。至少需要添加一个。")); return; }
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: t("供应商") }), el("p.st-page-desc", { text: t("每张卡是一个 API 端点。点开配置连接、拉取模型、标注能力与价格。") })), add));
+    if (!list.length) { root.append(empty(t("还没有供应商。至少需要添加一个。"))); return; }
     root.append(el("div.st-grid", null, list.map((provider, index) => providerCard(provider, index))));
   }
 
@@ -1442,8 +1442,8 @@ window.MiyuSettings = (() => {
 
     const connectionTab = (body) => {
       const rows = [];
-      if (builtin) rows.push(row("类型", chip(BUILTIN_PROTOCOLS[provider.protocol], "is-accent"), { hint: "内置本机 CLI 中转，没有 URL 与密钥。" }));
-      rows.push(row("配置 ID", textInput(provider.id, (value) => {
+      if (builtin) rows.push(row(t("类型"), chip(BUILTIN_PROTOCOLS[provider.protocol], "is-accent"), { hint: t("内置本机 CLI 中转，没有 URL 与密钥。") }));
+      rows.push(row(t("配置 ID"), textInput(provider.id, (value) => {
         const previous = String(provider.id || "");
         provider.id = value.trim();
         const next = String(provider.id || "");
@@ -1454,24 +1454,24 @@ window.MiyuSettings = (() => {
         ctx.refreshProviderSecretStates();
         dirty();
         if (previous !== provider.id) syncCard();
-      }, { mono: true, placeholder: "如 deepseek" }), { hint: "配置里的唯一标识，改名会同步所有引用。" }));
-      rows.push(row("显示名称", textInput(provider.display_name, (value) => { provider.display_name = value; dirty(); syncCard(); }, { placeholder: "界面上显示的名字" })));
+      }, { mono: true, placeholder: t("如 deepseek") }), { hint: t("配置里的唯一标识，改名会同步所有引用。") }));
+      rows.push(row(t("显示名称"), textInput(provider.display_name, (value) => { provider.display_name = value; dirty(); syncCard(); }, { placeholder: t("界面上显示的名字") })));
       if (!builtin) {
-        rows.push(row("Base URL", textInput(provider.base_url, (value) => { provider.base_url = value.trim(); dirty(); }, { mono: true, placeholder: "https://api.example.com/v1" }), { hint: "到 /v1 为止；拉取模型时自动补 /models。", block: true }));
-        rows.push(row("协议", selectInput(PROTOCOLS, provider.protocol || "auto", (value) => { provider.protocol = value; dirty(); syncCard(); }, "协议"), { hint: "自动识别按 URL 判断；Anthropic 端点须显式选。" }));
-        rows.push(row("API Key", secretControl(secretKey), { hint: "支持 $env:NAME 读取环境变量；多个密钥用逗号分隔轮询。", block: true }));
+        rows.push(row("Base URL", textInput(provider.base_url, (value) => { provider.base_url = value.trim(); dirty(); }, { mono: true, placeholder: "https://api.example.com/v1" }), { hint: t("到 /v1 为止；拉取模型时自动补 /models。"), block: true }));
+        rows.push(row(t("协议"), selectInput(PROTOCOLS, provider.protocol || "auto", (value) => { provider.protocol = value; dirty(); syncCard(); }, t("协议")), { hint: t("自动识别按 URL 判断；Anthropic 端点须显式选。") }));
+        rows.push(row("API Key", secretControl(secretKey), { hint: t("支持 $env:NAME 读取环境变量；多个密钥用逗号分隔轮询。"), block: true }));
       } else {
-        rows.push(row("启用", toggle(provider.enabled !== false, (value) => { provider.enabled = value; dirty(); syncCard(); }), { hint: "关闭后该供应商的模型不会出现在任何池里。" }));
+        rows.push(row(t("启用"), toggle(provider.enabled !== false, (value) => { provider.enabled = value; dirty(); syncCard(); }), { hint: t("关闭后该供应商的模型不会出现在任何池里。") }));
       }
-      rows.push(row("超时秒数", numberInput({ label: "超时", min: 1, integer: true }, provider.timeout_seconds ?? 60, (value) => { provider.timeout_seconds = value; dirty(); })));
+      rows.push(row(t("超时秒数"), numberInput({ label: t("超时"), min: 1, integer: true }, provider.timeout_seconds ?? 60, (value) => { provider.timeout_seconds = value; dirty(); })));
       body.append(card(rows));
     };
 
     const modelsTab = (body) => {
-      const fetchButton = button("拉取模型列表", { kind: "primary", iconName: "refresh-cw", onClick: () => fetchProviderModels(index, fetchButton) });
-      const addButton = button("手动添加", { iconName: "plus", onClick: () => {
+      const fetchButton = button(t("拉取模型列表"), { kind: "primary", iconName: "refresh-cw", onClick: () => fetchProviderModels(index, fetchButton) });
+      const addButton = button(t("手动添加"), { iconName: "plus", onClick: () => {
         openPopover(addButton, (popBody, close) => {
-          const input = textInput("", null, { mono: true, placeholder: "模型名，如 deepseek-chat", ariaLabel: "模型名" });
+          const input = textInput("", null, { mono: true, placeholder: t("模型名，如 deepseek-chat"), ariaLabel: t("模型名") });
           const commit = () => {
             const name = input.value.trim();
             if (!name) return;
@@ -1489,12 +1489,12 @@ window.MiyuSettings = (() => {
             enrichModels(index, [name], { silent: true }).then((changed) => { if (changed) drawer.refresh(); });
           };
           input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } });
-          popBody.append(el("div.st-inline-form", null, input, button("添加", { kind: "primary", small: true, onClick: commit })));
-        }, { title: "添加模型", width: "320px" });
+          popBody.append(el("div.st-inline-form", null, input, button(t("添加"), { kind: "primary", small: true, onClick: commit })));
+        }, { title: t("添加模型"), width: "320px" });
       } });
-      body.append(el("div.st-toolbar", null, fetchButton, addButton, el("span.st-toolbar-hint", { text: builtin ? "内置 CLI 供应商的目录由 CLI 提供。" : "从 /models 端点拉取，并用 models.dev 目录补全能力与价格。" })));
+      body.append(el("div.st-toolbar", null, fetchButton, addButton, el("span.st-toolbar-hint", { text: builtin ? t("内置 CLI 供应商的目录由 CLI 提供。") : t("从 /models 端点拉取，并用 models.dev 目录补全能力与价格。") })));
       const models = Array.isArray(provider.models) ? provider.models : [];
-      if (!models.length) { body.append(empty("还没有模型。拉取列表或手动添加一个。")); return; }
+      if (!models.length) { body.append(empty(t("还没有模型。拉取列表或手动添加一个。"))); return; }
       const list = el("div.st-model-list");
       models.forEach((model, modelIndex) => list.append(modelRow(index, model, modelIndex)));
       body.append(list);
@@ -1502,18 +1502,18 @@ window.MiyuSettings = (() => {
 
     const advancedTab = (body) => {
       const rows = [
-        row("Temperature", numberInput({ label: "Temperature", min: 0, max: 2, step: 0.1 }, provider.temperature ?? 1, (value) => { provider.temperature = value; dirty(); }), { hint: "供应商默认温度；单个模型可在模型列表里覆盖。" }),
-        row("Anthropic 最大 Token", numberInput({ label: "最大 Token", min: 1, integer: true }, provider.anthropic_max_tokens ?? 4096, (value) => { provider.anthropic_max_tokens = value; dirty(); }), { hint: "仅 Anthropic 协议用；其它协议忽略。" }),
-        row("工具结果带媒体", selectInput([{ value: "", label: "自动判断" }, { value: "true", label: "可以" }, { value: "false", label: "不可以" }], provider.tool_result_media == null ? "" : String(provider.tool_result_media), (value) => { if (value === "") delete provider.tool_result_media; else provider.tool_result_media = value === "true"; dirty(); }, "工具结果带媒体"), { hint: "工具输出能否直接携带图片；不能则改为追加一条带图用户消息。" }),
-        row("额外请求体", kvTable(provider.extra_body || {}, (next) => { provider.extra_body = Object.keys(next).length ? next : null; dirty(); }, { keyPlaceholder: "字段名", valuePlaceholder: "值（支持 JSON 字面量）", valueKind: "json" }), { hint: "合并进每次请求的 JSON 顶层，例如 {\"top_k\": 40}。", block: true })
+        row("Temperature", numberInput({ label: "Temperature", min: 0, max: 2, step: 0.1 }, provider.temperature ?? 1, (value) => { provider.temperature = value; dirty(); }), { hint: t("供应商默认温度；单个模型可在模型列表里覆盖。") }),
+        row(t("Anthropic 最大 Token"), numberInput({ label: t("最大 Token"), min: 1, integer: true }, provider.anthropic_max_tokens ?? 4096, (value) => { provider.anthropic_max_tokens = value; dirty(); }), { hint: t("仅 Anthropic 协议用；其它协议忽略。") }),
+        row(t("工具结果带媒体"), selectInput([{ value: "", label: t("自动判断") }, { value: "true", label: t("可以") }, { value: "false", label: t("不可以") }], provider.tool_result_media == null ? "" : String(provider.tool_result_media), (value) => { if (value === "") delete provider.tool_result_media; else provider.tool_result_media = value === "true"; dirty(); }, t("工具结果带媒体")), { hint: t("工具输出能否直接携带图片；不能则改为追加一条带图用户消息。") }),
+        row(t("额外请求体"), kvTable(provider.extra_body || {}, (next) => { provider.extra_body = Object.keys(next).length ? next : null; dirty(); }, { keyPlaceholder: t("字段名"), valuePlaceholder: t("值（支持 JSON 字面量）"), valueKind: "json" }), { hint: t("合并进每次请求的 JSON 顶层，例如 {\"top_k\": 40}。"), block: true })
       ];
       body.append(card(rows));
     };
 
     const footer = [];
     if (!builtin) {
-      footer.push(button("删除供应商", { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
-        if (!(await confirmAction(`删除供应商“${provider.display_name || provider.id || index + 1}”？引用它的模型池会一并清理。`, "删除"))) return;
+      footer.push(button(t("删除供应商"), { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
+        if (!(await confirmAction(t("删除供应商“{name}”？引用它的模型池会一并清理。", { name: provider.display_name || provider.id || index + 1 }), t("删除")))) return;
         const draft = S().configDraft;
         draft.providers.splice(index, 1);
         S().providerSecretStates.splice(index, 1);
@@ -1528,16 +1528,16 @@ window.MiyuSettings = (() => {
         rerender("models");
       } }));
     }
-    footer.push(el("span.st-foot-spacer"), button("完成", { kind: "primary", onClick: () => closeDrawer() }));
+    footer.push(el("span.st-foot-spacer"), button(t("完成"), { kind: "primary", onClick: () => closeDrawer() }));
 
     const drawer = openDrawer({
-      title: provider.display_name || provider.id || "新供应商",
+      title: provider.display_name || provider.id || t("新供应商"),
       subtitle: provider.id || "",
       width: "560px",
       tabs: [
-        { id: "connection", label: "连接", render: connectionTab },
-        { id: "models", label: "模型", render: modelsTab },
-        { id: "advanced", label: "高级", render: advancedTab }
+        { id: "connection", label: t("连接"), render: connectionTab },
+        { id: "models", label: t("模型"), render: modelsTab },
+        { id: "advanced", label: t("高级"), render: advancedTab }
       ],
       initialTab: provider.id ? "models" : "connection",
       footer,
@@ -1547,7 +1547,7 @@ window.MiyuSettings = (() => {
           const draft = S().configDraft;
           const position = draft.providers.indexOf(provider);
           if (position >= 0) { draft.providers.splice(position, 1); S().providerSecretStates.splice(position, 1); ctx.refreshProviderSecretStates(); }
-          toast("没有填写 ID 的供应商已丢弃");
+          toast(t("没有填写 ID 的供应商已丢弃"));
         }
         pruneModelReferences(); rerender("providers"); rerender("models"); ctx.renderModelMenu?.();
       }
@@ -1572,19 +1572,19 @@ window.MiyuSettings = (() => {
     if (temperature != null) badges.append(chip(`T ${temperature}`, "is-soft"));
     if (loading) badges.append(chip(loading, "is-soft"));
     for (const pool of pools) badges.append(chip(pool, "is-accent"));
-    const star = iconButton("star", isDefault ? "默认模型" : "设为默认", () => {
+    const star = iconButton("star", isDefault ? t("默认模型") : t("设为默认"), () => {
       provider.default_model = model;
       dirty();
       for (const item of node.parentElement.querySelectorAll(".st-model-row")) item.classList.remove("is-default");
       node.classList.add("is-default");
       rerender("providers");
     }, `st-star${isDefault ? " is-on" : ""}`);
-    const more = iconButton("ellipsis", "更多", () => openMenu(more, [
-      { label: "微调…", hint: "上下文窗口 / 模态 / 温度 / 价格", icon: "pencil", onSelect: () => openModelTuner(providerIndex, model, more) },
-      { label: "从目录补全", hint: "用 models.dev 数据填上下文窗口、模态、价格", icon: "sparkles", onSelect: () => enrichModels(providerIndex, [model]).then((changed) => { if (changed) refreshDrawerTab(); }) },
-      { label: isDefault ? "已是默认模型" : "设为默认", icon: "star", disabled: isDefault, onSelect: () => { provider.default_model = model; dirty(); refreshDrawerTab(); rerender("providers"); } },
+    const more = iconButton("ellipsis", t("更多"), () => openMenu(more, [
+      { label: t("微调…"), hint: t("上下文窗口 / 模态 / 温度 / 价格"), icon: "pencil", onSelect: () => openModelTuner(providerIndex, model, more) },
+      { label: t("从目录补全"), hint: t("用 models.dev 数据填上下文窗口、模态、价格"), icon: "sparkles", onSelect: () => enrichModels(providerIndex, [model]).then((changed) => { if (changed) refreshDrawerTab(); }) },
+      { label: isDefault ? t("已是默认模型") : t("设为默认"), icon: "star", disabled: isDefault, onSelect: () => { provider.default_model = model; dirty(); refreshDrawerTab(); rerender("providers"); } },
       "-",
-      { label: "移除", icon: "trash-2", danger: true, onSelect: () => {
+      { label: t("移除"), icon: "trash-2", danger: true, onSelect: () => {
         provider.models = (provider.models || []).filter((item) => item !== model);
         provider.custom_models = (provider.custom_models || []).filter((item) => item !== model);
         for (const key of ["model_context_window", "model_costs", "model_modalities", "model_temperature", "model_tools_loading_mode"]) if (provider[key] && typeof provider[key] === "object") delete provider[key][model];
@@ -1609,7 +1609,7 @@ window.MiyuSettings = (() => {
     const ensure = (key) => { if (!provider[key] || typeof provider[key] !== "object") provider[key] = {}; return provider[key]; };
     const setOrDelete = (key, value) => { const map = ensure(key); if (value === null || value === undefined || value === "") delete map[model]; else map[model] = value; dirty(); };
     openPopover(anchor, (body) => {
-      body.append(row("上下文窗口", el("span.st-unit-wrap", null, numberInput({ label: "上下文窗口", min: 1, integer: true, nullable: true }, provider.model_context_window?.[model] ?? "", (value) => setOrDelete("model_context_window", value)), el("span.st-unit", { text: "tokens" })), { hint: "留空则用 models.dev 目录或供应商 /models 报的数。" }));
+      body.append(row(t("上下文窗口"), el("span.st-unit-wrap", null, numberInput({ label: t("上下文窗口"), min: 1, integer: true, nullable: true }, provider.model_context_window?.[model] ?? "", (value) => setOrDelete("model_context_window", value)), el("span.st-unit", { text: "tokens" })), { hint: t("留空则用 models.dev 目录或供应商 /models 报的数。") }));
       const modalityWrap = el("div.st-choice-chips");
       const current = new Set(modelModalities(provider, model));
       const declared = provider.model_modalities && Object.prototype.hasOwnProperty.call(provider.model_modalities, model);
@@ -1623,9 +1623,9 @@ window.MiyuSettings = (() => {
         } }, icon(MODALITY_ICONS[modality]), el("span", { text: MODALITY_LABELS[modality] }));
         modalityWrap.append(chipNode);
       }
-      body.append(row("输入模态", modalityWrap, { hint: declared ? "已手动标注。" : "未标注时按目录推断；勾选即写入配置。", block: true }));
-      body.append(row("温度覆盖", numberInput({ label: "温度", min: 0, max: 2, step: 0.1, nullable: true }, provider.model_temperature?.[model] ?? "", (value) => setOrDelete("model_temperature", value)), { hint: "留空继承供应商温度。" }));
-      body.append(row("工具加载模式", selectInput([{ value: "", label: "继承全局" }, { value: "full", label: "full（完整声明）" }, { value: "stub", label: "stub（按需加载）" }], provider.model_tools_loading_mode?.[model] || "", (value) => setOrDelete("model_tools_loading_mode", value), "工具加载模式"), { hint: "约束解码型模型（如 glm-5.3-flash）需要 full。" }));
+      body.append(row(t("输入模态"), modalityWrap, { hint: declared ? t("已手动标注。") : t("未标注时按目录推断；勾选即写入配置。"), block: true }));
+      body.append(row(t("温度覆盖"), numberInput({ label: t("温度"), min: 0, max: 2, step: 0.1, nullable: true }, provider.model_temperature?.[model] ?? "", (value) => setOrDelete("model_temperature", value)), { hint: t("留空继承供应商温度。") }));
+      body.append(row(t("工具加载模式"), selectInput([{ value: "", label: t("继承全局") }, { value: "full", label: t("full（完整声明）") }, { value: "stub", label: t("stub（按需加载）") }], provider.model_tools_loading_mode?.[model] || "", (value) => setOrDelete("model_tools_loading_mode", value), t("工具加载模式")), { hint: t("约束解码型模型（如 glm-5.3-flash）需要 full。") }));
       const cost = { currency: "USD", input: "", output: "", cache_read: "", ...(provider.model_costs?.[model] || {}) };
       const commitCost = () => {
         if (cost.input === "" && cost.output === "") { setOrDelete("model_costs", null); return; }
@@ -1634,11 +1634,11 @@ window.MiyuSettings = (() => {
         setOrDelete("model_costs", next);
       };
       const costGrid = el("div.st-cost-grid", null,
-        selectInput([{ value: "USD", label: "USD" }, { value: "CNY", label: "CNY" }], cost.currency, (value) => { cost.currency = value; commitCost(); }, "币种"),
-        el("label.st-cost-cell", null, el("small", { text: "输入" }), numberInput({ label: "输入价", min: 0, step: 0.001, nullable: true }, cost.input, (value) => { cost.input = value ?? ""; commitCost(); })),
-        el("label.st-cost-cell", null, el("small", { text: "输出" }), numberInput({ label: "输出价", min: 0, step: 0.001, nullable: true }, cost.output, (value) => { cost.output = value ?? ""; commitCost(); })),
-        el("label.st-cost-cell", null, el("small", { text: "缓存读" }), numberInput({ label: "缓存读价", min: 0, step: 0.001, nullable: true }, cost.cache_read ?? "", (value) => { cost.cache_read = value ?? ""; commitCost(); })));
-      body.append(row("价格 / 1M tokens", costGrid, { hint: "留空用 models.dev 目录价；中转/赠送端点在这里手填。", block: true }));
+        selectInput([{ value: "USD", label: "USD" }, { value: "CNY", label: "CNY" }], cost.currency, (value) => { cost.currency = value; commitCost(); }, t("币种")),
+        el("label.st-cost-cell", null, el("small", { text: t("输入") }), numberInput({ label: t("输入价"), min: 0, step: 0.001, nullable: true }, cost.input, (value) => { cost.input = value ?? ""; commitCost(); })),
+        el("label.st-cost-cell", null, el("small", { text: t("输出") }), numberInput({ label: t("输出价"), min: 0, step: 0.001, nullable: true }, cost.output, (value) => { cost.output = value ?? ""; commitCost(); })),
+        el("label.st-cost-cell", null, el("small", { text: t("缓存读") }), numberInput({ label: t("缓存读价"), min: 0, step: 0.001, nullable: true }, cost.cache_read ?? "", (value) => { cost.cache_read = value ?? ""; commitCost(); })));
+      body.append(row(t("价格 / 1M tokens"), costGrid, { hint: t("留空用 models.dev 目录价；中转/赠送端点在这里手填。"), block: true }));
     }, { title: model, width: "380px" });
   }
 
@@ -1683,11 +1683,11 @@ window.MiyuSettings = (() => {
     try {
       const result = await requestProviderModels(provider, { fetch: false, models });
       const changed = applyCatalog(provider, result.models);
-      if (!silent) toast(changed ? "已从目录补全元数据" : "目录里没有更多信息", changed ? "info" : "error");
+      if (!silent) toast(changed ? t("已从目录补全元数据") : t("目录里没有更多信息"), changed ? "info" : "error");
       if (changed) { rerender("providers"); rerender("models"); }
       return changed;
     } catch (error) {
-      if (!silent) toast(error.message || "目录查询失败", "error");
+      if (!silent) toast(error.message || t("目录查询失败"), "error");
       return false;
     }
   }
@@ -1700,7 +1700,7 @@ window.MiyuSettings = (() => {
       const result = await requestProviderModels(provider, { fetch: true });
       openFetchDialog(providerIndex, result);
     } catch (error) {
-      toast(error.message || "拉取失败", "error");
+      toast(error.message || t("拉取失败"), "error");
     } finally {
       trigger.disabled = false;
       trigger.classList.remove("is-loading");
@@ -1718,7 +1718,7 @@ window.MiyuSettings = (() => {
     const paint = () => {
       list.replaceChildren();
       const visible = entries.filter((entry) => !filterText || entry.id.toLowerCase().includes(filterText));
-      if (!visible.length) list.append(empty(entries.length ? "没有匹配的模型。" : "供应商没有返回任何模型。"));
+      if (!visible.length) list.append(empty(entries.length ? t("没有匹配的模型。") : t("供应商没有返回任何模型。")));
       visible.forEach((entry, index) => {
         const already = existing.has(entry.id);
         const input = el("input", { type: "checkbox", checked: already || selected.has(entry.id), disabled: already });
@@ -1727,27 +1727,27 @@ window.MiyuSettings = (() => {
         for (const modality of entry.modalities || []) badges.append(el("span.st-modality", { title: MODALITY_LABELS[modality] || modality }, icon(MODALITY_ICONS[modality] || "circle-alert")));
         if (entry.context_window) badges.append(chip(formatTokens(entry.context_window), "is-soft"));
         if (entry.cost) badges.append(chip(`$${entry.cost.input}/${entry.cost.output}`, "is-soft"));
-        if (already) badges.append(chip("已添加", "is-ok"));
+        if (already) badges.append(chip(t("已添加"), "is-ok"));
         const rowNode = el("label.st-fetch-row", null, input, el("strong", { text: entry.id }), badges);
         rowNode.style.setProperty("--i", String(Math.min(index, 20)));
         list.append(rowNode);
       });
     };
-    const paintSummary = () => { summary.textContent = `${entries.length} 个模型 · 已选 ${selected.size}`; };
-    const search = textInput("", (value) => { filterText = value.trim().toLowerCase(); paint(); }, { placeholder: "筛选模型名", ariaLabel: "筛选模型名" });
-    const selectAll = button("全选可见", { small: true, onClick: () => {
+    const paintSummary = () => { summary.textContent = t("{count} 个模型 · 已选 {selected}", { count: entries.length, selected: selected.size }); };
+    const search = textInput("", (value) => { filterText = value.trim().toLowerCase(); paint(); }, { placeholder: t("筛选模型名"), ariaLabel: t("筛选模型名") });
+    const selectAll = button(t("全选可见"), { small: true, onClick: () => {
       for (const entry of entries) if (!existing.has(entry.id) && (!filterText || entry.id.toLowerCase().includes(filterText))) selected.add(entry.id);
       paint(); paintSummary();
     } });
     const handle = openDialog({
-      title: "拉取到的模型",
-      subtitle: `${provider.display_name || provider.id} · 来源：${{ http: "/models 端点", cli: "本机 CLI", catalog: "目录" }[result.source] || result.source}`,
+      title: t("拉取到的模型"),
+      subtitle: t("{provider} · 来源：{source}", { provider: provider.display_name || provider.id, source: { http: t("/models 端点"), cli: t("本机 CLI"), catalog: t("目录") }[result.source] || result.source }),
       width: "560px",
       body: (body) => { body.append(el("div.st-toolbar", null, search, selectAll, summary), list); paint(); paintSummary(); },
       actions: [
-        button("取消", { onClick: () => handle.close() }),
-        button("加入所选", { kind: "primary", onClick: () => {
-          if (!selected.size) { toast("没有勾选任何模型", "error"); return; }
+        button(t("取消"), { onClick: () => handle.close() }),
+        button(t("加入所选"), { kind: "primary", onClick: () => {
+          if (!selected.size) { toast(t("没有勾选任何模型"), "error"); return; }
           provider.models = Array.isArray(provider.models) ? provider.models : [];
           for (const id of selected) if (!provider.models.includes(id)) provider.models.push(id);
           if (!provider.default_model) provider.default_model = provider.models[0];
@@ -1757,7 +1757,7 @@ window.MiyuSettings = (() => {
           refreshDrawerTab();
           rerender("providers");
           rerender("models");
-          toast(`已加入 ${selected.size} 个模型`);
+          toast(t("已加入 {count} 个模型", { count: selected.size }));
         } })
       ]
     });
@@ -1768,19 +1768,19 @@ window.MiyuSettings = (() => {
   /* 页面分三段:全局池(两张)/分级池(四张)/旁路请求(一张通栏)。卡片标题就是池名,
      档位只显示中文,配置 id 留在 tier 字段里。 */
   const GLOBAL_POOL_COLUMNS = [
-    { id: "text", label: "全局文本池", hint: "主对话，以及未分配的旁路请求", path: "active_provider_models" },
-    { id: "multimodal", label: "全局多模态池", hint: "看图/看视频时用", path: "active_multimodal_provider_models", capability: "image" }
+    { id: "text", label: t("全局文本池"), hint: t("主对话，以及未分配的旁路请求"), path: "active_provider_models" },
+    { id: "multimodal", label: t("全局多模态池"), hint: t("看图/看视频时用"), path: "active_multimodal_provider_models", capability: "image" }
   ];
-  const TIER_POOL_COLUMNS = TIER_NAMES.map((tier) => ({ id: tier, label: `${TIER_HINTS[tier]}档`, hint: tier === "standard" ? "task 子代理的默认档" : "", tier, emptyHint: "未配置，继承全局池" }));
+  const TIER_POOL_COLUMNS = TIER_NAMES.map((tier) => ({ id: tier, label: t("{tier}档", { tier: TIER_HINTS[tier] }), hint: tier === "standard" ? t("task 子代理的默认档") : "", tier, emptyHint: t("未配置，继承全局池") }));
   const POOL_COLUMNS = [...GLOBAL_POOL_COLUMNS, ...TIER_POOL_COLUMNS];
 
   /* 旁路请求 → 档位。缺省值由代码内置(标题 lite,整理 standard);
      "缺省"就是删掉这个键。 */
   const AUX_ROLES = [
-    { key: "session_title", label: "会话标题", fallback: "lite" },
-    { key: "memory_organizer", label: "日记整理", fallback: "standard" },
+    { key: "session_title", label: t("会话标题"), fallback: "lite" },
+    { key: "memory_organizer", label: t("日记整理"), fallback: "standard" },
     // 聊天正文选中文字右键「解释 / 翻译」(web/selectionmenu.js)。
-    { key: "selection_assist", label: "划词解释 / 翻译", fallback: "lite" }
+    { key: "selection_assist", label: t("划词解释 / 翻译"), fallback: "lite" }
   ];
 
   function auxRolesCard() {
@@ -1794,8 +1794,8 @@ window.MiyuSettings = (() => {
         const current = typeof roles[role.key] === "string" ? roles[role.key] : "";
         const rowNode = el("div.st-pool-member");
         rowNode.append(
-          el("span.st-pool-member-copy", null, el("strong", { text: role.label }), current ? el("small", { text: `缺省是${TIER_HINTS[role.fallback]}` }) : null),
-          selectInput([{ value: "", label: `缺省（${TIER_HINTS[role.fallback]}）` }, ...TIER_NAMES.map((tier) => ({ value: tier, label: TIER_HINTS[tier] })), { value: "global", label: "全局池" }], current, (next) => {
+          el("span.st-pool-member-copy", null, el("strong", { text: role.label }), current ? el("small", { text: t("缺省是{tier}", { tier: TIER_HINTS[role.fallback] }) }) : null),
+          selectInput([{ value: "", label: t("缺省（{tier}）", { tier: TIER_HINTS[role.fallback] }) }, ...TIER_NAMES.map((tier) => ({ value: tier, label: TIER_HINTS[tier] })), { value: "global", label: t("全局池") }], current, (next) => {
             const draft = S().configDraft;
             if (!draft.model_tiers || typeof draft.model_tiers !== "object") draft.model_tiers = {};
             if (!draft.model_tiers.roles || typeof draft.model_tiers.roles !== "object") draft.model_tiers.roles = {};
@@ -1863,17 +1863,17 @@ window.MiyuSettings = (() => {
   }
 
   function renderModelsPage(root) {
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "模型池" }), el("p.st-page-desc", { text: "每个池是一组候选模型，请求时在池里轮询。" }))));
-    if (!modelChoices().length) { root.append(empty("请先在供应商中配置模型。", button("去供应商", { onClick: () => ctx.setSettingsView("providers") }))); return; }
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: t("模型池") }), el("p.st-page-desc", { text: t("每个池是一组候选模型，请求时在池里轮询。") }))));
+    if (!modelChoices().length) { root.append(empty(t("请先在供应商中配置模型。"), button(t("去供应商"), { onClick: () => ctx.setSettingsView("providers") }))); return; }
     const section = (title, desc, gridClass, cards) => {
       const grid = el(`div.st-pool-grid.${gridClass}`);
       cards.forEach((card) => grid.append(card));
       return el("section.st-pool-section", null, el("div.st-pool-section-head", null, el("h3", { text: title }), el("p", { text: desc })), grid);
     };
     root.append(
-      section("全局池", "主对话用的池。分级档没配模型时也落到这里。", "is-global", GLOBAL_POOL_COLUMNS.map((column, index) => poolCard(column, index))),
-      section("分级池", "按任务难度分四档，给 task 子代理、旁路请求和 QQ 各处引用；留空即继承全局池。", "is-tiers", TIER_POOL_COLUMNS.map((column, index) => poolCard(column, index + GLOBAL_POOL_COLUMNS.length))),
-      section("旁路请求", "会话标题、日记整理各走哪一档；QQ 侧的模型在「QQ 平台」页配置。", "is-roles", [auxRolesCard()]));
+      section(t("全局池"), t("主对话用的池。分级档没配模型时也落到这里。"), "is-global", GLOBAL_POOL_COLUMNS.map((column, index) => poolCard(column, index))),
+      section(t("分级池"), t("按任务难度分四档，给 task 子代理、旁路请求和 QQ 各处引用；留空即继承全局池。"), "is-tiers", TIER_POOL_COLUMNS.map((column, index) => poolCard(column, index + GLOBAL_POOL_COLUMNS.length))),
+      section(t("旁路请求"), t("会话标题、日记整理各走哪一档；QQ 侧的模型在「QQ 平台」页配置。"), "is-roles", [auxRolesCard()]));
   }
 
   function poolCard(column, index) {
@@ -1883,10 +1883,10 @@ window.MiyuSettings = (() => {
     const list = el("div.st-pool-list");
     const paint = () => {
       const { items, implicit } = poolMembers(column);
-      count.textContent = items.length ? `${items.length} 个模型` : "空";
+      count.textContent = items.length ? t("{count} 个模型", { count: items.length }) : t("空");
       count.className = `st-chip ${items.length ? "is-accent" : "is-soft"}`;
       list.replaceChildren();
-      if (!items.length) list.append(el("p.st-pool-empty", { text: column.emptyHint || "还没有模型，点下面添加。" }));
+      if (!items.length) list.append(el("p.st-pool-empty", { text: column.emptyHint || t("还没有模型，点下面添加。") }));
       items.forEach((item, position) => {
         const provider = providerById(item.provider_id);
         const rowNode = el("div.st-pool-member");
@@ -1894,13 +1894,13 @@ window.MiyuSettings = (() => {
         rowNode.append(...[
           mark(provider?.display_name || item.provider_id, "is-small"),
           el("span.st-pool-member-copy", null, el("strong", { text: item.model }), el("small", { text: provider?.display_name || item.provider_id })),
-          implicit ? chip("默认模型", "is-soft") : null,
-          iconButton("x", "移出池", () => { poolToggle(column, item, false); paint(); }, "is-danger")
+          implicit ? chip(t("默认模型"), "is-soft") : null,
+          iconButton("x", t("移出池"), () => { poolToggle(column, item, false); paint(); }, "is-danger")
         ].filter(Boolean));
         list.append(rowNode);
       });
     };
-    const add = button("添加模型", { iconName: "plus", small: true, onClick: () => {
+    const add = button(t("添加模型"), { iconName: "plus", small: true, onClick: () => {
       openPopover(add, (body) => {
         const groups = new Map();
         for (const choice of modelChoices()) {
@@ -1908,7 +1908,7 @@ window.MiyuSettings = (() => {
           if (!groups.has(choice.provider_id)) groups.set(choice.provider_id, { name: choice.provider_name, items: [] });
           groups.get(choice.provider_id).items.push(choice);
         }
-        if (!groups.size) body.append(el("p.st-hint", { text: "没有可加入的模型：多模态池需要模型标注了图片输入能力。" }));
+        if (!groups.size) body.append(el("p.st-hint", { text: t("没有可加入的模型：多模态池需要模型标注了图片输入能力。") }));
         for (const [providerId, group] of groups) {
           const groupNode = el("div.st-pick-group", null, el("div.st-pick-group-title", { text: group.name }));
           for (const choice of group.items) {
@@ -1919,7 +1919,7 @@ window.MiyuSettings = (() => {
           }
           body.append(groupNode);
         }
-      }, { title: `加入${column.label}`, width: "340px", align: "start" });
+      }, { title: t("加入{name}", { name: column.label }), width: "340px", align: "start" });
     } });
     node.append(
       el("header.st-pool-head", null, el("div", null, el("h3", { text: column.label }), column.hint ? el("p", { text: column.hint }) : null), count),
@@ -1953,7 +1953,7 @@ window.MiyuSettings = (() => {
       image.addEventListener("error", () => { image.remove(); avatar.append(mark(displayName(doc))); });
       avatar.append(image);
     } else avatar.append(mark(displayName(doc)));
-    node.append(...[avatar, el("span.st-persona-copy", null, el("strong", { text: displayName(doc) || "未命名" }), el("small", { text: `${String(doc.content || "").length} 字` })), active ? chip("使用中", "is-accent") : null, icon("chevron-right", "st-card-caret")].filter(Boolean));
+    node.append(...[avatar, el("span.st-persona-copy", null, el("strong", { text: displayName(doc) || t("未命名") }), el("small", { text: t("{count} 字", { count: String(doc.content || "").length }) })), active ? chip(t("使用中"), "is-accent") : null, icon("chevron-right", "st-card-caret")].filter(Boolean));
     return node;
   }
 
@@ -1961,8 +1961,8 @@ window.MiyuSettings = (() => {
     const drafts = S().promptDraft || { personas: [], identities: [] };
     const section = (kind, title, description, activePath, defaultLabel) => {
       const documents = Array.isArray(drafts[kind]) ? drafts[kind] : (drafts[kind] = []);
-      const add = button(kind === "personas" ? "新建人格" : "新建身份", { iconName: "plus", onClick: () => {
-        const base = kind === "personas" ? "新建人格" : "新建身份";
+      const add = button(kind === "personas" ? t("新建人格") : t("新建身份"), { iconName: "plus", onClick: () => {
+        const base = kind === "personas" ? t("新建人格") : t("新建身份");
         let name = `${base}.md`;
         let suffix = 2;
         while (documents.some((doc) => doc.name === name)) name = `${base} ${suffix++}.md`;
@@ -1976,22 +1976,22 @@ window.MiyuSettings = (() => {
       const active = cfg(activePath, "");
       const defaultCard = el(`button.st-persona-card${!active ? ".is-active" : ""}`, { type: "button", onclick: () => { setCfg(activePath, ""); rerender("prompts"); } });
       defaultCard.style.setProperty("--i", "0");
-      defaultCard.append(...[el("span.st-avatar.is-default", null, icon("sparkles")), el("span.st-persona-copy", null, el("strong", { text: defaultLabel }), el("small", { text: kind === "personas" ? "内置人格，不可编辑" : "不附加用户身份说明" })), !active ? chip("使用中", "is-accent") : null].filter(Boolean));
+      defaultCard.append(...[el("span.st-avatar.is-default", null, icon("sparkles")), el("span.st-persona-copy", null, el("strong", { text: defaultLabel }), el("small", { text: kind === "personas" ? t("内置人格，不可编辑") : t("不附加用户身份说明") })), !active ? chip(t("使用中"), "is-accent") : null].filter(Boolean));
       grid.append(defaultCard);
       documents.forEach((doc, index) => grid.append(personaCard(kind, doc, index, activePath)));
       root.append(grid);
     };
-    section("personas", "AI 人格", "点卡片编辑内容、看板与预设问题；「使用中」的人格决定她怎么说话。", "prompt.active_persona", "Miyu 默认人格");
-    section("identities", "用户身份", "告诉她你是谁。同样点卡片编辑。", "prompt.active_identity", "不使用用户身份");
+    section("personas", t("AI 人格"), t("点卡片编辑内容、看板与预设问题；「使用中」的人格决定她怎么说话。"), "prompt.active_persona", t("Miyu 默认人格"));
+    section("identities", t("用户身份"), t("告诉她你是谁。同样点卡片编辑。"), "prompt.active_identity", t("不使用用户身份"));
   }
 
   function imageField(doc, key, label, previewClass) {
     const preview = el(`img.${previewClass}`, { alt: "" });
     const wrap = el("div.st-image-field");
-    const pathInput = textInput(doc[key] || "", (value) => { doc[key] = value.trim() || null; paint(); ctx.markConfigDirty(); }, { mono: true, placeholder: "留空使用默认", ariaLabel: label });
+    const pathInput = textInput(doc[key] || "", (value) => { doc[key] = value.trim() || null; paint(); ctx.markConfigDirty(); }, { mono: true, placeholder: t("留空使用默认"), ariaLabel: label });
     const picker = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif,image/bmp", hidden: true });
-    const pick = button("选择图片", { iconName: "folder", small: true, onClick: () => picker.click() });
-    const clear = button("清除", { kind: "text", small: true, danger: true, onClick: () => { doc[key] = null; pathInput.value = ""; paint(); ctx.markConfigDirty(); } });
+    const pick = button(t("选择图片"), { iconName: "folder", small: true, onClick: () => picker.click() });
+    const clear = button(t("清除"), { kind: "text", small: true, danger: true, onClick: () => { doc[key] = null; pathInput.value = ""; paint(); ctx.markConfigDirty(); } });
     const paint = () => {
       const url = doc[key] ? `/api/persona/avatar?path=${encodeURIComponent(doc[key])}` : "";
       preview.classList.toggle("is-missing", !url);
@@ -2001,7 +2001,7 @@ window.MiyuSettings = (() => {
     picker.addEventListener("change", async () => {
       const file = picker.files?.[0];
       if (!file) return;
-      if (file.size > 8 * 1024 * 1024) return toast("图片不能超过 8 MiB", "error");
+      if (file.size > 8 * 1024 * 1024) return toast(t("图片不能超过 8 MiB"), "error");
       pick.disabled = true;
       try {
         const response = await ctx.apiRequest("/api/persona/assets", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
@@ -2013,7 +2013,7 @@ window.MiyuSettings = (() => {
         ctx.markConfigDirty();
         rerender("prompts");
       } catch (error) {
-        toast(error.message || "图片上传失败", "error");
+        toast(error.message || t("图片上传失败"), "error");
       } finally {
         pick.disabled = false;
         picker.value = "";
@@ -2036,45 +2036,45 @@ window.MiyuSettings = (() => {
         doc.name = documentName(value);
         if (cfg(activePath, "") === previous) setCfg(activePath, doc.name);
         ctx.markConfigDirty();
-        drawer.setTitle(displayName(doc) || "未命名");
+        drawer.setTitle(displayName(doc) || t("未命名"));
         rerender("prompts");
-      }, { placeholder: "名称", ariaLabel: "名称" });
+      }, { placeholder: t("名称"), ariaLabel: t("名称") });
       const active = cfg(activePath, "") === doc.name;
       const useToggle = toggle(active, (value) => { setCfg(activePath, value ? doc.name : ""); rerender("prompts"); });
       body.append(card([
-        row("名称", nameInput, { hint: "存成 prompts 目录下同名 .md 文件。" }),
-        row("设为当前使用", useToggle, { hint: isPersona ? "切换人格会重排系统提示词。" : "开启后每次对话都附带这段身份说明。" })
+        row(t("名称"), nameInput, { hint: t("存成 prompts 目录下同名 .md 文件。") }),
+        row(t("设为当前使用"), useToggle, { hint: isPersona ? t("切换人格会重排系统提示词。") : t("开启后每次对话都附带这段身份说明。") })
       ]));
-      body.append(card([row("内容", textarea(doc.content, (value) => { doc.content = value; ctx.markConfigDirty(); }, { rows: 16, placeholder: isPersona ? "她是谁、怎么说话、有什么习惯……" : "你是谁、希望她怎么称呼你……", ariaLabel: "内容" }), { block: true, hint: "Markdown；越具体越稳定。" })]));
+      body.append(card([row(t("内容"), textarea(doc.content, (value) => { doc.content = value; ctx.markConfigDirty(); }, { rows: 16, placeholder: isPersona ? t("她是谁、怎么说话、有什么习惯……") : t("你是谁、希望她怎么称呼你……"), ariaLabel: t("内容") }), { block: true, hint: t("Markdown；越具体越稳定。") })]));
     };
     const boardTab = (body) => {
       body.append(card([
-        imageField(doc, "avatar_path", "头像", "st-avatar-preview"),
-        imageField(doc, "board_image_path", "看板图片", "st-board-preview"),
-        row("看板大字", textInput(doc.board_title || "", (value) => { doc.board_title = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.DEFAULT_BOARD_TITLE })),
-        row("看板小字", textInput(doc.board_subtitle || "", (value) => { doc.board_subtitle = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.DEFAULT_BOARD_SUBTITLE })),
-        row("输入框提示", textInput(doc.composer_placeholder || "", (value) => { doc.composer_placeholder = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.defaultComposerPlaceholder(displayName(doc) || "Miyu") }), { hint: "输入框为空时显示的灰字；留空按人格名生成。" })
-      ], { title: "空白页看板", description: "新会话第一屏显示的头像、大图与文案。" }));
+        imageField(doc, "avatar_path", t("头像"), "st-avatar-preview"),
+        imageField(doc, "board_image_path", t("看板图片"), "st-board-preview"),
+        row(t("看板大字"), textInput(doc.board_title || "", (value) => { doc.board_title = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.DEFAULT_BOARD_TITLE })),
+        row(t("看板小字"), textInput(doc.board_subtitle || "", (value) => { doc.board_subtitle = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.DEFAULT_BOARD_SUBTITLE })),
+        row(t("输入框提示"), textInput(doc.composer_placeholder || "", (value) => { doc.composer_placeholder = value.trim() || null; ctx.markConfigDirty(); }, { placeholder: ctx.defaultComposerPlaceholder(displayName(doc) || "Miyu") }), { hint: t("输入框为空时显示的灰字；留空按人格名生成。") })
+      ], { title: t("空白页看板"), description: t("新会话第一屏显示的头像、大图与文案。") }));
     };
     const starterTab = (body) => {
       const values = Array.isArray(doc.starter_prompts) ? ctx.DEFAULT_STARTER_PROMPTS.map((_, i) => String(doc.starter_prompts[i] || "")) : ctx.DEFAULT_STARTER_PROMPTS.map(() => "");
-      const rows = values.map((value, i) => row(`预设问题 ${i + 1}`, textInput(value, (next) => {
+      const rows = values.map((value, i) => row(t("预设问题 {index}", { index: i + 1 }), textInput(value, (next) => {
         values[i] = next;
         doc.starter_prompts = values.some((item) => item.trim()) ? [...values] : null;
         ctx.markConfigDirty();
       }, { placeholder: ctx.DEFAULT_STARTER_PROMPTS[i] })));
-      body.append(card(rows, { title: "预设问题", description: "空白页上的四个快捷入口；留空用默认。" }));
+      body.append(card(rows, { title: t("预设问题"), description: t("空白页上的四个快捷入口；留空用默认。") }));
     };
-    const tabs = [{ id: "content", label: "内容", render: contentTab }];
-    if (isPersona) tabs.push({ id: "board", label: "看板", render: boardTab }, { id: "starter", label: "预设问题", render: starterTab });
+    const tabs = [{ id: "content", label: t("内容"), render: contentTab }];
+    if (isPersona) tabs.push({ id: "board", label: t("看板"), render: boardTab }, { id: "starter", label: t("预设问题"), render: starterTab });
     const drawer = openDrawer({
-      title: displayName(doc) || "未命名",
-      subtitle: isPersona ? "AI 人格" : "用户身份",
+      title: displayName(doc) || t("未命名"),
+      subtitle: isPersona ? t("AI 人格") : t("用户身份"),
       width: "600px",
       tabs,
       footer: [
-        button("删除", { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
-          if (!(await confirmAction(`删除“${displayName(doc)}”？文件会一并删除。`, "删除"))) return;
+        button(t("删除"), { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
+          if (!(await confirmAction(t("删除“{name}”？文件会一并删除。", { name: displayName(doc) }), t("删除")))) return;
           const wasActive = cfg(activePath, "") === doc.name;
           documents.splice(index, 1);
           if (wasActive) setCfg(activePath, "");
@@ -2083,7 +2083,7 @@ window.MiyuSettings = (() => {
           rerender("prompts");
         } }),
         el("span.st-foot-spacer"),
-        button("完成", { kind: "primary", onClick: () => closeDrawer() })
+        button(t("完成"), { kind: "primary", onClick: () => closeDrawer() })
       ],
       onClose: () => rerender("prompts")
     });
@@ -2103,12 +2103,12 @@ window.MiyuSettings = (() => {
   }
 
   function renderGeneralPage(root) {
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "全局" }), el("p.st-page-desc", { text: "工具、上下文、记忆这些跟供应商无关的行为。数字类参数收在每张卡的「高级参数」里。" }))));
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: t("通用") }), el("p.st-page-desc", { text: t("工具、上下文、记忆这些跟供应商无关的行为。数字类参数收在每张卡的「高级参数」里。") }))));
     const sections = (schema().general || []).filter((section) => section.id !== "mcp");
     sections.forEach((section, index) => {
       const rows = fieldRows(section.fields, generalBindingFor);
       if (Array.isArray(section.advanced) && section.advanced.length) {
-        rows.push(disclosure("高级参数", (inner) => inner.append(...fieldRows(section.advanced, generalBindingFor)), { hint: `${section.advanced.length} 项` }));
+        rows.push(disclosure(t("高级参数"), (inner) => inner.append(...fieldRows(section.advanced, generalBindingFor)), { hint: t("{count} 项", { count: section.advanced.length }) }));
       }
       const node = card(rows, { title: section.title, description: section.description || "" });
       node.style.setProperty("--i", String(index));
@@ -2127,10 +2127,10 @@ window.MiyuSettings = (() => {
 
   function renderMcpPage(root) {
     const servers = mcpServers();
-    const add = button("添加服务器", { kind: "primary", iconName: "plus", onClick: () => openMcpDialog(null) });
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "MCP" }), el("p.st-page-desc", { text: "Model Context Protocol 服务器：每个是一条本机命令，启动后把它的工具挂进工具面。" })), add));
-    root.append(card([row("启用 MCP", toggle(Boolean(cfg("mcp.enabled")), (value) => setCfg("mcp.enabled", value)), { hint: "总开关；关闭后所有服务器都不启动。" })]));
-    if (!servers.length) { root.append(empty("还没有 MCP 服务器。")); return; }
+    const add = button(t("添加服务器"), { kind: "primary", iconName: "plus", onClick: () => openMcpDialog(null) });
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "MCP" }), el("p.st-page-desc", { text: t("Model Context Protocol 服务器：每个是一条本机命令，启动后把它的工具挂进工具面。") })), add));
+    root.append(card([row(t("启用 MCP"), toggle(Boolean(cfg("mcp.enabled")), (value) => setCfg("mcp.enabled", value)), { hint: t("总开关；关闭后所有服务器都不启动。") })]));
+    if (!servers.length) { root.append(empty(t("还没有 MCP 服务器。"))); return; }
     const list = el("div.st-card");
     const body = el("div.st-card-body.is-list");
     servers.forEach((server, index) => {
@@ -2139,12 +2139,12 @@ window.MiyuSettings = (() => {
       const command = [server.command, ...(server.args || [])].join(" ");
       item.append(
         el("span.st-server-mark", null, icon("server")),
-        el("button.st-server-copy", { type: "button", onclick: () => openMcpDialog(index) }, el("strong", { text: server.display_name || server.id || `服务器 ${index + 1}` }), el("small.is-mono", { text: command })),
+        el("button.st-server-copy", { type: "button", onclick: () => openMcpDialog(index) }, el("strong", { text: server.display_name || server.id || t("服务器 {index}", { index: index + 1 }) }), el("small.is-mono", { text: command })),
         chip(`${server.timeout_seconds ?? 30}s`, "is-soft"),
-        toggle(server.enabled !== false, (value) => { server.enabled = value; dirty(); }, "启用"),
-        iconButton("pencil", "编辑", () => openMcpDialog(index)),
-        iconButton("trash-2", "删除", async () => {
-          if (!(await confirmAction(`删除 MCP 服务器“${server.display_name || server.id}”？`, "删除"))) return;
+        toggle(server.enabled !== false, (value) => { server.enabled = value; dirty(); }, t("启用")),
+        iconButton("pencil", t("编辑"), () => openMcpDialog(index)),
+        iconButton("trash-2", t("删除"), async () => {
+          if (!(await confirmAction(t("删除 MCP 服务器“{name}”？", { name: server.display_name || server.id }), t("删除")))) return;
           servers.splice(index, 1);
           dirty();
           rerender("mcp");
@@ -2162,28 +2162,28 @@ window.MiyuSettings = (() => {
     const draft = editing ? clone(servers[index]) : { id: "", display_name: "", command: "", args: [], env: {}, timeout_seconds: 30, enabled: true };
     draft.args = Array.isArray(draft.args) ? draft.args : [];
     draft.env = draft.env && typeof draft.env === "object" ? draft.env : {};
-    const idInput = textInput(draft.id, (value) => { draft.id = value.trim(); }, { mono: true, placeholder: "如 filesystem", ariaLabel: "ID" });
+    const idInput = textInput(draft.id, (value) => { draft.id = value.trim(); }, { mono: true, placeholder: t("如 filesystem"), ariaLabel: "ID" });
     const handle = openDialog({
-      title: editing ? "编辑 MCP 服务器" : "添加 MCP 服务器",
+      title: editing ? t("编辑 MCP 服务器") : t("添加 MCP 服务器"),
       width: "560px",
       body: (body) => {
         body.append(card([
-          row("ID", idInput, { hint: "工具名前缀；只用字母、数字、连字符。" }),
-          row("显示名称", textInput(draft.display_name, (value) => { draft.display_name = value; }, { placeholder: "可选" })),
-          row("命令", textInput(draft.command, (value) => { draft.command = value.trim(); }, { mono: true, placeholder: "npx / uvx / 绝对路径" }), { hint: "可执行文件本身；参数放下面。" }),
-          row("参数", stringList(draft.args, (value) => { draft.args = value; }, { placeholder: "一个参数", mono: true }), { block: true, hint: "每行一个，按启动顺序。" }),
-          row("环境变量", kvTable(draft.env, (value) => { draft.env = value; }, { keyPlaceholder: "NAME", valuePlaceholder: "value" }), { block: true }),
-          row("超时秒数", numberInput({ label: "超时", min: 1, max: 600, integer: true }, draft.timeout_seconds ?? 30, (value) => { draft.timeout_seconds = value; })),
-          row("启用", toggle(draft.enabled !== false, (value) => { draft.enabled = value; }))
+          row("ID", idInput, { hint: t("工具名前缀；只用字母、数字、连字符。") }),
+          row(t("显示名称"), textInput(draft.display_name, (value) => { draft.display_name = value; }, { placeholder: t("可选") })),
+          row(t("命令"), textInput(draft.command, (value) => { draft.command = value.trim(); }, { mono: true, placeholder: t("npx / uvx / 绝对路径") }), { hint: t("可执行文件本身；参数放下面。") }),
+          row(t("参数"), stringList(draft.args, (value) => { draft.args = value; }, { placeholder: t("一个参数"), mono: true }), { block: true, hint: t("每行一个，按启动顺序。") }),
+          row(t("环境变量"), kvTable(draft.env, (value) => { draft.env = value; }, { keyPlaceholder: "NAME", valuePlaceholder: "value" }), { block: true }),
+          row(t("超时秒数"), numberInput({ label: t("超时"), min: 1, max: 600, integer: true }, draft.timeout_seconds ?? 30, (value) => { draft.timeout_seconds = value; })),
+          row(t("启用"), toggle(draft.enabled !== false, (value) => { draft.enabled = value; }))
         ]));
       },
       actions: [
-        button("取消", { onClick: () => handle.close() }),
-        button(editing ? "保存" : "添加", { kind: "primary", onClick: () => {
-          if (!draft.id) return setInvalid(idInput, "ID 不能为空");
-          if (!/^[A-Za-z0-9_-]+$/.test(draft.id)) return setInvalid(idInput, "只能用字母、数字、下划线和连字符");
-          if (servers.some((server, i) => server.id === draft.id && i !== index)) return setInvalid(idInput, "ID 已存在");
-          if (!draft.command) { toast("命令不能为空", "error"); return; }
+        button(t("取消"), { onClick: () => handle.close() }),
+        button(editing ? t("保存") : t("添加"), { kind: "primary", onClick: () => {
+          if (!draft.id) return setInvalid(idInput, t("ID 不能为空"));
+          if (!/^[A-Za-z0-9_-]+$/.test(draft.id)) return setInvalid(idInput, t("只能用字母、数字、下划线和连字符"));
+          if (servers.some((server, i) => server.id === draft.id && i !== index)) return setInvalid(idInput, t("ID 已存在"));
+          if (!draft.command) { toast(t("命令不能为空"), "error"); return; }
           if (editing) servers[index] = draft; else servers.push(draft);
           dirty();
           handle.close();
@@ -2195,7 +2195,10 @@ window.MiyuSettings = (() => {
 
   /* ───────────────────────── 插件 ───────────────────────── */
 
-  const PLUGIN_GROUP_ORDER = ["联网", "视觉与生图", "知识与记忆", "系统工具", "CLI 中转"];
+  const PLUGIN_GROUP_ORDER = ["联网", "视觉与生图", "知识与记忆", "系统工具", "CLI 中转"]; // i18n-allow: 插件分组数据键,须与 settings-schema.js 的 definition.group 原文一致
+  const PLUGIN_GROUP_LABELS = { "联网": t("联网"), "视觉与生图": t("视觉与生图"), "知识与记忆": t("知识与记忆"), "系统工具": t("系统工具"), "CLI 中转": t("CLI 中转") }; // i18n-allow: 左侧是上面的数据键,右侧才是给人读的标题
+  /* definition.group 可能已被 settings-schema.js 翻成英文:原文与标题都归到同一组。 */
+  const pluginGroupKey = (name) => PLUGIN_GROUP_ORDER.find((item) => item === name || PLUGIN_GROUP_LABELS[item] === name) || "系统工具"; // i18n-allow: 兜底分组键(与 PLUGIN_GROUP_ORDER 同源),不是文案
 
   function pluginObject(key) {
     const draft = S().configDraft;
@@ -2226,18 +2229,18 @@ window.MiyuSettings = (() => {
   }
 
   function renderPluginsPage(root) {
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "插件" }), el("p.st-page-desc", { text: "卡片上直接开关；点卡片调参数。QQ 群管理记录在控制台「群管」面板。" }))));
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: t("插件") }), el("p.st-page-desc", { text: t("卡片上直接开关；点卡片调参数。QQ 群管理记录在控制台「群管」面板。") }))));
     const definitions = schema().toolPlugins || {};
     const groups = new Map(PLUGIN_GROUP_ORDER.map((name) => [name, []]));
     for (const [key, definition] of Object.entries(definitions)) {
       if (key === "memory" || key === "print_image") continue;
-      const group = groups.has(definition.group) ? definition.group : "系统工具";
+      const group = pluginGroupKey(definition.group);
       groups.get(group).push({ key, definition });
     }
     let cardIndex = 0;
     for (const [group, items] of groups) {
       if (!items.length) continue;
-      root.append(el("h3.st-group-title", { text: group }));
+      root.append(el("h3.st-group-title", { text: PLUGIN_GROUP_LABELS[group] || group }));
       const grid = el("div.st-grid.is-plugins");
       for (const { key, definition } of items) {
         const object = pluginObject(key);
@@ -2254,7 +2257,7 @@ window.MiyuSettings = (() => {
             object.enabled = value;
             node.classList.toggle("is-off", !value);
             dirty();
-          }, `${definition.title} 启用`));
+          }, t("{name} 启用", { name: definition.title })));
         } else node.append(chip("CLI", "is-soft"));
         grid.append(node);
       }
@@ -2272,13 +2275,13 @@ window.MiyuSettings = (() => {
       const top = [];
       if (pluginHasSwitch(pluginKey, definition)) {
         const enabledField = (definition.fields || []).find((field) => field.key === "enabled");
-        top.push(row("启用插件", toggle(object.enabled === undefined ? Boolean(enabledField?.default) : Boolean(object.enabled), (value) => { object.enabled = value; dirty(); rerender("plugins"); }), { hint: enabledField?.hint || "" }));
+        top.push(row(t("启用插件"), toggle(object.enabled === undefined ? Boolean(enabledField?.default) : Boolean(object.enabled), (value) => { object.enabled = value; dirty(); rerender("plugins"); }), { hint: enabledField?.hint || "" }));
       }
       if (top.length) body.append(card(top));
       if (fields.length) body.append(card(fieldRows(fields, bindingFor)));
-      if (!fields.length && !top.length && !definition.custom) body.append(empty("这个插件没有可调参数。"));
+      if (!fields.length && !top.length && !definition.custom) body.append(empty(t("这个插件没有可调参数。")));
     };
-    openDrawer({ title: definition.title || pluginKey, subtitle: `plugins.${pluginKey}`, width: "560px", body: render, footer: [el("span.st-foot-spacer"), button("完成", { kind: "primary", onClick: () => closeDrawer() })], onClose: () => { pruneModelReferences(); rerender("plugins"); } });
+    openDrawer({ title: definition.title || pluginKey, subtitle: `plugins.${pluginKey}`, width: "560px", body: render, footer: [el("span.st-foot-spacer"), button(t("完成"), { kind: "primary", onClick: () => closeDrawer() })], onClose: () => { pruneModelReferences(); rerender("plugins"); } });
   }
 
   /* ───────────────────────── QQ 平台 ───────────────────────── */
@@ -2298,17 +2301,17 @@ window.MiyuSettings = (() => {
   }
 
   const QQ_SECTIONS = [
-    { id: "connection", title: "连接", description: "NapCat / OneBot 反向 WebSocket 接入与基础行为。" },
-    { id: "access", title: "权限与白名单", description: "谁能找她说话、谁是管理员。" },
-    { id: "limits", title: "限流与并发", description: "非白名单的节流，以及同时能跑几轮。" },
-    { id: "models", title: "配置模型", description: "QQ 里用哪些模型；不设则继承全局池。" }
+    { id: "connection", title: t("连接"), description: t("NapCat / OneBot 反向 WebSocket 接入与基础行为。") },
+    { id: "access", title: t("权限与白名单"), description: t("谁能找她说话、谁是管理员。") },
+    { id: "limits", title: t("限流与并发"), description: t("非白名单的节流，以及同时能跑几轮。") },
+    { id: "models", title: t("配置模型"), description: t("QQ 里用哪些模型；不设则继承全局池。") }
   ];
 
   function renderQqPage(root) {
     const qq = qqConfig();
-    const switchLabel = el("span", { text: qq.enabled ? "已启用" : "未启用" });
-    const enabled = toggle(Boolean(qq.enabled), (value) => { qq.enabled = value; dirty(); switchLabel.textContent = value ? "已启用" : "未启用"; root.classList.toggle("is-platform-off", !value); });
-    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: "QQ 平台" }), el("p.st-page-desc", { text: "腾讯 QQ 接入。改动保存后会重启监听。" })), el("label.st-head-switch", null, switchLabel, enabled)));
+    const switchLabel = el("span", { text: qq.enabled ? t("已启用") : t("未启用") });
+    const enabled = toggle(Boolean(qq.enabled), (value) => { qq.enabled = value; dirty(); switchLabel.textContent = value ? t("已启用") : t("未启用"); root.classList.toggle("is-platform-off", !value); });
+    root.append(el("div.st-page-head", null, el("div", null, el("h2", { text: t("QQ 平台") }), el("p.st-page-desc", { text: t("腾讯 QQ 接入。改动保存后会重启监听。") })), el("label.st-head-switch", null, switchLabel, enabled)));
     root.classList.toggle("is-platform-off", !qq.enabled);
     const qqSchema = schema().qq || {};
     QQ_SECTIONS.forEach((section, index) => {
@@ -2331,40 +2334,40 @@ window.MiyuSettings = (() => {
   function routeSummary(route) {
     const chips = [];
     const persona = route.persona?.mode;
-    if (persona === "miyu") chips.push(chip("人格：Miyu", "is-soft"));
-    else if (persona === "custom") chips.push(chip(`人格：${String(route.persona?.name || "").replace(/\.md$/i, "")}`, "is-soft"));
-    if (Array.isArray(route.text_models) && route.text_models.length) chips.push(chip(`文本 ${route.text_models.length}`, "is-accent"));
-    else if (route.text_models_inheritance === "global") chips.push(chip("文本：继承全局", "is-soft"));
-    if (Array.isArray(route.multimodal_models) && route.multimodal_models.length) chips.push(chip(`多模态 ${route.multimodal_models.length}`, "is-accent"));
-    if (route.extra_prompt) chips.push(chip("额外提示词", "is-soft"));
-    if (route.session_limits) chips.push(chip(`并行 ${route.session_limits.running}`, "is-soft"));
-    if (route.probability_reply === false) chips.push(chip("概率主动回复：关", "is-soft"));
-    else if (route.probability_reply === true) chips.push(chip("概率主动回复：开", "is-soft"));
-    if (typeof route.probability_reply_rate === "number") chips.push(chip(`抽样概率 ${route.probability_reply_rate}`, "is-soft"));
-    if (route.ignore_sleep_hours === true) chips.push(chip("忽略睡眠时间", "is-soft"));
+    if (persona === "miyu") chips.push(chip(t("人格：Miyu"), "is-soft"));
+    else if (persona === "custom") chips.push(chip(t("人格：{name}", { name: String(route.persona?.name || "").replace(/\.md$/i, "") }), "is-soft"));
+    if (Array.isArray(route.text_models) && route.text_models.length) chips.push(chip(t("文本 {count}", { count: route.text_models.length }), "is-accent"));
+    else if (route.text_models_inheritance === "global") chips.push(chip(t("文本：继承全局"), "is-soft"));
+    if (Array.isArray(route.multimodal_models) && route.multimodal_models.length) chips.push(chip(t("多模态 {count}", { count: route.multimodal_models.length }), "is-accent"));
+    if (route.extra_prompt) chips.push(chip(t("额外提示词"), "is-soft"));
+    if (route.session_limits) chips.push(chip(t("并行 {count}", { count: route.session_limits.running }), "is-soft"));
+    if (route.probability_reply === false) chips.push(chip(t("概率主动回复：关"), "is-soft"));
+    else if (route.probability_reply === true) chips.push(chip(t("概率主动回复：开"), "is-soft"));
+    if (typeof route.probability_reply_rate === "number") chips.push(chip(t("抽样概率 {rate}", { rate: route.probability_reply_rate }), "is-soft"));
+    if (route.ignore_sleep_hours === true) chips.push(chip(t("忽略睡眠时间"), "is-soft"));
     return chips;
   }
 
   function routesCard() {
     const list = routes();
-    const add = button("新增会话配置", { iconName: "plus", small: true, onClick: () => {
+    const add = button(t("新增会话配置"), { iconName: "plus", small: true, onClick: () => {
       list.push({ conversation: { kind: "group", id: "" } });
       dirty();
       openRouteDrawer(list.length - 1);
     } });
     const body = el("div.st-card-body.is-list");
-    if (!list.length) body.append(empty("没有专属配置；所有会话按上面的平台设置走。"));
+    if (!list.length) body.append(empty(t("没有专属配置；所有会话按上面的平台设置走。")));
     list.forEach((route, index) => {
       const item = el("button.st-route-row", { type: "button", onclick: () => openRouteDrawer(index) });
       item.style.setProperty("--i", String(index));
       item.append(
         el("span.st-server-mark", null, icon(route.conversation?.kind === "private" ? "message-circle" : "users")),
-        el("span.st-route-copy", null, el("strong", { text: `${route.conversation?.kind === "private" ? "私聊" : "群聊"} ${route.conversation?.id || "（未填号码）"}` }), el("span.st-provider-chips", null, routeSummary(route).length ? routeSummary(route) : chip("未覆盖任何项", "is-soft"))),
+        el("span.st-route-copy", null, el("strong", { text: t("{kind} {id}", { kind: route.conversation?.kind === "private" ? t("私聊") : t("群聊"), id: route.conversation?.id || t("（未填号码）") }) }), el("span.st-provider-chips", null, routeSummary(route).length ? routeSummary(route) : chip(t("未覆盖任何项"), "is-soft"))),
         icon("chevron-right", "st-card-caret"));
       body.append(item);
     });
     const node = el("section.st-card", null,
-      el("header.st-card-head", null, el("div", null, el("h3", { text: "会话专属配置" }), el("p", { text: "某个群或私聊单独用另一套人格、模型或提示词。" })), el("div.st-card-actions", null, add)),
+      el("header.st-card-head", null, el("div", null, el("h3", { text: t("会话专属配置") }), el("p", { text: t("某个群或私聊单独用另一套人格、模型或提示词。") })), el("div.st-card-actions", null, add)),
       body);
     node.style.setProperty("--i", "4");
     return node;
@@ -2378,7 +2381,7 @@ window.MiyuSettings = (() => {
     if (!route.persona) route.persona = { mode: "inherit" };
     const personaChoices = (S().promptDraft?.personas || []).map((doc) => ({ value: doc.name, label: displayName(doc) }));
     const fields = (schema().qq?.routes?.fields || []).map((field) => field.key === "persona.name"
-      ? { ...field, kind: "select", hint: personaChoices.length ? "从「人格」页里已有的人格中选" : "还没有自定义人格，先去「人格」页新建", choices: [{ value: "", label: "请选择" }, ...personaChoices] }
+      ? { ...field, kind: "select", hint: personaChoices.length ? t("从「人格」页里已有的人格中选") : t("还没有自定义人格，先去「人格」页新建"), choices: [{ value: "", label: t("请选择") }, ...personaChoices] }
       : field);
     const bindingFor = (field, keyOverride) => {
       const key = keyOverride || field.key;
@@ -2424,25 +2427,25 @@ window.MiyuSettings = (() => {
         drawer.setTitle(routeTitle(route));
       } };
     };
-    const routeTitle = (item) => `${item.conversation?.kind === "private" ? "私聊" : "群聊"} ${item.conversation?.id || ""}`.trim();
+    const routeTitle = (item) => t("{kind} {id}", { kind: item.conversation?.kind === "private" ? t("私聊") : t("群聊"), id: item.conversation?.id || "" }).trim();
     const drawer = openDrawer({
       title: routeTitle(route),
-      subtitle: "会话专属配置",
+      subtitle: t("会话专属配置"),
       width: "560px",
       body: (body) => body.append(card(fieldRows(fields, bindingFor))),
       footer: [
-        button("删除", { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
-          if (!(await confirmAction("删除这条会话专属配置？", "删除"))) return;
+        button(t("删除"), { kind: "text", danger: true, iconName: "trash-2", onClick: async () => {
+          if (!(await confirmAction(t("删除这条会话专属配置？"), t("删除")))) return;
           list.splice(index, 1);
           dirty();
           closeDrawer();
         } }),
         el("span.st-foot-spacer"),
-        button("完成", { kind: "primary", onClick: () => closeDrawer() })
+        button(t("完成"), { kind: "primary", onClick: () => closeDrawer() })
       ],
       onClose: () => {
         normalizeRoutePersona(route);
-        if (!String(route.conversation?.id || "").trim()) { list.splice(list.indexOf(route), 1); dirty(); toast("没有填号码的会话配置已丢弃", "error"); }
+        if (!String(route.conversation?.id || "").trim()) { list.splice(list.indexOf(route), 1); dirty(); toast(t("没有填号码的会话配置已丢弃"), "error"); }
         rerender("qq");
       }
     });
@@ -2482,10 +2485,10 @@ window.MiyuSettings = (() => {
       node.classList.toggle("is-off", !enabled);
       node.append(
         el("button.st-plugin-open", { type: "button", onclick: () => openQqPluginDrawer(id) }, mark(definition.title || id), el("span.st-plugin-copy", null, el("strong", { text: definition.title || id }), el("small", { text: definition.description || id }))),
-        toggle(enabled, (value) => { qqPluginInstance(id).enabled = value; node.classList.toggle("is-off", !value); dirty(); }, `${definition.title} 启用`));
+        toggle(enabled, (value) => { qqPluginInstance(id).enabled = value; node.classList.toggle("is-off", !value); dirty(); }, t("{name} 启用", { name: definition.title })));
       grid.append(node);
     });
-    const node = el("section.st-card.is-plain", null, el("header.st-card-head", null, el("div", null, el("h3", { text: "QQ 插件" }), el("p", { text: "群聊真实上下文、回复处理、入群审批、定时消息等。卡片上开关，点开调参数。" }))), grid);
+    const node = el("section.st-card.is-plain", null, el("header.st-card-head", null, el("div", null, el("h3", { text: t("QQ 插件") }), el("p", { text: t("群聊真实上下文、回复处理、入群审批、定时消息等。卡片上开关，点开调参数。") }))), grid);
     node.style.setProperty("--i", "5");
     return node;
   }
@@ -2496,7 +2499,7 @@ window.MiyuSettings = (() => {
     const instance = qqPluginInstance(id);
     const settings = instance.settings;
     const bindingFor = (field, keyOverride) => nestedBinding(settings, keyOverride || field.key);
-    const statusCard = () => card([row("插件状态", toggle(qqPluginEnabled(id, definition), (value) => { instance.enabled = value; dirty(); rerender("qq"); }), { hint: definition.description || "" })]);
+    const statusCard = () => card([row(t("插件状态"), toggle(qqPluginEnabled(id, definition), (value) => { instance.enabled = value; dirty(); rerender("qq"); }), { hint: definition.description || "" })]);
     let tabs = null;
     let body = null;
     if (Array.isArray(definition.groups) && definition.groups.length) {
@@ -2515,7 +2518,7 @@ window.MiyuSettings = (() => {
         if (definition.custom === "scheduled_tasks") host.append(scheduledTasksCard(settings, definition));
       };
     }
-    openDrawer({ title: definition.title || id, subtitle: `platforms.qq.plugins.${id}`, width: tabs ? "760px" : "560px", tabs: tabs || undefined, body: body || undefined, footer: [el("span.st-foot-spacer"), button("完成", { kind: "primary", onClick: () => closeDrawer() })], onClose: () => rerender("qq") });
+    openDrawer({ title: definition.title || id, subtitle: `platforms.qq.plugins.${id}`, width: tabs ? "760px" : "560px", tabs: tabs || undefined, body: body || undefined, footer: [el("span.st-foot-spacer"), button(t("完成"), { kind: "primary", onClick: () => closeDrawer() })], onClose: () => rerender("qq") });
   }
 
   function joinApprovalGroupsCard(settings, definition) {
@@ -2524,19 +2527,19 @@ window.MiyuSettings = (() => {
     const body = el("div.st-accounts");
     const paint = () => {
       body.replaceChildren();
-      if (!list.length) body.append(empty("没有分群条件；未列出的群按插件默认逻辑处理。"));
+      if (!list.length) body.append(empty(t("没有分群条件；未列出的群按插件默认逻辑处理。")));
       list.forEach((group, index) => {
         const item = el("div.st-account");
         item.append(
           el("div.st-account-head", null,
-            el("span.st-unit-wrap", null, numberInput({ label: "群号", min: 1, integer: true }, group.group_id ?? "", (value) => { group.group_id = value; dirty(); }), el("span.st-unit", { text: "群号" })),
-            iconButton("trash-2", "删除", async () => { if (!(await confirmAction("删除这条审批条件？", "删除"))) return; list.splice(index, 1); dirty(); paint(); }, "is-danger")),
-          textarea(group.approve_condition || "", (value) => { group.approve_condition = value; dirty(); }, { rows: 3, placeholder: "通过条件，自然语言描述", ariaLabel: "通过条件" }));
+            el("span.st-unit-wrap", null, numberInput({ label: t("群号"), min: 1, integer: true }, group.group_id ?? "", (value) => { group.group_id = value; dirty(); }), el("span.st-unit", { text: t("群号") })),
+            iconButton("trash-2", t("删除"), async () => { if (!(await confirmAction(t("删除这条审批条件？"), t("删除")))) return; list.splice(index, 1); dirty(); paint(); }, "is-danger")),
+          textarea(group.approve_condition || "", (value) => { group.approve_condition = value; dirty(); }, { rows: 3, placeholder: t("通过条件，自然语言描述"), ariaLabel: t("通过条件") }));
         body.append(item);
       });
     };
     paint();
-    return card([body, button("新增一项", { iconName: "plus", small: true, onClick: () => { list.push({ group_id: null, approve_condition: "" }); dirty(); paint(); body.querySelector(".st-account:last-of-type input")?.focus(); } })], { title: "分群审批条件", description: "每个群一条自然语言条件，模型据此判断入群申请。" });
+    return card([body, button(t("新增一项"), { iconName: "plus", small: true, onClick: () => { list.push({ group_id: null, approve_condition: "" }); dirty(); paint(); body.querySelector(".st-account:last-of-type input")?.focus(); } })], { title: t("分群审批条件"), description: t("每个群一条自然语言条件，模型据此判断入群申请。") });
   }
 
   function parseConversation(text) {
@@ -2550,15 +2553,15 @@ window.MiyuSettings = (() => {
     const body = el("div.st-card-body.is-list");
     const paint = () => {
       body.replaceChildren();
-      if (!list.length) body.append(empty("没有定时任务。"));
+      if (!list.length) body.append(empty(t("没有定时任务。")));
       list.forEach((task, index) => {
         const conversation = parseConversation(task.conversation);
         const item = el("button.st-route-row", { type: "button", onclick: () => openTaskDialog(index) });
         item.append(
           el("span.st-server-mark", null, icon("alarm-clock" in ICONS ? "alarm-clock" : "message-circle")),
           el("span.st-route-copy", null,
-            el("strong", { text: `${conversation.kind === "private" ? "私聊" : "群聊"} ${conversation.id} · ${(task.times || []).join(" / ") || "未设时间"}` }),
-            el("small", { text: `${Array.isArray(task.days) && task.days.length ? task.days.join(",") + " · " : "每天 · "}${String(task.message || "").slice(0, 60)}` })),
+            el("strong", { text: t("{kind} {id} · {times}", { kind: conversation.kind === "private" ? t("私聊") : t("群聊"), id: conversation.id, times: (task.times || []).join(" / ") || t("未设时间") }) }),
+            el("small", { text: t("{schedule}{message}", { schedule: Array.isArray(task.days) && task.days.length ? task.days.join(",") + " · " : t("每天 · "), message: String(task.message || "").slice(0, 60) }) })),
           icon("chevron-right", "st-card-caret"));
         body.append(item);
       });
@@ -2570,16 +2573,16 @@ window.MiyuSettings = (() => {
       const draft = { conversation, times: [...(source.times || [])], message: source.message || "", days: [...(source.days || [])], account: source.account ?? null };
       const bindingFor = (field, keyOverride) => nestedBinding(draft, keyOverride || field.key);
       const handle = openDialog({
-        title: editing ? "编辑定时任务" : "新增定时任务",
+        title: editing ? t("编辑定时任务") : t("新增定时任务"),
         width: "560px",
         body: (host) => host.append(card(fieldRows(definition.taskFields || [], bindingFor))),
         actions: [
-          button("取消", { onClick: () => handle.close() }),
-          button(editing ? "保存" : "添加", { kind: "primary", onClick: () => {
-            if (!/^\d+$/.test(String(draft.conversation.id || ""))) return toast("号码必须是纯数字", "error");
+          button(t("取消"), { onClick: () => handle.close() }),
+          button(editing ? t("保存") : t("添加"), { kind: "primary", onClick: () => {
+            if (!/^\d+$/.test(String(draft.conversation.id || ""))) return toast(t("号码必须是纯数字"), "error");
             const times = (draft.times || []).map((item) => String(item).trim()).filter(Boolean);
-            if (!times.length || times.some((item) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(item))) return toast("时间点格式为 HH:MM，至少一个", "error");
-            if (!String(draft.message || "").trim()) return toast("发送内容不能为空", "error");
+            if (!times.length || times.some((item) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(item))) return toast(t("时间点格式为 HH:MM，至少一个"), "error");
+            if (!String(draft.message || "").trim()) return toast(t("发送内容不能为空"), "error");
             const next = { conversation: `${draft.conversation.kind}:${draft.conversation.id}`, times, message: draft.message };
             if (Array.isArray(draft.days) && draft.days.length) next.days = draft.days;
             if (draft.account != null) next.account = draft.account;
@@ -2588,12 +2591,12 @@ window.MiyuSettings = (() => {
             handle.close();
             paint();
           } }),
-          editing ? button("删除", { kind: "text", danger: true, onClick: async () => { if (!(await confirmAction("删除这个定时任务？", "删除"))) return; list.splice(index, 1); dirty(); handle.close(); paint(); } }) : null
+          editing ? button(t("删除"), { kind: "text", danger: true, onClick: async () => { if (!(await confirmAction(t("删除这个定时任务？"), t("删除")))) return; list.splice(index, 1); dirty(); handle.close(); paint(); } }) : null
         ].filter(Boolean)
       });
     };
     paint();
-    return card([body, button("新增任务", { iconName: "plus", small: true, onClick: () => openTaskDialog(null) })], { title: "任务", description: "到点向指定群或私聊发送固定内容。" });
+    return card([body, button(t("新增任务"), { iconName: "plus", small: true, onClick: () => openTaskDialog(null) })], { title: t("定时任务"), description: t("到点向指定群或私聊发送固定内容。") });
   }
 
   /* ───────────────────────── 装配 ───────────────────────── */

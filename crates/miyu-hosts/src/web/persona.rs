@@ -107,7 +107,7 @@ pub(in crate::web) async fn persona_avatar(
             return Err(ApiError::new(
                 StatusCode::NOT_FOUND,
                 "persona avatar format is unsupported",
-            ))
+            ));
         }
     };
     let mut response = bytes.into_response();
@@ -142,17 +142,17 @@ pub(in crate::web) fn member_persona_identity(
             .board_path()
             .map(|_| format!("/api/persona/avatar?scope={scope}&board=1")),
         board_title: if persona.meta.board_title.trim().is_empty() {
-            DEFAULT_BOARD_TITLE.to_string()
+            default_board_title().to_string()
         } else {
             persona.meta.board_title.clone()
         },
         board_subtitle: if persona.meta.board_subtitle.trim().is_empty() {
-            DEFAULT_BOARD_SUBTITLE.to_string()
+            default_board_subtitle().to_string()
         } else {
             persona.meta.board_subtitle.clone()
         },
         composer_placeholder: default_composer_placeholder(&persona.meta.name),
-        starter_prompts: DEFAULT_STARTER_PROMPTS.map(str::to_string).to_vec(),
+        starter_prompts: default_starter_prompts().map(str::to_string).to_vec(),
     })
 }
 
@@ -166,10 +166,10 @@ pub(in crate::web) fn persona_identity(
             name: "Miyu".to_string(),
             avatar_url: Some("/assets/miyu-logo.png".to_string()),
             board_image_url: Some("/assets/miyuwallpaper.png".to_string()),
-            board_title: DEFAULT_BOARD_TITLE.to_string(),
-            board_subtitle: DEFAULT_BOARD_SUBTITLE.to_string(),
+            board_title: default_board_title().to_string(),
+            board_subtitle: default_board_subtitle().to_string(),
             composer_placeholder: default_composer_placeholder("Miyu"),
-            starter_prompts: DEFAULT_STARTER_PROMPTS.map(str::to_string).to_vec(),
+            starter_prompts: default_starter_prompts().map(str::to_string).to_vec(),
         };
     }
     let document = prompts
@@ -191,12 +191,12 @@ pub(in crate::web) fn persona_identity(
     let board_title = document
         .and_then(|document| document.board_title.as_deref())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(DEFAULT_BOARD_TITLE)
+        .unwrap_or_else(|| default_board_title())
         .to_string();
     let board_subtitle = document
         .and_then(|document| document.board_subtitle.as_deref())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(DEFAULT_BOARD_SUBTITLE)
+        .unwrap_or_else(|| default_board_subtitle())
         .to_string();
     let name = active.strip_suffix(".md").unwrap_or(active).to_string();
     let composer_placeholder = document
@@ -204,7 +204,7 @@ pub(in crate::web) fn persona_identity(
         .filter(|value| !value.trim().is_empty())
         .map_or_else(|| default_composer_placeholder(&name), str::to_string);
     let configured_prompts = document.and_then(|document| document.starter_prompts.as_deref());
-    let starter_prompts = DEFAULT_STARTER_PROMPTS
+    let starter_prompts = default_starter_prompts()
         .iter()
         .enumerate()
         .map(|(index, fallback)| {

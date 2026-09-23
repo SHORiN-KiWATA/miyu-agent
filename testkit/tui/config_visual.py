@@ -322,7 +322,7 @@ def main():
               f"{spent * 1000:.0f}ms，像是还在逐行铺")
 
         # ── 编辑态：光标落在值上 ──
-        text = driver.send(b"j\r", "编辑中")
+        text = driver.send(b"jj\r", "编辑中")  # 09-23:语言排第一,数字字段退到第三行
         check(text is not None, "进得了编辑态")
         caret_x = driver.screen.cursor.x
         check(caret_x >= values[0], "光标落在值那一列", f"光标 {caret_x} < 值列 {values[0]}")

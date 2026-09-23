@@ -73,13 +73,13 @@ window.MiyuPreview = (() => {
     root.hidden = true;
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
-    root.setAttribute("aria-label", "附件预览");
+    root.setAttribute("aria-label", t("附件预览"));
 
     const scrim = document.createElement("button");
     scrim.type = "button";
     scrim.className = "attachment-preview-scrim";
     scrim.tabIndex = -1;
-    scrim.setAttribute("aria-label", "关闭预览");
+    scrim.setAttribute("aria-label", t("关闭预览"));
     scrim.addEventListener("click", close);
 
     const frame = document.createElement("div");
@@ -94,14 +94,14 @@ window.MiyuPreview = (() => {
     meta = document.createElement("small");
     title.append(caption, meta);
 
-    externalLink = iconButton("external-link", "在新标签页打开", { tag: "a" });
+    externalLink = iconButton("external-link", t("在新标签页打开"), { tag: "a" });
     externalLink.target = "_blank";
     externalLink.rel = "noreferrer noopener";
 
-    downloadLink = iconButton("download", "下载", { tag: "a" });
+    downloadLink = iconButton("download", t("下载"), { tag: "a" });
     downloadLink.setAttribute("download", "");
 
-    const closeButton = iconButton("x", "关闭预览");
+    const closeButton = iconButton("x", t("关闭预览"));
     closeButton.classList.add("attachment-preview-close");
     closeButton.addEventListener("click", close);
 
@@ -130,16 +130,16 @@ window.MiyuPreview = (() => {
   }
 
   async function renderText(url) {
-    showMessage("读取中…");
+    showMessage(t("读取中…"));
     let response;
     try {
       response = await fetch(url, { credentials: "same-origin" });
     } catch (_) {
-      showMessage("读不到这个附件，可能已经被清理了。");
+      showMessage(t("读不到这个附件，可能已经被清理了。"));
       return;
     }
     if (!response.ok) {
-      showMessage(`读不到这个附件（HTTP ${response.status}）。`);
+      showMessage(t("读不到这个附件（HTTP {status}）。", { status: response.status }));
       return;
     }
     let text = await response.text();
@@ -155,7 +155,7 @@ window.MiyuPreview = (() => {
     if (clipped) {
       const note = document.createElement("p");
       note.className = "attachment-preview-note";
-      note.textContent = "文件较大，只显示了开头部分；完整内容请下载。";
+      note.textContent = t("文件较大，只显示了开头部分；完整内容请下载。");
       body.appendChild(note);
     }
   }
@@ -176,7 +176,7 @@ window.MiyuPreview = (() => {
     media.appendChild(source);
     // 浏览器不认这个编码时别留一个黑框,直说。
     media.addEventListener("error", () => {
-      showMessage("这个格式浏览器放不了，下载下来用本地播放器打开吧。");
+      showMessage(t("这个格式浏览器放不了，下载下来用本地播放器打开吧。"));
     });
     body.replaceChildren(media);
   }
@@ -186,7 +186,7 @@ window.MiyuPreview = (() => {
     frame.className = "attachment-preview-pdf";
     // inline=1 才不会被 Content-Disposition: attachment 变成一次下载。
     frame.src = `${url}${url.includes("?") ? "&" : "?"}inline=1`;
-    frame.title = "PDF 预览";
+    frame.title = t("PDF 预览");
     body.replaceChildren(frame);
   }
 
@@ -201,7 +201,7 @@ window.MiyuPreview = (() => {
       return true;
     }
     if (!root) build();
-    const name = attachment.name || "附件";
+    const name = attachment.name || t("未命名附件");
     caption.textContent = name;
     caption.title = name;
     meta.textContent = formatFileSize ? formatFileSize(attachment.size) : "";

@@ -9,6 +9,7 @@
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use miyu_base::config::{MimoTtsConfig, MiniMaxTtsConfig, VoiceTtsConfig};
+use miyu_base::i18n::text as t;
 use serde_json::{json, Value};
 
 const SPEAK_OPEN: &str = "<speak>";
@@ -92,9 +93,9 @@ fn replace_tokens(line: &str) -> String {
                 || bare.starts_with("https://")
                 || bare.starts_with("www.")
             {
-                "链接".to_string()
+                t("link", "链接").to_string()
             } else if looks_like_path(bare) {
-                "路径".to_string()
+                t("path", "路径").to_string()
             } else {
                 word.to_string()
             }
@@ -146,7 +147,14 @@ pub(crate) async fn synthesize(tts: &VoiceTtsConfig, text: &str) -> Result<Vec<u
     match tts.provider() {
         Some("mimo") => synthesize_mimo(&tts.mimo, text).await,
         Some("minimax") | None => synthesize_minimax(&tts.minimax, text).await,
-        Some(other) => anyhow::bail!("未知的播报供应商 {other}"),
+        Some(other) => anyhow::bail!(
+            "{}",
+            t(
+                "Unknown speech provider {provider}",
+                "未知的播报供应商 {provider}"
+            )
+            .replace("{provider}", other)
+        ),
     }
 }
 
@@ -155,7 +163,14 @@ pub(crate) async fn list_voices(tts: &VoiceTtsConfig, provider: &str) -> Result<
     match provider {
         "mimo" => Ok(list_mimo_voices()),
         "minimax" => list_minimax_voices(&tts.minimax).await,
-        other => anyhow::bail!("未知的播报供应商 {other}"),
+        other => anyhow::bail!(
+            "{}",
+            t(
+                "Unknown speech provider {provider}",
+                "未知的播报供应商 {provider}"
+            )
+            .replace("{provider}", other)
+        ),
     }
 }
 
@@ -183,10 +198,27 @@ pub const MIMO_MODELS: &[&str] = &[
     "mimo-v2.5-tts-voiceclone",
 ];
 
+/// 预置音色的显示名(跟随 UI 语言)。id 是接口取值,不翻译;`MIMO_VOICES` 里
+/// 那份中文名留给 TUI(那边按显示名反查 id),这里按 id 给双语。
+fn mimo_voice_label(id: &str, fallback: &'static str) -> &'static str {
+    match id {
+        "mimo_default" => t("MiMo default", "MiMo 默认"),
+        "冰糖" => t("Bingtang · Chinese female", "冰糖 · 中文女声"),
+        "茉莉" => t("Moli · Chinese female", "茉莉 · 中文女声"),
+        "苏打" => t("Soda · Chinese male", "苏打 · 中文男声"),
+        "白桦" => t("Birch · Chinese male", "白桦 · 中文男声"),
+        "Mia" => t("Mia · English female", "Mia · 英文女声"),
+        "Chloe" => t("Chloe · English female", "Chloe · 英文女声"),
+        "Milo" => t("Milo · English male", "Milo · 英文男声"),
+        "Dean" => t("Dean · English male", "Dean · 英文男声"),
+        _ => fallback,
+    }
+}
+
 pub(crate) fn list_mimo_voices() -> Vec<Value> {
     MIMO_VOICES
         .iter()
-        .map(|(id, label)| json!({ "value": id, "label": label }))
+        .map(|(id, label)| json!({ "value": id, "label": mimo_voice_label(id, label) }))
         .collect()
 }
 
@@ -211,13 +243,19 @@ pub(crate) fn mimo_api_key(cfg: &MimoTtsConfig) -> Result<String> {
         .as_deref()
         .map(str::trim)
         .filter(|key| !key.is_empty())
-        .context("MiMo 播报没有配置 api_key")?;
+        .context(t(
+            "The MiMo speech provider has no api_key configured",
+            "MiMo 播报没有配置 api_key",
+        ))?;
     let mut keys = Vec::new();
     miyu_base::config::append_resolved_api_keys(&mut keys, raw)?;
     keys.into_iter()
         .map(|key| key.value)
         .find(|key| !key.trim().is_empty())
-        .context("MiMo 播报的 api_key 解析为空")
+        .context(t(
+            "The MiMo speech api_key resolved to an empty value",
+            "MiMo 播报的 api_key 解析为空",
+        ))
 }
 
 /// 参考音频 → `data:audio/wav;base64,…`(voiceclone 模型的 `voice` 字段)。
@@ -227,14 +265,23 @@ fn mimo_clone_voice(cfg: &MimoTtsConfig) -> Result<String> {
         .as_deref()
         .map(str::trim)
         .filter(|path| !path.is_empty())
-        .context("MiMo voiceclone 模型需要参考音频(sample_audio)")?;
+        .context(t(
+            "The MiMo voiceclone model needs reference audio (sample_audio)",
+            "MiMo voiceclone 模型需要参考音频(sample_audio)",
+        ))?;
     let path = match path.strip_prefix("~/") {
         Some(rest) => std::env::var_os("HOME")
             .map(|home| std::path::PathBuf::from(home).join(rest))
             .unwrap_or_else(|| std::path::PathBuf::from(path)),
         None => std::path::PathBuf::from(path),
     };
-    let bytes = std::fs::read(&path).with_context(|| format!("读取参考音频 {}", path.display()))?;
+    let bytes = std::fs::read(&path).with_context(|| {
+        t(
+            "failed to read reference audio {path}",
+            "读取参考音频 {path}",
+        )
+        .replace("{path}", &path.display().to_string())
+    })?;
     let mime = match path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -243,12 +290,22 @@ fn mimo_clone_voice(cfg: &MimoTtsConfig) -> Result<String> {
     {
         Some("mp3") => "audio/mpeg",
         Some("wav") => "audio/wav",
-        other => anyhow::bail!("参考音频只支持 wav / mp3,不是 {other:?}"),
+        other => anyhow::bail!(
+            "{}",
+            t(
+                "Reference audio must be wav / mp3, not {kind}",
+                "参考音频只支持 wav / mp3,不是 {kind}",
+            )
+            .replace("{kind}", &format!("{other:?}"))
+        ),
     };
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
     anyhow::ensure!(
         encoded.len() <= 10 * 1024 * 1024,
-        "参考音频 base64 后超过 10MB"
+        t(
+            "Reference audio is over 10MB after base64 encoding",
+            "参考音频 base64 后超过 10MB",
+        )
     );
     Ok(format!("data:{mime};base64,{encoded}"))
 }
@@ -267,7 +324,10 @@ pub(crate) fn mimo_request_body(cfg: &MimoTtsConfig, text: &str) -> Result<Value
     if model.ends_with("voicedesign") {
         anyhow::ensure!(
             !prompt.is_empty(),
-            "MiMo voicedesign 模型需要在提示词里写一句音色描述"
+            t(
+                "The MiMo voicedesign model needs a voice description in the prompt",
+                "MiMo voicedesign 模型需要在提示词里写一句音色描述",
+            )
         );
     }
     if !prompt.is_empty() {
@@ -323,22 +383,38 @@ pub(crate) fn mimo_extract_audio(status: u16, payload: &Value) -> Result<Vec<u8>
         });
     if !(200..300).contains(&status) {
         anyhow::bail!(
-            "MiMo 合成失败(HTTP {status}):{}",
-            error.unwrap_or_else(|| "unknown".to_string())
+            "{}",
+            t(
+                "MiMo synthesis failed (HTTP {status}): {message}",
+                "MiMo 合成失败(HTTP {status}):{message}",
+            )
+            .replace("{status}", &status.to_string())
+            .replace("{message}", error.as_deref().unwrap_or("unknown"))
         );
     }
     let encoded = payload
         .pointer("/choices/0/message/audio/data")
         .and_then(Value::as_str)
         .or_else(|| payload.pointer("/data").and_then(Value::as_str))
-        .with_context(|| match error {
-            Some(message) => format!("MiMo 合成失败:{message}"),
-            None => "MiMo 应答没有 choices[0].message.audio.data".to_string(),
+        .with_context(|| match error.as_deref() {
+            Some(message) => t(
+                "MiMo synthesis failed: {message}",
+                "MiMo 合成失败:{message}",
+            )
+            .replace("{message}", message),
+            None => t(
+                "The MiMo response has no choices[0].message.audio.data",
+                "MiMo 应答没有 choices[0].message.audio.data",
+            )
+            .to_string(),
         })?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded.trim())
-        .context("MiMo 音频 base64 解码")?;
-    anyhow::ensure!(bytes.len() > 44, "MiMo 返回的音频为空");
+        .context(t("Decoding the MiMo audio base64", "MiMo 音频 base64 解码"))?;
+    anyhow::ensure!(
+        bytes.len() > 44,
+        t("MiMo returned empty audio", "MiMo 返回的音频为空")
+    );
     Ok(bytes)
 }
 
@@ -357,9 +433,15 @@ pub(crate) async fn synthesize_mimo(cfg: &MimoTtsConfig, text: &str) -> Result<V
         .json(&body)
         .send()
         .await
-        .context("请求 MiMo chat/completions")?;
+        .context(t(
+            "Requesting MiMo chat/completions",
+            "请求 MiMo chat/completions",
+        ))?;
     let status = response.status().as_u16();
-    let raw = response.text().await.context("读取 MiMo 应答")?;
+    let raw = response
+        .text()
+        .await
+        .context(t("Reading the MiMo response", "读取 MiMo 应答"))?;
     let payload: Value = serde_json::from_str(&raw).unwrap_or_else(
         |_| json!({ "error": { "message": crate::web::voice_bridge::clip(raw.trim(), 200) } }),
     );
@@ -391,13 +473,19 @@ pub(crate) fn minimax_api_key(cfg: &MiniMaxTtsConfig) -> Result<String> {
         .as_deref()
         .map(str::trim)
         .filter(|key| !key.is_empty())
-        .context("MiniMax 播报没有配置 api_key")?;
+        .context(t(
+            "The MiniMax speech provider has no api_key configured",
+            "MiniMax 播报没有配置 api_key",
+        ))?;
     let mut keys = Vec::new();
     miyu_base::config::append_resolved_api_keys(&mut keys, raw)?;
     keys.into_iter()
         .map(|key| key.value)
         .find(|key| !key.trim().is_empty())
-        .context("MiniMax 播报的 api_key 解析为空")
+        .context(t(
+            "The MiniMax speech api_key resolved to an empty value",
+            "MiniMax 播报的 api_key 解析为空",
+        ))
 }
 
 fn minimax_client(cfg: &MiniMaxTtsConfig) -> Result<(reqwest::Client, String)> {
@@ -435,9 +523,12 @@ pub(crate) async fn synthesize_minimax(tts: &MiniMaxTtsConfig, text: &str) -> Re
         .json(&body)
         .send()
         .await
-        .context("请求 MiniMax t2a_v2")?;
+        .context(t("Requesting MiniMax t2a_v2", "请求 MiniMax t2a_v2"))?;
     let status = response.status();
-    let payload: Value = response.json().await.context("解析 MiniMax 应答")?;
+    let payload: Value = response
+        .json()
+        .await
+        .context(t("Parsing the MiniMax response", "解析 MiniMax 应答"))?;
     let code = payload
         .pointer("/base_resp/status_code")
         .and_then(Value::as_i64)
@@ -447,14 +538,30 @@ pub(crate) async fn synthesize_minimax(tts: &MiniMaxTtsConfig, text: &str) -> Re
             .pointer("/base_resp/status_msg")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        anyhow::bail!("MiniMax 合成失败(HTTP {status},status_code {code}):{message}");
+        anyhow::bail!(
+            "{}",
+            t(
+                "MiniMax synthesis failed (HTTP {status}, status_code {code}): {message}",
+                "MiniMax 合成失败(HTTP {status},status_code {code}):{message}",
+            )
+            .replace("{status}", &status.to_string())
+            .replace("{code}", &code.to_string())
+            .replace("{message}", message)
+        );
     }
     let audio_hex = payload
         .pointer("/data/audio")
         .and_then(Value::as_str)
-        .context("MiniMax 应答没有 data.audio")?;
-    let bytes = hex::decode(audio_hex.trim()).context("MiniMax 音频 hex 解码")?;
-    anyhow::ensure!(bytes.len() > 44, "MiniMax 返回的音频为空");
+        .context(t(
+            "The MiniMax response has no data.audio",
+            "MiniMax 应答没有 data.audio",
+        ))?;
+    let bytes = hex::decode(audio_hex.trim())
+        .context(t("Decoding the MiniMax audio hex", "MiniMax 音频 hex 解码"))?;
+    anyhow::ensure!(
+        bytes.len() > 44,
+        t("MiniMax returned empty audio", "MiniMax 返回的音频为空")
+    );
     Ok(bytes)
 }
 
@@ -468,8 +575,11 @@ pub async fn list_minimax_voices(tts: &MiniMaxTtsConfig) -> Result<Vec<Value>> {
         .json(&json!({ "voice_type": "all" }))
         .send()
         .await
-        .context("请求 MiniMax get_voice")?;
-    let payload: Value = response.json().await.context("解析 MiniMax 音色列表")?;
+        .context(t("Requesting MiniMax get_voice", "请求 MiniMax get_voice"))?;
+    let payload: Value = response
+        .json()
+        .await
+        .context(t("Parsing the MiniMax voice list", "解析 MiniMax 音色列表"))?;
     let code = payload
         .pointer("/base_resp/status_code")
         .and_then(Value::as_i64)
@@ -479,13 +589,21 @@ pub async fn list_minimax_voices(tts: &MiniMaxTtsConfig) -> Result<Vec<Value>> {
             .pointer("/base_resp/status_msg")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        anyhow::bail!("MiniMax get_voice 失败(status_code {code}):{message}");
+        anyhow::bail!(
+            "{}",
+            t(
+                "MiniMax get_voice failed (status_code {code}): {message}",
+                "MiniMax get_voice 失败(status_code {code}):{message}",
+            )
+            .replace("{code}", &code.to_string())
+            .replace("{message}", message)
+        );
     }
     let mut out = Vec::new();
     for (group, prefix) in [
         ("system_voice", ""),
-        ("voice_cloning", "克隆:"),
-        ("voice_generation", "生成:"),
+        ("voice_cloning", t("Cloned: ", "克隆:")),
+        ("voice_generation", t("Generated: ", "生成:")),
     ] {
         if let Some(items) = payload.get(group).and_then(Value::as_array) {
             for item in items {

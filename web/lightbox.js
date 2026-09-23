@@ -37,13 +37,13 @@ window.MiyuLightbox = (() => {
     root.hidden = true;
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
-    root.setAttribute("aria-label", "图片预览");
+    root.setAttribute("aria-label", t("图片预览"));
 
     const scrim = document.createElement("button");
     scrim.type = "button";
     scrim.className = "lightbox-scrim";
     scrim.tabIndex = -1;
-    scrim.setAttribute("aria-label", "关闭预览");
+    scrim.setAttribute("aria-label", t("关闭预览"));
     scrim.addEventListener("click", close);
 
     const frame = document.createElement("div");
@@ -60,21 +60,21 @@ window.MiyuLightbox = (() => {
     caption = document.createElement("span");
     caption.className = "lightbox-caption";
 
-    workspaceButton = iconButton("panel-right", "在预览工作区打开");
+    workspaceButton = iconButton("panel-right", t("在预览工作区打开"));
     workspaceButton.addEventListener("click", () => {
       const target = current;
       close();
       target?.onOpenInWorkspace?.();
     });
 
-    externalLink = iconButton("external-link", "在新窗口打开图片", { tag: "a" });
+    externalLink = iconButton("external-link", t("在新窗口打开图片"), { tag: "a" });
     externalLink.target = "_blank";
     externalLink.rel = "noreferrer noopener";
 
-    downloadLink = iconButton("download", "下载图片", { tag: "a" });
+    downloadLink = iconButton("download", t("下载图片"), { tag: "a" });
     downloadLink.setAttribute("download", "");
 
-    const closeButton = iconButton("x", "关闭预览");
+    const closeButton = iconButton("x", t("关闭预览"));
     closeButton.classList.add("lightbox-close");
     closeButton.addEventListener("click", close);
 

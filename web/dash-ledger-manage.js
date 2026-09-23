@@ -12,11 +12,11 @@
   if (!D) return;
 
   const ACCOUNT_KIND_LABEL = {
-    cash: "现金",
-    bank: "银行卡",
-    ewallet: "电子钱包",
-    credit: "信用卡",
-    other: "其他",
+    cash: t("现金"),
+    bank: t("银行卡"),
+    ewallet: t("电子钱包"),
+    credit: t("信用卡"),
+    other: t("其他"),
   };
 
   /*
@@ -30,7 +30,7 @@
     const close = () => { form.hidden = true; toggle.hidden = false; };
     const save = D.el("button.dash-button.is-primary", {
       type: "button",
-      text: "建立",
+      text: t("建立"),
       onclick: async () => {
         save.disabled = true;
         try {
@@ -49,7 +49,7 @@
       },
     });
     toggle.append(D.icon("plus"), label);
-    const cancel = D.el("button.dash-button", { type: "button", text: "取消", onclick: close });
+    const cancel = D.el("button.dash-button", { type: "button", text: t("取消"), onclick: close });
     form.append(D.el("div.dash-actions", null, save, cancel));
     return { toggle, form };
   }
@@ -68,20 +68,20 @@
     const { state, accounts, currencyOptions, reload } = ctx;
     const root = D.el("div");
 
-    const name = D.el("input.dash-input", { type: "text", placeholder: "微信" });
+    const name = D.el("input.dash-input", { type: "text", placeholder: t("微信") });
     const kind = D.select(
       Object.entries(ACCOUNT_KIND_LABEL).map(([value, label]) => ({ value, label })),
-      "ewallet", () => {}, "类型");
-    const currencyPicker = D.select(currencyOptions(), ctx.currency(), () => {}, "币种");
+      "ewallet", () => {}, t("类型"));
+    const currencyPicker = D.select(currencyOptions(), ctx.currency(), () => {}, t("币种"));
     const opening = D.el("input.dash-input", { type: "text", inputmode: "decimal", placeholder: "0" });
 
     const { toggle, form } = inlineForm({
-      label: "新建账户",
+      label: t("新建账户"),
       fields: [
-        { node: D.field("名称", name) },
-        { node: D.field("类型", kind) },
-        { node: D.field("币种", currencyPicker, "与账本币种不同时才需要改") },
-        { node: D.field("当前余额", opening, "可留空;之后的收支会在它上面加减") },
+        { node: D.field(t("名称"), name) },
+        { node: D.field(t("类型"), kind) },
+        { node: D.field(t("币种"), currencyPicker, t("与账本币种不同时才需要改")) },
+        { node: D.field(t("当前余额"), opening, t("可留空;之后的收支会在它上面加减")) },
       ],
       submit: async () => {
         try {
@@ -95,27 +95,27 @@
               opening_balance: opening.value.trim(),
             },
           });
-          D.toast("已建立");
+          D.toast(t("已建立"));
           reload();
         } catch (error) { D.toast(error.message, "error"); }
       },
     });
 
     root.append(head(
-      "账户",
-      "账户回答的是「这笔钱从哪付的」。只想记花了多少的话，一个都不用建——记账时这一栏会自动消失。",
+      t("账户"),
+      t("账户回答的是「这笔钱从哪付的」。只想记花了多少的话，一个都不用建——记账时这一栏会自动消失。"),
       toggle
     ), form);
 
     const list = accounts();
     if (!list.length) {
-      root.append(D.el("p.dash-empty", { text: "还没有账户。" }));
+      root.append(D.el("p.dash-empty", { text: t("还没有账户。") }));
       return root;
     }
     root.append(D.el("div.dash-led-cards", null, ...list.map((account) =>
       D.el("div.dash-led-card", null,
         D.el("span.dash-led-card-name", { text: account.name }),
-        D.el("span.dash-chip", { text: ACCOUNT_KIND_LABEL[account.kind] || "其他" }),
+        D.el("span.dash-chip", { text: ACCOUNT_KIND_LABEL[account.kind] || t("其他") }),
         D.el("strong.dash-led-card-value", { text: `${account.balance_text} ${account.currency}` })))));
     return root;
   }
@@ -126,17 +126,17 @@
     const { state, categories, reload } = ctx;
     const root = D.el("div");
 
-    const name = D.el("input.dash-input", { type: "text", placeholder: "健身" });
+    const name = D.el("input.dash-input", { type: "text", placeholder: t("健身") });
     const direction = D.select(
-      [{ value: "expense", label: "支出" }, { value: "income", label: "收入" }],
-      "expense", () => {}, "方向");
-    const parent = D.select([{ value: "", label: "作为一级分类" }], "", () => {}, "上级");
+      [{ value: "expense", label: t("支出") }, { value: "income", label: t("收入") }],
+      "expense", () => {}, t("方向"));
+    const parent = D.select([{ value: "", label: t("作为一级分类") }], "", () => {}, t("上级"));
     const icon = D.el("input.dash-input", { type: "text", placeholder: "🏋️", maxlength: "4" });
 
     // 上级只能选同方向的一级分类，改方向要跟着换一批。
     const syncParents = () => {
       const roots = categories().filter((c) => c.direction === direction.value && !c.parent_id);
-      parent.replaceChildren(D.el("option", { value: "", text: "作为一级分类" }));
+      parent.replaceChildren(D.el("option", { value: "", text: t("作为一级分类") }));
       for (const root of roots) {
         parent.append(D.el("option", { value: root.id, text: root.name }));
       }
@@ -145,12 +145,12 @@
     syncParents();
 
     const { toggle, form } = inlineForm({
-      label: "新建分类",
+      label: t("新建分类"),
       fields: [
-        { node: D.field("名称", name) },
-        { node: D.field("方向", direction) },
-        { node: D.field("上级", parent, "选了就成为二级分类，花销照样算进上级") },
-        { node: D.field("图标", icon, "一个 emoji，可留空") },
+        { node: D.field(t("名称"), name) },
+        { node: D.field(t("方向"), direction) },
+        { node: D.field(t("上级"), parent, t("选了就成为二级分类，花销照样算进上级")) },
+        { node: D.field(t("图标"), icon, t("一个 emoji，可留空")) },
       ],
       submit: async () => {
         try {
@@ -164,20 +164,20 @@
               icon: icon.value.trim(),
             },
           });
-          D.toast("已建立");
+          D.toast(t("已建立"));
           reload();
         } catch (error) { D.toast(error.message, "error"); }
       },
     });
 
-    root.append(head("分类", "收和支各一棵树，最多两层。二级分类的花销会算进它的上级。", toggle), form);
+    root.append(head(t("分类"), t("收和支各一棵树，最多两层。二级分类的花销会算进它的上级。"), toggle), form);
 
-    for (const [dir, title] of [["expense", "支出分类"], ["income", "收入分类"]]) {
+    for (const [dir, title] of [["expense", t("支出分类")], ["income", t("收入分类")]]) {
       const all = categories().filter((c) => c.direction === dir);
       const roots = all.filter((c) => !c.parent_id);
       const block = D.el("section.dash-led-block", null, D.el("h3.dash-section", { text: title }));
       if (!roots.length) {
-        block.append(D.el("p.dash-empty", { text: "还没有分类" }));
+        block.append(D.el("p.dash-empty", { text: t("还没有分类") }));
       } else {
         block.append(D.el("div.dash-led-chips", null, ...roots.flatMap((root) => {
           const children = all.filter((c) => c.parent_id === root.id);
@@ -200,17 +200,17 @@
     const root = D.el("div");
     const budgets = state.overview?.budgets || [];
 
-    const scope = D.select([{ value: "", label: "整本账（总预算）" }], "", () => {}, "作用范围");
+    const scope = D.select([{ value: "", label: t("整本账（总预算）") }], "", () => {}, t("作用范围"));
     for (const category of categories().filter((c) => c.direction === "expense" && !c.parent_id)) {
       scope.append(D.el("option", { value: category.id, text: `${category.icon || ""} ${category.name}`.trim() }));
     }
     const amount = D.el("input.dash-input", { type: "text", inputmode: "decimal", placeholder: "3000" });
 
     const { toggle, form } = inlineForm({
-      label: "设定预算",
+      label: t("设定预算"),
       fields: [
-        { node: D.field("作用范围", scope) },
-        { node: D.field("每月额度", amount, `以 ${ctx.currency()} 计`) },
+        { node: D.field(t("作用范围"), scope) },
+        { node: D.field(t("每月额度"), amount, t("以 {currency} 计", { currency: ctx.currency() })) },
       ],
       submit: async () => {
         try {
@@ -218,20 +218,20 @@
             method: "POST",
             body: { book: state.book, category: scope.value, amount: amount.value.trim() },
           });
-          D.toast("已设定");
+          D.toast(t("已设定"));
           reload();
         } catch (error) { D.toast(error.message, "error"); }
       },
     });
 
     root.append(head(
-      "月度预算",
-      "每月重新计算。超过八成她记账时会提一句，超支会直接报出来。",
+      t("月度预算"),
+      t("每月重新计算。超过八成她记账时会提一句，超支会直接报出来。"),
       toggle
     ), form);
 
     if (!budgets.length) {
-      root.append(D.el("p.dash-empty", { text: "还没有设预算。" }));
+      root.append(D.el("p.dash-empty", { text: t("还没有设预算。") }));
       return root;
     }
     root.append(D.el("div", null, ...budgets.map((budget) => {
@@ -242,15 +242,15 @@
       fill.style.setProperty("width", `${percent}%`);
       return D.el("div.dash-meter.dash-led-budget", null,
         D.el("span.dash-meter-label", {
-          text: budget.scope === "total" ? "整本账" : budget.scope.replace("category:", ""),
+          text: budget.scope === "total" ? t("整本账") : budget.scope.replace("category:", ""),
         }),
         D.el("span.dash-meter-track", null, fill),
         D.el("span.dash-cell-mono", { text: `${budget.used_text} / ${budget.limit_text}` }),
-        D.iconButton("trash-2", "删除预算", async () => {
-          if (!(await D.confirmAction("删除这条预算?"))) return;
+        D.iconButton("trash-2", t("删除预算"), async () => {
+          if (!(await D.confirmAction(t("删除这条预算?")))) return;
           try {
             await D.api(`/api/dash/ledger/budgets/${encodeURIComponent(budget.id)}`, { method: "DELETE" });
-            D.toast("已删除");
+            D.toast(t("已删除"));
             reload();
           } catch (error) { D.toast(error.message, "error"); }
         }));
@@ -265,13 +265,13 @@
     const root = D.el("div");
 
     // 账本
-    const bookName = D.el("input.dash-input", { type: "text", placeholder: "工作" });
+    const bookName = D.el("input.dash-input", { type: "text", placeholder: t("工作") });
     const bookCurrency = D.el("input.dash-input", { type: "text", placeholder: "CNY", maxlength: "3" });
     const { toggle: bookToggle, form: bookForm } = inlineForm({
-      label: "新建账本",
+      label: t("新建账本"),
       fields: [
-        { node: D.field("名称", bookName) },
-        { node: D.field("目标币种", bookCurrency, "这本账的所有统计都换算成它，之后不便更改") },
+        { node: D.field(t("名称"), bookName) },
+        { node: D.field(t("目标币种"), bookCurrency, t("这本账的所有统计都换算成它，之后不便更改")) },
       ],
       submit: async () => {
         try {
@@ -279,38 +279,38 @@
             method: "POST",
             body: { name: bookName.value.trim(), currency: bookCurrency.value.trim().toUpperCase() },
           });
-          D.toast("已建立");
+          D.toast(t("已建立"));
           reload();
         } catch (error) { D.toast(error.message, "error"); }
       },
     });
-    root.append(head("账本", "每本账有自己的币种、账户、分类和预算，互不干扰。", bookToggle), bookForm);
+    root.append(head(t("账本"), t("每本账有自己的币种、账户、分类和预算，互不干扰。"), bookToggle), bookForm);
     root.append(D.el("div.dash-led-cards", null, ...(state.overview?.books || []).map((book) =>
       D.el(`div.dash-led-card${book.id === state.book ? ".is-current" : ""}`, null,
         D.el("span.dash-led-card-name", { text: book.name }),
         D.el("span.dash-chip", { text: book.currency }),
-        book.id === state.book ? D.el("span.dash-chip.is-active", { text: "当前" }) : null))));
+        book.id === state.book ? D.el("span.dash-chip.is-active", { text: t("当前") }) : null))));
 
     // 导入导出
     // 原生 file 控件的「Choose File / No file chosen」是浏览器给的英文，
     // 改不了，只能把它藏起来自己做一个。
-    const fileName = D.el("span.dash-led-filename", { text: "未选择文件" });
+    const fileName = D.el("span.dash-led-filename", { text: t("未选择文件") });
     const file = D.el("input", {
       type: "file",
       accept: ".csv,text/csv",
       hidden: true,
-      onchange: () => { fileName.textContent = file.files?.[0]?.name || "未选择文件"; },
+      onchange: () => { fileName.textContent = file.files?.[0]?.name || t("未选择文件"); },
     });
     const pick = D.el("div.dash-led-file", null,
-      D.el("button.dash-button", { type: "button", text: "选择文件", onclick: () => file.click() }),
+      D.el("button.dash-button", { type: "button", text: t("选择文件"), onclick: () => file.click() }),
       fileName, file);
     const createMissing = D.el("input", { type: "checkbox" });
     const importButton = D.el("button.dash-button", {
       type: "button",
-      text: "开始导入",
+      text: t("开始导入"),
       onclick: async () => {
         const picked = file.files?.[0];
-        if (!picked) { D.toast("先选一个 CSV 文件", "error"); return; }
+        if (!picked) { D.toast(t("先选一个 CSV 文件"), "error"); return; }
         importButton.disabled = true;
         try {
           const csv = await picked.text();
@@ -318,11 +318,11 @@
             method: "POST",
             body: { book: state.book, csv, create_missing: createMissing.checked },
           });
-          const parts = [`导入 ${result.imported} 笔`];
-          if (result.skipped) parts.push(`跳过重复 ${result.skipped} 笔`);
-          if (result.failed) parts.push(`失败 ${result.failed} 笔`);
-          D.toast(parts.join("，"), result.failed ? "error" : undefined);
-          if (result.failures?.length) console.warn("记账导入失败明细", result.failures);
+          const parts = [t("导入 {count} 笔", { count: result.imported })];
+          if (result.skipped) parts.push(t("跳过重复 {count} 笔", { count: result.skipped }));
+          if (result.failed) parts.push(t("失败 {count} 笔", { count: result.failed }));
+          D.toast(parts.join(t("，")), result.failed ? "error" : undefined);
+          if (result.failures?.length) console.warn("记账导入失败明细", result.failures);  // i18n-allow: console 日志(开发者排错用),不是界面文案
           reload();
         } catch (error) {
           D.toast(error.message, "error");
@@ -334,18 +334,18 @@
 
     root.append(
       D.el("section.dash-led-block", null,
-        D.el("h3.dash-section", { text: "导入导出" }),
-        D.el("p.dash-led-hint", { text: "导出的是当前月份；导入按内容去重，同一份文件导两次不会重复。" }),
+        D.el("h3.dash-section", { text: t("导入导出") }),
+        D.el("p.dash-led-hint", { text: t("导出的是当前月份；导入按内容去重，同一份文件导两次不会重复。") }),
         D.el("div.dash-actions", null,
           D.el("button.dash-button", {
             type: "button",
-            text: "导出本月 CSV",
+            text: t("导出本月 CSV"),
             onclick: () => window.open(`/api/dash/ledger/export?${query()}`, "_blank"),
           })),
         D.el("div.dash-led-form", null,
-          D.field("导入 CSV", pick, "表头至少要有 date、kind、amount 三列"),
+          D.field(t("导入 CSV"), pick, t("表头至少要有 date、kind、amount 三列")),
           D.el("label.dash-check", null, createMissing,
-            D.el("span", { text: "自动建立文件里没见过的分类与账户" })),
+            D.el("span", { text: t("自动建立文件里没见过的分类与账户") })),
           D.el("div.dash-actions", null, importButton))));
 
     return root;

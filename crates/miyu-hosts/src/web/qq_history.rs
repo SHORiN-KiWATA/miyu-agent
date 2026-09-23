@@ -98,7 +98,7 @@ pub(in crate::web) async fn qq_group_history_clear_http(
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "kind must be offenders or kicks",
-            ))
+            ));
         }
     };
     state

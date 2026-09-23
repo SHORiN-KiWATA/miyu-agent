@@ -49,6 +49,7 @@ mod subagent_host;
 mod tests;
 mod tty;
 mod turns;
+mod ui_locale;
 mod ui_prefs;
 mod voice_api;
 pub mod voice_bridge;
@@ -169,6 +170,9 @@ const SELECTION_MENU_JS: &str = include_str!("../../../../web/selectionmenu.js")
 const HIGHLIGHT_JS: &str = include_str!("../../../../web/highlight.js");
 // 文件分享面板:独立文件,与 artifact 演示区无关。
 const SHARED_JS: &str = include_str!("../../../../web/shared.js");
+// WebUI 双语运行时与英文词典(2026-09-23):语言由服务端注入,见 ui_locale.rs。
+const I18N_JS: &str = include_str!("../../../../web/i18n.js");
+const I18N_EN_JS: &str = include_str!("../../../../web/i18n-en.js");
 // 文件编辑工具的 diff 渲染:把 patchText 参数画成增删配色的 diff 卡。
 const DIFF_JS: &str = include_str!("../../../../web/diff.js");
 // 插件 dashboard 脚本走 assets.rs 的 DASH_SCRIPTS 静态表,加面板只改那一行。

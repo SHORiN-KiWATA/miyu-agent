@@ -13,10 +13,10 @@
 window.MiyuTodos = (() => {
   const STATUS_ORDER = ["in_progress", "pending", "completed", "cancelled"];
   const STATUS_LABEL = {
-    pending: "待处理",
-    in_progress: "进行中",
-    completed: "已完成",
-    cancelled: "已取消",
+    pending: t("待处理"),
+    in_progress: t("进行中"),
+    completed: t("已完成"),
+    cancelled: t("已取消"),
   };
 
   function isTodoTool(name) {
@@ -69,7 +69,7 @@ window.MiyuTodos = (() => {
     head.className = "todo-panel-head";
     const done = todos.filter((todo) => todo.status === "completed").length;
     const title = document.createElement("strong");
-    title.textContent = "任务列表";
+    title.textContent = t("任务列表");
     const count = document.createElement("small");
     count.textContent = `${done} / ${todos.length}`;
     head.append(title, count);

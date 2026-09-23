@@ -27,12 +27,12 @@
   refreshUiScale();
   window.addEventListener("resize", refreshUiScale);
   const artifactTextScale = () => 1.2 / UI_SCALE;
-  const DEFAULT_BOARD_TITLE = "今天想聊些什么？";
-  const DEFAULT_BOARD_SUBTITLE = "从一个问题、计划或此刻的想法开始。";
+  const DEFAULT_BOARD_TITLE = t("今天想聊些什么？");
+  const DEFAULT_BOARD_SUBTITLE = t("从一个问题、计划或此刻的想法开始。");
   // 输入框提示跟着人格名走,所以是函数不是常量;与后端
   // `web::dto::default_composer_placeholder` 保持同一句话。
-  const defaultComposerPlaceholder = (name) => `给 ${name} 发消息`;
-  const DEFAULT_STARTER_PROMPTS = ["查询今天的天气", "分析一个问题", "发表情包打个招呼吧", "搜索一张图片"];
+  const defaultComposerPlaceholder = (name) => t("给 {name} 发消息", {name: name});
+  const DEFAULT_STARTER_PROMPTS = [t("查询今天的天气"), t("分析一个问题"), t("发表情包打个招呼吧"), t("搜索一张图片")];
   // 档位一律用供应商原值(max/high/minimal…),不翻译:译名和文档、和模型
   // 实际认的参数值对不上,查起来反而费劲。"没设"这一档没有原值,只好写字。
   const THINKING_VARIANT_DEFAULT_LABEL = "default";
@@ -210,6 +210,7 @@
     sidebarConnectionStatus: document.getElementById("sidebarConnectionStatus"),
     newChatButton: document.getElementById("newChatButton"),
     matugenThemeLink: document.getElementById("matugenThemeLink"),
+    languageSeg: document.getElementById("languageSeg"),
     reasoningExpandToggle: document.getElementById("reasoningExpandToggle"),
     toolExpandToggle: document.getElementById("toolExpandToggle"),
     procCollapseToggle: document.getElementById("procCollapseToggle"),
@@ -661,7 +662,7 @@
     for (const button of [elements.sidebarThemeButton]) {
       const slot = button.querySelector(".icon-slot");
       slot.replaceChildren(createIcon(nextIcon));
-      button.title = selected === "graphite" ? "切换到晨光主题" : "切换到夜阑主题";
+      button.title = selected === "graphite" ? t("切换到晨光主题") : t("切换到夜阑主题");
       button.setAttribute("aria-label", button.title);
     }
     const themeColor = document.querySelector('meta[name="theme-color"]');
@@ -1017,7 +1018,7 @@
   }
 
   function thinkingVariantLabel(variant, short = false) {
-    if (variant == null) return short ? THINKING_VARIANT_DEFAULT_LABEL : "模型默认";
+    if (variant == null) return short ? THINKING_VARIANT_DEFAULT_LABEL : t("模型默认");
     return String(variant);
   }
 
@@ -1060,7 +1061,7 @@
       updateCurrentModelDisplay();
     } catch (error) {
       if (generation !== state.thinkingVariantLoadGeneration) return;
-      state.thinkingVariantError = error.message || "无法载入思考档位";
+      state.thinkingVariantError = error.message || t("无法载入思考档位");
     } finally {
       if (generation === state.thinkingVariantLoadGeneration) {
         state.thinkingVariantLoading = false;
@@ -1187,7 +1188,7 @@
   function showToast(message, type = "info") {
     const toast = document.createElement("div");
     toast.className = `toast${type === "error" ? " is-error" : ""}`;
-    toast.textContent = String(message || "操作未完成");
+    toast.textContent = String(message || t("操作未完成"));
     elements.toastRegion.replaceChildren(toast);
     if (state.toastTimer) window.clearTimeout(state.toastTimer);
     state.toastTimer = window.setTimeout(() => {
@@ -1196,7 +1197,7 @@
   }
 
   function showInlineError(message) {
-    const text = String(message || "操作未完成").trim();
+    const text = String(message || t("操作未完成")).trim();
     elements.errorRegion.textContent = text;
     elements.errorRegion.hidden = !text;
   }
@@ -1269,7 +1270,7 @@
     elements.composerInput.placeholder = state.persona.composer_placeholder;
     const boardImageUrl = state.persona.board_image_url;
     elements.emptyVisual.hidden = !boardImageUrl;
-    elements.emptyBoardImage.alt = `${state.persona.name} 看板图片`;
+    elements.emptyBoardImage.alt = t("{name} 看板图片", {name: state.persona.name});
     if (boardImageUrl) {
       elements.emptyBoardImage.onerror = () => {
         elements.emptyBoardImage.removeAttribute("src");
@@ -1355,16 +1356,24 @@
 
   function updateSettingsControls() {
     const busy = state.configLoading || state.configSaving;
+    // 界面语言是 config 字段(display.language),不在 schema 表单里:显示的是
+    // **草稿**里的值(用户 09-23 指定放在「界面」视图的对话字号上面)。
+    const language = String(state.configDraft?.display?.language || "auto");
+    elements.languageSeg?.querySelectorAll("[data-language]").forEach((button) => {
+      const active = button.dataset.language === language;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
     elements.reloadConfigButton.disabled = busy;
     elements.saveConfigButton.disabled = busy || !state.configLoaded || !state.configDirty || state.invalidConfigFields.size > 0 || conversationRunning();
     elements.settingsFooter?.classList.toggle("is-dirty", Boolean(state.configLoaded && state.configDirty));
     elements.settingsFooter?.classList.toggle("is-invalid", state.invalidConfigFields.size > 0);
-    if (state.configLoading) elements.settingsStatus.textContent = "正在载入配置";
-    else if (state.configSaving) elements.settingsStatus.textContent = "正在验证并保存";
-    else if (!state.configLoaded) elements.settingsStatus.textContent = "尚未载入配置";
-    else if (state.invalidConfigFields.size) elements.settingsStatus.textContent = "请修正表单中的错误";
-    else if (conversationRunning() && state.configDirty) elements.settingsStatus.textContent = "回复完成后才能保存";
-    else elements.settingsStatus.textContent = state.configDirty ? "有未保存的修改" : "配置已同步";
+    if (state.configLoading) elements.settingsStatus.textContent = t("正在载入配置");
+    else if (state.configSaving) elements.settingsStatus.textContent = t("正在验证并保存");
+    else if (!state.configLoaded) elements.settingsStatus.textContent = t("尚未载入配置");
+    else if (state.invalidConfigFields.size) elements.settingsStatus.textContent = t("请修正表单中的错误");
+    else if (conversationRunning() && state.configDirty) elements.settingsStatus.textContent = t("回复完成后才能保存");
+    else elements.settingsStatus.textContent = state.configDirty ? t("有未保存的修改") : t("配置已同步");
   }
 
   function updateAdvancedConfigEditor() {
@@ -1462,15 +1471,15 @@
 
   async function loadConfigDraft() {
     if (state.configLoading || state.configSaving) return;
-    if (state.configDirty && !window.confirm("放弃尚未保存的配置修改并重新载入？")) return;
+    if (state.configDirty && !window.confirm(t("放弃尚未保存的配置修改并重新载入？"))) return;
     state.configLoading = true;
     updateSettingsControls();
     try {
       const response = await apiRequest("/api/config");
       applyConfigPayload(await response.json());
     } catch (error) {
-      showToast(error.message || "配置载入失败", "error");
-      elements.settingsStatus.textContent = error.message || "配置载入失败";
+      showToast(error.message || t("配置载入失败"), "error");
+      elements.settingsStatus.textContent = error.message || t("配置载入失败");
     } finally {
       state.configLoading = false;
       updateSettingsControls();
@@ -1508,6 +1517,11 @@
     if (!state.configLoaded || state.configSaving || state.configLoading || conversationRunning() || state.invalidConfigFields.size) return;
     const personaChanged = String(state.configDraft?.prompt?.active_persona || "")
       !== String(state.configOriginal?.prompt?.active_persona || "");
+    // 界面语言变了要整页重载(2026-09-23):语言是服务端按请求注入的
+    // (/i18n.js 里的 MIYU_LANG + 根页面 lang),已经渲染好的这一页改不了。
+    // 比的是「上一份已保存的配置」与「服务端回执」——draft 里已经是新值,
+    // 拿 draft 比永远相等,重载就永远不触发。
+    const languageBefore = String(state.configOriginal?.display?.language || "auto");
     state.configSaving = true;
     state.adminBusy = true;
     updateSettingsControls();
@@ -1522,12 +1536,18 @@
           reset_conversation: false
         })
       });
-      applyConfigPayload(await response.json());
+      const payload = await response.json();
+      const languageAfter = String(payload?.config?.display?.language || "auto");
+      applyConfigPayload(payload);
+      if (languageBefore !== languageAfter) {
+        location.reload();
+        return;
+      }
       if (personaChanged) await loadBootstrap();
-      showToast("配置已保存");
+      showToast(t("配置已保存"));
     } catch (error) {
-      showToast(error.message || "配置保存失败", "error");
-      elements.settingsStatus.textContent = error.message || "配置保存失败";
+      showToast(error.message || t("配置保存失败"), "error");
+      elements.settingsStatus.textContent = error.message || t("配置保存失败");
     } finally {
       state.configSaving = false;
       state.adminBusy = false;
@@ -1539,7 +1559,7 @@
   function applyAdvancedConfig() {
     try {
       const parsed = JSON.parse(elements.advancedConfigEditor.value);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("配置必须是 JSON 对象");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(t("配置必须是 JSON 对象"));
       const oldSecretStates = new Map((state.configDraft?.providers || []).map((provider, index) => [String(provider?.id || ""), Boolean(state.providerSecretStates[index])]));
       state.configDraft = parsed;
       ensurePlatformDefaults(state.configDraft);
@@ -1548,9 +1568,9 @@
       clearProviderSecretChanges();
       markConfigDirty();
       renderConfigEditors();
-      showToast("完整配置已应用到草稿");
+      showToast(t("完整配置已应用到草稿"));
     } catch (error) {
-      showToast(error.message || "JSON 无效", "error");
+      showToast(error.message || t("JSON 无效"), "error");
     }
   }
 
@@ -1562,7 +1582,7 @@
     } catch (_) {
       // Fall through to an HTTP status message.
     }
-    return `请求失败 (${response.status})`;
+    return t("请求失败 ({status})", {status: response.status});
   }
 
   async function apiRequest(path, options = {}) {
@@ -1573,12 +1593,12 @@
     try {
       response = await fetch(path, { ...options, headers, credentials: "same-origin" });
     } catch (_) {
-      throw new ApiError("无法连接 Miyu WebUI", 0);
+      throw new ApiError(t("无法连接 Miyu WebUI"), 0);
     }
     if (response.status === 401 && !state.blocked && !path.startsWith("/api/auth/")) {
       // 登录态没了(daemon 重启、令牌过期):直接回登录页,别等用户发消息时弹一句英文。
       showBlockedState(true, "", { expired: true });
-      throw new ApiError("登录已过期,请重新登录", 401);
+      throw new ApiError(t("登录已过期,请重新登录"), 401);
     }
     if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
     return response;
@@ -1626,7 +1646,7 @@
     const duration = asFiniteNumber(millis, 0);
     if (count <= 0 || duration <= 0) return "";
     const rate = (count * 1000) / duration;
-    return `每秒 ${rate >= 10 ? formatInteger(Math.round(rate)) : rate.toFixed(1)} toks`;
+    return t("每秒 {rate} toks", {rate: rate >= 10 ? formatInteger(Math.round(rate)) : rate.toFixed(1)});
   }
 
   // 只取速度数字(给输入框下方信息行的「每秒 __ toks」用,模板已带「每秒/toks」)。
@@ -1643,10 +1663,10 @@
     const speed = formatGenerationSpeed(generationTokens, generationMs);
     if (speed) parts.push(speed);
     if (asFiniteNumber(turnTotal) > 0) {
-      parts.push(`本轮${estimated ? "约 " : " "}${formatTokens(turnTotal)}${cacheSuffix(turnCached, turnPrompt)}`);
+      parts.push(t("本轮{approx}{total}{cache}", {approx: estimated ? t("约 ") : " ", total: formatTokens(turnTotal), cache: cacheSuffix(turnCached, turnPrompt)}));
     }
     if (asFiniteNumber(cumulative) > 0) {
-      parts.push(`累计 ${formatTokens(cumulative)}${cacheSuffix(cumulativeCached, cumulativePrompt)}`);
+      parts.push(t("累计 {total}{cache}", {total: formatTokens(cumulative), cache: cacheSuffix(cumulativeCached, cumulativePrompt)}));
     }
     return parts.join(" · ");
   }
@@ -1702,8 +1722,8 @@
     const date = parseDate(value);
     if (!date) return "";
     const difference = Date.now() - date.getTime();
-    if (difference >= 0 && difference < 60_000) return "刚刚";
-    if (difference >= 0 && difference < 3_600_000) return `${Math.max(1, Math.floor(difference / 60_000))} 分钟前`;
+    if (difference >= 0 && difference < 60_000) return t("刚刚");
+    if (difference >= 0 && difference < 3_600_000) return t("{count} 分钟前", {count: Math.max(1, Math.floor(difference / 60_000))});
     const now = new Date();
     if (date.toDateString() === now.toDateString()) return formatTime(date);
     try {
@@ -1721,16 +1741,16 @@
 
   function formatDayLabel(value) {
     const date = parseDate(value);
-    if (!date) return "较早";
+    if (!date) return t("较早");
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
-    if (date.toDateString() === today.toDateString()) return "今天";
-    if (date.toDateString() === yesterday.toDateString()) return "昨天";
+    if (date.toDateString() === today.toDateString()) return t("今天");
+    if (date.toDateString() === yesterday.toDateString()) return t("昨天");
     try {
       return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(date);
     } catch (_) {
-      return date.toLocaleDateString?.() || "较早";
+      return date.toLocaleDateString?.() || t("较早");
     }
   }
 
@@ -1759,10 +1779,10 @@
   function setConnectionStatus(status) {
     state.connection = status;
     const definitions = {
-      online: { sidebar: "在线", className: "" },
-      connecting: { sidebar: "重连中", className: "is-connecting" },
-      offline: { sidebar: "离线", className: "is-offline" },
-      blocked: { sidebar: "未授权", className: "is-blocked" }
+      online: { sidebar: t("在线"), className: "" },
+      connecting: { sidebar: t("重连中"), className: "is-connecting" },
+      offline: { sidebar: t("离线"), className: "is-offline" },
+      blocked: { sidebar: t("未授权"), className: "is-blocked" }
     };
     const selected = definitions[status] || definitions.connecting;
     elements.sidebarConnectionStatus.textContent = selected.sidebar;
@@ -1786,7 +1806,7 @@
     }
     if (elements.contextTrack) {
       elements.contextTrack.setAttribute("aria-valuenow", String(Math.round(percent)));
-      elements.contextTrack.setAttribute("aria-label", windowSize ? `上下文使用 ${Math.round(percent)}%` : `上下文 ${formatInteger(tokens)} tokens`);
+      elements.contextTrack.setAttribute("aria-label", windowSize ? t("上下文使用 {percent}%", {percent: Math.round(percent)}) : t("上下文 {tokens} tokens", {tokens: formatInteger(tokens)}));
       elements.contextTrack.classList.toggle("is-high", percent >= 75 && percent < 90);
       elements.contextTrack.classList.toggle("is-critical", percent >= 90);
     }
@@ -1817,9 +1837,9 @@
 
   function updateCapabilities() {
     const values = [
-      ["会话", state.capabilities?.multi_conversation ? "多会话" : "当前单一对话"],
-      ["附件", state.capabilities?.attachments ? "可用" : "不可用"],
-      ["消息队列", state.capabilities?.queue ? "可用" : "不可用"]
+      [t("会话"), state.capabilities?.multi_conversation ? t("多会话") : t("当前单一对话")],
+      [t("附件"), state.capabilities?.attachments ? t("可用") : t("不可用")],
+      [t("消息队列"), state.capabilities?.queue ? t("可用") : t("不可用")]
     ];
     elements.capabilityList.replaceChildren();
     for (const [name, value] of values) {
@@ -1906,12 +1926,12 @@
     const active = activeModels();
     if (active.length === 0) {
       elements.settingsModelMark.textContent = "--";
-      elements.settingsModelName.textContent = state.models.length ? "未选择模型" : "未配置模型";
+      elements.settingsModelName.textContent = state.models.length ? t("未选择模型") : t("未配置模型");
       elements.settingsModelProvider.textContent = "--";
     } else if (active.length > 1) {
       elements.settingsModelMark.textContent = "MX";
-      elements.settingsModelName.textContent = "混合模型";
-      elements.settingsModelProvider.textContent = `${active.length} 个活动端点`;
+      elements.settingsModelName.textContent = t("混合模型");
+      elements.settingsModelProvider.textContent = t("{count} 个活动端点", {count: active.length});
     } else {
       elements.settingsModelMark.textContent = modelMark(active[0]);
       elements.settingsModelName.textContent = String(active[0].model || "");
@@ -1921,15 +1941,15 @@
     // 顶栏反映当前会话生效的模型池：有覆盖显示覆盖，否则跟随全局。
     const override = viewSessionModelOverride();
     const pool = override ? override.map(describeOverrideModel) : active;
-    const scope = override ? "本会话固定" : "跟随全局";
+    const scope = override ? t("本会话固定") : t("跟随全局");
     if (pool.length === 0) {
-      elements.modelLabel.textContent = state.models.length ? "未选择模型" : "未配置模型";
+      elements.modelLabel.textContent = state.models.length ? t("未选择模型") : t("未配置模型");
       elements.modelLabel.title = `${elements.modelLabel.textContent}（${scope}）`;
       return;
     }
     if (pool.length > 1) {
       const title = pool.map((model) => `${model.provider_name || model.provider_id || ""} · ${model.model || ""}`).join("\n");
-      elements.modelLabel.textContent = `混合模型 · ${pool.length}`;
+      elements.modelLabel.textContent = t("混合模型 · {count}", {count: pool.length});
       elements.modelLabel.title = `${scope}\n${title}`;
       return;
     }
@@ -1996,7 +2016,7 @@
     const list = document.createElement("div");
     list.className = "model-menu-list";
     list.setAttribute("role", "group");
-    list.setAttribute("aria-label", "可用模型");
+    list.setAttribute("aria-label", t("可用模型"));
 
     const follow = document.createElement("button");
     follow.type = "button";
@@ -2007,9 +2027,9 @@
     const followCopy = document.createElement("span");
     followCopy.className = "model-menu-copy";
     const followName = document.createElement("strong");
-    followName.textContent = "跟随全局";
+    followName.textContent = t("跟随全局");
     const followHint = document.createElement("small");
-    followHint.textContent = "使用全局激活模型池";
+    followHint.textContent = t("使用全局激活模型池");
     followCopy.append(followName, followHint);
     const followCheck = document.createElement("span");
     followCheck.className = "icon-slot check-slot";
@@ -2060,7 +2080,7 @@
       chip.type = "button";
       chip.className = "model-level-chip";
       chip.setAttribute("aria-expanded", String(state.expandedLevelKey === key));
-      chip.title = `思考程度：${thinkingVariantLabel(stagedVariantFor(key))}`;
+      chip.title = t("思考程度：{level}", {level: thinkingVariantLabel(stagedVariantFor(key))});
       const chipText = document.createElement("span");
       chipText.textContent = thinkingVariantLabel(stagedVariantFor(key), true);
       chip.append(chipText, makeIconSlot("chevron-down"));
@@ -2084,13 +2104,13 @@
     cancel.type = "button";
     cancel.className = "model-cancel";
     cancel.setAttribute("role", "menuitem");
-    cancel.textContent = "取消";
+    cancel.textContent = t("取消");
     cancel.addEventListener("click", () => closeModelMenu({ restoreFocus: true }));
     const confirm = document.createElement("button");
     confirm.type = "button";
     confirm.className = "model-confirm";
     confirm.setAttribute("role", "menuitem");
-    confirm.textContent = "确认";
+    confirm.textContent = t("确认");
     confirm.addEventListener("click", confirmModelSelection);
     footer.append(feedback, cancel, confirm);
     elements.modelMenu.append(list, footer);
@@ -2123,12 +2143,12 @@
     if (feedback) {
       const following = staging.follow || staging.keys.size === 0;
       feedback.textContent = state.modelMenuError
-        || (following ? "跟随全局激活模型池" : `已选择 ${formatInteger(staging.keys.size)} 个模型（仅本会话）`);
+        || (following ? t("跟随全局激活模型池") : t("已选择 {count} 个模型（仅本会话）", {count: formatInteger(staging.keys.size)}));
       feedback.classList.toggle("is-error", Boolean(state.modelMenuError));
     }
     const confirm = elements.modelMenu.querySelector(".model-confirm");
     if (confirm) {
-      confirm.textContent = state.modelSelectionSubmitting ? "正在应用" : "确认";
+      confirm.textContent = state.modelSelectionSubmitting ? t("正在应用") : t("确认");
       confirm.disabled = state.modelSelectionSubmitting || state.blocked;
     }
     const cancel = elements.modelMenu.querySelector(".model-cancel");
@@ -2155,7 +2175,7 @@
     state.expandedLevelKey = key;
     const menu = elements.modelLevelMenu;
     menu.replaceChildren();
-    menu.setAttribute("aria-label", `${modelName} 的思考程度`);
+    menu.setAttribute("aria-label", t("{model} 的思考程度", {model: modelName}));
     for (const variant of [null, ...variants]) {
       const staged = stagedVariantFor(key) === variant;
       const option = document.createElement("button");
@@ -2165,7 +2185,7 @@
       option.setAttribute("aria-checked", String(staged));
       option.classList.toggle("selected", staged);
       option.textContent = thinkingVariantLabel(variant);
-      option.title = variant == null ? "使用模型默认设置" : String(variant);
+      option.title = variant == null ? t("使用模型默认设置") : String(variant);
       option.addEventListener("click", (event) => {
         event.stopPropagation();
         stageVariant(key, variant);
@@ -2240,8 +2260,8 @@
     const live = newestLiveRun();
     if (state.turns.length === 0) {
       const liveUser = live?.userText || state.pendingSubmission?.content || "";
-      if (!liveUser) return { title: "新对话", snippet: "尚未开始", timestamp: null };
-      return { title: firstLine(liveUser) || "新对话", snippet: firstLine(liveUser), timestamp: new Date() };
+      if (!liveUser) return { title: t("新对话"), snippet: t("尚未开始"), timestamp: null };
+      return { title: firstLine(liveUser) || t("新对话"), snippet: firstLine(liveUser), timestamp: new Date() };
     }
     const firstTurn = state.turns[0];
     const lastTurn = state.turns[state.turns.length - 1];
@@ -2252,8 +2272,8 @@
     const snippet = firstLine(liveContent || assistant || lastFollowup?.content || lastTurn?.user_content || "");
     const timestamp = liveContent ? live?.startedAt : lastTurn?.assistant_timestamp || lastFollowup?.submitted_at || lastTurn?.user_timestamp;
     return {
-      title: firstLine(firstTurn?.user_content) || "当前对话",
-      snippet: snippet || (lastTurn?.status === "running" ? "正在回复" : "对话已开始"),
+      title: firstLine(firstTurn?.user_content) || t("当前对话"),
+      snippet: snippet || (lastTurn?.status === "running" ? t("正在回复") : t("对话已开始")),
       timestamp
     };
   }
@@ -2264,7 +2284,7 @@
 
   function sessionDisplayName(session) {
     const name = firstLine(session?.name || "");
-    return name || "新会话";
+    return name || t("新会话");
   }
 
   function findSession(sessionId) {
@@ -2354,9 +2374,9 @@
         body: JSON.stringify({ name })
       });
       session.name = name;
-      showToast("会话已重命名");
+      showToast(t("会话已重命名"));
     } catch (error) {
-      showToast(error.message || "重命名失败", "error");
+      showToast(error.message || t("重命名失败"), "error");
     }
     renderSessionList();
     if (sessionId === state.viewSessionId) updateConversationChrome();
@@ -2367,15 +2387,15 @@
     const menu = document.createElement("div");
     menu.className = "session-menu";
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", `会话操作：${sessionDisplayName(session)}`);
+    menu.setAttribute("aria-label", t("会话操作：{name}", {name: sessionDisplayName(session)}));
     // 终端集成会话是固定入口:不可改名、不可删除、不可被顶替,
     // 菜单只留「清空对话」;其余会话不再提供「设为默认」。
     const actions = [];
-    if (!isDefault) actions.push({ label: "重命名", handler: () => beginSessionRename(id) });
+    if (!isDefault) actions.push({ label: t("重命名"), handler: () => beginSessionRename(id) });
     // 清空对本来只给默认会话（它不能改名/删除，拿这个顶位），可普通会话一样
     // 需要「留着会话、只丢历史」——删掉重建会连模型/工作目录覆盖一起丢。
-    actions.push({ label: "清空对话", handler: requestClearConversation });
-    if (!isDefault) actions.push({ label: "删除", danger: true, handler: () => deleteSession(id) });
+    actions.push({ label: t("清空对话"), handler: requestClearConversation });
+    if (!isDefault) actions.push({ label: t("删除"), danger: true, handler: () => deleteSession(id) });
     for (const action of actions) {
       const button = document.createElement("button");
       button.type = "button";
@@ -2415,7 +2435,7 @@
     main.className = `session-item-main${renaming ? " is-renaming" : ""}`;
     if (!renaming) {
       main.type = "button";
-      main.title = isView ? sessionDisplayName(session) : `查看「${sessionDisplayName(session)}」`;
+      main.title = isView ? sessionDisplayName(session) : t("查看「{name}」", {name: sessionDisplayName(session)});
       main.addEventListener("click", () => openSessionView(id));
     }
     // 行首那一格只放状态指示器。模式图标搬去了分组标题——同一组里每行都
@@ -2426,13 +2446,13 @@
     if (sessionHasRuns(id)) {
       const spinner = document.createElement("span");
       spinner.className = "session-run-spinner";
-      spinner.title = "有回复正在运行";
+      spinner.title = t("有回复正在运行");
       spinner.textContent = BRAILLE_FRAMES[state.brailleFrame % BRAILLE_FRAMES.length];
       lead.appendChild(spinner);
     } else if (state.unreadSessions.has(id)) {
       const dot = document.createElement("span");
       dot.className = "session-unread-dot";
-      dot.title = "有未读的新回复";
+      dot.title = t("有未读的新回复");
       lead.appendChild(dot);
     }
     main.appendChild(lead);
@@ -2445,7 +2465,7 @@
       input.type = "text";
       input.value = String(session?.name || "");
       input.maxLength = 200;
-      input.setAttribute("aria-label", "会话名称");
+      input.setAttribute("aria-label", t("会话名称"));
       input.addEventListener("click", (event) => event.stopPropagation());
       input.addEventListener("keydown", (event) => {
         event.stopPropagation();
@@ -2474,8 +2494,8 @@
       if (isDefault) {
         const badge = document.createElement("span");
         badge.className = "session-default-badge";
-        badge.textContent = "默认";
-        badge.title = "CLI 与快捷入口的默认会话";
+        badge.textContent = t("默认");
+        badge.title = t("CLI 与快捷入口的默认会话");
         titleRow.appendChild(badge);
       }
       copy.appendChild(titleRow);
@@ -2487,7 +2507,7 @@
       const sandbox = String(session?.sandbox || "").trim();
       // 只锁写的会话要和读写都锁的区分开，不然悬浮提示里长得一样。
       const sandboxLine = sandbox
-        ? `sandbox: ${sandbox}${session?.sandbox_read_all ? "（只锁写）" : ""}`
+        ? t("sandbox: {mode}{note}", {mode: sandbox, note: session?.sandbox_read_all ? t("（只锁写）") : ""})
         : "";
       const details = [snippet, sandboxLine].filter(Boolean).join("\n");
       if (details) {
@@ -2504,8 +2524,8 @@
     const menuButton = document.createElement("button");
     menuButton.type = "button";
     menuButton.className = "session-menu-button";
-    menuButton.title = "会话操作";
-    menuButton.setAttribute("aria-label", `会话操作：${sessionDisplayName(session)}`);
+    menuButton.title = t("会话操作");
+    menuButton.setAttribute("aria-label", t("会话操作：{name}", {name: sessionDisplayName(session)}));
     menuButton.setAttribute("aria-haspopup", "menu");
     menuButton.setAttribute("aria-expanded", String(state.sessionMenuFor === id));
     menuButton.appendChild(makeIconSlot("ellipsis"));
@@ -2572,11 +2592,11 @@
       (session) => !isTerminalSession(session?.session_id) && session?.mode === "dev"
     );
     if (normal.length) {
-      elements.sessionItems.appendChild(buildSessionGroupHeader("普通模式", "message-circle"));
+      elements.sessionItems.appendChild(buildSessionGroupHeader(t("普通模式"), "message-circle"));
       for (const session of normal) elements.sessionItems.appendChild(buildSessionItem(session));
     }
     if (dev.length) {
-      elements.sessionItems.appendChild(buildSessionGroupHeader("开发模式", "code"));
+      elements.sessionItems.appendChild(buildSessionGroupHeader(t("开发模式"), "code"));
       for (const session of dev) elements.sessionItems.appendChild(buildSessionItem(session));
     }
   }
@@ -2672,7 +2692,7 @@
         body: JSON.stringify({ session_ids: ids })
       });
     } catch (error) {
-      showToast(error.message || "排序保存失败", "error");
+      showToast(error.message || t("排序保存失败"), "error");
       refreshSessions();
     }
   }
@@ -2722,7 +2742,7 @@
       if (sessionId) await loadSessionView(sessionId);
       focusComposerIfDesktop();
     } catch (error) {
-      showToast(error.message || "新建会话失败", "error");
+      showToast(error.message || t("新建会话失败"), "error");
     } finally {
       setSessionBusy(false);
     }
@@ -2764,10 +2784,10 @@
       if (generation !== state.viewLoadGeneration) return;
       if (error.status === 401) showBlockedState(true);
       else if (error.status === 404) {
-        showToast("会话不存在", "error");
+        showToast(t("会话不存在"), "error");
         refreshSessions();
         if (sessionId === state.viewSessionId) window.setTimeout(() => openFallbackSessionView(sessionId), 0);
-      } else showToast(error.message || "载入会话失败", "error");
+      } else showToast(error.message || t("载入会话失败"), "error");
     } finally {
       if (generation === state.viewLoadGeneration) {
         state.viewLoading = false;
@@ -3092,12 +3112,12 @@
 
   async function deleteSession(sessionId) {
     const session = findSession(sessionId);
-    if (!window.confirm(`删除会话「${sessionDisplayName(session)}」？此操作无法撤销。`)) return;
+    if (!window.confirm(t("删除会话「{name}」？此操作无法撤销。", {name: sessionDisplayName(session)}))) return;
     if (state.sessionBusy) return;
     setSessionBusy(true);
     try {
       const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
-      showToast("会话已删除");
+      showToast(t("会话已删除"));
       state.sessions = state.sessions.filter((item) => String(item?.session_id) !== String(sessionId));
       // 删的是最后一个会话时，服务端已经建好顶替的那个并随回执带回；事件
       // 到达有先后，这里直接收进列表，兜底就不会再去新建。
@@ -3107,7 +3127,7 @@
       renderSessionList();
       if (sessionId === state.viewSessionId) await openFallbackSessionView(sessionId);
     } catch (error) {
-      showToast(error.message || "删除失败", "error");
+      showToast(error.message || t("删除失败"), "error");
     } finally {
       setSessionBusy(false);
     }
@@ -3277,7 +3297,7 @@
       const isImage = item.kind === "image" && item.previewUrl;
       const entry = document.createElement("div");
       entry.className = `attachment-item ${isImage ? "is-image" : "is-file"} is-${item.status}`;
-      entry.title = item.status === "error" ? `${item.name}: ${item.error || "上传失败"}` : item.name;
+      entry.title = item.status === "error" ? t("{name}: {error}", {name: item.name, error: item.error || t("上传失败")}) : item.name;
       if (isImage) {
         const image = document.createElement("img");
         image.src = item.previewUrl;
@@ -3305,8 +3325,8 @@
         name.textContent = item.name;
         name.title = item.name;
         const meta = document.createElement("small");
-        if (item.status === "uploading") meta.textContent = `上传中 ${Math.round(item.progress || 0)}%`;
-        else if (item.status === "error") meta.textContent = item.error || "上传失败";
+        if (item.status === "uploading") meta.textContent = t("上传中 {percent}%", {percent: Math.round(item.progress || 0)});
+        else if (item.status === "error") meta.textContent = item.error || t("上传失败");
         else meta.textContent = formatFileSize(item.size);
         copy.append(name, meta);
         entry.appendChild(copy);
@@ -3318,8 +3338,8 @@
         const retry = document.createElement("button");
         retry.type = "button";
         retry.className = "attachment-action";
-        retry.title = "重试上传";
-        retry.setAttribute("aria-label", `重试上传 ${item.name}`);
+        retry.title = t("重试上传");
+        retry.setAttribute("aria-label", t("重试上传 {name}", {name: item.name}));
         retry.appendChild(makeIconSlot("refresh-cw"));
         retry.addEventListener("click", () => uploadComposerAttachment(item));
         entry.appendChild(retry);
@@ -3327,8 +3347,8 @@
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "attachment-action attachment-remove";
-      remove.title = "移除附件";
-      remove.setAttribute("aria-label", `移除附件 ${item.name}`);
+      remove.title = t("移除附件");
+      remove.setAttribute("aria-label", t("移除附件 {name}", {name: item.name}));
       remove.appendChild(makeIconSlot("x"));
       remove.addEventListener("click", () => removeComposerAttachment(item));
       entry.appendChild(remove);
@@ -3371,7 +3391,7 @@
         });
       } else {
         item.status = "error";
-        item.error = payload?.error?.message || `上传失败 (${request.status || "网络错误"})`;
+        item.error = payload?.error?.message || t("上传失败 ({status})", {status: request.status || t("网络错误")});
       }
       renderComposerAttachments();
       updateControlState();
@@ -3380,7 +3400,7 @@
       if (item.request !== request) return;
       item.request = null;
       item.status = "error";
-      item.error = "无法连接上传服务";
+      item.error = t("无法连接上传服务");
       renderComposerAttachments();
       updateControlState();
     });
@@ -3410,12 +3430,12 @@
     if (!incoming.length) return;
     const available = Math.max(0, MAX_ATTACHMENTS - state.composerAttachments.length);
     if (incoming.length > available) {
-      showToast(`每条消息最多添加 ${MAX_ATTACHMENTS} 个附件，已忽略 ${incoming.length - available} 个`, "error");
+      showToast(t("每条消息最多添加 {max} 个附件，已忽略 {skipped} 个", {max: MAX_ATTACHMENTS, skipped: incoming.length - available}), "error");
     }
     const accepted = incoming.slice(0, available);
     for (const file of accepted) {
       if (!(file instanceof File) || file.size <= 0) {
-        showToast(`${file?.name || "附件"} 是空文件`, "error");
+        showToast(t("{name} 是空文件", {name: file?.name || t("附件")}), "error");
         continue;
       }
       const image = file.type.startsWith("image/");
@@ -3576,7 +3596,7 @@
       // 看门狗:音频帧断流 3 秒(标签页被挂起、AudioContext 没跑起来)就收,
       // 否则 daemon 那头收不到静音帧,10 秒静默自动结束永远不会触发。
       current.watchdog = setInterval(() => {
-        if (Date.now() - current.lastFrameAt > 3000) stop(current, "麦克风没有音频,听写已停止");
+        if (Date.now() - current.lastFrameAt > 3000) stop(current, t("麦克风没有音频,听写已停止"));
       }, 1000);
     }
 
@@ -3596,7 +3616,7 @@
       try { current.socket.close(); } catch { /* 已关 */ }
       button.classList.remove("is-recording");
       button.setAttribute("aria-pressed", "false");
-      button.title = "语音输入";
+      button.title = t("语音输入");
       setIndicator(false);
       if (notice) showToast(notice, "info");
     }
@@ -3604,7 +3624,7 @@
     async function start() {
       if (session) return;
       if (!navigator.mediaDevices?.getUserMedia) {
-        showToast("这个页面拿不到麦克风(需要 https 或 localhost);可在终端 REPL 里用 /stt 听写", "error");
+        showToast(t("这个页面拿不到麦克风(需要 https 或 localhost);可在终端 REPL 里用 /stt 听写"), "error");
         return;
       }
       const context = new (window.AudioContext || window.webkitAudioContext)();
@@ -3613,7 +3633,7 @@
         stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
       } catch (error) {
         context.close().catch(() => {});
-        showToast(`麦克风不可用:${error?.message || error}`, "error");
+        showToast(t("麦克风不可用:{detail}", {detail: error?.message || error}), "error");
         return;
       }
       const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/voice/stream`;
@@ -3623,7 +3643,7 @@
       session = current;
       button.classList.add("is-recording");
       button.setAttribute("aria-pressed", "true");
-      button.title = "点击结束听写(Esc 也可以)";
+      button.title = t("点击结束听写(Esc 也可以)");
       socket.onmessage = (event) => {
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
@@ -3634,28 +3654,28 @@
         } else if (message.type === "dictation") {
           if (message.text) insertText(String(message.text));
         } else if (message.type === "ended") {
-          stop(current, "听写结束");
+          stop(current, t("听写结束"));
         } else if (message.type === "error") {
-          showToast(`语音听写不可用:${message.message || "未知错误"}`, "error");
+          showToast(t("语音听写不可用:{detail}", {detail: message.message || t("未知错误")}), "error");
           stop(current, null);
         }
       };
       socket.onclose = () => {
         if (session !== current) return;
-        if (!current.ready) showToast("语音听写连接失败", "error");
-        stop(current, current.ready ? "听写结束" : null);
+        if (!current.ready) showToast(t("语音听写连接失败"), "error");
+        stop(current, current.ready ? t("听写结束") : null);
       };
-      current.timer = setTimeout(() => stop(current, "听写超时结束"), MAX_MS);
+      current.timer = setTimeout(() => stop(current, t("听写超时结束")), MAX_MS);
     }
 
     button.addEventListener("click", () => {
-      if (session) stop(session, "听写已停止");
+      if (session) stop(session, t("听写已停止"));
       else start();
     });
     elements.composerInput.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && session) {
         event.preventDefault();
-        stop(session, "听写已停止");
+        stop(session, t("听写已停止"));
       }
     });
   }
@@ -3684,7 +3704,7 @@
 
     elements.sendButton.classList.remove("is-cancel");
     elements.sendButton.querySelector(".icon-slot").replaceChildren(createIcon("arrow-up"));
-    elements.sendButton.title = running ? "加入队列" : "发送消息";
+    elements.sendButton.title = running ? t("加入队列") : t("发送消息");
     elements.sendButton.setAttribute("aria-label", elements.sendButton.title);
     elements.sendButton.disabled = state.blocked || state.adminBusy || state.submitting || hasPendingQuestion()
       || (inputCount === 0 && !attachmentReady) || inputCount > MAX_CONTENT_CHARS || attachmentUploading || attachmentError;
@@ -3698,14 +3718,14 @@
       button.disabled = !revisionEligible();
     });
 
-    if (state.blocked) elements.composerState.textContent = "未授权";
+    if (state.blocked) elements.composerState.textContent = t("未授权");
     // 被问问题时不再在输入框页脚重复「等待回答」——问题卡自己就写着,页脚这份多余
     // 且被模型芯片/速度挤成竖排(#3)。留空即可。
     else if (hasPendingQuestion()) elements.composerState.textContent = "";
-    else if (attachmentUploading) elements.composerState.textContent = "正在上传";
-    else if (attachmentError) elements.composerState.textContent = "附件上传失败";
-    else if (busy) elements.composerState.textContent = state.submitting ? (running ? "正在加入队列" : "正在发送") : "正在处理";
-    else if (inputCount > MAX_CONTENT_CHARS) elements.composerState.textContent = "消息不能超过 20,000 个字符";
+    else if (attachmentUploading) elements.composerState.textContent = t("正在上传");
+    else if (attachmentError) elements.composerState.textContent = t("附件上传失败");
+    else if (busy) elements.composerState.textContent = state.submitting ? (running ? t("正在加入队列") : t("正在发送")) : t("正在处理");
+    else if (inputCount > MAX_CONTENT_CHARS) elements.composerState.textContent = t("消息不能超过 20,000 个字符");
     else elements.composerState.textContent = "";
     elements.composerState.classList.toggle("is-error", inputCount > MAX_CONTENT_CHARS || attachmentError);
     updateSettingsControls();
@@ -3792,7 +3812,7 @@
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(value);
-        showToast("已复制");
+        showToast(t("已复制"));
         return true;
       }
     } catch (_) {
@@ -3814,11 +3834,11 @@
       copied = false;
     }
     textarea.remove();
-    showToast(copied ? "已复制" : "复制失败", copied ? "info" : "error");
+    showToast(copied ? t("已复制") : t("复制失败"), copied ? "info" : "error");
     return copied;
   }
 
-  function makeCopyButton(textProvider, label = "复制") {
+  function makeCopyButton(textProvider, label = t("复制")) {
     const button = document.createElement("button");
     button.type = "button";
     button.title = label;
@@ -3862,11 +3882,11 @@
     closeRevisionEditor();
     const form = document.createElement("form");
     form.className = "revision-editor";
-    form.setAttribute("aria-label", "编辑最后一条消息");
+    form.setAttribute("aria-label", t("编辑最后一条消息"));
     const textarea = document.createElement("textarea");
     textarea.value = String(content || "");
     textarea.maxLength = MAX_CONTENT_CHARS;
-    textarea.setAttribute("aria-label", "消息内容");
+    textarea.setAttribute("aria-label", t("消息内容"));
     const error = document.createElement("div");
     error.className = "revision-editor-error";
     error.setAttribute("role", "alert");
@@ -3875,10 +3895,10 @@
     footer.className = "revision-editor-footer";
     const cancel = document.createElement("button");
     cancel.type = "button";
-    cancel.textContent = "取消";
+    cancel.textContent = t("取消");
     const submit = document.createElement("button");
     submit.type = "submit";
-    submit.textContent = "发送";
+    submit.textContent = t("发送");
     footer.append(cancel, submit);
     form.append(textarea, error, footer);
     const wasHidden = bubble.hidden;
@@ -3890,12 +3910,12 @@
       event.preventDefault();
       const draft = textarea.value.trim();
       if (!draft && !article.querySelector(".user-attachments")) {
-        error.textContent = "消息不能为空";
+        error.textContent = t("消息不能为空");
         error.hidden = false;
         return;
       }
       if (countCharacters(draft) > MAX_CONTENT_CHARS) {
-        error.textContent = "消息不能超过 20,000 个字符";
+        error.textContent = t("消息不能超过 20,000 个字符");
         error.hidden = false;
         return;
       }
@@ -3954,7 +3974,7 @@
       );
       const payload = await response.json();
       const runId = String(payload?.run_id || "");
-      if (!runId) throw new ApiError("服务未返回运行标识", response.status);
+      if (!runId) throw new ApiError(t("服务未返回运行标识"), response.status);
       trackRun(sessionId, runId);
       createLiveForRun(runId, "", {
         claimTurn: false,
@@ -3968,10 +3988,10 @@
       updateConversationChrome();
     } catch (error) {
       if (editor && state.revisionEditor === editor) {
-        editor.error.textContent = error.status === 409 ? "会话已变化，请重新操作" : error.message;
+        editor.error.textContent = error.status === 409 ? t("会话已变化，请重新操作") : error.message;
         editor.error.hidden = false;
       }
-      showToast(error.status === 409 ? "会话状态已更新" : error.message, "error");
+      showToast(error.status === 409 ? t("会话状态已更新") : error.message, "error");
       if (error.status === 409) await loadSessionView(sessionId, { quiet: true });
     } finally {
       state.revisionSubmitting = false;
@@ -4333,13 +4353,13 @@
     const toolbar = document.createElement("div");
     toolbar.className = "code-toolbar";
     const label = document.createElement("span");
-    label.textContent = "图表";
+    label.textContent = t("图表");
     const sourceToggle = document.createElement("button");
     sourceToggle.type = "button";
     // 不蹭 `.code-copy-button`：那是给图标用的 25×23 定宽格子，塞中文会断成两行。
     sourceToggle.className = "mermaid-source-toggle";
-    sourceToggle.textContent = "源码";
-    const copy = makeCopyButton(codeText, "复制源码");
+    sourceToggle.textContent = t("源码");
+    const copy = makeCopyButton(codeText, t("复制源码"));
     copy.className = "code-copy-button";
     // 两个按钮成一组靠右：工具栏是 space-between，散着放中间那个会飘到正中。
     const actions = document.createElement("div");
@@ -4349,7 +4369,7 @@
 
     const figure = document.createElement("div");
     figure.className = "mermaid-figure";
-    figure.textContent = "正在画图…";
+    figure.textContent = t("正在画图…");
 
     const source = plainCodeBlock("mermaid", codeText);
     source.hidden = true;
@@ -4360,7 +4380,7 @@
       const showSource = source.hidden;
       source.hidden = !showSource;
       figure.hidden = showSource;
-      sourceToggle.textContent = showSource ? "图表" : "源码";
+      sourceToggle.textContent = showSource ? t("图表") : t("源码");
       sourceToggle.classList.toggle("is-active", showSource);
       sourceToggle.setAttribute("aria-expanded", String(showSource));
     });
@@ -4382,10 +4402,10 @@
       figure.classList.add("is-zoomable");
       figure.tabIndex = 0;
       figure.setAttribute("role", "button");
-      figure.setAttribute("aria-label", "放大查看图表");
+      figure.setAttribute("aria-label", t("放大查看图表"));
       const open = () => {
         const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-        window.MiyuLightbox?.open({ url, name: "图表" });
+        window.MiyuLightbox?.open({ url, name: t("图表") });
       };
       figure.addEventListener("click", open);
       // 卡片限了高（见 styles.css），高图会被缩着放。缩了就在工具栏说一句，
@@ -4394,7 +4414,7 @@
         const natural = parseFloat(node.getAttribute("height") || "0");
         if (natural > 0 && node.getBoundingClientRect().height < natural - 2) {
           wrapper.classList.add("is-scaled");
-          label.textContent = "图表 · 点开看原图";
+          label.textContent = t("图表 · 点开看原图");
         }
       });
       figure.addEventListener("keydown", (event) => {
@@ -4458,8 +4478,8 @@
     const toolbar = document.createElement("div");
     toolbar.className = "code-toolbar";
     const label = document.createElement("span");
-    label.textContent = language || "代码";
-    const copy = makeCopyButton(codeText, "复制代码");
+    label.textContent = language || t("代码");
+    const copy = makeCopyButton(codeText, t("复制代码"));
     copy.className = "code-copy-button";
     toolbar.append(label, copy);
     const pre = document.createElement("pre");
@@ -4618,8 +4638,8 @@
     const button = document.createElement("button");
     button.type = "button";
     button.className = "vfs-btn";
-    button.title = "网页全屏";
-    button.setAttribute("aria-label", "网页全屏");
+    button.title = t("网页全屏");
+    button.setAttribute("aria-label", t("网页全屏"));
     button.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
     button.addEventListener("click", () => shell.classList.toggle("webfs"));
@@ -4829,9 +4849,9 @@
   /// 地方，漏一个的表现是「时间线里画成用户气泡、但滚动到底又不算用户消息」。
   function isSyntheticTurnContent(raw) {
     const text = String(raw || "");
-    return text.startsWith("[后台任务完成]")
-      || text.startsWith("[后台命令完成]")
-      || text.startsWith("[目标续轮]")
+    return text.startsWith("[后台任务完成]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
+      || text.startsWith("[后台命令完成]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
+      || text.startsWith("[目标续轮]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
       || text.startsWith("<background-job-report>")
       || text.startsWith("<goal_round>");
   }
@@ -4960,17 +4980,17 @@
     // 目标续轮在时间线里什么都不画：输入框上方的状态行已经在说「进行中 ·
     // 第 N 轮」，对话流里每轮再来一条居中提示只是噪声，几十轮下来会把真正
     // 的内容淹掉。AI 的输出照常显示。
-    if (rawContent.startsWith("[目标续轮]") || rawContent.startsWith("<goal_round>")) {
+    if (rawContent.startsWith("[目标续轮]") || rawContent.startsWith("<goal_round>")) { // i18n-allow: 后端协议前缀,按原文比对
       return null;
     }
     // 目标变更通知走的是排队消息管线（步间送达、随回合持久化），但它是一次
     // 操作的回执，不是用户说的话——画成居中提示而不是用户气泡。
-    if (rawContent.startsWith("[目标已变更] ")) {
+    if (rawContent.startsWith("[目标已变更] ")) { // i18n-allow: 后端协议前缀(含尾空格),按原文比对
       const notice = document.createElement("div");
       notice.className = "system-event is-command-result";
       if (attributes.turnId) notice.dataset.turnId = attributes.turnId;
       const label = document.createElement("span");
-      label.textContent = `目标已变更：${rawContent.slice("[目标已变更] ".length)}`;
+      label.textContent = t("目标已变更：{detail}", {detail: rawContent.slice("[目标已变更] ".length)}); // i18n-allow: slice 掉的是后端协议前缀,不是文案
       label.title = formatDateTime(timestamp);
       notice.appendChild(label);
       return notice;
@@ -4981,14 +5001,14 @@
       if (attributes.turnId) notice.dataset.turnId = attributes.turnId;
       const label = document.createElement("span");
       let labelText = "";
-      if (rawContent.startsWith("[后台任务完成]")) {
+      if (rawContent.startsWith("[后台任务完成]")) { // i18n-allow: 后端协议前缀,按原文比对
         labelText = rawContent.replace(/^\[后台任务完成\]\s*/, "");
-      } else if (rawContent.startsWith("[后台命令完成]")) {
+      } else if (rawContent.startsWith("[后台命令完成]")) { // i18n-allow: 后端协议前缀,按原文比对
         const stripped = rawContent.replace(/^\[后台命令完成\]\s*/, "");
-        labelText = `命令完成 ${stripped.split(" · ").slice(0, 2).join(" · ")}`;
+        labelText = t("命令完成 {summary}", {summary: stripped.split(" · ").slice(0, 2).join(" · ")});
       } else {
         const inner = (rawContent.match(/「(.*?)」/)?.[1] || "").trim();
-        labelText = inner ? `任务完成 ${inner}` : "后台任务完成";
+        labelText = inner ? t("任务完成 {name}", {name: inner}) : t("后台任务完成");
       }
       label.textContent = `⚙ ${labelText}`;
       label.title = rawContent;
@@ -5017,12 +5037,12 @@
       const badge = document.createElement("span");
       badge.className = "queue-badge";
       const label = document.createElement("span");
-      label.textContent = "排队中";
+      label.textContent = t("排队中");
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "queue-remove";
-      remove.title = "撤回这条排队消息";
-      remove.setAttribute("aria-label", "撤回这条排队消息");
+      remove.title = t("撤回这条排队消息");
+      remove.setAttribute("aria-label", t("撤回这条排队消息"));
       remove.appendChild(makeIconSlot("undo-2"));
       remove.addEventListener("click", () => removeQueuedPrompt(attributes.queueId));
       badge.append(label, remove);
@@ -5033,13 +5053,13 @@
     const actions = document.createElement("div");
     actions.className = "message-actions";
     if (attributes.revisionTarget) {
-      const edit = makeMessageAction("square-pen", "编辑最后一条消息", () => {
+      const edit = makeMessageAction("square-pen", t("编辑最后一条消息"), () => {
         openRevisionEditor(article, bubble, textContent, attributes.revisionTarget, edit);
       });
       edit.className = "edit-action";
       actions.appendChild(edit);
     }
-    if (textContent.trim()) actions.appendChild(makeCopyButton(textContent, "复制消息"));
+    if (textContent.trim()) actions.appendChild(makeCopyButton(textContent, t("复制消息")));
     if (attachments) article.appendChild(attachments);
     article.append(bubble, actions);
     return article;
@@ -5081,7 +5101,7 @@
     for (const attachment of attachments) {
       const url = safeAttachmentUrl(attachment?.url);
       if (!url) continue;
-      const name = String(attachment?.name || "附件");
+      const name = String(attachment?.name || t("附件"));
       if (attachment?.kind === "image" || String(attachment?.mime || "").startsWith("image/")) {
         const link = document.createElement("a");
         link.className = "user-attachment-image";
@@ -5119,7 +5139,7 @@
         chip.classList.add("is-previewable");
         chip.tabIndex = 0;
         chip.setAttribute("role", "button");
-        chip.title = `预览 ${name}`;
+        chip.title = t("预览 {name}", {name: name});
         const openPreview = () => window.MiyuPreview.open({ ...attachment, url, name });
         chip.addEventListener("click", openPreview);
         chip.addEventListener("keydown", (event) => {
@@ -5130,7 +5150,7 @@
       } else {
         chip.href = url;
         chip.setAttribute("download", "");
-        chip.title = `下载 ${name}`;
+        chip.title = t("下载 {name}", {name: name});
       }
       chip.appendChild(makeIconSlot(attachmentIconName(attachment)));
       const copy = document.createElement("span");
@@ -5145,8 +5165,8 @@
         download.className = "user-attachment-download";
         download.href = url;
         download.setAttribute("download", "");
-        download.title = `下载 ${name}`;
-        download.setAttribute("aria-label", `下载 ${name}`);
+        download.title = t("下载 {name}", {name: name});
+        download.setAttribute("aria-label", t("下载 {name}", {name: name}));
         download.addEventListener("click", (event) => event.stopPropagation());
         download.appendChild(makeIconSlot("download"));
         chip.appendChild(download);
@@ -5183,7 +5203,7 @@
   }
 
   function artifactName(source) {
-    return String(source?.name || source?.alt || "预览资源").trim() || "预览资源";
+    return String(source?.name || source?.alt || t("预览资源")).trim() || t("预览资源");
   }
 
   function normalizeArtifact(source, fallbackKind = "file") {
@@ -5339,10 +5359,10 @@
   }
 
   const GOAL_PHASE_LABELS = Object.freeze({
-    active: "进行中",
-    paused: "已暂停",
-    blocked: "受阻",
-    complete: "已完成",
+    active: t("进行中"),
+    paused: t("已暂停"),
+    blocked: t("受阻"),
+    complete: t("已完成"),
   });
 
   /// 目标状态行。
@@ -5371,7 +5391,7 @@
     const objective = document.createElement("strong");
     objective.className = "goal-bar-objective";
     objective.textContent = String(goal.objective || "");
-    objective.title = "点击修改目标";
+    objective.title = t("点击修改目标");
     objective.tabIndex = 0;
     objective.setAttribute("role", "button");
     const startEdit = () => beginGoalEdit(objective, goal);
@@ -5387,9 +5407,9 @@
     meta.className = "goal-bar-meta";
     // active 但没武装 = 目标还在、只是不会自己往前跑了（被打断过或重启过）。
     const phase = goal.phase === "active" && !goal.armed
-      ? "已停下"
+      ? t("已停下")
       : GOAL_PHASE_LABELS[goal.phase] || goal.phase;
-    meta.textContent = `${phase} · 第 ${goal.rounds_started} 轮`;
+    meta.textContent = t("{phase} · 第 {round} 轮", {phase: phase, round: goal.rounds_started});
     if (goal.blocked_message) meta.title = goal.blocked_message;
 
     const actions = document.createElement("span");
@@ -5399,14 +5419,14 @@
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "goal-bar-button";
-    edit.title = "修改目标";
-    edit.setAttribute("aria-label", "修改目标");
+    edit.title = t("修改目标");
+    edit.setAttribute("aria-label", t("修改目标"));
     edit.append(makeIconSlot("square-pen"));
     edit.addEventListener("click", startEdit);
     actions.appendChild(edit);
     const buttons = goal.phase === "active" && goal.armed
-      ? [["pause", "暂停", "pause"], ["clear", "清除", "x"]]
-      : [["resume", "继续", "play"], ["clear", "清除", "x"]];
+      ? [["pause", t("暂停"), "pause"], ["clear", t("清除"), "x"]]
+      : [["resume", t("继续"), "play"], ["clear", t("清除"), "x"]];
     for (const [action, label, icon] of buttons) {
       const button = document.createElement("button");
       button.type = "button";
@@ -5428,7 +5448,7 @@
     input.className = "goal-bar-edit";
     input.rows = 1;
     input.value = String(goal.objective || "");
-    input.setAttribute("aria-label", "修改目标");
+    input.setAttribute("aria-label", t("修改目标"));
     const autosize = () => {
       input.style.height = "auto";
       input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
@@ -5474,9 +5494,9 @@
       if (/^(用法|\/goal |本会话)/.test(text)) showToast(text.split("\n")[0], "error");
       // edit 命中正在跑的续轮时，daemon 会掐掉旧轮、按新目标重开一轮——
       // 中断和新气泡就是时间线上的反馈，这里只补一个轻量确认。
-      else if (action.startsWith("edit ")) showToast(`目标已变更：${text.split("\n")[1] || ""}`);
+      else if (action.startsWith("edit ")) showToast(t("目标已变更：{detail}", {detail: text.split("\n")[1] || ""}));
     } catch (error) {
-      showToast(error?.message || "目标操作失败", "error");
+      showToast(error?.message || t("目标操作失败"), "error");
     }
     loadGoal(state.viewSessionId);
   }
@@ -5491,7 +5511,7 @@
       const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/poppable`);
       turns = (await response.json())?.turns || [];
     } catch (error) {
-      showToast(error.message || "读取可弹出轮次失败", "error");
+      showToast(error.message || t("读取可弹出轮次失败"), "error");
       return;
     }
     const list = elements.popDialogList;
@@ -5500,7 +5520,7 @@
     if (!turns.length) {
       const empty = document.createElement("div");
       empty.className = "pop-dialog-empty";
-      empty.textContent = "当前上下文没有可弹出的轮次";
+      empty.textContent = t("当前上下文没有可弹出的轮次");
       list.appendChild(empty);
     }
     const boxes = [];
@@ -5512,7 +5532,7 @@
       box.value = String(turn?.turn_id || "");
       const preview = document.createElement("span");
       preview.className = "pop-row-preview";
-      preview.textContent = String(turn?.preview || "").trim() || "（空消息）";
+      preview.textContent = String(turn?.preview || "").trim() || t("（空消息）");
       const meta = document.createElement("span");
       meta.className = "pop-row-meta";
       const tokens = asFiniteNumber(turn?.tokens);
@@ -5526,7 +5546,7 @@
     const refresh = () => {
       const selected = boxes.filter((box) => box.checked).length;
       elements.popConfirmButton.disabled = selected === 0;
-      elements.popConfirmButton.textContent = selected ? `弹出所选（${selected}）` : "弹出所选";
+      elements.popConfirmButton.textContent = selected ? t("弹出所选（{count}）", {count: selected}) : t("弹出所选");
       elements.popDialogAll.checked = boxes.length > 0 && selected === boxes.length;
     };
     // onchange 直接赋值而不是 addEventListener：每次打开都重建列表，
@@ -5548,10 +5568,10 @@
         const removed = (await response.json())?.result?.turns || 0;
         elements.popDialog.close();
         await loadSessionView(sessionId, { quiet: true });
-        showToast(`已从上下文弹出 ${removed} 轮`);
+        showToast(t("已从上下文弹出 {count} 轮", {count: removed}));
       } catch (error) {
         elements.popConfirmButton.disabled = false;
-        showToast(error.message || "弹出失败", "error");
+        showToast(error.message || t("弹出失败"), "error");
       }
     };
     refresh();
@@ -5759,7 +5779,7 @@
     const cached = state.artifactSourceCache.get(artifact.id);
     if (cached?.version === version) return cached.text;
     const response = await fetch(artifact.url, { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) throw new Error("文件载入失败");
+    if (!response.ok) throw new Error(t("文件载入失败"));
     const text = await response.text();
     state.artifactSourceCache.set(artifact.id, { version, text });
     return text;
@@ -5776,7 +5796,7 @@
     if (token !== state.artifactRenderToken) return;
     const failure = document.createElement("div");
     failure.className = "artifact-failure";
-    failure.append(makeIconSlot("circle-alert"), document.createTextNode(error?.message || "文件载入失败"));
+    failure.append(makeIconSlot("circle-alert"), document.createTextNode(error?.message || t("文件载入失败")));
     elements.artifactView.replaceChildren(failure);
   }
 
@@ -5849,7 +5869,7 @@
     article.className = "markdown-body artifact-markdown";
     if (rows.length === 0) {
       const note = document.createElement("p");
-      note.textContent = "这份表是空的。";
+      note.textContent = t("这份表是空的。");
       article.appendChild(note);
       return article;
     }
@@ -5880,7 +5900,7 @@
     if (clipped) {
       const note = document.createElement("p");
       note.className = "artifact-table-note";
-      note.textContent = `表太长，只画了前 ${MAX_TABLE_ROWS} 行，共 ${rows.length - 1} 行。完整内容看源码或下载。`;
+      note.textContent = t("表太长，只画了前 {shown} 行，共 {total} 行。完整内容看源码或下载。", {shown: MAX_TABLE_ROWS, total: rows.length - 1});
       article.appendChild(note);
     }
     return article;
@@ -5964,7 +5984,7 @@
       elements.artifactView.replaceChildren(article);
       return;
     }
-    throw new Error("此格式不支持预览");
+    throw new Error(t("此格式不支持预览"));
   }
 
   function renderArtifactResourceMenu(artifact) {
@@ -5994,8 +6014,8 @@
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "icon-button artifact-resource-remove";
-      remove.title = "从列表移除";
-      remove.setAttribute("aria-label", `从列表移除 ${item.name}`);
+      remove.title = t("从列表移除");
+      remove.setAttribute("aria-label", t("从列表移除 {name}", {name: item.name}));
       remove.appendChild(makeIconSlot("x"));
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -6070,7 +6090,7 @@
     // 图片没有文本可复制,但 svg 有——同样不能只看 mime。
     elements.artifactCopyButton.hidden = isImage && !canSource;
     elements.artifactMaximizeButton.replaceChildren(makeIconSlot(state.artifactMaximized ? "minimize-2" : "maximize-2"));
-    elements.artifactMaximizeButton.title = state.artifactMaximized ? "退出全屏" : "全屏显示";
+    elements.artifactMaximizeButton.title = state.artifactMaximized ? t("退出全屏") : t("全屏显示");
     elements.artifactMaximizeButton.setAttribute("aria-label", elements.artifactMaximizeButton.title);
     renderArtifactResourceMenu(artifact);
     const token = ++state.artifactRenderToken;
@@ -6089,15 +6109,15 @@
         await navigator.clipboard.writeText(await loadArtifactSource(artifact));
       } else if (artifact.kind === "image" && window.ClipboardItem) {
         const response = await fetch(artifact.url, { credentials: "same-origin" });
-        if (!response.ok) throw new Error("图片载入失败");
+        if (!response.ok) throw new Error(t("图片载入失败"));
         const blob = await response.blob();
         await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       } else {
         await navigator.clipboard.writeText(artifact.url);
       }
-      showToast("已复制", "success");
+      showToast(t("已复制"), "success");
     } catch (error) {
-      showToast(error.message || "复制失败", "error");
+      showToast(error.message || t("复制失败"), "error");
     }
   }
 
@@ -6144,7 +6164,7 @@
     const imageMime = !mime || mime.startsWith("image/");
     const width = validAssetDimension(source.width);
     const height = validAssetDimension(source.height);
-    const alt = String(source.alt || "").trim() || "Miyu 生成的图片";
+    const alt = String(source.alt || "").trim() || t("Miyu 生成的图片");
 
     const figure = document.createElement("figure");
     figure.className = "conversation-media";
@@ -6162,7 +6182,7 @@
     fallback.className = "conversation-media-fallback";
     fallback.appendChild(makeIconSlot("circle-alert"));
     const fallbackText = document.createElement("span");
-    fallbackText.textContent = url && imageMime ? "图片载入失败" : "图片地址不可用";
+    fallbackText.textContent = url && imageMime ? t("图片载入失败") : t("图片地址不可用");
     fallback.appendChild(fallbackText);
 
     if (url && imageMime) {
@@ -6196,7 +6216,7 @@
       visual.classList.add("is-zoomable");
       visual.tabIndex = 0;
       visual.setAttribute("role", "button");
-      visual.setAttribute("aria-label", `放大预览 ${alt}`);
+      visual.setAttribute("aria-label", t("放大预览 {alt}", {alt: alt}));
       const openLightbox = () => {
         window.MiyuLightbox?.open({
           url,
@@ -6310,7 +6330,7 @@
     );
     const label = document.createElement("span");
     label.className = "subagent-brief-name";
-    label.textContent = t || "任务 prompt";
+    label.textContent = t || t("任务 prompt");
     summary.append(marker, label);
     brief.appendChild(summary);
     if (p) {
@@ -6367,8 +6387,8 @@
   function subagentPeekLine(ev) {
     if (ev.kind === "reasoning") return ev.text;
     if (ev.kind === "content") return ev.text;
-    if (ev.kind === "call") return `调用 ${ev.name}${ev.subject ? " · " + ev.subject : ""}`;
-    if (ev.kind === "result") return `${ev.name} ${ev.ok ? "完成" : "出错"}`;
+    if (ev.kind === "call") return t("调用 {name}{subject}", {name: ev.name, subject: ev.subject ? " · " + ev.subject : ""});
+    if (ev.kind === "result") return t("{name} {status}", {name: ev.name, status: ev.ok ? t("完成") : t("出错")});
     return ev.text || "";
   }
 
@@ -6386,7 +6406,7 @@
       const finalText = sink.think.__acc != null ? sink.think.__acc : sink.thinkAccum;
       sink.think.body.textContent = finalText || "";
       setReasoningPeek(sink.think.peek, finalText || "");
-      sink.think.title.textContent = "已思考";
+      sink.think.title.textContent = t("已思考");
       sink.think.element.classList.remove("is-live");
       sink.think.element.classList.remove("has-window");
       if (sink.think.window) {
@@ -6562,7 +6582,7 @@
       // 思考逐 token 增量,累加到一个活的思考块(不能覆盖,否则只剩最后一个 token)。
       subEndContent(sink);
       if (!sink.think) {
-        sink.think = createReasoningBlock("", "正在思考", true);
+        sink.think = createReasoningBlock("", t("正在思考"), true);
         sink.thinkAccum = "";
         // 读秒 ticker 靠这个起点更新(见 subEndReasoning 上方的 setInterval)。
         if (sink.think.liveStatus && sink.think.startedAt != null) {
@@ -6599,7 +6619,7 @@
       sink.pendingCall = { name: ev.name, display: ev.display, args: ev.args, subject: ev.subject };
       // 窥视也用友好显示名(#7:展开是「运行命令」,窥视却还是裸的 run_command)。
       const callLabel = ev.display || ev.name;
-      sink.peekLine = ev.subject ? callLabel + " · " + ev.subject : "调用 " + callLabel;
+      sink.peekLine = ev.subject ? callLabel + " · " + ev.subject : t("调用 ") + callLabel;
       if (sink.taskPeek) setReasoningPeek(sink.taskPeek, sink.peekLine);
       return;
     }
@@ -6610,7 +6630,7 @@
       sink.pendingCall = null;
       const card = createPersistedToolCard({ name: call.name, display_name: call.display, arguments: call.args != null ? call.args : ev.args, output: ev.output, ok: ev.ok });
       subAttach(sink, card);
-      sink.peekLine = (call.display || call.name) + " " + (ev.ok ? "完成" : "出错");
+      sink.peekLine = (call.display || call.name) + " " + (ev.ok ? t("完成") : t("出错"));
       if (sink.taskPeek) setReasoningPeek(sink.taskPeek, sink.peekLine);
       return;
     }
@@ -6661,7 +6681,7 @@
     return sink;
   }
 
-  function createReasoningBlock(text, title = "已思考", live = false, summaryOnly = false, withWindow = false) {
+  function createReasoningBlock(text, title = t("已思考"), live = false, summaryOnly = false, withWindow = false) {
     const details = document.createElement("details");
     details.className = "reasoning-block";
     details.classList.toggle("is-summary", summaryOnly);
@@ -6672,7 +6692,7 @@
     if (live) for (let index = 0; index < 3; index += 1) atom.appendChild(document.createElement("i"));
     const titleNode = document.createElement("span");
     titleNode.className = "reasoning-title";
-    titleNode.textContent = title || (live ? "正在思考" : "已思考");
+    titleNode.textContent = title || (live ? t("正在思考") : t("已思考"));
     const chevron = makeIconSlot("chevron-right", "reasoning-chevron");
     summary.append(atom, titleNode);
     let liveStatus = null;
@@ -6685,8 +6705,8 @@
       progress = document.createElement("div");
       progress.className = "reasoning-progress";
       progress.setAttribute("role", "progressbar");
-      progress.setAttribute("aria-label", "思考进度");
-      progress.setAttribute("aria-valuetext", "正在思考");
+      progress.setAttribute("aria-label", t("思考进度"));
+      progress.setAttribute("aria-valuetext", t("正在思考"));
       const progressFill = document.createElement("i");
       progressFill.setAttribute("aria-hidden", "true");
       progress.appendChild(progressFill);
@@ -6755,7 +6775,7 @@
   function createAssistantMessage({
     content = "",
     reasoning = "",
-    reasoningTitle = "已思考",
+    reasoningTitle = t("已思考"),
     // 工具轮次（持久化回合用）。实时那份由事件流按到达顺序往 blocks 里插，
     // 推理、正文、工具卡是交错的；这里从 turn.tool_flow 重建同样的顺序。
     toolRounds = [],
@@ -6812,7 +6832,7 @@
       const roundReasoning = String(round?.assistant_reasoning || "");
       if (roundReasoning.trim() && !reasoningHidden()) {
         const parsed = splitReasoningText(roundReasoning);
-        procLineAttach(blocks, createReasoningBlock(parsed.body, "已思考", false).element, true);
+        procLineAttach(blocks, createReasoningBlock(parsed.body, t("已思考"), false).element, true);
       }
       const roundContent = String(round?.assistant_content || "");
       if (roundContent.trim()) {
@@ -6843,7 +6863,7 @@
     }
     if (String(reasoning || "").trim() && !reasoningHidden()) {
       const parsed = splitReasoningText(reasoning);
-      procLineAttach(blocks, createReasoningBlock(parsed.body, "已思考", false).element, true);
+      procLineAttach(blocks, createReasoningBlock(parsed.body, t("已思考"), false).element, true);
     }
     if (String(content || "").trim()) {
       const markdown = document.createElement("div");
@@ -6897,7 +6917,7 @@
     if (!activeContext) {
       const contextBadge = document.createElement("span");
       contextBadge.className = "context-state-badge";
-      contextBadge.textContent = "已移出当前上下文";
+      contextBadge.textContent = t("已移出当前上下文");
       meta.appendChild(contextBadge);
     }
     const copyValue = String(content || "").trim() || String(reasoning || "");
@@ -6906,11 +6926,11 @@
       spacer.className = "meta-spacer";
       meta.appendChild(spacer);
       if (redoTarget) {
-        const redo = makeMessageAction("refresh-cw", "重新生成回复", () => submitRedo(redoTarget));
+        const redo = makeMessageAction("refresh-cw", t("重新生成回复"), () => submitRedo(redoTarget));
         redo.className = "redo-action";
         meta.appendChild(redo);
       }
-      if (copyValue) meta.appendChild(makeCopyButton(copyValue, "复制回复"));
+      if (copyValue) meta.appendChild(makeCopyButton(copyValue, t("复制回复")));
     }
     if (meta.childNodes.length) article.appendChild(meta);
     return article;
@@ -6921,7 +6941,7 @@
     if (!meta) return;
     meta.querySelector(".redo-action")?.remove();
     if (!candidate) return;
-    const redo = makeMessageAction("refresh-cw", "重新生成回复", () => submitRedo(candidate));
+    const redo = makeMessageAction("refresh-cw", t("重新生成回复"), () => submitRedo(candidate));
     redo.className = "redo-action";
     const copy = meta.querySelector("button:last-child");
     if (copy) meta.insertBefore(redo, copy);
@@ -6936,10 +6956,10 @@
     // 去掉左边那个大对钩(#143 用户嫌大):「已回答」二字已经表达状态了。
     const copy = document.createElement("div");
     const status = document.createElement("small");
-    status.textContent = "已回答";
+    status.textContent = t("已回答");
     const title = document.createElement("strong");
     const questions = Array.isArray(exchange?.questions) ? exchange.questions : [];
-    title.textContent = questions.length === 1 ? String(questions[0]?.header || "补充确认") : `${questions.length} 项补充确认`;
+    title.textContent = questions.length === 1 ? String(questions[0]?.header || t("补充确认")) : t("{count} 项补充确认", {count: questions.length});
     copy.append(status, title);
     header.append(copy);
     const list = document.createElement("dl");
@@ -6948,10 +6968,10 @@
     questions.forEach((question, index) => {
       const row = document.createElement("div");
       const term = document.createElement("dt");
-      term.textContent = String(question?.question || question?.header || `问题 ${index + 1}`);
+      term.textContent = String(question?.question || question?.header || t("问题 {index}", {index: index + 1}));
       const description = document.createElement("dd");
       const selected = Array.isArray(answers[index]) ? answers[index] : [];
-      description.textContent = selected.map(String).join("、") || "未记录";
+      description.textContent = selected.map(String).join("、") || t("未记录");
       row.append(term, description);
       list.appendChild(row);
     });
@@ -6978,17 +6998,17 @@
     status.classList.toggle("is-interrupted", isInterrupted);
     status.appendChild(makeIconSlot(isInterrupted ? "circle-alert" : "loader-circle"));
     const text = document.createElement("span");
-    text.textContent = isInterrupted ? "本轮已中断" : "本轮正在运行";
+    text.textContent = isInterrupted ? t("本轮已中断") : t("本轮正在运行");
     status.appendChild(text);
     if (asFiniteNumber(turn?.token_total) > 0) {
       const usage = document.createElement("span");
-      usage.textContent = `${turn.token_usage_estimated ? "约 " : ""}${formatTokens(turn.token_total)} tokens`;
+      usage.textContent = t("{approx}{total} tokens", {approx: turn.token_usage_estimated ? t("约 ") : "", total: formatTokens(turn.token_total)});
       status.appendChild(usage);
     }
     if (turn?.active_context === false) {
       const context = document.createElement("span");
       context.className = "context-state-badge";
-      context.textContent = "已移出当前上下文";
+      context.textContent = t("已移出当前上下文");
       status.appendChild(context);
     }
     return status;
@@ -7106,7 +7126,7 @@
     if ((turn?.status === "running" && !claimed) || turn?.status === "interrupted") elements.timeline.appendChild(createTurnStatus(turn));
     else if (!stashedFinal && !assistantContent.trim() && !assistantReasoning.trim() && (asFiniteNumber(turn?.token_total) > 0 || turn?.active_context === false)) {
       const metadata = createTurnStatus({ ...turn, status: "completed" });
-      metadata.querySelector("span:nth-child(2)").textContent = "本轮已完成";
+      metadata.querySelector("span:nth-child(2)").textContent = t("本轮已完成");
       metadata.querySelector(".icon-slot").replaceChildren(createIcon("check"));
       elements.timeline.appendChild(metadata);
     }
@@ -7373,7 +7393,7 @@
     if (!promptId) return;
     const target = activeTurnUpdateTarget(state.viewSessionId);
     if (!target) {
-      showToast("无法确定排队消息所属的回复", "error");
+      showToast(t("无法确定排队消息所属的回复"), "error");
       return;
     }
     try {
@@ -7381,7 +7401,7 @@
       state.queuedPrompts = state.queuedPrompts.filter((prompt) => String(prompt?.id) !== String(promptId));
       renderQueueTray();
     } catch (error) {
-      showToast(error.message || "排队消息移除失败", "error");
+      showToast(error.message || t("排队消息移除失败"), "error");
       if (error.status === 404 && state.viewSessionId) await loadSessionView(state.viewSessionId, { quiet: true });
     }
   }
@@ -7591,7 +7611,7 @@
   function updateLiveStopButton(live) {
     if (!live.stopButton) return;
     live.stopButton.disabled = live.ended || live.cancellationRequested;
-    live.stopButton.title = live.cancellationRequested ? "正在停止" : "停止本条回复";
+    live.stopButton.title = live.cancellationRequested ? t("正在停止") : t("停止本条回复");
     live.stopButton.setAttribute("aria-label", live.stopButton.title);
   }
 
@@ -7606,14 +7626,14 @@
     if (!live || live.ended || live.cancellationRequested) return;
     live.cancellationRequested = true;
     updateLiveStopButton(live);
-    if (live.headerStatus) live.headerStatus.textContent = "正在停止";
+    if (live.headerStatus) live.headerStatus.textContent = t("正在停止");
     try {
       await apiRequest(`/api/runs/${encodeURIComponent(live.runId)}/cancel`, { method: "POST" });
     } catch (error) {
       live.cancellationRequested = false;
       updateLiveStopButton(live);
-      if (live.headerStatus && !live.ended) live.headerStatus.textContent = "正在回复";
-      showToast(error.message || "停止失败", "error");
+      if (live.headerStatus && !live.ended) live.headerStatus.textContent = t("正在回复");
+      showToast(error.message || t("停止失败"), "error");
       if ((error.status === 404 || error.status === 409) && state.viewSessionId) {
         await loadSessionView(state.viewSessionId, { quiet: true });
       }
@@ -7691,7 +7711,7 @@
     metaText.textContent = "";
     const spacer = document.createElement("span");
     spacer.className = "meta-spacer";
-    const copy = makeCopyButton(() => live.assistantText, "复制回复");
+    const copy = makeCopyButton(() => live.assistantText, t("复制回复"));
     copy.hidden = true;
     meta.append(endpoint, metaText, spacer, copy);
     const streamRail = document.createElement("div");
@@ -7811,7 +7831,7 @@
     if (live.reasoning) return live.reasoning;
     breakLiveText(live);
     live.contextOperation = null;
-    const reasoning = createReasoningBlock("", "正在思考", true, false, true);
+    const reasoning = createReasoningBlock("", t("正在思考"), true, false, true);
     // 计时从 reasoning.start 事件算起,而不是签出现的时刻(签是惰性创建的)
     if (live.reasoningClockStart != null) reasoning.startedAt = live.reasoningClockStart;
     reasoning.pendingTitle = normalizeReasoningTitle(live.reasoningTitle);
@@ -7844,10 +7864,10 @@
       live.reasoningTimer = null;
     }
     const parsed = splitReasoningText(reasoning.raw);
-    const title = "已思考";
+    const title = t("已思考");
     reasoning.raw = parsed.body;
     reasoning.finished = true;
-    if (!reasoning.raw.trim() && title === "已思考") {
+    if (!reasoning.raw.trim() && title === t("已思考")) {
       reasoning.element.remove();
     } else {
       reasoning.element.classList.remove("is-live");
@@ -7996,7 +8016,7 @@
     if (toolName === "run_command" || toolName === "Bash") {
       const line = compactLine(args.command || args.cmd);
       const background = args.background === true || args.run_in_background === true;
-      return background ? `[后台] ${line}` : line;
+      return background ? t("[后台] {command}", {command: line}) : line;
     }
     if (toolName === "read" || toolName === "read_file") {
       const path = compactPath(args.path);
@@ -8012,7 +8032,7 @@
       const text = String(args.patchText || args.patch_text || "");
       const files = [...text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1].trim());
       if (files.length === 1) return compactPath(files[0]);
-      if (files.length > 1) return `${compactPath(files[0])} 等 ${files.length} 个文件`;
+      if (files.length > 1) return t("{first} 等 {count} 个文件", {first: compactPath(files[0]), count: files.length});
       return "";
     }
     if (["read", "write", "edit", "print_image", "vision_analyze"].includes(toolName)) {
@@ -8118,11 +8138,11 @@
   function buildCommandRows(commandText, head) {
     const preview = document.createElement("div");
     preview.className = "tool-command-preview";
-    preview.setAttribute("aria-label", "命令");
+    preview.setAttribute("aria-label", t("命令"));
     const more = document.createElement("span");
     more.className = "tool-command-more";
     more.textContent = "⋮";
-    more.title = "还有，点开看完整命令";
+    more.title = t("还有，点开看完整命令");
     more.hidden = true;
     // 命令那几行在 `.tool-head`（button）**外面**，不接就只有抬头那一条窄缝可点，
     // 而视线正落在命令上。拖着选文字不算点：有选区就放过，否则复制命令会顺手把
@@ -8193,7 +8213,7 @@
       return;
     }
     if (subject) details.push(subject);
-    if (tool.imageCount) details.push(`${tool.imageCount} 张图片`);
+    if (tool.imageCount) details.push(t("{count} 张图片", {count: tool.imageCount}));
     // 没有主语就空着:「无输出 / 等待输出」是旧芯片时代占摘要位的话,时间线上耗时和转圈
     // 都在状态位,这里再写字只会让人以为工具真的没输出。
     tool.summary.textContent = details.filter(Boolean).join(" · ");
@@ -8208,7 +8228,7 @@
   function boundedAppend(current, addition) {
     const combined = `${current || ""}${addition || ""}`;
     if (combined.length <= MAX_TOOL_OUTPUT_CHARS) return combined;
-    return `[较早输出已省略]\n${combined.slice(combined.length - MAX_TOOL_OUTPUT_CHARS)}`;
+    return t("[较早输出已省略]\n{tail}", {tail: combined.slice(combined.length - MAX_TOOL_OUTPUT_CHARS)});
   }
 
   // 持久化回合里的工具卡片（只读）。
@@ -8253,13 +8273,13 @@
     const title = document.createElement("span");
     title.className = "tool-title";
     const displayName = document.createElement("strong");
-    displayName.textContent = String(call?.display_name || name || "工具");
+    displayName.textContent = String(call?.display_name || name || t("未命名工具"));
     // 子代理:显示「子代理 / 开发中」,不显裸的 `subagent:xxx`(刷新回看时历史里存的
     // display_name 是技术名,和实时的「子代理」不一致,#97 刷新后变回原始名)。任务
     // 标题走下面的 summary(toolSubject → description)。
     if (isSubagentTool(name)) {
       displayName.textContent =
-        parsedToolArguments(call?.arguments)?.dev === true ? "开发中" : "子代理";
+        parsedToolArguments(call?.arguments)?.dev === true ? t("开发中") : t("子代理");
     }
     // 名字被芯片截断时,悬浮还能看全(load_tools 一次点名几个工具就会超长)。
     displayName.title = displayName.textContent;
@@ -8285,7 +8305,7 @@
     const finishedMs = Number(call?.finished_ms);
     const hasSpan = Number.isFinite(startedMs) && Number.isFinite(finishedMs) && finishedMs >= startedMs;
     if (hasSpan) card.miyuTiming = { startedAt: startedMs, finishedAt: finishedMs };
-    statusText.textContent = ok ? (hasSpan ? formatToolDuration(finishedMs - startedMs) || "完成" : "完成") : "失败";
+    statusText.textContent = ok ? (hasSpan ? formatToolDuration(finishedMs - startedMs) || t("完成") : t("完成")) : t("失败");
     status.append(makeIconSlot(ok ? "check" : "circle-alert"), statusText);
     head.append(icon, title, status, makeIconSlot("chevron-down", "tool-chevron"));
     // 读秒：落库的起止时间算得出真实耗时，和实时那条定格的是同一个数。
@@ -8318,7 +8338,7 @@
     } else {
       const argumentText = prettyArguments(call?.arguments);
       if (argumentText) {
-        const detail = createToolDetail("参数", true);
+        const detail = createToolDetail(t("参数"), true);
         detail.content.textContent = argumentText;
         detail.wrapper.hidden = false;
         body.appendChild(detail.wrapper);
@@ -8329,7 +8349,7 @@
     // 失败时结果是报错原文,留着(diffView 存在=是编辑工具且解析出了补丁)。
     const hideEditOutput = diffView && ok;
     if (output && !hideEditOutput) {
-      const detail = createToolDetail("结果", true);
+      const detail = createToolDetail(t("结果"), true);
       detail.content.textContent = output;
       detail.wrapper.hidden = false;
       body.appendChild(detail.wrapper);
@@ -8387,7 +8407,7 @@
     // 意义——它会一直涨到下一次 tick 才停在一个错数上。
     if (tool.commandSeconds && iconName !== "loader-circle") {
       delete tool.commandSeconds.dataset.taskStart;
-      tool.commandSeconds.textContent = status === "失败" ? "" : status;
+      tool.commandSeconds.textContent = status === t("失败") ? "" : status;
     }
     tool.statusIcon.replaceChildren(createIcon(iconName));
     tool.statusIcon.classList.toggle("is-spinning", iconName === "loader-circle");
@@ -8406,7 +8426,7 @@
     if (preview.omitted) {
       const omitted = document.createElement("span");
       omitted.className = "tool-command-output-omitted";
-      omitted.textContent = "⋮ 已省略较早输出";
+      omitted.textContent = t("⋮ 已省略较早输出");
       children.push(omitted);
     }
     for (const line of preview.lines) {
@@ -8542,10 +8562,10 @@
     const title = document.createElement("span");
     title.className = "tool-title";
     const displayName = document.createElement("strong");
-    displayName.textContent = String(data?.display_name || data?.name || "工具");
+    displayName.textContent = String(data?.display_name || data?.name || t("未命名工具"));
     // 开发模式子代理显示「开发中」而非「子代理」,和普通子代理区分开(09-11)。
     if (isTask && parsedToolArguments(data?.arguments)?.dev === true) {
-      displayName.textContent = "开发中";
+      displayName.textContent = t("开发中");
     }
     displayName.title = displayName.textContent;
     const realName = document.createElement("small");
@@ -8558,7 +8578,7 @@
     status.className = "tool-status";
     const statusIcon = makeIconSlot("loader-circle", "is-spinning");
     const statusText = document.createElement("span");
-    statusText.textContent = "运行中";
+    statusText.textContent = t("运行中");
     status.append(statusIcon, statusText);
     const chevron = makeIconSlot("chevron-down", "tool-chevron");
     // 子代理:标题行里放一条单行窥视(和「已思考」标题右侧尾巴同款),收起态
@@ -8603,12 +8623,12 @@
       // 命令本身按行排在抬头底下，靠时间线那根竖线（`.proc-rail`）串起来。
       commandPreview = document.createElement("div");
       commandPreview.className = "tool-command-preview";
-      commandPreview.setAttribute("aria-label", "命令");
+      commandPreview.setAttribute("aria-label", t("命令"));
       // `⋮` 得在裁剪容器**外面**，否则它自己也被 max-height 裁掉。
       commandMore = document.createElement("span");
       commandMore.className = "tool-command-more";
       commandMore.textContent = "⋮";
-      commandMore.title = "还有，点开看完整命令";
+      commandMore.title = t("还有，点开看完整命令");
       commandMore.hidden = true;
       // 命令那几行也要能点开——它们在 `.tool-head`（button）**外面**，不点就
       // 只有抬头那一条窄缝可点，而视线正落在命令上（用户 09-20）。
@@ -8624,18 +8644,18 @@
       }
       commandOutputPreview = document.createElement("div");
       commandOutputPreview.className = "tool-command-output-preview";
-      commandOutputPreview.setAttribute("aria-label", "最近命令输出");
+      commandOutputPreview.setAttribute("aria-label", t("最近命令输出"));
       commandOutputPreview.style.setProperty("--command-output-lines", String(COMMAND_OUTPUT_PREVIEW_ROWS));
       commandOutputPreview.hidden = true;
     }
     const body = document.createElement("div");
     body.className = "tool-body";
-    const argumentsDetail = createToolDetail("参数", true);
-    const progressDetail = createToolDetail("进度");
-    const stdoutDetail = createToolDetail("命令输出", true);
-    const stderrDetail = createToolDetail("错误输出", true);
+    const argumentsDetail = createToolDetail(t("参数"), true);
+    const progressDetail = createToolDetail(t("进度"));
+    const stdoutDetail = createToolDetail(t("命令输出"), true);
+    const stderrDetail = createToolDetail(t("错误输出"), true);
     stderrDetail.wrapper.classList.add("is-stderr");
-    const resultDetail = createToolDetail("结果", true);
+    const resultDetail = createToolDetail(t("结果"), true);
     // 文件编辑:patchText 参数画成 diff,而不是摊一坨补丁 JSON(实时与刷新回看同一份)。
     const diffView = window.MiyuDiff?.renderFromCall?.({ name: data?.name, arguments: data?.arguments }) || null;
     const argumentText = diffView ? "" : prettyArguments(data?.arguments);
@@ -8670,7 +8690,7 @@
       fold.className = "tool-fold";
       fold.appendChild(body);
       card.append(head, fold);
-      if (taskPeek) taskPeek.textContent = reasoningPeekText(subjectText || "正在启动子代理…");
+      if (taskPeek) taskPeek.textContent = reasoningPeekText(subjectText || t("正在启动子代理…"));
     } else {
       card.append(head);
       if (commandPreview) card.appendChild(commandPreview);
@@ -8716,7 +8736,7 @@
       think: null,
       thinkAccum: "",
       pendingCall: null,
-      titleText: String(data?.display_name || data?.name || "工具"),
+      titleText: String(data?.display_name || data?.name || t("未命名工具")),
       subject: subjectText,
       startedAt: performance.now(),
       finishedAt: null,
@@ -8766,7 +8786,7 @@
       bubble.className = "image-gen-bubble";
       const label = document.createElement("span");
       label.className = "image-gen-label";
-      label.textContent = toolName === "print_image" ? "正在加载图片" : "正在生成图片";
+      label.textContent = toolName === "print_image" ? t("正在加载图片") : t("正在生成图片");
       if (subjectText) bubble.title = subjectText;
       bubble.appendChild(label);
       procLineBreak(live.blocks);
@@ -8788,10 +8808,10 @@
   // daemon older than this asset.
   function preparingToolLabel(name, phase) {
     if (phase) return String(phase);
-    if (["edit", "artifact", "kb", "apply_patch", "apply_artifact_patch"].includes(name)) return "准备编辑";
-    if (name === "run_command") return "准备执行";
-    if (name === "ask_question") return "准备问题";
-    return "准备工具";
+    if (["edit", "artifact", "kb", "apply_patch", "apply_artifact_patch"].includes(name)) return t("准备编辑");
+    if (name === "run_command") return t("准备执行");
+    if (name === "ask_question") return t("准备问题");
+    return t("准备工具");
   }
 
   function clearPreparingTool(live) {
@@ -8948,7 +8968,7 @@
       // (实时 token 汇进「累计」的逻辑统一在 renderSubagentProgress 的 stats 分支里,
       // 前台工具卡与后台任务条同源,见 #131。)
       renderSubagentProgress(tool, String(data?.message || ""));
-      if (!tool.finished) updateToolStatus(tool, "运行中", "loader-circle");
+      if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress") {
       let message = String(data?.message || "");
       // 文件编辑(edit/kb/artifact):diff 卡已由 patchText 参数在建卡时画好,「准备修改」
@@ -8987,7 +9007,7 @@
         syncBubbleWidth(live.article);
       }
       if (!tool.subject && message) tool.subject = compactLine(message);
-      updateToolStatus(tool, "运行中", "loader-circle");
+      updateToolStatus(tool, t("运行中"), "loader-circle");
       updateToolSummary(tool);
     } else if (name === "tool.output") {
       const detail = data?.stream === "stderr" ? tool.stderrDetail : tool.stdoutDetail;
@@ -9015,7 +9035,7 @@
         if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       }
       const output = String(data?.output || "");
-      tool.resultDetail.raw = output.length > MAX_TOOL_OUTPUT_CHARS ? `[较早输出已省略]\n${output.slice(-MAX_TOOL_OUTPUT_CHARS)}` : output;
+      tool.resultDetail.raw = output.length > MAX_TOOL_OUTPUT_CHARS ? t("[较早输出已省略]\n{tail}", {tail: output.slice(-MAX_TOOL_OUTPUT_CHARS)}) : output;
       tool.resultDetail.content.textContent = tool.resultDetail.raw;
       // 子代理的最终输出要显示出来(#6:用户要看 AI 的最终输出,上批误删了)。
       // 编辑工具成功时结果是 `{ok:true,files:[…]}` 样板,和 diff 卡重复——藏掉;失败留报错。
@@ -9062,7 +9082,7 @@
         tool.card.classList.remove("image-tool-chip");
       }
       // 时间线上成功不打勾不写「完成」,右侧就是耗时;失败才写字
-      updateToolStatus(tool, ok ? formatToolDuration(tool.finishedAt - tool.startedAt) || "完成" : "失败", ok ? "check" : "circle-alert", ok ? "is-success" : "is-failure");
+      updateToolStatus(tool, ok ? formatToolDuration(tool.finishedAt - tool.startedAt) || t("完成") : t("失败"), ok ? "check" : "circle-alert", ok ? "is-success" : "is-failure");
       updateToolSummary(tool);
       if (tool.liveProgress) {
         if (ok || tool.lastProgressWasPhase) tool.liveProgress.hidden = true;
@@ -9110,7 +9130,7 @@
       custom.next.disabled = !show;
       custom.next.classList.toggle("is-ready", show);
       custom.next.replaceChildren(makeIconSlot(index === lastIndex ? "check" : "chevron-right"));
-      custom.next.title = index === lastIndex ? "提交回答" : "下一题";
+      custom.next.title = index === lastIndex ? t("提交回答") : t("下一题");
       custom.next.setAttribute("aria-label", custom.next.title);
     });
   }
@@ -9159,7 +9179,7 @@
       page.hidden = pageIndex !== nextIndex;
     });
     const question = questionState.questions[nextIndex] || {};
-    questionState.prompt.textContent = String(question.question || question.header || `问题 ${nextIndex + 1}`);
+    questionState.prompt.textContent = String(question.question || question.header || t("问题 {index}", {index: nextIndex + 1}));
     questionState.position.textContent = `${nextIndex + 1} of ${questionState.pages.length}`;
     updateQuestionNavigation(questionState);
     elements.questionDock.scrollTop = 0;
@@ -9185,14 +9205,14 @@
       const selected = control.options.filter((option) => option.input.checked).map((option) => option.value);
       if (control.custom?.toggle.checked) {
         const custom = control.custom.textarea.value.trim();
-        if (!custom) throw new Error(`请填写第 ${index + 1} 项的自定义回答`);
-        if (countCharacters(custom) > MAX_CUSTOM_ANSWER_CHARS) throw new Error(`第 ${index + 1} 项的自定义回答不能超过 4,000 个字符`);
-        if (/[\u0000-\u001f\u007f-\u009f]/.test(custom)) throw new Error(`第 ${index + 1} 项的自定义回答不能包含控制字符或换行`);
-        if (selected.includes(custom)) throw new Error(`第 ${index + 1} 项包含重复回答`);
+        if (!custom) throw new Error(t("请填写第 {index} 项的自定义回答", {index: index + 1}));
+        if (countCharacters(custom) > MAX_CUSTOM_ANSWER_CHARS) throw new Error(t("第 {index} 项的自定义回答不能超过 4,000 个字符", {index: index + 1}));
+        if (/[\u0000-\u001f\u007f-\u009f]/.test(custom)) throw new Error(t("第 {index} 项的自定义回答不能包含控制字符或换行", {index: index + 1}));
+        if (selected.includes(custom)) throw new Error(t("第 {index} 项包含重复回答", {index: index + 1}));
         selected.push(custom);
       }
-      if (selected.length === 0) throw new Error(`请回答第 ${index + 1} 项`);
-      if (!control.multiple && selected.length !== 1) throw new Error(`第 ${index + 1} 项只能选择一个回答`);
+      if (selected.length === 0) throw new Error(t("请回答第 {index} 项", {index: index + 1}));
+      if (!control.multiple && selected.length !== 1) throw new Error(t("第 {index} 项只能选择一个回答", {index: index + 1}));
       answers.push(selected);
     }
     return answers;
@@ -9210,9 +9230,9 @@
     questionState.questions.forEach((question, index) => {
       const row = document.createElement("div");
       const term = document.createElement("dt");
-      term.textContent = String(question?.question || question?.header || `问题 ${index + 1}`);
+      term.textContent = String(question?.question || question?.header || t("问题 {index}", {index: index + 1}));
       const value = document.createElement("dd");
-      value.textContent = (Array.isArray(normalized[index]) ? normalized[index] : []).map(String).join("、") || "未记录";
+      value.textContent = (Array.isArray(normalized[index]) ? normalized[index] : []).map(String).join("、") || t("未记录");
       row.append(term, value);
       questionState.summary.appendChild(row);
     });
@@ -9234,7 +9254,7 @@
     questionState.header.hidden = false;
     questionState.card.removeAttribute("aria-label");
     questionState.card.setAttribute("aria-labelledby", questionState.titleId);
-    questionState.status.textContent = "已回答";
+    questionState.status.textContent = t("已回答");
     // 去掉那个大对钩(#143/#161):和落库回看的已回答卡一致,「已回答」二字已够表达状态。
     questionState.icon.replaceChildren();
     questionState.icon.hidden = true;
@@ -9259,7 +9279,7 @@
     setQuestionControlsDisabled(questionState, true);
     removeQuestionFromDock(questionState);
     updateControlState();
-    showToast("回答界面已关闭");
+    showToast(t("回答界面已关闭"));
     if (restoreFocus) window.requestAnimationFrame(focusComposerIfDesktop);
     contentAdded(questionState.card);
   }
@@ -9272,8 +9292,8 @@
     questionState.card.classList.remove("is-error");
     questionState.card.setAttribute("aria-busy", "true");
     questionState.close.replaceChildren(makeIconSlot("loader-circle", "is-spinning"));
-    questionState.close.title = "正在关闭";
-    questionState.close.setAttribute("aria-label", "正在关闭");
+    questionState.close.title = t("正在关闭");
+    questionState.close.setAttribute("aria-label", t("正在关闭"));
     setQuestionControlsDisabled(questionState, true);
     try {
       await apiRequest(`/api/questions/${encodeURIComponent(questionState.id)}`, { method: "DELETE" });
@@ -9284,15 +9304,15 @@
       questionState.restoreFocusOnClose = false;
       questionState.closing = false;
       questionState.card.removeAttribute("aria-busy");
-      questionState.error.textContent = error.message || "回答界面关闭失败";
+      questionState.error.textContent = error.message || t("回答界面关闭失败");
       questionState.error.hidden = false;
       questionState.card.classList.add("is-error");
       questionState.close.replaceChildren(makeIconSlot("x"));
-      questionState.close.title = "关闭回答";
-      questionState.close.setAttribute("aria-label", "关闭回答");
+      questionState.close.title = t("关闭回答");
+      questionState.close.setAttribute("aria-label", t("关闭回答"));
       setQuestionControlsDisabled(questionState, false);
       updateQuestionNavigation(questionState);
-      showToast(error.message || "回答界面关闭失败", "error");
+      showToast(error.message || t("回答界面关闭失败"), "error");
       if (restoreFocus) window.requestAnimationFrame(() => questionState.close.focus());
       if ((error.status === 404 || error.status === 409) && state.viewSessionId) {
         window.setTimeout(() => loadSessionView(state.viewSessionId, { quiet: true }), 300);
@@ -9318,8 +9338,8 @@
     questionState.card.classList.remove("is-error");
     questionState.card.setAttribute("aria-busy", "true");
     questionState.submit.replaceChildren(makeIconSlot("loader-circle", "is-spinning"));
-    questionState.submit.title = "提交中";
-    questionState.submit.setAttribute("aria-label", "提交中");
+    questionState.submit.title = t("提交中");
+    questionState.submit.setAttribute("aria-label", t("提交中"));
     setQuestionControlsDisabled(questionState, true);
     try {
       await apiRequest(`/api/questions/${encodeURIComponent(questionState.id)}/answer`, {
@@ -9331,15 +9351,15 @@
       if (!questionState.pending) return;
       questionState.submitting = false;
       questionState.card.removeAttribute("aria-busy");
-      questionState.error.textContent = error.message || "回答提交失败";
+      questionState.error.textContent = error.message || t("回答提交失败");
       questionState.error.hidden = false;
       questionState.card.classList.add("is-error");
       questionState.submit.replaceChildren(makeIconSlot("check"));
-      questionState.submit.title = "提交回答";
-      questionState.submit.setAttribute("aria-label", "提交回答");
+      questionState.submit.title = t("提交回答");
+      questionState.submit.setAttribute("aria-label", t("提交回答"));
       setQuestionControlsDisabled(questionState, false);
       updateQuestionNavigation(questionState);
-      showToast(error.message || "回答提交失败", "error");
+      showToast(error.message || t("回答提交失败"), "error");
       if ((error.status === 404 || error.status === 409) && state.viewSessionId) {
         window.setTimeout(() => loadSessionView(state.viewSessionId, { quiet: true }), 300);
       }
@@ -9360,7 +9380,7 @@
     card.className = "question-card";
     card.dataset.questionId = questionId;
     const titleId = `live-question-title-${live.questions.size + 1}`;
-    card.setAttribute("aria-label", "待回答问题");
+    card.setAttribute("aria-label", t("待回答问题"));
     const header = document.createElement("header");
     header.hidden = true;
     const icon = document.createElement("span");
@@ -9368,10 +9388,10 @@
     icon.appendChild(makeIconSlot("circle-help"));
     const headerCopy = document.createElement("div");
     const status = document.createElement("small");
-    status.textContent = "等待回答";
+    status.textContent = t("等待回答");
     const title = document.createElement("strong");
     title.id = titleId;
-    title.textContent = questions.length === 1 ? String(questions[0]?.header || "补充确认") : `${questions.length} 项补充确认`;
+    title.textContent = questions.length === 1 ? String(questions[0]?.header || t("补充确认")) : t("{count} 项补充确认", {count: questions.length});
     headerCopy.append(status, title);
     header.append(icon, headerCopy);
     const form = document.createElement("form");
@@ -9383,16 +9403,16 @@
     prompt.id = `question-${questionId}-prompt`;
     prompt.setAttribute("aria-live", "polite");
     prompt.setAttribute("aria-atomic", "true");
-    prompt.textContent = String(questions[0]?.question || questions[0]?.header || "问题 1");
+    prompt.textContent = String(questions[0]?.question || questions[0]?.header || t("问题 1"));
     const navigation = document.createElement("div");
     navigation.className = "question-navigation";
     navigation.setAttribute("role", "group");
-    navigation.setAttribute("aria-label", "问题导航");
+    navigation.setAttribute("aria-label", t("问题导航"));
     const previous = document.createElement("button");
     previous.type = "button";
     previous.className = "question-page-button is-previous";
-    previous.title = "上一题";
-    previous.setAttribute("aria-label", "上一题");
+    previous.title = t("上一题");
+    previous.setAttribute("aria-label", t("上一题"));
     previous.appendChild(makeIconSlot("chevron-right"));
     const position = document.createElement("span");
     position.className = "question-position";
@@ -9401,21 +9421,21 @@
     const next = document.createElement("button");
     next.type = "button";
     next.className = "question-page-button";
-    next.title = "下一题";
-    next.setAttribute("aria-label", "下一题");
+    next.title = t("下一题");
+    next.setAttribute("aria-label", t("下一题"));
     next.appendChild(makeIconSlot("chevron-right"));
     const submit = document.createElement("button");
     submit.className = "question-page-button question-submit";
     submit.type = "submit";
-    submit.title = "提交回答";
-    submit.setAttribute("aria-label", "提交回答");
+    submit.title = t("提交回答");
+    submit.setAttribute("aria-label", t("提交回答"));
     submit.hidden = true;
     submit.appendChild(makeIconSlot("check"));
     const close = document.createElement("button");
     close.type = "button";
     close.className = "question-page-button question-close-button";
-    close.title = "关闭回答";
-    close.setAttribute("aria-label", "关闭回答");
+    close.title = t("关闭回答");
+    close.setAttribute("aria-label", t("关闭回答"));
     close.appendChild(makeIconSlot("x"));
     navigation.append(previous, position, next, submit, close);
     heading.append(prompt, navigation);
@@ -9431,7 +9451,7 @@
       const legend = document.createElement("legend");
       legend.className = "question-legend";
       legend.setAttribute("aria-hidden", "true");
-      legend.textContent = String(question?.question || question?.header || `问题 ${questionIndex + 1}`);
+      legend.textContent = String(question?.question || question?.header || t("问题 {index}", {index: questionIndex + 1}));
       fieldset.appendChild(legend);
       const optionList = document.createElement("div");
       optionList.className = "question-options";
@@ -9471,11 +9491,11 @@
         toggle.name = inputName;
         toggle.value = "__custom__";
         toggle.dataset.questionIndex = String(questionIndex);
-        toggle.setAttribute("aria-label", `${question?.header || `问题 ${questionIndex + 1}`}使用自定义回答`);
+        toggle.setAttribute("aria-label", t("{header}使用自定义回答", {header: question?.header || t("问题 {index}", {index: questionIndex + 1})}));
         const textarea = document.createElement("textarea");
         textarea.rows = 1;
-        textarea.placeholder = "自定义回答";
-        textarea.setAttribute("aria-label", `${question?.header || `问题 ${questionIndex + 1}`}的自定义回答`);
+        textarea.placeholder = t("自定义回答");
+        textarea.setAttribute("aria-label", t("{header}的自定义回答", {header: question?.header || t("问题 {index}", {index: questionIndex + 1})}));
         textarea.addEventListener("focus", () => {
           toggle.checked = true;
           updateQuestionOptionClasses(questionState);
@@ -9489,8 +9509,8 @@
           customNext = document.createElement("button");
           customNext.type = "button";
           customNext.className = "custom-answer-next";
-          customNext.title = "下一题";
-          customNext.setAttribute("aria-label", "下一题");
+          customNext.title = t("下一题");
+          customNext.setAttribute("aria-label", t("下一题"));
           customNext.hidden = true;
           customNext.appendChild(makeIconSlot("chevron-right"));
           customNext.addEventListener("click", () => advanceQuestion(questionState));
@@ -9583,7 +9603,7 @@
       question.restoreFocusOnClose = false;
       question.card.removeAttribute("aria-busy");
       question.card.classList.add("is-error");
-      question.status.textContent = "本轮已结束";
+      question.status.textContent = t("本轮已结束");
       question.error.textContent = message;
       question.error.hidden = false;
       setQuestionControlsDisabled(question, true);
@@ -9600,7 +9620,7 @@
     block.className = "context-operation";
     const title = document.createElement("strong");
     title.append(makeIconSlot("refresh-cw"), document.createElement("span"));
-    title.lastChild.textContent = kind === "compact" ? "正在整理上下文" : "正在释放旧上下文";
+    title.lastChild.textContent = kind === "compact" ? t("正在整理上下文") : t("正在释放旧上下文");
     const output = document.createElement("pre");
     output.hidden = true;
     block.append(title, output);
@@ -9621,17 +9641,17 @@
       operation.output.textContent = operation.raw;
       operation.output.hidden = !operation.raw;
     } else if (name === "context.compact_end") {
-      if (live.contextOperation?.kind === "compact") live.contextOperation.title.textContent = "上下文已整理";
+      if (live.contextOperation?.kind === "compact") live.contextOperation.title.textContent = t("上下文已整理");
       live.contextOperation = null;
     } else if (name === "context.pop_start") createContextOperation(live, "pop");
     else if (name === "context.pop_end") {
-      if (live.contextOperation?.kind === "pop") live.contextOperation.title.textContent = "旧上下文已释放";
+      if (live.contextOperation?.kind === "pop") live.contextOperation.title.textContent = t("旧上下文已释放");
       live.contextOperation = null;
     } else if (name === "context.error") {
       const operation = live.contextOperation || createContextOperation(live, "compact");
       operation.block.classList.add("is-error");
-      operation.title.textContent = "上下文整理未完成";
-      operation.raw = String(data?.message || "上下文维护失败");
+      operation.title.textContent = t("上下文整理未完成");
+      operation.raw = String(data?.message || t("上下文维护失败"));
       operation.output.textContent = operation.raw;
       operation.output.hidden = false;
       live.contextOperation = null;
@@ -9641,12 +9661,12 @@
 
   function jobStatusDisplay(status) {
     const value = String(status || "");
-    if (value === "stopped") return "已中断";
-    if (value === "timed_out") return "已超时";
-    if (value === "exited(signal)") return "异常退出";
-    if (value === "exited(0)") return "完成";
+    if (value === "stopped") return t("已中断");
+    if (value === "timed_out") return t("已超时");
+    if (value === "exited(signal)") return t("异常退出");
+    if (value === "exited(0)") return t("完成");
     const match = value.match(/^exited\((-?\d+)\)$/);
-    return match ? `退出码 ${match[1]}` : value;
+    return match ? t("退出码 {code}", {code: match[1]}) : value;
   }
 
   function visibleBackgroundJobs() {
@@ -9715,14 +9735,14 @@
       const resp = await apiRequest(`/api/jobs/${encodeURIComponent(jobId)}/log`);
       const data = await resp.json();
       const atBottom = entry.pre.scrollTop + entry.pre.clientHeight >= entry.pre.scrollHeight - 8;
-      entry.pre.textContent = data?.log || "(暂无输出)";
+      entry.pre.textContent = data?.log || t("(暂无输出)");
       if (atBottom) entry.pre.scrollTop = entry.pre.scrollHeight;
       if (!data?.running && entry.timer) {
         clearInterval(entry.timer);
         entry.timer = null;
       }
     } catch {
-      entry.pre.textContent = "(读取日志失败)";
+      entry.pre.textContent = t("(读取日志失败)");
     }
   }
 
@@ -9783,7 +9803,7 @@
       toggle.setAttribute("aria-expanded", String(state.jobsStripOpen));
       const label = document.createElement("span");
       label.className = "job-chip-label";
-      label.textContent = `后台任务 ×${jobs.length}`;
+      label.textContent = t("后台任务 ×{count}", {count: jobs.length});
       toggle.append(makeJobSpinner(), label);
       toggle.addEventListener("click", () => {
         state.jobsStripOpen = !state.jobsStripOpen;
@@ -9813,7 +9833,7 @@
 
       const label = document.createElement("span");
       label.className = "job-chip-label";
-      const kindWord = isSubagent ? (job.dev ? "开发中" : "子代理") : "命令";
+      const kindWord = isSubagent ? (job.dev ? t("开发中") : t("子代理")) : t("命令");
       // 后代的任务前面挂个 ↳,看得出不是这一层开的。
       const nested = job.root_session_id && job.session_id && job.root_session_id !== job.session_id;
       label.textContent = `${kindWord} ${nested ? "↳ " : ""}${job.job_id} · ${job.title}`;
@@ -9840,13 +9860,13 @@
       stop.type = "button";
       stop.className = "job-chip-stop";
       stop.textContent = "✕";
-      stop.title = "停止该后台任务";
+      stop.title = t("停止该后台任务");
       stop.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
           await apiRequest(`/api/jobs/${encodeURIComponent(jid)}`, { method: "DELETE" });
         } catch (error) {
-          showToast(error.message || "停止失败", "error");
+          showToast(error.message || t("停止失败"), "error");
         }
       });
 
@@ -10022,7 +10042,7 @@
       if (tool.finished) continue;
       tool.finished = true;
       tool.finishedAt = performance.now();
-      updateToolStatus(tool, "已中断", "circle-alert", "is-failure");
+      updateToolStatus(tool, t("已中断"), "circle-alert", "is-failure");
       updateToolSummary(tool);
       if (tool.liveProgress) {
         if (tool.liveProgress.textContent.trim()) tool.liveProgress.classList.add("is-error");
@@ -10216,7 +10236,7 @@
     if (unit === "k") n *= 1e3;
     else if (unit === "m") n *= 1e6;
     else if (unit === "b") n *= 1e9;
-    else if (m[2] === "万") n *= 1e4;
+    else if (m[2] === "万") n *= 1e4; // i18n-allow: 数字后缀是数据,程序按原文解析单位
     return Math.round(n);
   }
 
@@ -10229,7 +10249,7 @@
       state.liveRuns.delete(runId);
       state.replayRunIds?.delete(runId);
       state.terminalRunIds.add(runId);
-      showToast(kind === "failed" ? String(data?.message || "重新生成失败") : "重新生成已取消", "error");
+      showToast(kind === "failed" ? String(data?.message || t("重新生成失败")) : t("重新生成已取消"), "error");
       if (state.viewSessionId) loadSessionView(state.viewSessionId, { quiet: true });
       updateConversationChrome();
       updateControlState();
@@ -10259,7 +10279,7 @@
           generationTokens: data?.usage?.generation_tokens,
           generationMs: data?.usage?.generation_ms
         });
-        live.meta.textContent = usage || "已完成";
+        live.meta.textContent = usage || t("已完成");
       }
       // 输入框下方信息行:最新一轮的输出速度 + 会话累计 token(#99/#131)。收尾时
       // 会话累计是权威值(所有子代理都跑完、子会话都记好了),直接当基线,把中途的
@@ -10277,15 +10297,15 @@
       });
     } else if (kind === "cancelled") {
       markUnfinishedTools(live);
-      endPendingQuestions(live, "本轮已停止，无法再提交回答");
+      endPendingQuestions(live, t("本轮已停止，无法再提交回答"));
       // 停止状态只由时间线的「本轮已中断」一处表达,气泡内通知与 header/meta 不再重复
       if (live.headerStatus) live.headerStatus.textContent = "";
       if (live.meta) live.meta.textContent = "";
     } else {
       markUnfinishedTools(live);
-      endPendingQuestions(live, "本轮已结束，无法再提交回答");
-      appendRunNotice(live, String(data?.message || "本轮运行失败"), true);
-      if (live.headerStatus) live.headerStatus.textContent = "运行失败";
+      endPendingQuestions(live, t("本轮已结束，无法再提交回答"));
+      appendRunNotice(live, String(data?.message || t("本轮运行失败")), true);
+      if (live.headerStatus) live.headerStatus.textContent = t("运行失败");
       if (live.meta) live.meta.textContent = "";
     }
 
@@ -10566,7 +10586,7 @@
     try {
       data = event.data ? JSON.parse(event.data) : {};
     } catch (_) {
-      showToast("收到无法解析的事件，正在重新同步", "error");
+      showToast(t("收到无法解析的事件，正在重新同步"), "error");
       loadBootstrap();
       return;
     }
@@ -10738,10 +10758,10 @@
     elements.timeline.hidden = true;
     elements.emptyState.hidden = true;
     elements.blockedState.hidden = false;
-    elements.blockedTitle.textContent = unauthorized ? "登录 Miyu" : "无法载入 Miyu WebUI";
+    elements.blockedTitle.textContent = unauthorized ? t("登录 Miyu") : t("无法载入 Miyu WebUI");
     elements.blockedMessage.textContent = unauthorized
-      ? (expired ? "登录已过期,请重新登录。" : "输入用户名和密码以继续。")
-      : message || "本地服务暂时无法访问";
+      ? (expired ? t("登录已过期,请重新登录。") : t("输入用户名和密码以继续。"))
+      : message || t("本地服务暂时无法访问");
     elements.loginForm.hidden = !unauthorized;
     elements.registerForm.hidden = true;
     elements.setupForm.hidden = true;
@@ -10763,13 +10783,13 @@
     try {
       const status = await fetch("/api/auth/status", { cache: "no-store" }).then((response) => response.json());
       if (!document.body.classList.contains("is-login") || !elements.loginForm || elements.loginForm.hidden) return;
-      if (elements.blockedMessage.textContent.startsWith("登录已过期")) return;
+      if (elements.blockedMessage.textContent === t("登录已过期,请重新登录。")) return;
       if (status?.setup_pending) {
-        elements.blockedMessage.textContent = "首次使用:用户名 miyu、密码 miyu 登录,然后创建管理员账号。";
+        elements.blockedMessage.textContent = t("首次使用:用户名 miyu、密码 miyu 登录,然后创建管理员账号。");
         elements.loginUsername.placeholder = "miyu";
       } else {
-        elements.blockedMessage.textContent = "输入用户名和密码以继续。";
-        elements.loginUsername.placeholder = "用户名";
+        elements.blockedMessage.textContent = t("输入用户名和密码以继续。");
+        elements.loginUsername.placeholder = t("用户名");
       }
     } catch (_) { /* 提示拿不到就用默认文案 */ }
   }
@@ -10782,8 +10802,8 @@
     elements.timeline.hidden = true;
     elements.emptyState.hidden = true;
     elements.blockedState.hidden = false;
-    elements.blockedTitle.textContent = "创建管理员账号";
-    elements.blockedMessage.textContent = "内置账号 miyu 只用这一次;建好账号后用它登录,别人凭邀请码注册。";
+    elements.blockedTitle.textContent = t("创建管理员账号");
+    elements.blockedMessage.textContent = t("内置账号 miyu 只用这一次;建好账号后用它登录,别人凭邀请码注册。");
     elements.loginForm.hidden = true;
     elements.registerForm.hidden = true;
     elements.setupForm.hidden = false;
@@ -10801,9 +10821,9 @@
     const username = elements.setupUsername.value.trim();
     const password = elements.setupPassword.value;
     const fail = (text, focus) => { elements.setupError.textContent = text; elements.setupError.hidden = false; focus?.focus(); };
-    if (!username) return fail("先起个用户名", elements.setupUsername);
-    if (!password) return fail("请输入密码", elements.setupPassword);
-    if (password !== elements.setupPassword2.value) return fail("两次密码不一样", elements.setupPassword2);
+    if (!username) return fail(t("先起个用户名"), elements.setupUsername);
+    if (!password) return fail(t("请输入密码"), elements.setupPassword);
+    if (password !== elements.setupPassword2.value) return fail(t("两次密码不一样"), elements.setupPassword2);
     elements.setupError.hidden = true;
     state.setupSubmitting = true;
     elements.setupSubmit.disabled = true;
@@ -10816,7 +10836,7 @@
       elements.setupPassword2.value = "";
       await loadBootstrap();
     } catch (error) {
-      fail(error.message || "创建失败", elements.setupUsername);
+      fail(error.message || t("创建失败"), elements.setupUsername);
     } finally {
       state.setupSubmitting = false;
       elements.setupSubmit.disabled = false;
@@ -11004,7 +11024,7 @@
   function showRegisterForm(show) {
     elements.loginForm.hidden = show;
     elements.registerForm.hidden = !show;
-    elements.blockedMessage.textContent = show ? "凭管理员发的邀请码创建账号。" : "输入用户名和密码以继续。";
+    elements.blockedMessage.textContent = show ? t("凭管理员发的邀请码创建账号。") : t("输入用户名和密码以继续。");
     window.requestAnimationFrame(() => (show ? elements.registerInvite : elements.loginUsername).focus());
   }
 
@@ -11015,7 +11035,7 @@
     }
     elements.registerSubmit.disabled = state.registerSubmitting;
     elements.registerSubmit.classList.toggle("is-loading", state.registerSubmitting);
-    elements.registerSubmitLabel.textContent = state.registerSubmitting ? "正在注册" : "注册并登录";
+    elements.registerSubmitLabel.textContent = state.registerSubmitting ? t("正在注册") : t("注册并登录");
   }
 
   async function submitRegister() {
@@ -11029,9 +11049,9 @@
       elements.registerError.hidden = false;
       input?.focus();
     };
-    if (!invite) return fail("请输入邀请码", elements.registerInvite);
-    if (!username) return fail("请输入用户名", elements.registerUsername);
-    if (!password) return fail("请输入密码", elements.registerPassword);
+    if (!invite) return fail(t("请输入邀请码"), elements.registerInvite);
+    if (!username) return fail(t("请输入用户名"), elements.registerUsername);
+    if (!password) return fail(t("请输入密码"), elements.registerPassword);
     elements.registerError.hidden = true;
     setRegisterSubmitting(true);
     try {
@@ -11043,7 +11063,7 @@
       elements.registerInvite.value = "";
       await loadBootstrap();
     } catch (error) {
-      fail(error.message || "注册失败", elements.registerInvite);
+      fail(error.message || t("注册失败"), elements.registerInvite);
     } finally {
       setRegisterSubmitting(false);
     }
@@ -11065,7 +11085,7 @@
     elements.loginPassword.disabled = state.loginSubmitting;
     elements.loginSubmit.disabled = state.loginSubmitting;
     elements.loginSubmit.classList.toggle("is-loading", state.loginSubmitting);
-    elements.loginSubmitLabel.textContent = state.loginSubmitting ? "正在登录" : "登录";
+    elements.loginSubmitLabel.textContent = state.loginSubmitting ? t("正在登录") : t("登录");
     const icon = elements.loginSubmit.querySelector(".icon-slot");
     if (icon) icon.replaceChildren(createIcon(state.loginSubmitting ? "loader-circle" : "log-in"));
   }
@@ -11075,13 +11095,13 @@
     const username = elements.loginUsername.value.trim();
     const password = elements.loginPassword.value;
     if (!username) {
-      elements.loginError.textContent = "请输入用户名";
+      elements.loginError.textContent = t("请输入用户名");
       elements.loginError.hidden = false;
       elements.loginUsername.focus();
       return;
     }
     if (!password) {
-      elements.loginError.textContent = "请输入密码";
+      elements.loginError.textContent = t("请输入密码");
       elements.loginError.hidden = false;
       elements.loginPassword.focus();
       return;
@@ -11098,8 +11118,8 @@
       await loadBootstrap();
     } catch (error) {
       elements.loginError.textContent = error.status === 401
-        ? "用户名或密码不正确，请重试"
-        : error.message || "登录失败";
+        ? t("用户名或密码不正确，请重试")
+        : error.message || t("登录失败");
       elements.loginError.hidden = false;
       window.requestAnimationFrame(() => {
         elements.loginPassword.focus();
@@ -11136,14 +11156,14 @@
     if (!(state.stagedModelKeys instanceof Set) || state.modelSelectionSubmitting) return;
     const sessionId = String(state.viewSessionId || state.currentSessionId || "");
     if (!sessionId) {
-      state.modelMenuError = "当前视图没有可设置的会话";
+      state.modelMenuError = t("当前视图没有可设置的会话");
       updateModelMenuState();
       return;
     }
     const follow = state.stagedFollowGlobal || state.stagedModelKeys.size === 0;
     const selected = follow ? [] : state.models.filter((model) => state.stagedModelKeys.has(modelKey(model)));
     if (!follow && selected.length === 0) {
-      state.modelMenuError = "所选模型已不可用，请重新选择";
+      state.modelMenuError = t("所选模型已不可用，请重新选择");
       updateModelMenuState();
       return;
     }
@@ -11170,9 +11190,9 @@
       setSessionModelOverride(sessionId, payload?.model_override);
       // 换了模型池,窗口大小也跟着换;不拉的话上下文条要到跑完一轮才纠正。
       refreshSessionContext(sessionId);
-      showToast(follow ? "本会话已恢复跟随全局" : "本会话模型已更新（下一轮生效）");
+      showToast(follow ? t("本会话已恢复跟随全局") : t("本会话模型已更新（下一轮生效）"));
     } catch (error) {
-      state.modelMenuError = error.message || "模型设置未保存";
+      state.modelMenuError = error.message || t("模型设置未保存");
       showInlineError(error.message);
       showToast(error.message, "error");
     } finally {
@@ -11225,7 +11245,7 @@
             const live = [...state.liveRuns.values()].find((entry) => entry && !entry.ended);
             if (!live) return "";
             await cancelLiveRun(live);
-            return live.cancellationRequested ? "已请求停止当前回复" : "";
+            return live.cancellationRequested ? t("已请求停止当前回复") : "";
           },
           // 命令改了服务端状态（/reset 清空历史）时用它重拉，光重绘不够。
           reload: async () => {
@@ -11267,12 +11287,12 @@
     }));
     const count = countCharacters(content);
     if (!content && !attachmentIds.length) {
-      elements.composerState.textContent = "消息不能为空";
+      elements.composerState.textContent = t("消息不能为空");
       elements.composerState.classList.add("is-error");
       return;
     }
     if (count > MAX_CONTENT_CHARS) {
-      elements.composerState.textContent = "消息不能超过 20,000 个字符";
+      elements.composerState.textContent = t("消息不能超过 20,000 个字符");
       elements.composerState.classList.add("is-error");
       return;
     }
@@ -11321,7 +11341,7 @@
         return;
       }
       const runId = String(payload?.run_id || "");
-      if (!runId) throw new ApiError("服务未返回运行标识", response.status);
+      if (!runId) throw new ApiError(t("服务未返回运行标识"), response.status);
       if (state.terminalRunIds.has(runId)) {
         if (sessionId) await loadSessionView(sessionId, { quiet: true });
         else await loadBootstrap();
@@ -11367,10 +11387,10 @@
           else await loadBootstrap();
           return;
         } catch (retryError) {
-          showToast(retryError.message || "发送失败", "error");
+          showToast(retryError.message || t("发送失败"), "error");
         }
       } else if (error.status === 409) {
-        showToast("这条没发出去：会话刚开始新的一轮，再发一次", "error");
+        showToast(t("这条没发出去：会话刚开始新的一轮，再发一次"), "error");
       } else {
         showInlineError(error.message);
         showToast(error.message, "error");
@@ -11408,15 +11428,15 @@
     const panel = document.createElement("div");
     panel.className = "mode-chooser";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "选择新会话模式");
+    panel.setAttribute("aria-label", t("选择新会话模式"));
     const title = document.createElement("strong");
-    title.textContent = "新会话";
+    title.textContent = t("新会话");
     const hint = document.createElement("small");
-    hint.textContent = "选择模式后开始对话；会话模式创建后不可更改";
+    hint.textContent = t("选择模式后开始对话；会话模式创建后不可更改");
     panel.append(title, hint);
     const options = [
-      { id: "normal", label: "普通模式", icon: "message-circle", desc: "人格、记忆、全部工具" },
-      { id: "dev", label: "开发模式", icon: "code", desc: "极简提示词与编码工具，记忆独立" }
+      { id: "normal", label: t("普通模式"), icon: "message-circle", desc: t("人格、记忆、全部工具") },
+      { id: "dev", label: t("开发模式"), icon: "code", desc: t("极简提示词与编码工具，记忆独立") }
     ];
     for (const option of options) {
       const button = document.createElement("button");
@@ -11488,7 +11508,7 @@
   function requestClearConversation() {
     if (conversationRunning() || state.adminBusy || state.submitting) return;
     if (!hasHistory()) {
-      showToast("当前会话没有可清除的记录");
+      showToast(t("当前会话没有可清除的记录"));
       return;
     }
     openResetDialog();
@@ -11499,10 +11519,10 @@
     state.adminBusy = true;
     elements.resetConfirmButton.disabled = true;
     elements.resetCancelButton.disabled = true;
-    elements.resetConfirmButton.textContent = "正在清除";
+    elements.resetConfirmButton.textContent = t("正在清除");
     updateControlState();
     try {
-      if (!state.viewSessionId) throw new Error("无法确定要清除的会话");
+      if (!state.viewSessionId) throw new Error(t("无法确定要清除的会话"));
       await apiRequest("/api/conversation/reset", {
         method: "POST",
         body: JSON.stringify({ session_id: state.viewSessionId })
@@ -11518,7 +11538,7 @@
       state.adminBusy = false;
       elements.resetConfirmButton.disabled = false;
       elements.resetCancelButton.disabled = false;
-      elements.resetConfirmButton.textContent = "清空记录";
+      elements.resetConfirmButton.textContent = t("清空记录");
       updateControlState();
     }
   }
@@ -11616,8 +11636,12 @@
   usageTip.className = "u-chart-tip";
   document.body.appendChild(usageTip);
 
+  // 可选的花费行:提示气泡里用,抽出来免得模板串里再套模板串。
+  const usageCostRow = (cost) => usageFmtCost(cost) ? `<div class="row"><span data-i18n="消费">消费</span><em>≈${usageFmtCost(cost)}</em></div>` : ""; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+
   function usageTipShow(html, event) {
     usageTip.innerHTML = html;
+    MiyuI18n.applyDom(usageTip);
     usageTip.style.display = "block";
     usageTipMove(event);
   }
@@ -11646,24 +11670,24 @@
     return String(value);
   }
   function usageSourceName(src) {
-    if (src === "agent") return "智能体";
+    if (src === "agent") return t("智能体");
     if (src === "qq" || src === "onebot") return "QQ";
     return src;
   }
 
   // 来源内细项(后端 kinds):已含在来源合计里,只是拆出来看得见。
   function usageKindName(kind) {
-    if (kind === "judge") return "主动回复判断";
-    if (kind === "affection") return "好感度更新";
-    if (kind === "group_join") return "入群审批";
+    if (kind === "judge") return t("主动回复判断");
+    if (kind === "affection") return t("好感度更新");
+    if (kind === "group_join") return t("入群审批");
     return kind;
   }
 
   // 明细表列窄,用短名;没有短名就退回全名。
   function usageKindShortName(kind) {
-    if (kind === "judge") return "判断";
-    if (kind === "affection") return "好感度";
-    if (kind === "group_join") return "入群";
+    if (kind === "judge") return t("判断");
+    if (kind === "affection") return t("好感度");
+    if (kind === "group_join") return t("入群");
     return usageKindName(kind);
   }
 
@@ -11839,7 +11863,7 @@
 
   async function loadUsageStats() {
     const seq = ++usageState.loadSeq;
-    elements.usageStamp.textContent = "正在载入…";
+    elements.usageStamp.textContent = t("正在载入…");
     try {
       const response = await apiRequest(`/api/usage/stats?range=${usageState.range}`);
       const data = await response.json();
@@ -11849,10 +11873,10 @@
       const now = new Date();
       const pad = (n) => String(n).padStart(2, "0");
       elements.usageStamp.textContent =
-        `更新于 ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        t("更新于 {time}", {time: `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`});
     } catch (error) {
       if (seq !== usageState.loadSeq) return;
-      elements.usageStamp.textContent = `载入失败:${error.message || error}`;
+      elements.usageStamp.textContent = t("载入失败:{detail}", {detail: error.message || error});
     }
   }
 
@@ -11866,7 +11890,8 @@
       renderUsageRecords(data.records || []);
     } catch (_) {
       elements.usageRecords.innerHTML =
-        `<tr class="u-day-row"><td colspan="7">明细载入失败</td></tr>`;
+        `<tr class="u-day-row"><td colspan="7" data-i18n="明细载入失败">明细载入失败</td></tr>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(elements.usageRecords);
     }
   }
 
@@ -11915,7 +11940,7 @@
       const value = ((current || 0) / base - 1) * 100;
       const dir = value >= 0 ? "up" : "down";
       const sign = value >= 0 ? "+" : "";
-      return `<span class="u-tl-right u-delta ${dir}" title="对比上一周期">${sign}${value.toFixed(0)}%</span>`;
+      return `<span class="u-tl-right u-delta ${dir}" data-i18n-title="对比上一周期" title="对比上一周期">${sign}${value.toFixed(0)}%</span>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
     };
     const hit = usageCacheRate(totals.cache_read || 0, totals.prompt || 0);
     const RING_R = 15;
@@ -11923,29 +11948,34 @@
     const icon = (path) => `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
     const dailyAvg = usageState.range === "1d"
       ? ""
-      : ` · 日均 ${(Number(totals.requests || 0) / rangeDayCount(stats)).toFixed(1)} 次`;
+      : t(" · 日均 {value} 次", {value: (Number(totals.requests || 0) / rangeDayCount(stats)).toFixed(1)});
     const costValue = usageFmtCost(totals.cost);
     const costCoverage = Number(totals.costed_requests || 0) < Number(totals.requests || 0)
-      ? `估算覆盖 ${Number(totals.costed_requests || 0).toLocaleString()}/${Number(totals.requests || 0).toLocaleString()} 次`
-      : "按 models.dev 价格估算";
+      ? t("估算覆盖 {costed}/{total} 次", {costed: Number(totals.costed_requests || 0).toLocaleString(), total: Number(totals.requests || 0).toLocaleString()})
+      : t("按 models.dev 价格估算");
+    const ioLine = t("输入 {prompt} · 输出 {completion}", {prompt: usageFmt(totals.prompt || 0), completion: usageFmt(totals.completion || 0)});
+    const requestsLine = t("全部请求:对话 + 辅助{avg}", {avg: dailyAvg});
+    const hitLine = t("命中 {hit} / 输入侧 {prompt}", {hit: usageFmt(totals.cache_read || 0), prompt: usageFmt(totals.prompt || 0)});
+    // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
     elements.usageTiles.innerHTML = `
-      <div class="u-tile"><div class="u-tile-label">${icon('<path d="M18 5H7l6 7-6 7h11"/>')}总消耗${delta(totals.total, prev && prev.total)}</div>
+      <div class="u-tile"><div class="u-tile-label" data-i18n-text="总消耗">${icon('<path d="M18 5H7l6 7-6 7h11"/>')}总消耗${delta(totals.total, prev && prev.total)}</div>
         <div class="u-tile-value">${usageFmt(totals.total || 0)}<small>tokens</small></div>
-        <div class="u-tile-sub">输入 ${usageFmt(totals.prompt || 0)} · 输出 ${usageFmt(totals.completion || 0)}</div></div>
-      <div class="u-tile"><div class="u-tile-label">${icon('<path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>')}总消费${delta(totals.cost, prev && prev.cost)}</div>
-        <div class="u-tile-value">${costValue ? `≈${costValue}` : "—"}</div>
-        <div class="u-tile-sub">${costValue ? costCoverage : "暂无价格数据"}</div></div>
-      <div class="u-tile"><div class="u-tile-label">${icon('<path d="M22 12h-4l-3 8L9 4l-3 8H2"/>')}请求数${delta(totals.requests, prev && prev.requests)}</div>
+        <div class="u-tile-sub">${ioLine}</div></div>
+      <div class="u-tile"><div class="u-tile-label" data-i18n-text="总消费">${icon('<path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>')}总消费${delta(totals.cost, prev && prev.cost)}</div>
+        <div class="u-tile-value">${costValue ? "≈" + costValue : "—"}</div>
+        <div class="u-tile-sub">${costValue ? costCoverage : t("暂无价格数据")}</div></div>
+      <div class="u-tile"><div class="u-tile-label" data-i18n-text="请求数">${icon('<path d="M22 12h-4l-3 8L9 4l-3 8H2"/>')}请求数${delta(totals.requests, prev && prev.requests)}</div>
         <div class="u-tile-value">${Number(totals.requests || 0).toLocaleString()}</div>
-        <div class="u-tile-sub">全部请求:对话 + 辅助${dailyAvg}</div></div>
+        <div class="u-tile-sub">${requestsLine}</div></div>
       <div class="u-tile u-tile-flex"><div class="u-tf-main">
-        <div class="u-tile-label">${icon('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/>')}缓存命中率</div>
-        <div class="u-tile-value">${hit == null ? "—" : `${hit}<small>%</small>`}</div>
-        <div class="u-tile-sub">命中 ${usageFmt(totals.cache_read || 0)} / 输入侧 ${usageFmt(totals.prompt || 0)}</div></div>
+        <div class="u-tile-label" data-i18n-text="缓存命中率">${icon('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/>')}缓存命中率</div>
+        <div class="u-tile-value">${hit == null ? "—" : hit + "<small>%</small>"}</div>
+        <div class="u-tile-sub">${hitLine}</div></div>
         <svg class="u-ring" viewBox="0 0 40 40" aria-hidden="true">
           <circle cx="20" cy="20" r="${RING_R}" fill="none" stroke="var(--chart-1)" stroke-opacity=".22" stroke-width="5"/>
           <circle cx="20" cy="20" r="${RING_R}" fill="none" stroke="var(--chart-3)" stroke-width="5" stroke-linecap="round"
             stroke-dasharray="${(((hit || 0) / 100) * RING_C).toFixed(1)} ${RING_C.toFixed(1)}" transform="rotate(-90 20 20)"/></svg></div>`;
+    MiyuI18n.applyDom(elements.usageTiles);
   }
 
   function rangeDayCount(stats) {
@@ -11979,11 +12009,10 @@
     for (const day of daily) {
       const cell = document.createElement("i");
       cell.dataset.l = day.total === 0 ? 0 : Math.min(4, 1 + Math.floor((day.total / max) * 3.99));
-      cell.addEventListener("mousemove", (event) => usageTipShow(
+      cell.addEventListener("mousemove", (event) => usageTipShow( // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
         `<b>${day.date}</b>
          <div class="row"><span>tokens</span><em>${usageFmt(day.total)}</em></div>
-         <div class="row"><span>请求</span><em>${day.requests}</em></div>${usageFmtCost(day.cost) ? `
-         <div class="row"><span>消费</span><em>≈${usageFmtCost(day.cost)}</em></div>` : ""}`, event));
+         <div class="row"><span data-i18n="请求">请求</span><em>${day.requests}</em></div>${usageCostRow(day.cost)}`, event));
       cell.addEventListener("mouseleave", usageTipHide);
       wrap.appendChild(cell);
     }
@@ -11994,7 +12023,7 @@
       const month = usageParseDate(daily[index].date).getMonth();
       if (month !== previousMonth) {
         const label = document.createElement("span");
-        label.textContent = `${month + 1}月`;
+        label.textContent = t("{month}月", {month: month + 1});
         label.style.left = `${(column / columns) * 100}%`;
         monthsEl.appendChild(label);
         previousMonth = month;
@@ -12003,7 +12032,7 @@
     const requests = daily.reduce((sum, day) => sum + day.requests, 0);
     const tokens = daily.reduce((sum, day) => sum + day.total, 0);
     elements.usageHeatTotal.textContent =
-      `共 ${requests.toLocaleString()} 次调用 · ${usageFmt(tokens)} tokens`;
+      t("共 {count} 次调用 · {tokens} tokens", {count: requests.toLocaleString(), tokens: usageFmt(tokens)});
   }
 
   function renderUsageBars(stats) {
@@ -12029,14 +12058,15 @@
         slice.push(merged);
       }
     }
-    elements.usageBarsHint.textContent = weekly ? "按周聚合 · 悬停看明细" : "悬停看明细";
+    elements.usageBarsHint.textContent = weekly ? t("按周聚合 · 悬停看明细") : t("悬停看明细");
     const bars = elements.usageBars;
     const xs = elements.usageBarsX;
     const ys = elements.usageBarsY;
     bars.innerHTML = ""; xs.innerHTML = ""; ys.innerHTML = "";
     const max = Math.max(...slice.map((day) => day.total), 0);
     if (!max) {
-      bars.innerHTML = `<div class="u-empty" style="width:100%">该范围内没有调用记录</div>`;
+      bars.innerHTML = `<div class="u-empty" style="width:100%" data-i18n="该范围内没有调用记录">该范围内没有调用记录</div>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(bars);
       return;
     }
     const HEIGHT = 200;
@@ -12073,14 +12103,13 @@
         column.appendChild(segment);
       }
       slot.appendChild(column);
-      column.addEventListener("mousemove", (event) => usageTipShow(
-        `<b>${day.date.slice(5)}${weekly ? " 起当周" : ""}</b>
-         <div class="row"><span><i style="background:var(--chart-1)"></i>新输入</span><em>${usageFmt(fresh)}</em></div>
-         <div class="row"><span><i style="background:var(--chart-2)"></i>输出</span><em>${usageFmt(day.completion)}</em></div>
-         <div class="row"><span><i style="background:var(--chart-3)"></i>缓存命中</span><em>${usageFmt(day.cache_read)}</em></div>
-         <div class="row"><span>请求</span><em>${day.requests}</em></div>
-         <div class="row"><span>合计</span><em>${usageFmt(day.total)}</em></div>${usageFmtCost(day.cost) ? `
-         <div class="row"><span>消费</span><em>≈${usageFmtCost(day.cost)}</em></div>` : ""}`, event));
+      column.addEventListener("mousemove", (event) => usageTipShow( // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+        `<b>${day.date.slice(5)}${weekly ? t(" 起当周") : ""}</b>
+         <div class="row"><span data-i18n-text="新输入"><i style="background:var(--chart-1)"></i>新输入</span><em>${usageFmt(fresh)}</em></div>
+         <div class="row"><span data-i18n-text="输出"><i style="background:var(--chart-2)"></i>输出</span><em>${usageFmt(day.completion)}</em></div>
+         <div class="row"><span data-i18n-text="缓存命中"><i style="background:var(--chart-3)"></i>缓存命中</span><em>${usageFmt(day.cache_read)}</em></div>
+         <div class="row"><span data-i18n="请求">请求</span><em>${day.requests}</em></div>
+         <div class="row"><span data-i18n="合计">合计</span><em>${usageFmt(day.total)}</em></div>${usageCostRow(day.cost)}`, event));
       column.addEventListener("mouseleave", usageTipHide);
       bars.appendChild(slot);
       const label = document.createElement("span");
@@ -12097,7 +12126,7 @@
   const accountState = { names: new Map(), loadSeq: 0 };
 
   function accountLabel(accountId) {
-    if (!accountId) return "未署名";
+    if (!accountId) return t("未署名");
     const entry = accountState.names.get(accountId);
     if (!entry) return accountId;
     return entry.display_name && entry.display_name !== entry.username
@@ -12122,15 +12151,15 @@
     showAccountError("");
     const account = state.account || {};
     const noRow = !account.account_id;
-    elements.accountUsername.value = account.username || (noRow ? "(访问密码登录)" : "");
+    elements.accountUsername.value = account.username || (noRow ? t("(访问密码登录)") : "");
     elements.accountDisplayName.value = account.display_name || "";
     elements.accountDisplayName.disabled = noRow;
     elements.accountCurrentPassword.disabled = noRow;
     elements.accountNewPassword.disabled = noRow;
     elements.accountSave.disabled = noRow;
     elements.accountSelfHint.textContent = noRow
-      ? "用访问密码登录的是机器级管理员,密码在启动参数里改;用管理员用户名登录可以改显示名。"
-      : account.admin ? "管理员" : "成员";
+      ? t("用访问密码登录的是机器级管理员,密码在启动参数里改;用管理员用户名登录可以改显示名。")
+      : account.admin ? t("管理员") : t("普通成员");
     elements.accountSave.disabled = false;
     elements.accountStamp.textContent = "";
     try {
@@ -12157,7 +12186,7 @@
       renderAccountRows(accounts, usageResponse.accounts || []);
     } catch (error) {
       if (seq !== accountState.loadSeq) return;
-      elements.accountStamp.textContent = `载入失败:${error.message || error}`;
+      elements.accountStamp.textContent = t("载入失败:{detail}", {detail: error.message || error});
     }
   }
 
@@ -12165,10 +12194,11 @@
     const body = elements.inviteRows;
     body.replaceChildren();
     if (!invites.length) {
-      body.innerHTML = `<tr><td colspan="5" class="acct-muted">还没有邀请码</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="acct-muted" data-i18n="还没有邀请码">还没有邀请码</td></tr>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(body);
       return;
     }
-    const statusLabel = { open: "可用", used: "已使用", expired: "已过期" };
+    const statusLabel = { open: t("可用"), used: t("已使用"), expired: t("已过期") };
     for (const invite of invites) {
       const row = document.createElement("tr");
       const usedBy = invite.used_by ? accountLabel(invite.used_by) : "—";
@@ -12178,14 +12208,14 @@
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "secondary-button acct-row-action";
-        remove.textContent = "作废";
+        remove.textContent = t("作废");
         remove.addEventListener("click", async () => {
           remove.disabled = true;
           try {
             await apiRequest(`/api/admin/invites/${encodeURIComponent(invite.id)}`, { method: "DELETE" });
             loadAccountPanel();
           } catch (error) {
-            showToast(error.message || "作废失败", "error");
+            showToast(error.message || t("作废失败"), "error");
             remove.disabled = false;
           }
         });
@@ -12205,8 +12235,8 @@
       const cells = [
         account.username,
         account.display_name,
-        account.admin ? "管理员" : "成员",
-        account.last_login_at ? formatRelativeTime(account.last_login_at) : "从未",
+        account.admin ? t("管理员") : t("普通成员"),
+        account.last_login_at ? formatRelativeTime(account.last_login_at) : t("从未"),
         spent ? usageFmt(asFiniteNumber(spent.total)) : "0",
         spent ? (usageFmtCost(asFiniteNumber(spent.cost)) || "—") : "—",
       ];
@@ -12222,15 +12252,15 @@
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "secondary-button acct-row-action";
-      toggle.textContent = account.disabled ? "恢复" : "停用";
+      toggle.textContent = account.disabled ? t("恢复") : t("停用");
       toggle.disabled = isSelf;
       toggle.addEventListener("click", () => patchAccount(account.id, { disabled: !account.disabled }, toggle));
       const reset = document.createElement("button");
       reset.type = "button";
       reset.className = "secondary-button acct-row-action";
-      reset.textContent = "重设密码";
+      reset.textContent = t("重设密码");
       reset.addEventListener("click", () => {
-        const password = window.prompt(`给 ${account.username} 设一个新密码:`);
+        const password = window.prompt(t("给 {name} 设一个新密码:", {name: account.username}));
         if (password == null) return;
         patchAccount(account.id, { password }, reset);
       });
@@ -12249,7 +12279,7 @@
       });
       loadAccountPanel();
     } catch (error) {
-      showToast(error.message || "操作失败", "error");
+      showToast(error.message || t("操作失败"), "error");
       if (button) button.disabled = false;
     }
   }
@@ -12264,7 +12294,7 @@
       const invitesResponse = await apiRequest("/api/admin/invites").then((r) => r.json());
       renderInviteRows(invitesResponse.invites || []);
     } catch (error) {
-      showToast(error.message || "生成失败", "error");
+      showToast(error.message || t("生成失败"), "error");
     } finally {
       elements.inviteCreate.disabled = false;
     }
@@ -12281,7 +12311,7 @@
     }
     const profile = elements.accountProfile.value;
     if (profile !== (accountState.profile ?? "")) patch.profile = profile;
-    if (!Object.keys(patch).length) return showAccountError("没有要保存的改动");
+    if (!Object.keys(patch).length) return showAccountError(t("没有要保存的改动"));
     elements.accountSave.disabled = true;
     try {
       const response = await apiRequest("/api/account", { method: "PATCH", body: JSON.stringify(patch) });
@@ -12293,9 +12323,9 @@
       elements.accountNewPassword.value = "";
       if (patch.profile != null) accountState.profile = patch.profile;
       showAccountError("");
-      showToast("已保存", "success");
+      showToast(t("已保存"), "success");
     } catch (error) {
-      showAccountError(error.message || "保存失败");
+      showAccountError(error.message || t("保存失败"));
     } finally {
       elements.accountSave.disabled = false;
     }
@@ -12331,8 +12361,8 @@
     // 首启是「先跳过」(跳过建号引导);新建/编辑人格是「取消」(直接关掉不保存)——
     // 之前这两种模式下这颗键整个藏了,于是新建人格没有任何退出口(用户 #164)。
     elements.oobeSkip.hidden = step === 4;
-    elements.oobeSkip.textContent = oobeState.reason === "first" ? "先跳过" : "取消";
-    elements.oobeNextLabel.textContent = last ? (oobeState.editing ? "保存" : "开始聊天") : "下一步";
+    elements.oobeSkip.textContent = oobeState.reason === "first" ? t("先跳过") : t("取消");
+    elements.oobeNextLabel.textContent = last ? (oobeState.editing ? t("保存") : t("开始聊天")) : t("下一步");
     oobeShowError("");
     if (step === 1) window.requestAnimationFrame(() => elements.oobeName.focus());
     if (step === 3) window.requestAnimationFrame(() => elements.oobeProfile.focus());
@@ -12366,7 +12396,8 @@
       label.append(input, text);
       elements.oobePlugins.appendChild(label);
     }
-    if (!options.length) elements.oobePlugins.innerHTML = `<p class="u-hint">没有可选的功能。</p>`;
+    if (!options.length) elements.oobePlugins.innerHTML = `<p class="u-hint" data-i18n="没有可选的功能。">没有可选的功能。</p>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    if (!options.length) MiyuI18n.applyDom(elements.oobePlugins);
     bindOobeSelectAll();
   }
 
@@ -12476,15 +12507,15 @@
       skills = data.skills || [];
       if (data.shared?.name) elements.oobeSharedName.textContent = data.shared.name;
       elements.oobeSharedHint.textContent = data.shared?.maintainer
-        ? `${data.shared.maintainer} 维护的预置人格,不可修改`
-        : "预置人格,不可修改";
+        ? t("{maintainer} 维护的预置人格,不可修改", {maintainer: data.shared.maintainer})
+        : t("预置人格,不可修改");
       if (data.shared?.name) elements.oobeSharedName.textContent = data.shared.name;
       elements.oobeSharedHint.textContent = data.shared?.maintainer
-        ? `${data.shared.maintainer} 维护的预置人格,不可修改`
-        : "预置人格,不可修改";
+        ? t("{maintainer} 维护的预置人格,不可修改", {maintainer: data.shared.maintainer})
+        : t("预置人格,不可修改");
       elements.oobeProfile.value = data.prompt || "";
       if (data.member_personas === false && reason !== "first") {
-        showToast("管理员关闭了成员自建人格", "error");
+        showToast(t("管理员关闭了成员自建人格"), "error");
         closeOobe();
         return;
       }
@@ -12494,7 +12525,7 @@
         if (persona.avatar_url) { elements.oobeAvatarPreview.src = `${persona.avatar_url}&v=${Date.now()}`; elements.oobeAvatarPreview.hidden = false; }
       }
     } catch (error) {
-      oobeShowError(error.message || "载入失败");
+      oobeShowError(error.message || t("载入失败"));
     }
     oobeRenderPlugins(options, persona ? persona.plugins : null);
     oobeRenderScripts(scripts, persona ? persona.scripts : null);
@@ -12528,7 +12559,7 @@
       if (oobeState.mode === "private") {
         const name = elements.oobeName.value.trim();
         const prompt = elements.oobePrompt.value.trim();
-        if (!name) { oobeSetStep(1); throw new Error("先起个名字"); }
+        if (!name) { oobeSetStep(1); throw new Error(t("先起个名字")); }
         const body = {
           name, prompt,
           description: elements.oobeDesc.value.trim(),
@@ -12559,12 +12590,12 @@
         // 编辑不该重新进 OOBE 的那套开场/收尾)。
         closeOobe();
         if (consoleIsOpen()) loadAccountPanel();
-        showToast(`${displayName} 已更新`, "success");
+        showToast(t("{name} 已更新", {name: displayName}), "success");
       } else {
-        elements.oobeDoneTitle.textContent = `${displayName} 准备好了`;
+        elements.oobeDoneTitle.textContent = t("{name} 准备好了", {name: displayName});
         elements.oobeDoneText.textContent = oobeState.mode === "private"
-          ? "接下来的会话用这个人格。改设定、换头像在控制台的账号页。"
-          : "你用的是共享的 Miyu;想要自己的人格,随时在账号页里创建。";
+          ? t("接下来的会话用这个人格。改设定、换头像在控制台的账号页。")
+          : t("你用的是共享的 Miyu;想要自己的人格,随时在账号页里创建。");
         const avatar = oobeState.avatarFile ? URL.createObjectURL(oobeState.avatarFile) : (slug ? `/api/persona/avatar?scope=${encodeURIComponent(slug)}` : "/assets/miyu-logo.png");
         elements.oobeDoneAvatar.onerror = () => { elements.oobeDoneAvatar.hidden = true; };
         elements.oobeDoneAvatar.src = avatar;
@@ -12577,7 +12608,7 @@
         }, 1400);
       }
     } catch (error) {
-      oobeShowError(error.message || "保存失败");
+      oobeShowError(error.message || t("保存失败"));
     } finally {
       oobeState.busy = false;
       elements.oobeNext.disabled = false;
@@ -12596,7 +12627,7 @@
     elements.oobeBack.addEventListener("click", () => oobeSetStep(Math.max(1, oobeState.step - 1)));
     elements.oobeNext.addEventListener("click", () => {
       if (oobeState.step === 1 && oobeState.mode === "private") {
-        if (!elements.oobeName.value.trim()) return oobeShowError("先起个名字");
+        if (!elements.oobeName.value.trim()) return oobeShowError(t("先起个名字"));
       }
       if (oobeState.step === 1 && oobeState.mode === "shared") return oobeSetStep(3);
       if (oobeState.step < 3) return oobeSetStep(oobeState.step + 1);
@@ -12612,7 +12643,7 @@
         await apiRequest("/api/account/active-persona", { method: "PUT", body: JSON.stringify({ slug: null, oobe_done: true }) });
       } catch (_) {}
       closeOobe();
-      showToast("随时可以在账号页里创建自己的人格", "info");
+      showToast(t("随时可以在账号页里创建自己的人格"), "info");
     });
   }
 
@@ -12622,7 +12653,8 @@
       const data = await apiRequest("/api/account/personas").then((response) => response.json());
       renderPersonaList(data);
     } catch (error) {
-      elements.personaList.innerHTML = `<p class="u-hint">载入失败:${escapeText(error.message || error)}</p>`;
+      const hintText = t("载入失败:{detail}", {detail: error.message || error});
+      elements.personaList.innerHTML = `<p class="u-hint">${escapeText(hintText)}</p>`;
     }
   }
 
@@ -12635,10 +12667,10 @@
   /// 账号页人格卡的一行摘要:插件数,脚本/技能勾了明细才报数(null = 全开)。
   /// 记忆对新建的人格常开,只有旧人格关着时才提一句。
   function personaSummary(persona) {
-    const parts = [`${(persona.plugins || []).length} 个插件`];
-    if (Array.isArray(persona.scripts)) parts.push(`${persona.scripts.length} 个脚本`);
-    if (Array.isArray(persona.skills)) parts.push(`${persona.skills.length} 个技能`);
-    if (persona.memory === false) parts.unshift("记忆关");
+    const parts = [t("{count} 个插件", {count: (persona.plugins || []).length})];
+    if (Array.isArray(persona.scripts)) parts.push(t("{count} 个脚本", {count: persona.scripts.length}));
+    if (Array.isArray(persona.skills)) parts.push(t("{count} 个技能", {count: persona.skills.length}));
+    if (persona.memory === false) parts.unshift(t("记忆关"));
     return parts.join(" · ");
   }
 
@@ -12646,7 +12678,7 @@
     const list = elements.personaList;
     list.replaceChildren();
     elements.personaCreate.hidden = data.member_personas === false;
-    const rows = [{ slug: null, name: "Miyu", description: "管理员发布的共享人格", shared: true }, ...(data.personas || [])];
+    const rows = [{ slug: null, name: "Miyu", description: t("管理员发布的共享人格"), shared: true }, ...(data.personas || [])];
     for (const persona of rows) {
       const row = document.createElement("div");
       row.className = "persona-row";
@@ -12665,7 +12697,7 @@
       }
       const text = document.createElement("div");
       const title = document.createElement("b");
-      title.textContent = persona.name + (active ? "(当前)" : "");
+      title.textContent = persona.name + (active ? t("(当前)") : "");
       const sub = document.createElement("small");
       sub.textContent = persona.description || (persona.shared ? "" : personaSummary(persona));
       text.append(title, sub);
@@ -12676,16 +12708,16 @@
         const use = document.createElement("button");
         use.type = "button";
         use.className = "secondary-button acct-row-action";
-        use.textContent = "使用";
+        use.textContent = t("使用");
         use.addEventListener("click", async () => {
           use.disabled = true;
           try {
             await apiRequest("/api/account/active-persona", { method: "PUT", body: JSON.stringify({ slug: persona.slug, oobe_done: true }) });
             await loadBootstrap();
             loadPersonaCard();
-            showToast(`新会话将使用 ${persona.name}`, "success");
+            showToast(t("新会话将使用 {name}", {name: persona.name}), "success");
           } catch (error) {
-            showToast(error.message || "切换失败", "error");
+            showToast(error.message || t("切换失败"), "error");
             use.disabled = false;
           }
         });
@@ -12695,7 +12727,7 @@
         const edit = document.createElement("button");
         edit.type = "button";
         edit.className = "secondary-button acct-row-action";
-        edit.textContent = "编辑";
+        edit.textContent = t("编辑");
         edit.addEventListener("click", async () => {
           try {
             const detail = await apiRequest("/api/account/personas").then((response) => response.json());
@@ -12705,21 +12737,21 @@
             full.prompt = (await promptResponse.json()).prompt || "";
             openOobe({ reason: "edit", persona: full });
           } catch (error) {
-            showToast(error.message || "载入失败", "error");
+            showToast(error.message || t("载入失败"), "error");
           }
         });
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "secondary-button acct-row-action";
-        remove.textContent = "删除";
+        remove.textContent = t("删除");
         remove.addEventListener("click", async () => {
-          if (!window.confirm(`删除人格「${persona.name}」?记忆一起删,会话保留。`)) return;
+          if (!window.confirm(t("删除人格「{name}」?记忆一起删,会话保留。", {name: persona.name}))) return;
           try {
             await apiRequest(`/api/account/personas/${encodeURIComponent(persona.slug)}`, { method: "DELETE" });
             await loadBootstrap();
             loadPersonaCard();
           } catch (error) {
-            showToast(error.message || "删除失败", "error");
+            showToast(error.message || t("删除失败"), "error");
           }
         });
         actions.append(edit, remove);
@@ -12734,7 +12766,8 @@
     container.innerHTML = "";
     const sources = stats.sources || [];
     if (!sources.length) {
-      container.innerHTML = `<div class="u-card"><div class="u-empty">该范围内没有调用记录</div></div>`;
+      container.innerHTML = `<div class="u-card"><div class="u-empty" data-i18n="该范围内没有调用记录">该范围内没有调用记录</div></div>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(container);
       return;
     }
     const agent = sources.find((source) => source.src === "agent");
@@ -12744,8 +12777,8 @@
     }
     if (agent) {
       container.appendChild(buildUsageSourceCard(
-        "模型消耗明细 · 智能体",
-        "终端 / WebUI / 定时任务 / 子代理 · 悬停环形图或表行看联动",
+        t("模型消耗明细 · 智能体"),
+        t("终端 / WebUI / 定时任务 / 子代理 · 悬停环形图或表行看联动"),
         agent,
         stats,
         null,
@@ -12757,8 +12790,8 @@
       }
       const active = platforms.find((source) => source.src === usageState.platformTab) || platforms[0];
       container.appendChild(buildUsageSourceCard(
-        "模型消耗明细 · 通讯平台",
-        "按平台分页 · 同一模型全页同色",
+        t("模型消耗明细 · 通讯平台"),
+        t("按平台分页 · 同一模型全页同色"),
         active,
         stats,
         platforms,
@@ -12771,12 +12804,14 @@
   function buildUsageAccountsCard(accounts) {
     const card = document.createElement("div");
     card.className = "u-card";
-    card.innerHTML = `<div class="u-card-head"><h3>按人拆分</h3><span class="u-hint">成员的 WebUI 会话各记各的 · 未署名 = 管理员/终端/通讯平台</span></div>`;
+    card.innerHTML = `<div class="u-card-head"><h3 data-i18n="按人拆分">按人拆分</h3><span class="u-hint" data-i18n="成员的 WebUI 会话各记各的 · 未署名 = 管理员/终端/通讯平台">成员的 WebUI 会话各记各的 · 未署名 = 管理员/终端/通讯平台</span></div>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    MiyuI18n.applyDom(card);
     const scroll = document.createElement("div");
     scroll.className = "u-table-scroll";
     const table = document.createElement("table");
     table.className = "u-table";
-    table.innerHTML = `<thead><tr><th>账号</th><th class="num">调用</th><th class="num">输入</th><th class="num">输出</th><th class="num">合计</th><th class="num">消费</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th data-i18n="账号">账号</th><th class="num" data-i18n="调用">调用</th><th class="num" data-i18n="输入">输入</th><th class="num" data-i18n="输出">输出</th><th class="num" data-i18n="合计">合计</th><th class="num" data-i18n="消费">消费</th></tr></thead>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    MiyuI18n.applyDom(table);
     const body = document.createElement("tbody");
     for (const entry of accounts) {
       const row = document.createElement("tr");
@@ -12832,14 +12867,14 @@
       seg.className = "con-segmented";
       seg.style.marginLeft = platformTabs && platformTabs.length ? "8px" : "auto";
       const active = usageState.kindFilters.get(source.src) || "all";
-      const choices = [["all", "全部"], ["main", "其它"]];
+      const choices = [["all", t("全部")], ["main", t("其它")]];
       for (const kind of filterKinds) choices.push([kind.kind, usageKindName(kind.kind)]);
       for (const [value, label] of choices) {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = label;
         button.title = value === "main"
-          ? "未标注用途的调用:主线回复,以及好感度、入群审批等尚未打标的辅助调用"
+          ? t("未标注用途的调用:主线回复,以及好感度、入群审批等尚未打标的辅助调用")
           : label;
         button.classList.toggle("on", active === value);
         button.addEventListener("click", () => {
@@ -12868,8 +12903,10 @@
     scroll.className = "u-table-scroll";
     const table = document.createElement("table");
     table.className = "u-table u-models-table";
-    table.innerHTML = `<thead><tr><th>模型</th><th class="num">占比</th><th class="num">请求</th>
-      <th class="num">输入</th><th class="num">输出</th><th class="num">消费</th><th>缓存命中</th></tr></thead>`;
+    // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    table.innerHTML = `<thead><tr><th data-i18n="模型">模型</th><th class="num" data-i18n="占比">占比</th><th class="num" data-i18n="请求">请求</th>
+      <th class="num" data-i18n="输入">输入</th><th class="num" data-i18n="输出">输出</th><th class="num" data-i18n="消费">消费</th><th data-i18n="缓存命中">缓存命中</th></tr></thead>`;
+    MiyuI18n.applyDom(table);
     const tbody = document.createElement("tbody");
     const tfoot = document.createElement("tfoot");
     table.appendChild(tbody);
@@ -12941,11 +12978,15 @@
           cost: sum.cost + Number(model.cost || 0),
         }), { requests: 0, prompt: 0, completion: 0, cache_read: 0, total: 0, cost: 0 });
     const requests = Number(aggregate.requests || 0);
-    const defCenter = `<div><b>${usageFmt(aggregate.total || 0)}</b><small>token 合计</small>
-      <span class="u-donut-sub">${requests.toLocaleString()} 次请求</span></div>`;
+    const requestsLine = t("{count} 次请求", {count: requests.toLocaleString()});
+    // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    const defCenter = `<div><b>${usageFmt(aggregate.total || 0)}</b><small data-i18n="token 合计">token 合计</small>
+      <span class="u-donut-sub">${requestsLine}</span></div>`;
     center.innerHTML = defCenter;
+    MiyuI18n.applyDom(center);
     if (!visible.length || !aggregate.total) {
-      tbody.innerHTML = `<tr><td colspan="7"><div class="u-empty">暂无记录</div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7"><div class="u-empty" data-i18n="暂无记录">暂无记录</div></td></tr>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(tbody);
       return card;
     }
 
@@ -12953,13 +12994,16 @@
       ? Math.round((aggregate.total / stats.totals.total) * 100)
       : null;
     const sourceHit = usageCacheRate(aggregate.cache_read || 0, aggregate.prompt || 0);
-    tfoot.innerHTML = `<tr><td>合计${globalShare == null ? "" :
-      ` <small style="color:var(--text-faint);font-weight:400">占全局 ${globalShare}%</small>`}</td>
+    const shareLabel = globalShare == null ? null : t("占全局 {share}%", {share: globalShare});
+    // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+    tfoot.innerHTML = `<tr><td data-i18n-text="合计">合计${shareLabel == null ? "" :
+      ' <small style="color:var(--text-faint);font-weight:400">' + shareLabel + "</small>"}</td>
       <td></td><td class="num">${requests}</td>
       <td class="num">${usageFmt(aggregate.prompt || 0)}</td>
       <td class="num">${usageFmt(aggregate.completion || 0)}</td>
-      <td class="num">${usageFmtCost(aggregate.cost) ? `≈${usageFmtCost(aggregate.cost)}` : "—"}</td>
-      <td>${sourceHit == null ? "" : `<span class="u-cache-pill">${sourceHit}%</span>`}</td></tr>`;
+      <td class="num">${usageFmtCost(aggregate.cost) ? "≈" + usageFmtCost(aggregate.cost) : "—"}</td>
+      <td>${sourceHit == null ? "" : '<span class="u-cache-pill">' + sourceHit + "%</span>"}</td></tr>`;
+    MiyuI18n.applyDom(tfoot);
 
     const RADIUS = 44;
     const CIRCUM = 2 * Math.PI * RADIUS;
@@ -12970,7 +13014,7 @@
     let accumulated = 0;
     visible.forEach((model, index) => {
       const share = model.total / aggregate.total;
-      const baseName = model.model || "(未标模型)";
+      const baseName = model.model || t("(未标模型)");
       const modelName = model.kindLabel ? `${baseName} · ${model.kindLabel}` : baseName;
       const color = usageModelColor(model.provider, model.model);
       const hit = usageCacheRate(model.cache_read || 0, model.prompt || 0);
@@ -12980,15 +13024,15 @@
         ? `<i class="u-dot u-dot-kind" style="background:${color}"></i>`
         : `<i class="u-dot" style="background:${color}"></i>`;
       row.innerHTML = `<td class="u-model-name"><b>${dot}${baseName}${
-          model.kindLabel ? `<span class="u-kind-tag">${model.kindLabel}</span>` : ""
+          model.kindLabel ? '<span class="u-kind-tag">' + model.kindLabel + "</span>" : ""
         }</b>
           <small><i class="u-dot" style="visibility:hidden"></i>${model.provider || "—"}</small></td>
         <td class="num">${Math.round(share * 100)}%</td>
         <td class="num">${model.requests}</td>
         <td class="num">${usageFmt(model.prompt || 0)}</td>
         <td class="num">${usageFmt(model.completion || 0)}</td>
-        <td class="num">${usageFmtCost(model.cost) ? `≈${usageFmtCost(model.cost)}` : "—"}</td>
-        <td>${hit == null ? "—" : `<span class="u-cache-pill">${hit}%</span>`}</td>`;
+        <td class="num">${usageFmtCost(model.cost) ? "≈" + usageFmtCost(model.cost) : "—"}</td>
+        <td>${hit == null ? "—" : '<span class="u-cache-pill">' + hit + "%</span>"}</td>`;
       tbody.appendChild(row);
 
       const length = Math.max(0.5, share * CIRCUM - GAP);
@@ -13007,19 +13051,19 @@
         circle.setAttribute("stroke-width", "21");
         row.classList.add("hl");
         center.innerHTML = `<div><b>${Math.round(share * 100)}%</b><small>${modelName}</small></div>`;
-        usageTipShow(
+        usageTipShow( // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
           `<b>${modelName}</b>
-           <div class="row"><span>占比</span><em>${Math.round(share * 100)}%</em></div>
-           <div class="row"><span>请求</span><em>${model.requests}</em></div>
-           <div class="row"><span>输入</span><em>${usageFmt(model.prompt || 0)}</em></div>
-           <div class="row"><span>输出</span><em>${usageFmt(model.completion || 0)}</em></div>${usageFmtCost(model.cost) ? `
-           <div class="row"><span>消费</span><em>≈${usageFmtCost(model.cost)}</em></div>` : ""}
-           <div class="row"><span>缓存命中</span><em>${hit == null ? "—" : `${hit}%`}</em></div>`, event);
+           <div class="row"><span data-i18n="占比">占比</span><em>${Math.round(share * 100)}%</em></div>
+           <div class="row"><span data-i18n="请求">请求</span><em>${model.requests}</em></div>
+           <div class="row"><span data-i18n="输入">输入</span><em>${usageFmt(model.prompt || 0)}</em></div>
+           <div class="row"><span data-i18n="输出">输出</span><em>${usageFmt(model.completion || 0)}</em></div>${usageCostRow(model.cost)}
+           <div class="row"><span data-i18n="缓存命中">缓存命中</span><em>${hit == null ? "—" : hit + "%"}</em></div>`, event);
       });
       circle.addEventListener("mouseleave", () => {
         circle.setAttribute("stroke-width", "18");
         row.classList.remove("hl");
         center.innerHTML = defCenter;
+        MiyuI18n.applyDom(center);
         usageTipHide();
       });
       row.addEventListener("mouseenter", () => circle.setAttribute("stroke-width", "21"));
@@ -13034,7 +13078,8 @@
     const tbody = elements.usageRecords;
     tbody.innerHTML = "";
     if (!records.length) {
-      tbody.innerHTML = `<tr class="u-day-row"><td colspan="8">还没有任何调用记录</td></tr>`;
+      tbody.innerHTML = `<tr class="u-day-row"><td colspan="8" data-i18n="还没有任何调用记录">还没有任何调用记录</td></tr>`; // i18n-allow: HTML 骨架走 data-i18n 标记,插入后 applyDom 统一应用
+      MiyuI18n.applyDom(tbody);
       return;
     }
     const today = new Date();
@@ -13050,25 +13095,25 @@
       const key = dayKey(date);
       if (key !== currentDay) {
         currentDay = key;
-        const label = key === todayKey ? "今天" : key === yesterdayKey ? "昨天" : "";
+        const label = key === todayKey ? t("今天") : key === yesterdayKey ? t("昨天") : "";
         const row = document.createElement("tr");
         row.className = "u-day-row";
-        row.innerHTML = `<td colspan="8">${label ? `${label} · ` : ""}${key.slice(5)}</td>`;
+        row.innerHTML = `<td colspan="8">${label ? label + " · " : ""}${key.slice(5)}</td>`;
         tbody.appendChild(row);
       }
       const pad = (n) => String(n).padStart(2, "0");
       const hit = usageCacheRate(record.cache_read || 0, record.prompt || 0);
+      const modelLabel = record.model || t("(未标模型)");
+      const kindLabel = record.kind ? usageKindShortName(record.kind) : record.aux ? t("辅助") : t("对话");
       const row = document.createElement("tr");
       row.innerHTML = `<td class="time">${pad(date.getHours())}:${pad(date.getMinutes())}</td>
         <td><span class="u-src-pill">${usageSourceName(record.src || "agent")}</span></td>
-        <td class="u-model-name"><b>${record.model || "(未标模型)"}</b><small>${record.provider || "—"}</small></td>
+        <td class="u-model-name"><b>${modelLabel}</b><small>${record.provider || "—"}</small></td>
         <td class="num">${usageFmt(record.prompt || 0)}</td>
         <td class="num">${usageFmt(record.completion || 0)}</td>
-        <td class="num">${usageFmtCost(record.cost) ? `≈${usageFmtCost(record.cost)}` : "—"}</td>
-        <td>${hit == null ? "—" : `<span class="u-cache-pill">${hit}%</span>`}</td>
-        <td><span class="u-type-pill ${record.kind ? "t-kind" : record.aux ? "t-aux" : "t-chat"}">${
-          record.kind ? usageKindShortName(record.kind) : record.aux ? "辅助" : "对话"
-        }</span></td>`;
+        <td class="num">${usageFmtCost(record.cost) ? "≈" + usageFmtCost(record.cost) : "—"}</td>
+        <td>${hit == null ? "—" : '<span class="u-cache-pill">' + hit + "%</span>"}</td>
+        <td><span class="u-type-pill ${record.kind ? "t-kind" : record.aux ? "t-aux" : "t-chat"}">${kindLabel}</span></td>`;
       tbody.appendChild(row);
     }
   }
@@ -13097,7 +13142,7 @@
     elements.usageClear.addEventListener("click", async () => {
       // 本页(卡片/热力/每日/模型明细/最近调用)全部派生自 usage-history.jsonl,
       // 删它就是清空整页;usage.json 只喂聊天界面的会话累计,不在本页上。
-      if (!window.confirm("清空数据统计？\n\n本页所有数据（总消耗、热力图、每日 token、模型明细、最近调用）都会归零，且不可恢复。")) {
+      if (!window.confirm(t("清空数据统计？\n\n本页所有数据（总消耗、热力图、每日 token、模型明细、最近调用）都会归零，且不可恢复。"))) {
         return;
       }
       elements.usageClear.disabled = true;
@@ -13108,7 +13153,7 @@
         loadUsageStats();
         loadUsageRecords();
       } catch (error) {
-        elements.usageStamp.textContent = `清空失败:${error.message || error}`;
+        elements.usageStamp.textContent = t("清空失败:{detail}", {detail: error.message || error});
       } finally {
         elements.usageClear.disabled = false;
       }
@@ -13228,6 +13273,14 @@
     document.querySelectorAll("[data-theme-choice]").forEach((button) => button.addEventListener("click", () => setTheme(button.dataset.themeChoice)));
     document.querySelectorAll("[data-scheme-choice]").forEach((button) => button.addEventListener("click", () => setColorScheme(button.dataset.schemeChoice)));
     document.querySelectorAll("[data-chat-font]").forEach((button) => button.addEventListener("click", () => setChatFontSize(button.dataset.chatFont)));
+    // 界面语言:写进 config 草稿,由「保存配置」落盘;保存后 saveConfigDraft
+    // 会发现语言变了并整页重载(2026-09-23)。
+    elements.languageSeg?.querySelectorAll("[data-language]").forEach((button) => button.addEventListener("click", () => {
+      if (!state.configDraft) return;
+      state.configDraft.display = state.configDraft.display || {};
+      state.configDraft.display.language = button.dataset.language;
+      markConfigDirty();
+    }));
     elements.reasoningExpandToggle?.addEventListener("click", () => setReasoningExpanded(!state.reasoningExpanded));
     elements.toolExpandToggle?.addEventListener("click", () => setToolExpanded(!state.toolExpanded));
     elements.procCollapseToggle?.addEventListener("click", () => setProcCollapse(!state.procCollapse));
@@ -13315,7 +13368,7 @@
       const files = collectTransferFiles(event.clipboardData);
       if (!files.length) {
         const hasUriList = Array.from(event.clipboardData?.items || []).some((item) => item.type === "text/uri-list");
-        if (hasUriList) showToast("浏览器没有提供文件内容，请直接拖入输入框", "error");
+        if (hasUriList) showToast(t("浏览器没有提供文件内容，请直接拖入输入框"), "error");
         return;
       }
       event.preventDefault();

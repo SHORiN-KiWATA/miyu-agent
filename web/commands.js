@@ -48,7 +48,7 @@ window.MiyuCommands = (() => {
       catalog = Array.isArray(payload?.commands) ? payload.commands : [];
       // /stop 是纯前端命令（取消当前 run 的 HTTP 调用就在本页），REPL 没有
       // 对应物（那边是 Ctrl+C），所以不进服务端那张表，在这里补进目录。
-      catalog.push({ name: "/stop", arg_hint: "", help: "停止当前正在运行的回复" });
+      catalog.push({ name: "/stop", arg_hint: "", help: t("停止当前正在运行的回复") });
     } catch (_) {
       // 拿不到目录就退化成「没有命令」：所有 / 开头的输入照常发给模型。
       catalog = [];
@@ -149,7 +149,7 @@ window.MiyuCommands = (() => {
     const [, args] = split(line);
     // 先占位再执行：命令要等服务端干完活，这中间对话流里必须有个东西告诉
     // 用户「收到了，在跑」。原来是跑完才出现回执，看着就像回车丢了。
-    const pending = note(line, "执行中…", "pending", ctx.anchorTurnId, ctx.sessionId);
+    const pending = note(line, t("执行中…"), "pending", ctx.anchorTurnId, ctx.sessionId);
     ctx.redraw();
     const done = (text, tone) => {
       pending.text = text;
@@ -158,14 +158,14 @@ window.MiyuCommands = (() => {
       return true;
     };
     if (!spec.arg_hint && args.trim()) {
-      return done(`${spec.name} 不接受参数`, "error");
+      return done(t("{name} 不接受参数", { name: spec.name }), "error");
     }
     // 与 REPL 同一条规矩：会重排上下文的命令不插在运行中的回合上
     // （/compact 折叠消息、/reset 清库、/pop 弹轮次，正在跑的回合手里那份
     // 消息数组会成悬空引用）。后端也会 409，这里提前拦下给出中文说法。
     const blockedWhileRunning = ["/compact", "/reset", "/pop"];
     if (blockedWhileRunning.includes(spec.name) && ctx.isRunning?.()) {
-      return done("命令要在两轮之间执行，等这一轮跑完再试", "error");
+      return done(t("命令要在两轮之间执行，等这一轮跑完再试"), "error");
     }
     try {
       if (spec.name === "/compact") {
@@ -179,7 +179,7 @@ window.MiyuCommands = (() => {
         // 回合折成摘要，整段对话都还在尾巴以内时，没有更老的可折。
         // 尾巴预算 = min(16384, 窗口/4)，1M 窗口下就是 16k。
         const compacted = (await response.json())?.result?.compacted === true;
-        return done(compacted ? "上下文已压缩" : "当前上下文过少");
+        return done(compacted ? t("上下文已压缩") : t("当前上下文过少"));
       }
       if (spec.name === "/reset") {
         await ctx.apiRequest("/api/conversation/reset", {
@@ -192,7 +192,7 @@ window.MiyuCommands = (() => {
         // 就是最清楚的反馈，再挂一条「已清空」和一个 /reset 的回显反而是垃圾。
         clearNotices(ctx.sessionId);
         await ctx.reload();
-        ctx.toast?.("已清空当前会话");
+        ctx.toast?.(t("已清空当前会话"));
         return true;
       }
       if (spec.name === "/goal") {
@@ -216,7 +216,7 @@ window.MiyuCommands = (() => {
           body: JSON.stringify({ mode: ctx.mode, session_id: ctx.sessionId }),
         });
         // 回执文案由服务端拼（和 REPL/QQ 同一份实现），前端原样贴出。
-        const text = (await response.json())?.text || "已清空本次会话记下的记忆";
+        const text = (await response.json())?.text || t("已清空本次会话记下的记忆");
         return done(text);
       }
       if (spec.name === "/reset-all-memory") {
@@ -227,7 +227,7 @@ window.MiyuCommands = (() => {
           method: "POST",
           body: JSON.stringify({ mode: ctx.mode, session_id: ctx.sessionId }),
         });
-        return done("已清空全部长期记忆");
+        return done(t("已清空全部长期记忆"));
       }
       if (spec.name === "/pop") {
         // /pop 全程不在对话流里留任何东西（回显和回执都不留）：
@@ -245,7 +245,7 @@ window.MiyuCommands = (() => {
         const count = Number.parseInt(trimmed, 10);
         if (!Number.isFinite(count) || count < 1) {
           dropEcho();
-          ctx.toast?.("用法：/pop [数量]（不带数量打开多选列表）");
+          ctx.toast?.(t("用法：/pop [数量]（不带数量打开多选列表）"));
           return true;
         }
         let response;
@@ -258,14 +258,14 @@ window.MiyuCommands = (() => {
           dropEcho();
           // 409 = 没有可弹出的轮次（服务端文案是英文的，翻一下）。
           ctx.toast?.(
-            error?.status === 409 ? "当前上下文没有可弹出的轮次" : error?.message || "弹出失败"
+            error?.status === 409 ? t("当前上下文没有可弹出的轮次") : error?.message || t("弹出失败")
           );
           return true;
         }
         const removed = (await response.json())?.result?.turns || 0;
         dropEcho();
         await ctx.reload();
-        ctx.toast?.(`已从上下文弹出最旧的 ${removed} 轮`);
+        ctx.toast?.(t("已从上下文弹出最旧的 {count} 轮", { count: removed }));
         return true;
       }
       if (spec.name === "/sandbox") {
@@ -288,14 +288,14 @@ window.MiyuCommands = (() => {
           const response = await ctx.apiRequest(`${base}/context`);
           const info = await response.json();
           if (!info?.sandbox) {
-            return "未绑定沙盒：读写不设限。用 /sandbox <路径> 把本会话关进一个目录";
+            return t("未绑定沙盒：读写不设限。用 /sandbox <路径> 把本会话关进一个目录");
           }
           const writable = (info.sandbox_writable || []).join("、");
           const readable = (info.sandbox_readable || []).join("、");
-          return `沙盒根：${info.sandbox} ｜ 可写：${writable} ｜ 可读：${readable}`;
+          return t("沙盒根：{root} ｜ 可写：{writable} ｜ 可读：{readable}", { root: info.sandbox, writable, readable });
         };
         if (!trimmed) {
-          return done(allowRead ? "用法：/sandbox <路径> [--allow-read]" : await describe());
+          return done(allowRead ? t("用法：/sandbox <路径> [--allow-read]") : await describe());
         }
         const clearing = trimmed.toLowerCase() === "clear";
         await ctx.apiRequest(base, {
@@ -305,10 +305,10 @@ window.MiyuCommands = (() => {
             sandbox_allow_read: !clearing && allowRead,
           }),
         });
-        if (clearing) return done("已解绑沙盒；之后的回合不设限");
+        if (clearing) return done(t("已解绑沙盒；之后的回合不设限"));
         // 读放开=把「读不到密钥」那一半关掉，回执里说明白。
-        const caveat = allowRead ? "；只锁写，读不设限（~/.ssh 与 API key 也读得到）" : "";
-        return done(`已绑定：${await describe()}（只影响之后的回合${caveat}）`);
+        const caveat = allowRead ? t("；只锁写，读不设限（~/.ssh 与 API key 也读得到）") : "";
+        return done(t("已绑定：{detail}（只影响之后的回合{caveat}）", { detail: await describe(), caveat }));
       }
       if (spec.name === "/stop") {
         // 和点停止按钮完全一致：不留命令回显、不留回执（按钮也不留）。
@@ -316,15 +316,15 @@ window.MiyuCommands = (() => {
         notices.splice(notices.indexOf(pending), 1);
         ctx.redraw();
         const outcome = await ctx.stopRun?.();
-        if (!outcome) ctx.toast?.("当前没有正在运行的回复");
+        if (!outcome) ctx.toast?.(t("当前没有正在运行的回复"));
         return true;
       }
     } catch (error) {
-      return done(error?.message || "命令执行失败", "error");
+      return done(error?.message || t("命令执行失败"), "error");
     }
     // 目录里有、这里却没实现：说明服务端开了 web 标记但前端没接上。
     // 当成命令吃掉并报错，比静默发给模型强——后者会让用户以为命令生效了。
-    return done(`${spec.name} 在 WebUI 里还没有实现`, "error");
+    return done(t("{name} 在 WebUI 里还没有实现", { name: spec.name }), "error");
   }
 
   // ── 命令回执：像消息一样留在对话流里 ─────────────────────────────

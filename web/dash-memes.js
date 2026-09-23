@@ -24,7 +24,7 @@
   };
   const ui = {};
 
-  const STATE_LABEL = { builtin: "内置", user: "自有", shadowed: "已覆盖", disabled: "已禁用" };
+  const STATE_LABEL = { builtin: t("内置"), user: t("自有"), shadowed: t("已覆盖"), disabled: t("已禁用") };
 
   function itemState(item) {
     if (item.disabled) return "disabled";
@@ -77,28 +77,28 @@
   function mount(root) {
     root.textContent = "";
     ui.stamp = D.el("small", { text: "" });
-    ui.library = D.select([], state.library, (value) => { state.library = value; D.remember("memes.library", value); loadItems(); }, "表情库");
+    ui.library = D.select([], state.library, (value) => { state.library = value; D.remember("memes.library", value); loadItems(); }, t("表情库"));
     ui.mapping = D.el("small.dash-scope-hint", { text: "" });
     const head = D.el("div.con-head", null,
-      D.el("h2", { text: "表情包" }),
-      D.iconButton("refresh-cw", "刷新", () => reloadAll()),
+      D.el("h2", { text: t("表情包") }),
+      D.iconButton("refresh-cw", t("刷新"), () => reloadAll()),
       ui.stamp,
-      D.el("span.dash-scope", null, D.el("span.dash-scope-label", { text: "库" }), ui.library, ui.mapping,
-        D.el("button.dash-button.is-primary", { type: "button", onclick: openUpload }, D.icon("plus"), "上传")));
+      D.el("span.dash-scope", null, D.el("span.dash-scope-label", { text: t("库") }), ui.library, ui.mapping,
+        D.el("button.dash-button.is-primary", { type: "button", onclick: openUpload }, D.icon("plus"), t("上传"))));
 
     ui.cards = D.el("div");
     ui.tags = D.el("div.dash-tag-cloud");
-    ui.search = D.el("input.dash-search", { type: "search", placeholder: "按名称、描述、用法、标签搜索…", oninput: () => {
+    ui.search = D.el("input.dash-search", { type: "search", placeholder: t("按名称、描述、用法、标签搜索…"), oninput: () => {
       clearTimeout(ui.searchTimer);
       ui.searchTimer = setTimeout(() => { state.q = ui.search.value.trim(); renderGallery(); }, 200);
     } });
     const filterSelect = (key, options) => D.select(options, state.filter[key], (value) => { state.filter[key] = value; renderGallery(); });
     const toolbar = D.el("div.dash-toolbar", null,
-      filterSelect("state", [{ value: "all", label: "全部状态" }, { value: "builtin", label: "内置" }, { value: "user", label: "自有" }, { value: "shadowed", label: "已覆盖" }, { value: "disabled", label: "已禁用" }]),
-      filterSelect("animated", [{ value: "all", label: "静图 + 动图" }, { value: "yes", label: "仅动图" }, { value: "no", label: "仅静图" }]),
-      filterSelect("origin", [{ value: "all", label: "全部来源" }, { value: "collected", label: "QQ 收集" }, { value: "manual", label: "手工添加" }]),
+      filterSelect("state", [{ value: "all", label: t("全部状态") }, { value: "builtin", label: t("内置") }, { value: "user", label: t("自有") }, { value: "shadowed", label: t("已覆盖") }, { value: "disabled", label: t("已禁用") }]),
+      filterSelect("animated", [{ value: "all", label: t("静图 + 动图") }, { value: "yes", label: t("仅动图") }, { value: "no", label: t("仅静图") }]),
+      filterSelect("origin", [{ value: "all", label: t("全部来源") }, { value: "collected", label: t("QQ 收集") }, { value: "manual", label: t("手工添加") }]),
       D.el("label.dash-search-box", null, D.icon("search"), ui.search),
-      D.el("button.dash-button", { type: "button", title: "进入选择模式,批量禁用 / 启用 / 删除", onclick: () => setSelecting(!state.selecting) }, D.icon("check-square"), "选择"));
+      D.el("button.dash-button", { type: "button", title: t("进入选择模式,批量禁用 / 启用 / 删除"), onclick: () => setSelecting(!state.selecting) }, D.icon("check-square"), t("选择")));
     ui.selectButton = toolbar.lastChild;
     ui.hint = D.el("p.dash-search-hint", { hidden: true });
     ui.bulk = D.el("div");
@@ -121,20 +121,20 @@
       if (!state.library || !names.includes(state.library)) state.library = payload.active;
       ui.library.textContent = "";
       for (const entry of payload.libraries) {
-        const marks = [entry.builtin ? "内置" : null, entry.user ? "自有" : null].filter(Boolean).join("+");
-        ui.library.append(D.el("option", { value: entry.name, text: `${entry.name}${entry.name === payload.active ? "(当前人格)" : ""}${marks ? ` · ${marks}` : ""}` }));
+        const marks = [entry.builtin ? t("内置") : null, entry.user ? t("自有") : null].filter(Boolean).join("+");
+        ui.library.append(D.el("option", { value: entry.name, text: t("{name}{active}{marks}", { name: entry.name, active: entry.name === payload.active ? t("(当前人格)") : "", marks: marks ? ` · ${marks}` : "" }) }));
       }
       ui.library.value = state.library;
-      const persona = payload.active_persona || "默认人格";
-      ui.mapping.textContent = `人格 ${persona} → ${payload.active}`;
+      const persona = payload.active_persona || t("默认人格");
+      ui.mapping.textContent = t("人格 {persona} → {library}", { persona, library: payload.active });
     } catch (error) {
-      ui.stamp.textContent = `库清单加载失败:${error.message}`;
+      ui.stamp.textContent = t("库清单加载失败:{error}", { error: error.message });
     }
   }
 
   async function loadItems() {
     const seq = ++state.loadSeq;
-    ui.stamp.textContent = "载入中…";
+    ui.stamp.textContent = t("载入中…");
     try {
       const listing = await D.api(`/api/dash/memes/items?${libQuery()}`);
       if (seq !== state.loadSeq) return;
@@ -143,10 +143,10 @@
       renderCards();
       renderTags();
       renderGallery();
-      ui.stamp.textContent = `${listing.library} · ${listing.stats.total} 张`;
+      ui.stamp.textContent = t("{library} · {count} 张", { library: listing.library, count: listing.stats.total });
     } catch (error) {
       if (seq !== state.loadSeq) return;
-      ui.gallery.replaceChildren(D.el("p.dash-empty", { text: `加载失败:${error.message}` }));
+      ui.gallery.replaceChildren(D.el("p.dash-empty", { text: t("加载失败:{error}", { error: error.message }) }));
       ui.stamp.textContent = "";
     }
   }
@@ -155,11 +155,11 @@
     const s = state.listing.stats;
     const mtime = state.listing.index_mtime ? D.formatTime(state.listing.index_mtime * 1000) : "—";
     ui.cards.replaceChildren(D.statCards([
-      { label: "总数", value: s.total, hint: `内置 ${s.builtin} · 自有 ${s.user}` },
-      { label: "已覆盖", value: s.shadowed, hint: "自有条目盖住同图内置项" },
-      { label: "已禁用", value: s.disabled, hint: "模型看不到,面板仍列出" },
-      { label: "QQ 收集", value: s.collected, hint: `近 7 天 ${s.collected_7d}` },
-      { label: "索引更新", value: mtime.slice(5), hint: state.listing.user_dir }
+      { label: t("总数"), value: s.total, hint: t("内置 {builtin} · 自有 {own}", { builtin: s.builtin, own: s.user }) },
+      { label: t("已覆盖"), value: s.shadowed, hint: t("自有条目盖住同图内置项") },
+      { label: t("已禁用"), value: s.disabled, hint: t("模型看不到,面板仍列出") },
+      { label: t("QQ 收集"), value: s.collected, hint: t("近 7 天 {count}", { count: s.collected_7d }) },
+      { label: t("索引更新"), value: mtime.slice(5), hint: state.listing.user_dir }
     ]));
   }
 
@@ -197,12 +197,12 @@
     if (state.q) {
       const enabled = items.filter((item) => !item.disabled).slice(0, 3).map((item) => item.name.zh);
       ui.hint.hidden = false;
-      ui.hint.textContent = enabled.length ? `模型搜索“${state.q}”会拿到前 3 张:${enabled.join(" · ")}` : `模型搜索“${state.q}”拿不到任何表情`;
+      ui.hint.textContent = enabled.length ? t("模型搜索“{query}”会拿到前 3 张:{names}", { query: state.q, names: enabled.join(" · ") }) : t("模型搜索“{query}”拿不到任何表情", { query: state.q });
     } else {
       ui.hint.hidden = true;
     }
     if (!items.length) {
-      ui.gallery.append(D.el("p.dash-empty", { text: state.listing.items.length ? "没有匹配的表情。" : "这个库还是空的,上传几张吧。" }));
+      ui.gallery.append(D.el("p.dash-empty", { text: state.listing.items.length ? t("没有匹配的表情。") : t("这个库还是空的,上传几张吧。") }));
       return;
     }
     renderBulk(items);
@@ -288,7 +288,7 @@
     state.selecting = on;
     if (!on) state.selected.clear();
     ui.selectButton.classList.toggle("is-primary", on);
-    ui.selectButton.lastChild.textContent = on ? "退出选择" : "选择";
+    ui.selectButton.lastChild.textContent = on ? t("退出选择") : t("选择");
     renderGallery();
   }
 
@@ -303,13 +303,13 @@
     if (!state.selecting) return;
     const count = state.selected.size;
     ui.bulk.append(D.bulkBar({
-      count, total: visible.length, noun: "张",
+      count, total: visible.length, noun: t("张"),
       onAll: () => { for (const item of visible) state.selected.add(item.id); renderGallery(); },
       onNone: () => { state.selected.clear(); renderGallery(); },
       actions: [
-        { label: "启用", onClick: () => bulkPatch(true) },
-        { label: "禁用", onClick: () => bulkPatch(false) },
-        { label: "删除", icon: "trash-2", danger: true, onClick: bulkRemove }
+        { label: t("启用"), onClick: () => bulkPatch(true) },
+        { label: t("禁用"), onClick: () => bulkPatch(false) },
+        { label: t("删除"), icon: "trash-2", danger: true, onClick: bulkRemove }
       ]
     }));
   }
@@ -321,7 +321,7 @@
   async function bulkPatch(enabled) {
     const items = selectedItems();
     if (!items.length) return;
-    await D.runBatch(items, (item) => D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}`, { method: "PATCH", body: { enabled } }), enabled ? "启用" : "禁用");
+    await D.runBatch(items, (item) => D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}`, { method: "PATCH", body: { enabled } }), enabled ? t("启用") : t("禁用"));
     state.selected.clear();
     await loadItems();
   }
@@ -332,13 +332,13 @@
     const builtin = items.filter((item) => item.source === "builtin").length;
     const own = items.length - builtin;
     const parts = [];
-    if (own) parts.push(`删除 ${own} 张自有表情(图片进回收站)`);
-    if (builtin) parts.push(`禁用 ${builtin} 张内置表情(文件不删)`);
-    const ok = await D.confirmAction(`${parts.join(",")}?平台引用记录保留。`, "执行");
+    if (own) parts.push(t("删除 {count} 张自有表情(图片进回收站)", { count: own }));
+    if (builtin) parts.push(t("禁用 {count} 张内置表情(文件不删)", { count: builtin }));
+    const ok = await D.confirmAction(t("{parts}?平台引用记录保留。", { parts: parts.join(",") }), t("执行"));
     if (!ok) return;
     await D.runBatch(items, (item) => item.source === "builtin"
       ? D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}`, { method: "PATCH", body: { enabled: false } })
-      : D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}&hard=false`, { method: "DELETE" }), "删除");
+      : D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}&hard=false`, { method: "DELETE" }), t("删除"));
     state.selected.clear();
     await loadItems();
   }
@@ -348,41 +348,41 @@
     const refs = state.refs.get(item.id);
     const form = {
       name_zh: D.el("input.dash-select.dash-wide", { type: "text", value: item.name.zh, maxlength: "80" }),
-      name_en: D.el("input.dash-select.dash-wide", { type: "text", value: item.name.en, maxlength: "80", placeholder: "可选" }),
+      name_en: D.el("input.dash-select.dash-wide", { type: "text", value: item.name.en, maxlength: "80", placeholder: t("可选") }),
       description: D.el("textarea.dash-textarea", { rows: "3", maxlength: "500" }),
       usage: D.el("textarea.dash-textarea", { rows: "3", maxlength: "500" }),
-      tags: D.el("input.dash-select.dash-wide", { type: "text", value: item.tags.join(", "), placeholder: "逗号分隔,最多 16 个" })
+      tags: D.el("input.dash-select.dash-wide", { type: "text", value: item.tags.join(", "), placeholder: t("逗号分隔,最多 16 个") })
     };
     form.description.value = item.description;
     form.usage.value = item.usage;
     const image = D.el("img.dash-meme-full", { src: imageUrl(item), alt: item.name.zh });
     const meta = [
-      ["ID", item.short_id], ["完整", item.id.replace("sha256:", "")], ["文件", item.file], ["类型", `${item.mime_type}${item.animated ? " · 动图" : ""}`],
-      ["状态", STATE_LABEL[itemState(item)]]
+      ["ID", item.short_id], [t("完整"), item.id.replace("sha256:", "")], [t("文件"), item.file], [t("类型"), t("{mime}{animated}", { mime: item.mime_type, animated: item.animated ? t(" · 动图") : "" })],
+      [t("状态"), STATE_LABEL[itemState(item)]]
     ];
     if (item.origin) {
       const o = item.origin;
-      meta.push(["来源", `${o.platform} ${o.conversation_kind} ${o.conversation_id}`], ["发送者", `${o.sender_name || "?"}(${o.sender_id})`]);
-      if (o.sent_at) meta.push(["发送于", D.formatTime(o.sent_at)]);
-      if (o.collected_at) meta.push(["收集于", D.formatTime(o.collected_at)]);
+      meta.push([t("来源"), `${o.platform} ${o.conversation_kind} ${o.conversation_id}`], [t("发送者"), `${o.sender_name || "?"}(${o.sender_id})`]);
+      if (o.sent_at) meta.push([t("发送于"), D.formatTime(o.sent_at)]);
+      if (o.collected_at) meta.push([t("收集于"), D.formatTime(o.collected_at)]);
     } else {
-      meta.push(["来源", item.source === "builtin" ? "内置库" : "手工添加"]);
+      meta.push([t("来源"), item.source === "builtin" ? t("内置库") : t("手工添加")]);
     }
-    if (refs) meta.push(["平台引用", `收到 ${refs.inbound} · 发出 ${refs.outbound} · 最近 ${D.formatTime(refs.last_seen_at)}`]);
+    if (refs) meta.push([t("平台引用"), t("收到 {inbound} · 发出 {outbound} · 最近 {last}", { inbound: refs.inbound, outbound: refs.outbound, last: D.formatTime(refs.last_seen_at) })]);
 
     const body = D.el("div", null,
       D.el("div.dash-meme-hero", null, image),
-      D.el("div.dash-field-row", null, D.field("中文名", form.name_zh), D.field("英文名", form.name_en)),
-      D.field("描述(图上是什么)", form.description),
-      D.field("用法(什么时候发)", form.usage),
-      D.field("标签", form.tags),
-      item.source === "builtin" ? D.el("p.dash-banner", { text: "这是内置库条目:保存会把图片复制到自有库并生成覆盖项;删除只会禁用。" }) : null,
-      item.origin?.reason ? D.el("div.dash-meme-reason", null, D.el("span.dash-meme-reason-label", { text: "偷这张的理由" }), D.el("p", { text: item.origin.reason })) : null,
-      D.el("h4.dash-section", { text: "元数据" }),
+      D.el("div.dash-field-row", null, D.field(t("中文名"), form.name_zh), D.field(t("英文名"), form.name_en)),
+      D.field(t("描述(图上是什么)"), form.description),
+      D.field(t("用法(什么时候发)"), form.usage),
+      D.field(t("标签"), form.tags),
+      item.source === "builtin" ? D.el("p.dash-banner", { text: t("这是内置库条目:保存会把图片复制到自有库并生成覆盖项;删除只会禁用。") }) : null,
+      item.origin?.reason ? D.el("div.dash-meme-reason", null, D.el("span.dash-meme-reason-label", { text: t("偷这张的理由") }), D.el("p", { text: item.origin.reason })) : null,
+      D.el("h4.dash-section", { text: t("元数据") }),
       D.el("dl.dash-meta", null, meta.flatMap(([key, value]) => [D.el("dt", { text: key }), D.el("dd", { text: String(value) })])));
 
-    const classify = D.el("button.dash-button", { type: "button", text: "让模型重看", title: "调用视觉模型重新生成描述、用法、标签,填进表单不直接保存", onclick: async () => {
-      classify.disabled = true; classify.textContent = "看图中…";
+    const classify = D.el("button.dash-button", { type: "button", text: t("让模型重看"), title: t("调用视觉模型重新生成描述、用法、标签,填进表单不直接保存"), onclick: async () => {
+      classify.disabled = true; classify.textContent = t("看图中…");
       try {
         const result = await D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}/classify?${libQuery()}`, { method: "POST" });
         form.name_zh.value = result.name?.zh || form.name_zh.value;
@@ -390,16 +390,16 @@
         form.description.value = result.description || form.description.value;
         form.usage.value = result.usage || form.usage.value;
         form.tags.value = (result.tags || []).join(", ");
-        D.toast(`模型建议已填入(置信 ${result.confidence})`);
+        D.toast(t("模型建议已填入(置信 {confidence})", { confidence: result.confidence }));
       } catch (error) {
-        D.toast(`重看失败:${error.message}`, "error");
+        D.toast(t("重看失败:{error}", { error: error.message }), "error");
       } finally {
-        classify.disabled = false; classify.textContent = "让模型重看";
+        classify.disabled = false; classify.textContent = t("让模型重看");
       }
     } });
-    const toggle = D.el("button.dash-button", { type: "button", text: item.disabled ? "启用" : "禁用", onclick: () => patch(item, { enabled: item.disabled }) });
-    const remove = D.el("button.dash-button.is-danger", { type: "button", text: item.source === "builtin" ? "禁用(内置)" : "删除", onclick: () => removeItem(item) });
-    const save = D.el("button.dash-button.is-primary", { type: "button", text: "保存", onclick: () => patch(item, {
+    const toggle = D.el("button.dash-button", { type: "button", text: item.disabled ? t("启用") : t("禁用"), onclick: () => patch(item, { enabled: item.disabled }) });
+    const remove = D.el("button.dash-button.is-danger", { type: "button", text: item.source === "builtin" ? t("禁用(内置)") : t("删除"), onclick: () => removeItem(item) });
+    const save = D.el("button.dash-button.is-primary", { type: "button", text: t("保存"), onclick: () => patch(item, {
       name_zh: form.name_zh.value, name_en: form.name_en.value, description: form.description.value, usage: form.usage.value,
       tags: form.tags.value.split(/[,,、]/).map((t) => t.trim()).filter(Boolean)
     }) });
@@ -409,29 +409,29 @@
   async function patch(item, body) {
     try {
       await D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}`, { method: "PATCH", body });
-      D.toast("已保存");
+      D.toast(t("已保存"));
       D.closeDrawer();
       await loadItems();
     } catch (error) {
-      D.toast(`保存失败:${error.message}`, "error");
+      D.toast(t("保存失败:{error}", { error: error.message }), "error");
     }
   }
 
   async function removeItem(item) {
     if (item.source === "builtin") {
-      const ok = await D.confirmAction(`禁用内置表情「${item.name.zh}」?内置库文件不会删除,模型将看不到它;之后可在“已禁用”里重新启用。`, "禁用");
+      const ok = await D.confirmAction(t("禁用内置表情「{name}」?内置库文件不会删除,模型将看不到它;之后可在“已禁用”里重新启用。", { name: item.name.zh }), t("禁用"));
       if (!ok) return;
       return patch(item, { enabled: false });
     }
-    const hard = await D.confirmAction(`删除「${item.name.zh}」?\n\n图片文件会进回收站,索引条目移除;平台引用记录保留。`, "删除");
+    const hard = await D.confirmAction(t("删除「{name}」?\n\n图片文件会进回收站,索引条目移除;平台引用记录保留。", { name: item.name.zh }), t("删除"));
     if (!hard) return;
     try {
       await D.api(`/api/dash/memes/items/${encodeURIComponent(item.id)}?${libQuery()}&hard=false`, { method: "DELETE" });
-      D.toast("已删除");
+      D.toast(t("已删除"));
       D.closeDrawer();
       await loadItems();
     } catch (error) {
-      D.toast(`删除失败:${error.message}`, "error");
+      D.toast(t("删除失败:{error}", { error: error.message }), "error");
     }
   }
 
@@ -439,30 +439,30 @@
   function openUpload() {
     const files = D.el("input", { type: "file", multiple: true, accept: "image/png,image/jpeg,image/gif,image/webp" });
     let mode = "ai";
-    const modeSeg = D.segmented([{ value: "ai", label: "模型分类" }, { value: "manual", label: "手填元数据" }], mode, (value) => { mode = value; manualBox.hidden = value !== "manual"; });
+    const modeSeg = D.segmented([{ value: "ai", label: t("模型分类") }, { value: "manual", label: t("手填元数据") }], mode, (value) => { mode = value; manualBox.hidden = value !== "manual"; });
     const form = {
-      name_zh: D.el("input.dash-select.dash-wide", { type: "text", maxlength: "80", placeholder: "必填" }),
-      name_en: D.el("input.dash-select.dash-wide", { type: "text", maxlength: "80", placeholder: "可选" }),
-      description: D.el("textarea.dash-textarea", { rows: "2", maxlength: "500", placeholder: "图上是什么(必填)" }),
-      usage: D.el("textarea.dash-textarea", { rows: "2", maxlength: "500", placeholder: "什么时候发(必填)" }),
-      tags: D.el("input.dash-select.dash-wide", { type: "text", placeholder: "逗号分隔" })
+      name_zh: D.el("input.dash-select.dash-wide", { type: "text", maxlength: "80", placeholder: t("必填") }),
+      name_en: D.el("input.dash-select.dash-wide", { type: "text", maxlength: "80", placeholder: t("可选") }),
+      description: D.el("textarea.dash-textarea", { rows: "2", maxlength: "500", placeholder: t("图上是什么(必填)") }),
+      usage: D.el("textarea.dash-textarea", { rows: "2", maxlength: "500", placeholder: t("什么时候发(必填)") }),
+      tags: D.el("input.dash-select.dash-wide", { type: "text", placeholder: t("逗号分隔") })
     };
-    const manualBox = D.el("div", { hidden: true }, D.field("中文名", form.name_zh), D.field("英文名", form.name_en), D.field("描述", form.description), D.field("用法", form.usage), D.field("标签", form.tags),
-      D.el("p.dash-field-hint", { text: "手填模式下多张图共用同一套元数据,适合一次传一张。" }));
+    const manualBox = D.el("div", { hidden: true }, D.field(t("中文名"), form.name_zh), D.field(t("英文名"), form.name_en), D.field(t("描述"), form.description), D.field(t("用法"), form.usage), D.field(t("标签"), form.tags),
+      D.el("p.dash-field-hint", { text: t("手填模式下多张图共用同一套元数据,适合一次传一张。") }));
     const log = D.el("ul.dash-upload-list");
     const body = D.el("div", null,
-      D.field("图片", files, "PNG / JPEG / GIF / WebP;每边 32–4096 px;GIF ≤120 帧 15 秒;单张 ≤ 配置上限"),
-      D.field("入库方式", modeSeg.el, "模型分类会用视觉模型看图并严格把关,不合格会拒绝;拒绝后可切手填强制入库"),
+      D.field(t("图片"), files, t("PNG / JPEG / GIF / WebP;每边 32–4096 px;GIF ≤120 帧 15 秒;单张 ≤ 配置上限")),
+      D.field(t("入库方式"), modeSeg.el, t("模型分类会用视觉模型看图并严格把关,不合格会拒绝;拒绝后可切手填强制入库")),
       manualBox,
-      D.el("h4.dash-section", { text: "结果" }), log);
-    const submit = D.el("button.dash-button.is-primary", { type: "button", text: "开始上传", onclick: async () => {
+      D.el("h4.dash-section", { text: t("结果") }), log);
+    const submit = D.el("button.dash-button.is-primary", { type: "button", text: t("开始上传"), onclick: async () => {
       const list = Array.from(files.files || []);
-      if (!list.length) { D.toast("先选图片", "error"); return; }
-      if (mode === "manual" && (!form.name_zh.value.trim() || !form.description.value.trim() || !form.usage.value.trim())) { D.toast("手填模式要填中文名、描述、用法", "error"); return; }
+      if (!list.length) { D.toast(t("先选图片"), "error"); return; }
+      if (mode === "manual" && (!form.name_zh.value.trim() || !form.description.value.trim() || !form.usage.value.trim())) { D.toast(t("手填模式要填中文名、描述、用法"), "error"); return; }
       submit.disabled = true;
       let added = 0;
       for (const file of list) {
-        const row = D.el("li", null, D.el("span.dash-cell-mono", { text: file.name }), D.el("span.dash-chip", { text: "上传中…" }));
+        const row = D.el("li", null, D.el("span.dash-cell-mono", { text: file.name }), D.el("span.dash-chip", { text: t("上传中…") }));
         log.append(row);
         const chip = row.lastChild;
         try {
@@ -474,19 +474,19 @@
           const response = await fetch(`/api/dash/memes/items?${params}`, { method: "POST", body: await file.arrayBuffer(), headers: { "content-type": "application/octet-stream" } });
           const payload = await response.json().catch(() => null);
           if (!response.ok) throw new Error(payload?.error?.message || `HTTP ${response.status}`);
-          if (payload.already_exists) { chip.textContent = `已存在:${payload.name?.zh || ""}`; chip.className = "dash-chip is-warn"; }
-          else if (payload.rejected) { chip.textContent = `模型拒绝:${payload.error || ""}`; chip.className = "dash-chip is-danger"; chip.title = payload.error || ""; }
-          else if (payload.needs_user_info) { chip.textContent = `模型看不出来,切手填重传`; chip.className = "dash-chip is-danger"; chip.title = payload.error || ""; }
-          else if (payload.success) { chip.textContent = `已入库:${payload.name?.zh || ""}`; chip.className = "dash-chip is-active"; added += 1; }
-          else { chip.textContent = payload.message || "未知结果"; chip.className = "dash-chip is-warn"; }
+          if (payload.already_exists) { chip.textContent = t("已存在:{name}", { name: payload.name?.zh || "" }); chip.className = "dash-chip is-warn"; }
+          else if (payload.rejected) { chip.textContent = t("模型拒绝:{reason}", { reason: payload.error || "" }); chip.className = "dash-chip is-danger"; chip.title = payload.error || ""; }
+          else if (payload.needs_user_info) { chip.textContent = t("模型看不出来,切手填重传"); chip.className = "dash-chip is-danger"; chip.title = payload.error || ""; }
+          else if (payload.success) { chip.textContent = t("已入库:{name}", { name: payload.name?.zh || "" }); chip.className = "dash-chip is-active"; added += 1; }
+          else { chip.textContent = payload.message || t("未知结果"); chip.className = "dash-chip is-warn"; }
         } catch (error) {
-          chip.textContent = `失败:${error.message}`; chip.className = "dash-chip is-danger";
+          chip.textContent = t("失败:{error}", { error: error.message }); chip.className = "dash-chip is-danger";
         }
       }
       submit.disabled = false;
-      if (added) { D.toast(`入库 ${added} 张`); await loadItems(); }
+      if (added) { D.toast(t("入库 {count} 张", { count: added })); await loadItems(); }
     } });
-    D.openDrawer(`上传到 ${state.library}`, body, [submit]);
+    D.openDrawer(t("上传到 {library}", { library: state.library }), body, [submit]);
   }
 
   D.register({ name: "memes", root: "dashMemesRoot", mount, refresh: () => reloadAll() });

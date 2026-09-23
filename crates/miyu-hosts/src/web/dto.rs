@@ -7,22 +7,35 @@
 
 use crate::web::*;
 
-pub(in crate::web) const DEFAULT_BOARD_TITLE: &str = "今天想聊些什么？";
+/// 看板默认大字(人格没配就用它)。跟着 UI 语言走,所以是函数不是常量。
+pub(in crate::web) fn default_board_title() -> &'static str {
+    t("What shall we talk about today?", "今天想聊些什么？")
+}
 
-pub(in crate::web) const DEFAULT_BOARD_SUBTITLE: &str = "从一个问题、计划或此刻的想法开始。";
+/// 看板默认小字。
+pub(in crate::web) fn default_board_subtitle() -> &'static str {
+    t(
+        "Start with a question, a plan, or whatever is on your mind.",
+        "从一个问题、计划或此刻的想法开始。",
+    )
+}
 
 /// 输入框为空时的提示。跟着人格名走,所以是函数不是常量:此前这句写死在
 /// index.html 里,人格改了名输入框还留着旧名字。
+/// `{name}` 是人格名的位子,与前端 `defaultComposerPlaceholder` 同一句话。
 pub(in crate::web) fn default_composer_placeholder(persona_name: &str) -> String {
-    format!("给 {persona_name} 发消息")
+    t("Message {name}", "给 {name} 发消息").replace("{name}", persona_name)
 }
 
-pub(in crate::web) const DEFAULT_STARTER_PROMPTS: [&str; 4] = [
-    "查询今天的天气",
-    "分析一个问题",
-    "发表情包打个招呼吧",
-    "搜索一张图片",
-];
+/// 空白看板上的四个快捷入口(人格没配就用它)。
+pub(in crate::web) fn default_starter_prompts() -> [&'static str; 4] {
+    [
+        t("What's the weather today?", "查询今天的天气"),
+        t("Analyze a problem", "分析一个问题"),
+        t("Say hi with a meme", "发表情包打个招呼吧"),
+        t("Find an image", "搜索一张图片"),
+    ]
+}
 
 pub(in crate::web) const MAX_THINKING_VARIANT_UPDATES: usize = 64;
 

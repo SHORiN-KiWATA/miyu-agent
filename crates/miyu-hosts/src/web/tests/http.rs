@@ -11,6 +11,40 @@ fn artifact_tools_are_scoped_to_local_webui_requests() {
     assert!(!is_local_webui_request(PromptAudience::External, true));
 }
 
+/// 服务端文案跟请求语言(2026-09-23 WebUI 双语):同一次进程里,中文与英文两个
+/// 请求作用域各自拿到自己那份看板/输入框文案。中间件就是按这个作用域包的
+/// (`ui_locale::middleware` → `i18n::scoped`),这里是它最小可复现的落点。
+#[tokio::test]
+async fn server_text_follows_request_locale_scope() {
+    use miyu_base::i18n::Locale;
+
+    let zh = miyu_base::i18n::scoped(Locale::Zh, async {
+        (
+            default_board_title(),
+            default_board_subtitle(),
+            default_composer_placeholder("Miyu"),
+            default_starter_prompts()[0],
+        )
+    })
+    .await;
+    let en = miyu_base::i18n::scoped(Locale::En, async {
+        (
+            default_board_title(),
+            default_board_subtitle(),
+            default_composer_placeholder("Miyu"),
+            default_starter_prompts()[0],
+        )
+    })
+    .await;
+
+    assert_eq!(zh.0, "今天想聊些什么？");
+    assert_eq!(en.0, "What shall we talk about today?");
+    assert_ne!(zh.1, en.1);
+    assert_eq!(zh.2, "给 Miyu 发消息");
+    assert_eq!(en.2, "Message Miyu");
+    assert_ne!(zh.3, en.3);
+}
+
 /// 清空 token 统计明细:删的是 usage-history.jsonl,累计正账 usage.json
 /// 必须留着(它是"一生用了多少"的唯一记录)。08-26 新增按钮的后端契约。
 #[test]

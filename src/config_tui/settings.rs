@@ -33,6 +33,10 @@ pub(in crate::config_tui) fn confirm_save_on_exit(ui: &mut Ui) -> Result<bool> {
 pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) -> Result<()> {
     let language = language_choice_value(&config.display.language).unwrap_or("auto");
     let mut fields = vec![
+        // 界面语言排第一(用户 09-23 拍板):它跟 WebUI 的「语言」卡同一个字段
+        // (display.language),而且整份界面都用它——放最上面才找得到。
+        Field::new(t("Interface language", "界面语言"), language.to_string())
+            .choices(&["auto", "en", "zh"]),
         Field::boolean(t("Enable tools", "工具启用"), config.tools.enabled),
         Field::new(
             t("Maximum tool rounds", "工具最大轮数"),
@@ -52,8 +56,6 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
             t("Allow command execution", "允许执行命令"),
             config.skills.allow_command_execution,
         ),
-        Field::new(t("Interface language", "界面语言"), language.to_string())
-            .choices(&["auto", "en", "zh"]),
         // 三值档（隐藏/摘要/完整）09-17 拆成布尔、隐藏档删掉——用户原话
         //「是否展开思考内容 / 是否展开工具内容 / 是否缩起成 Worked for，
         // 这样更简洁」。三位互不相干：思考以后要从时间线里搬出去。
@@ -124,22 +126,23 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     ];
     // The read-back below is by index, so an insert in the middle silently
     // writes every later value into the wrong setting. This catches that in
-    // debug builds; new fields go on the end.
+    // debug builds; new fields go on the end (09-23 的例外:界面语言按用户要求
+    // 提到第一行,后面的索引一并重排,见下面逐行对应)。
     debug_assert_eq!(
         fields.len(),
         18,
         "global settings fields changed: update the positional read-back below"
     );
     run_form_without_buttons(ui, t(" GLOBAL SETTINGS ", " 全局设置 "), &mut fields)?;
-    config.tools.enabled = parse_bool_field(&fields[0].value)?;
-    config.tools.max_rounds = fields[1].value.trim().parse::<usize>()?;
-    config.tools.loading_mode = normalize_tools_loading_mode(&fields[2].value);
-    config.tools.persist_loaded_tools = parse_bool_field(&fields[3].value)?;
-    config.skills.enabled = parse_bool_field(&fields[4].value)?;
-    config.skills.allow_command_execution = parse_bool_field(&fields[5].value)?;
-    config.display.language = language_choice_value(&fields[6].value)
+    config.display.language = language_choice_value(&fields[0].value)
         .unwrap_or("auto")
         .to_string();
+    config.tools.enabled = parse_bool_field(&fields[1].value)?;
+    config.tools.max_rounds = fields[2].value.trim().parse::<usize>()?;
+    config.tools.loading_mode = normalize_tools_loading_mode(&fields[3].value);
+    config.tools.persist_loaded_tools = parse_bool_field(&fields[4].value)?;
+    config.skills.enabled = parse_bool_field(&fields[5].value)?;
+    config.skills.allow_command_execution = parse_bool_field(&fields[6].value)?;
     config.display.expand_reasoning = parse_bool_field(&fields[7].value)?;
     config.display.expand_tool_calls = parse_bool_field(&fields[8].value)?;
     config.display.thinking_scroll_lines = fields[9]

@@ -147,11 +147,11 @@ window.MiyuDash = (() => {
     const start = total === 0 ? 0 : offset + 1;
     const end = Math.min(offset + limit, total);
     const bar = el("div.dash-pager");
-    const prev = iconButton("chevron-left", "上一页", () => onChange(Math.max(0, offset - limit)));
-    const next = iconButton("chevron-right", "下一页", () => onChange(offset + limit));
+    const prev = iconButton("chevron-left", t("上一页"), () => onChange(Math.max(0, offset - limit)));
+    const next = iconButton("chevron-right", t("下一页"), () => onChange(offset + limit));
     prev.disabled = offset <= 0;
     next.disabled = end >= total;
-    bar.append(el("span.dash-pager-text", { text: total ? `第 ${start}–${end} 条 / 共 ${total}` : "没有条目" }), prev, next);
+    bar.append(el("span.dash-pager-text", { text: total ? t("第 {start}–{end} 条 / 共 {total}", { start, end, total }) : t("没有条目") }), prev, next);
     return bar;
   }
 
@@ -161,7 +161,7 @@ window.MiyuDash = (() => {
     closeDrawer();
     drawer = el("div.dash-drawer-overlay", { onclick: (event) => { if (event.target === drawer) closeDrawer(); } });
     const panel = el("aside.dash-drawer", { role: "dialog", "aria-label": title });
-    const head = el("header.dash-drawer-head", null, el("strong", { text: title }), iconButton("x", "关闭", closeDrawer));
+    const head = el("header.dash-drawer-head", null, el("strong", { text: title }), iconButton("x", t("关闭"), closeDrawer));
     const content = el("div.dash-drawer-body", null, body);
     panel.append(head, content);
     if (actions?.length) panel.append(el("footer.dash-drawer-foot", null, actions));
@@ -185,10 +185,10 @@ window.MiyuDash = (() => {
   }
 
   /* 危险操作确认:原生 dialog,CSP 下不能内联,所以全部程序化生成。 */
-  function confirmAction(message, confirmLabel = "删除") {
+  function confirmAction(message, confirmLabel = t("删除")) {
     return new Promise((resolve) => {
       const dialog = el("dialog.dash-confirm");
-      const cancel = el("button.dash-button", { type: "button", text: "取消", onclick: () => { dialog.close(); resolve(false); } });
+      const cancel = el("button.dash-button", { type: "button", text: t("取消"), onclick: () => { dialog.close(); resolve(false); } });
       const ok = el("button.dash-button.is-danger", { type: "button", text: confirmLabel, onclick: () => { dialog.close(); resolve(true); } });
       dialog.append(el("p", { text: message }), el("div.dash-confirm-actions", null, cancel, ok));
       // 同上:Escape 关的是确认框,不能顺带把控制台关了。
@@ -245,7 +245,7 @@ window.MiyuDash = (() => {
       if (column.sort && sort) {
         const active = sort.key === column.sort;
         const cell = el(`span.is-sortable${active ? ".is-active" : ""}`, {
-          role: "columnheader", tabindex: "0", title: "点击排序",
+          role: "columnheader", tabindex: "0", title: t("点击排序"),
           "aria-sort": active ? (sort.dir === "asc" ? "ascending" : "descending") : "none",
           onclick: () => sort.onChange(column.sort, active && sort.dir === "desc" ? "asc" : "desc"),
           onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); cell.click(); } }
@@ -266,7 +266,7 @@ window.MiyuDash = (() => {
 
   /* 垂直时间线:entries [{time, title, body, chip, chipClass}]。 */
   function timeline(entries, emptyText) {
-    if (!entries.length) return el("p.dash-empty", { text: emptyText || "暂无记录" });
+    if (!entries.length) return el("p.dash-empty", { text: emptyText || t("暂无记录") });
     const list = el("ol.dash-timeline");
     for (const entry of entries) {
       const item = el("li.dash-timeline-item", null,
@@ -331,14 +331,14 @@ window.MiyuDash = (() => {
      (比如知识库那条 300px 的目录树栏)里 spacer 自己占掉 80px,剩下的按钮被挤
      成三行、错落着排,看着像坏了(09-09 用户反馈)。现在窄了就是「计数一行、按钮
      一行」,宽了仍是左右分栏。 */
-  function bulkBar({ count, total, noun = "项", onAll, onNone, actions = [], compact = false }) {
+  function bulkBar({ count, total, noun = t("项"), onAll, onNone, actions = [], compact = false }) {
     const bar = el(`div.dash-bulk-bar${compact ? ".is-compact" : ""}`, { role: "toolbar" });
     // compact:数量写进动作按钮里,不再单占一行文字。选了多少,在「删除所选 N」
     // 上看比在旁边一句「已选 N 个文件」上看更该看到(09-09 用户反馈)。
-    if (!compact) bar.append(el("strong", { text: `已选 ${count} ${noun}` }));
+    if (!compact) bar.append(el("strong", { text: t("已选 {count} {noun}", { count, noun }) }));
     const group = el("div.dash-bulk-actions");
-    if (onAll && !compact) group.append(el("button.dash-button", { type: "button", text: total != null ? `全选 ${total}` : "全选", onclick: onAll }));
-    if (onNone) group.append(el("button.dash-button", { type: "button", text: "清空", onclick: onNone }));
+    if (onAll && !compact) group.append(el("button.dash-button", { type: "button", text: total != null ? t("全选 {total}", { total }) : t("全选"), onclick: onAll }));
+    if (onNone) group.append(el("button.dash-button", { type: "button", text: t("清空"), onclick: onNone }));
     for (const action of actions) {
       const button = el(`button.dash-button${action.danger ? ".is-danger" : ""}${action.primary ? ".is-primary" : ""}`, { type: "button", onclick: action.onClick });
       button.disabled = !count;
@@ -359,8 +359,8 @@ window.MiyuDash = (() => {
       try { await worker(item); done += 1; } catch (error) { failed.push({ item, error }); }
       toast(`${label} ${done + failed.length} / ${items.length}`);
     }
-    if (failed.length) toast(`${label}:${done} 成功,${failed.length} 失败(${failed[0].error.message})`, "error");
-    else toast(`${label}完成:${done} 项`);
+    if (failed.length) toast(t("{label}:{done} 成功,{count} 失败({reason})", { label, done, count: failed.length, reason: failed[0].error.message }), "error");
+    else toast(t("{label}完成:{done} 项", { label, done }));
     return { done, failed };
   }
 
