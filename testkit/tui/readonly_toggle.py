@@ -99,6 +99,38 @@ def lobby_row(screen):
     return next((line for line in screen if "Shift+Tab" in line), "")
 
 
+def key_hint_fg():
+    """大厅那行 `Shift+Tab` 此刻的前景色（还没画出来是 None）。"""
+    screen = h._VIEW["screen"]
+    for y in range(screen.lines):
+        row = screen.buffer[y]
+        cells = [(row[x].data, x) for x in range(screen.columns) if row[x].data]
+        text = "".join(data for data, _ in cells)
+        if "Shift+Tab" in text:
+            return row[cells[text.index("Shift+Tab")][1]].fg
+    return None
+
+
+def wait_lobby_faded_in(master, sink, timeout=6.0):
+    """等大厅淡入走完：`Shift+Tab` 的颜色连着 0.3 秒不再变。
+
+    淡入要到启动后三秒出头才走完（约 24 拍、每拍 40ms），`r.start` 只等了 3 秒。
+    09-23 起按键不再排队等下一拍、当场就处理，按下去的那一刻常常还差最后一两
+    拍——大厅那行比状态行暗一截，颜色判据按淡入走完的样子定，于是稳定地红。
+    """
+    deadline = time.time() + timeout
+    last, since = None, time.time()
+    while time.time() < deadline:
+        h.drain(master, 0.1, sink)
+        h.render(bytes(sink))
+        now = key_hint_fg()
+        if now != last:
+            last, since = now, time.time()
+        elif now is not None and time.time() - since >= 0.3:
+            return True
+    return False
+
+
 def read_only_colors():
     """(状态行「只读」是否跟大厅 `Shift+Tab` 同色, 大厅「● 只读」是否跟它同色)。
 
@@ -150,6 +182,7 @@ def scenario_lobby_shift_tab(report):
         "STUB_REQUEST_LOG": str(REQUEST_LOG),
     })
     try:
+        wait_lobby_faded_in(master, sink)
         screen = h.render(bytes(sink))
         before = lobby_row(screen)
         report["s1_lobby_row_offers_shift_tab"] = "只读" in before

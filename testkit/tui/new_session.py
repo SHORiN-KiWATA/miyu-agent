@@ -250,18 +250,21 @@ def main():
         empty_before = len(lane_sessions())
         # 浮层提示只活 2.2 秒，而 `command()` 在大厅里要等「安静 0.8 秒」——
         # 星空一直在动，它会一路等满超时，提示早散了。敲完就采。
+        #
+        # 采要在它活着的那段里**轮询**，不能读满 1.2 秒只看一眼：大厅每一帧都把
+        # 提示擦掉、紧接着再补上（老毛病，09-23 量过），只看一眼就是赌停在哪一拍
+        # （09-23 实测：6 次里看漏 2 次）。
         os.write(master, b"/new")
         h.drain_until(master, sink, "/new", 5.0)
         os.write(master, b"\r")
-        h.drain(master, 1.2, sink)
+        said = h.drain_until(master, sink, "已经是一条新会话", 2.0) or h.drain_until(
+            master, sink, "already on a new session", 0.2
+        )
         screen = h.render(bytes(sink))
         r.save("new-session-new-on-empty", screen)
         report["_空会话里敲 /new 前后的条数"] = [empty_before, len(lane_sessions())]
         report["空会话里敲 /new 不再多一条"] = len(lane_sessions()) == empty_before
-        report["空会话里敲 /new 会说一句"] = any(
-            "已经是一条新会话" in line or "already on a new session" in line
-            for line in screen
-        )
+        report["空会话里敲 /new 会说一句"] = said
         # 带名字就把当前这条改名，不新建。
         command(master, sink, "/new 改个名字")
         report["带名字也不新建"] = len(lane_sessions()) == empty_before

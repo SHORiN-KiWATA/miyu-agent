@@ -1598,7 +1598,14 @@ def main():
         # 09-20 起 `miyu` 启动开的是**新会话**（用户拍板），所以重开之后屏幕
         # 上什么都没有——要验回放就得先用 `/session` 切回刚才那条。
         # 「刚才那条」= 列表里第一条不叫「新会话」的（新开的那条还没命名）。
-        settle(master, again, quiet=1.0, timeout=20.0)
+        #
+        # 等大厅**真的画出来**再敲，不能只等「安静 1 秒」：退出后马上重开，新进程
+        # 要 0.7–1.5 秒才吐第一个字节，那一秒的安静里它还没进 raw 模式，敲进去的
+        # 回车被行规程变成换行、按键还被原样回显（09-24 取证：`raw-reopen.bin` 开头
+        # 就是测具自己敲的 `/session\r\njj`）。大厅画出来时 raw 模式早就开了。
+        deadline = time.time() + 20.0
+        while time.time() < deadline and not lobby(render(bytes(again))):
+            settle(master, again, quiet=0.2, timeout=1.0)
         os.write(master, b"/session\r")
         settle(master, again, quiet=0.8, timeout=20.0)
         for _ in range(12):
