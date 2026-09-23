@@ -219,7 +219,9 @@ def browser_search(keyword: str, capture_to=None, max_items=30, max_pages=1):
 
     items, ticket = [], None
     with sync_playwright() as p:
-        launch_kw = dict(headless=os.environ.get("XY_HEADED") != "1", args=["--no-sandbox"])
+        # Chrome 自己的沙箱只在 Linux 的 root / 容器里起不来; macOS 上用不着关。
+        launch_kw = dict(headless=os.environ.get("XY_HEADED") != "1",
+                         args=["--no-sandbox"] if sys.platform.startswith("linux") else [])
         if shutil.which("google-chrome") or shutil.which("google-chrome-stable"):
             launch_kw["channel"] = "chrome"
         elif shutil.which("microsoft-edge") or shutil.which("microsoft-edge-stable"):

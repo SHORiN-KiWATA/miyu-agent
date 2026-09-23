@@ -69,7 +69,9 @@ echo '{"action":"doctor"}'                               | zhihu-search
 
 ## 已知限制（重要）
 
-- **首次要人工过一次网易易盾验证码**，`login` 会开有头窗口让你手动做，之后登录态落在
+- **首次要人工过一次网易易盾验证码**，`login` 会开有头窗口让你手动做（Linux 要有
+  `DISPLAY`/`WAYLAND_DISPLAY`，macOS 要这台 Mac 的桌面是你在用，从 ssh 起的窗口也出在
+  那个桌面上），之后登录态落在
   持久化 profile（`~/.cache/zhihu-search/profile`，尊重 `XDG_CACHE_HOME`）里自己续期。
   放在缓存目录的代价是：清理工具把它当缓存删掉时，得重跑一次 `login`。
   旧版本装在 `~/.local/share/zhihu-search` 的登录态会在首次运行时自动搬过去，不用重登。

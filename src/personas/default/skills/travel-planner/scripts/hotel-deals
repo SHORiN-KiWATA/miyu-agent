@@ -198,8 +198,10 @@ def chromium_bundled():
 
 
 def launch_kwargs(headless=True):
-    kw = dict(headless=headless,
-              args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
+    kw = dict(headless=headless, args=["--disable-blink-features=AutomationControlled"])
+    if sys.platform.startswith("linux"):
+        # Chrome 自己的沙箱只在 Linux 的 root / 容器里起不来; macOS 上用不着关。
+        kw["args"].insert(0, "--no-sandbox")
     if shutil.which("google-chrome") or shutil.which("google-chrome-stable"):
         kw["channel"] = "chrome"
     elif shutil.which("microsoft-edge") or shutil.which("microsoft-edge-stable"):
