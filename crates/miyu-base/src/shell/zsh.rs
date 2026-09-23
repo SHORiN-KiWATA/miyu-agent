@@ -1,13 +1,16 @@
+use super::startup::{remove_file_if_exists, remove_source_block};
 use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
 use anyhow::Result;
-use std::path::Path;
 
 const BEGIN_MARKER: &str = "# >>> miyu zsh hook >>>";
 const END_MARKER: &str = "# <<< miyu zsh hook <<<";
 
 pub fn hook() -> String {
-    super::stamp_hook("zsh-init", body())
+    super::stamp_hook(
+        "zsh-init",
+        &format!("{}{}", super::locate::posix_prelude(), body()),
+    )
 }
 
 fn body() -> &'static str {
@@ -85,7 +88,9 @@ pub fn install(paths: &MiyuPaths) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&paths.zsh_hook_file, hook())?;
-    let rc_path = home_file(".zshrc");
+    let home = super::startup::home().unwrap_or_default();
+    let rc_path = super::startup::install_target("zsh", &home);
+    super::startup::prepare_install_target(&rc_path, &home)?;
     super::upsert_source_block(&rc_path, BEGIN_MARKER, END_MARKER, &paths.zsh_hook_file)?;
     println!(
         "{}: {}",
@@ -94,13 +99,19 @@ pub fn install(paths: &MiyuPaths) -> Result<()> {
     );
     println!("{}: {}", t("updated", "已更新"), rc_path.display());
     super::print_reload_hint("zsh", &paths.zsh_hook_file);
+    super::locate::warn_if_unreachable("zsh", Some(&rc_path));
     Ok(())
 }
 
 pub fn uninstall(paths: &MiyuPaths) -> Result<bool> {
     let removed_file = remove_file_if_exists(&paths.zsh_hook_file)?;
-    let rc_path = home_file(".zshrc");
-    let removed_block = remove_source_block(&rc_path, BEGIN_MARKER, END_MARKER)?;
+    // 所有候选启动文件都清一遍:老版本写在 `.bashrc`、macOS 上写在
+    // `.bash_profile`,卸载得都认得。
+    let home = super::startup::home().unwrap_or_default();
+    let mut removed_block = false;
+    for rc_path in super::startup::candidates("zsh", &home) {
+        removed_block |= remove_source_block(&rc_path, BEGIN_MARKER, END_MARKER)?;
+    }
     let removed = removed_file || removed_block;
     if removed {
         println!(
@@ -109,44 +120,6 @@ pub fn uninstall(paths: &MiyuPaths) -> Result<bool> {
         );
     }
     Ok(removed)
-}
-
-fn home_file(name: &str) -> std::path::PathBuf {
-    directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().join(name))
-        .unwrap_or_else(|| std::path::PathBuf::from(name))
-}
-
-fn remove_source_block(rc_path: &Path, begin: &str, end: &str) -> Result<bool> {
-    let Ok(existing) = std::fs::read_to_string(rc_path) else {
-        return Ok(false);
-    };
-    let Some(begin_index) = existing.find(begin) else {
-        return Ok(false);
-    };
-    let Some(end_relative) = existing[begin_index..].find(end) else {
-        return Ok(false);
-    };
-    let mut end_index = begin_index + end_relative + end.len();
-    if existing.as_bytes().get(end_index) == Some(&b'\r') {
-        end_index += 1;
-    }
-    if existing.as_bytes().get(end_index) == Some(&b'\n') {
-        end_index += 1;
-    }
-    let mut updated = String::new();
-    updated.push_str(&existing[..begin_index]);
-    updated.push_str(&existing[end_index..]);
-    super::write_rc_atomic(rc_path, &updated)?;
-    Ok(true)
-}
-
-fn remove_file_if_exists(path: &Path) -> Result<bool> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err.into()),
-    }
 }
 
 #[cfg(test)]
@@ -195,17 +168,6 @@ mod tests {
         assert!(!hook.contains("${#text} <= 120"));
         assert!(!hook.contains("miyu_shell_syntax_pattern"));
         assert!(!hook.contains("miyu_leading_pattern"));
-    }
-
-    #[test]
-    fn remove_file_if_exists_reports_whether_file_was_removed() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("hook.zsh");
-
-        assert!(!remove_file_if_exists(&path).unwrap());
-        std::fs::write(&path, hook()).unwrap();
-        assert!(remove_file_if_exists(&path).unwrap());
-        assert!(!remove_file_if_exists(&path).unwrap());
     }
 
     #[test]

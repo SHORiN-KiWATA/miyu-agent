@@ -1,5 +1,7 @@
 pub mod bash;
 pub mod fish;
+mod locate;
+pub mod startup;
 pub mod zsh;
 
 use crate::i18n::text as t;
@@ -69,21 +71,17 @@ pub(crate) fn refresh_migrated_hook_sources(
     bash_hook: Option<&Path>,
     zsh_hook: Option<&Path>,
 ) -> Result<()> {
+    // 那段 source 可能在任何一个候选启动文件里(macOS 上 bash 装在
+    // `.bash_profile`),只动已经写着标记块的那些。
     if let Some(hook) = bash_hook {
-        refresh_source_block_if_present(
-            &home.join(".bashrc"),
-            BASH_BEGIN_MARKER,
-            BASH_END_MARKER,
-            hook,
-        )?;
+        for rc in startup::candidates("bash", home) {
+            refresh_source_block_if_present(&rc, BASH_BEGIN_MARKER, BASH_END_MARKER, hook)?;
+        }
     }
     if let Some(hook) = zsh_hook {
-        refresh_source_block_if_present(
-            &home.join(".zshrc"),
-            ZSH_BEGIN_MARKER,
-            ZSH_END_MARKER,
-            hook,
-        )?;
+        for rc in startup::candidates("zsh", home) {
+            refresh_source_block_if_present(&rc, ZSH_BEGIN_MARKER, ZSH_END_MARKER, hook)?;
+        }
     }
     Ok(())
 }
@@ -268,11 +266,11 @@ fn process_name(pid: u32) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn shell_quote(path: &Path) -> String {
+pub(super) fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
 }
 
-fn fish_quote(path: &Path) -> String {
+pub(super) fn fish_quote(path: &Path) -> String {
     format!(
         "'{}'",
         path.display()
@@ -504,7 +502,7 @@ fn is_explicit_command_path(command: &str) -> bool {
     is_executable_file(&expanded)
 }
 
-fn command_exists_in_path(command: &str) -> bool {
+pub(super) fn command_exists_in_path(command: &str) -> bool {
     if command.is_empty() || command.contains('/') {
         return false;
     }
@@ -514,7 +512,7 @@ fn command_exists_in_path(command: &str) -> bool {
     env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(command)))
 }
 
-fn is_executable_file(path: &Path) -> bool {
+pub(super) fn is_executable_file(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };

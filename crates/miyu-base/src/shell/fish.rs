@@ -82,7 +82,7 @@ pub fn hook() -> String {
 }
 
 fn body() -> String {
-    let mut output = String::new();
+    let mut output = super::locate::fish_prelude();
     for (command, description) in completion_entries() {
         output.push_str(&format!(
             "complete -c miyu -n __fish_use_subcommand -f -a {command} -d '{description}'\n"
@@ -334,6 +334,7 @@ pub fn install(paths: &MiyuPaths) -> Result<()> {
         paths.fish_hook_file.display()
     );
     super::print_reload_hint("fish", &paths.fish_hook_file);
+    super::locate::warn_if_unreachable("fish", None);
     Ok(())
 }
 

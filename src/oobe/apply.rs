@@ -142,17 +142,23 @@ pub(super) fn current_persona(config: &AppConfig, paths: &MiyuPaths) -> Option<(
 
 /// 这个 shell 的 hook 装没装。fish 看 conf.d 里的文件；bash/zsh 还要 rc 里有
 /// 那段标记块——只有文件没有 source 等于没装。
+///
+/// 标记块可能在任何一个候选启动文件里(macOS 上 bash 写在 `.bash_profile`),
+/// 与安装、卸载用同一张候选表。
 pub(super) fn hook_installed(paths: &MiyuPaths, shell: &str) -> bool {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let rc_has = |file: &str, marker: &str| {
-        home.as_ref()
-            .and_then(|home| std::fs::read_to_string(home.join(file)).ok())
-            .is_some_and(|text| text.contains(marker))
+    let rc_has = |marker: &str| {
+        home.as_ref().is_some_and(|home| {
+            miyu_base::shell::startup::candidates(shell, home)
+                .iter()
+                .filter_map(|file| std::fs::read_to_string(file).ok())
+                .any(|text| text.contains(marker))
+        })
     };
     match shell {
         "fish" => paths.fish_hook_file.is_file(),
-        "bash" => paths.bash_hook_file.is_file() && rc_has(".bashrc", "miyu bash hook"),
-        "zsh" => paths.zsh_hook_file.is_file() && rc_has(".zshrc", "miyu zsh hook"),
+        "bash" => paths.bash_hook_file.is_file() && rc_has("miyu bash hook"),
+        "zsh" => paths.zsh_hook_file.is_file() && rc_has("miyu zsh hook"),
         _ => false,
     }
 }

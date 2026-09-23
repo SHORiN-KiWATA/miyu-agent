@@ -13,6 +13,7 @@
 
 ## 修复
 
+- 终端集成在 macOS 上能用了。hook 里直接调 `miyu`，PATH 上找不到它时自然语言输入会被悄悄忽略——而 macOS 上 Homebrew 装在 `/opt/homebrew/bin`，没配过 `brew shellenv` 的 shell（fish 常见）找不到。现在 PATH 上没有时 hook 会去 Homebrew、`~/.local/bin`、`~/.cargo/bin` 等常见位置找；哪儿都没有的话，装的时候会提示怎么把它加进 PATH。bash 在 macOS 上改写进 `~/.bash_profile`（macOS 的终端开的是登录 shell，不读 `~/.bashrc`，以前写进去等于没装）；zsh 跟着 `ZDOTDIR` 走。已经装过的 hook 升级后会自动更新；macOS 上用 bash 的需要重跑一次 `miyu bash-init`。
 - 受限（沙盒）会话里读得到技能和出厂脚本了。Miyu 装在 `~/.local` 这类非系统前缀下、或从源码树跑时，沙盒只放行了老的脚本目录，技能和搬进新位置的脚本在沙盒会话里都用不了。**需要重启 daemon**。
 - 机器上残留着旧版的 `/usr/share/miyu/scripts` 时，不会再把脚本和技能读错位置——会优先选带新布局的那一份。
 - 搜图不再做下载后的「视觉模型审核」。审核用的模型一出错（比如免费模型被限流），整批图都会被判成不安全，报出来的是 `rejected by safety review`，真正的原因被藏住了。设置里的「视觉模型审核」开关一并删除；开着安全搜索时，不再使用本身没有安全过滤的百度和 360 两个图源。**需要重启 daemon**。
