@@ -55,11 +55,8 @@ pub(in crate::llm::openai_compatible) struct AntigravityRuntime {
 impl AntigravityRuntime {
     pub(in crate::llm::openai_compatible) fn from_config(config: &AppConfig) -> Self {
         let plugin = &config.plugins.antigravity;
-        let binary = if plugin.binary.trim().is_empty() {
-            PathBuf::from("agy")
-        } else {
-            PathBuf::from(plugin.binary.trim())
-        };
+        // PATH 上没有时去常见安装目录找(09-23 macOS:claude 在 ~/.local/bin、codex 在 /opt/homebrew/bin)。
+        let binary = miyu_base::paths::configured_program(&plugin.binary, "agy");
         Self {
             binary,
             native_tools: plugin.native_tools.clone(),

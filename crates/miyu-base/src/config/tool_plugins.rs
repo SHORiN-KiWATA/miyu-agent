@@ -46,7 +46,7 @@ pub struct PluginsConfig {
 /// 退役,存量配置里的同名键会被忽略。)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeCodePluginConfig {
-    /// 空 = 从 PATH 解析 `claude`。
+    /// 空 = 按名字找 `claude`：先 PATH，再常见安装目录（`paths::COMMON_BIN_DIRS`）。
     #[serde(default)]
     pub binary: String,
     /// 原生工具开启时的 --permission-mode。无头模式没有交互审批,默认
@@ -92,7 +92,7 @@ impl Default for ClaudeCodePluginConfig {
 /// 替换默认提示词,Miyu 工具经全局 mcp_config.json 的 `miyu` 条目挂桥。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AntigravityPluginConfig {
-    /// 空 = 从 PATH 解析 `agy`。
+    /// 空 = 按名字找 `agy`：先 PATH，再常见安装目录（`paths::COMMON_BIN_DIRS`）。
     #[serde(default)]
     pub binary: String,
     /// 哪些模式的会话让 agy 用自带原生工具(run_command/view_file/…):
@@ -144,7 +144,7 @@ impl Default for AntigravityPluginConfig {
 /// 的 ~/.codex/config.toml。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexPluginConfig {
-    /// 空 = 从 PATH 解析 `codex`。
+    /// 空 = 按名字找 `codex`：先 PATH，再常见安装目录（`paths::COMMON_BIN_DIRS`）。
     #[serde(default)]
     pub binary: String,
     /// 哪些模式的会话让 codex 用自带原生工具(shell/apply_patch/web_search):
@@ -192,7 +192,7 @@ impl Default for CodexPluginConfig {
 /// `--no-session-persistence`(一次性会话),拼参数时跳过。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeBuddyPluginConfig {
-    /// 空 = 从 PATH 解析 `codebuddy`。
+    /// 空 = 按名字找 `codebuddy`：先 PATH，再常见安装目录（`paths::COMMON_BIN_DIRS`）。
     #[serde(default)]
     pub binary: String,
     /// 原生工具开启时的 --permission-mode。同 claude-code:无头模式没有交互

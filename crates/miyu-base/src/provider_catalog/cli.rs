@@ -19,13 +19,11 @@ const CLI_LIST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 该供应商列模型要跑的二进制;`None` = 没有对应的 CLI 子命令。
 pub fn builtin_cli_binary(config: &AppConfig, provider: &ProviderConfig) -> Option<String> {
+    // 和中转线启动 CLI 同一个口径:PATH 上没有时去常见安装目录找。
     let pick = |configured: &str, fallback: &str| {
-        let configured = configured.trim();
-        if configured.is_empty() {
-            fallback.to_string()
-        } else {
-            configured.to_string()
-        }
+        crate::paths::configured_program(configured, fallback)
+            .to_string_lossy()
+            .into_owned()
     };
     if provider.is_antigravity() {
         Some(pick(&config.plugins.antigravity.binary, "agy"))

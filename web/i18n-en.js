@@ -1917,7 +1917,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "移除附件": "Remove attachment",
   "移除附件 {name}": "Remove attachment {name}",
   "空": "Empty",
-  "空 = 从 PATH 解析": "Empty = resolve from PATH.",
+  "空 = 按名字找：先 PATH，再常见安装目录": "Empty = look it up by name: PATH first, then common install directories.",
   "空 = 内置默认字体": "Empty = the built-in default font.",
   "空 = 跟随正文字体": "Empty = follow the body font.",
   "空 Token 只接受本机回环连接": "An empty token accepts loopback connections only.",

@@ -15,16 +15,9 @@
 
 use std::path::PathBuf;
 
-/// PATH 上找不到时依次去找的目录（写进 hook 的就是这张表）。
-/// Apple Silicon 的 Homebrew、Intel 的 Homebrew、Linuxbrew、`pip`/手装常用的
-/// `~/.local/bin`、`cargo install`。
-const FALLBACK_DIRS: &[&str] = &[
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/home/linuxbrew/.linuxbrew/bin",
-    "~/.local/bin",
-    "~/.cargo/bin",
-];
+/// PATH 上找不到时依次去找的目录（写进 hook 的就是这张表）。daemon 找 claude/codex
+/// 这些 CLI 也用这张（`paths::COMMON_BIN_DIRS`，09-23 挪过去共用）。
+const FALLBACK_DIRS: &[&str] = crate::paths::COMMON_BIN_DIRS;
 
 /// fish hook 开头那段兜底。
 pub(super) fn fish_prelude() -> String {

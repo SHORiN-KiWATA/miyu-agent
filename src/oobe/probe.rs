@@ -201,9 +201,11 @@ impl Loader {
                 ("输入法", "fcitx5 · 编辑态托管".into(), true)
             }
             Step::Channels => {
+                // 和中转线启动 CLI 同一个口径:官方安装脚本把 claude 放在 ~/.local/bin,
+                // 拉起引导的终端 PATH 里不一定有,光查 PATH 会误报「没找到 CLI」。
                 let clis: Vec<(&'static str, bool)> = ["claude", "codex", "agy", "codebuddy"]
                     .into_iter()
-                    .map(|name| (name, which(name)))
+                    .map(|name| (name, miyu_base::paths::program_available(name)))
                     .collect();
                 let keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
                 self.facts.env_key = keys.iter().any(|key| std::env::var_os(key).is_some());

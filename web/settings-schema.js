@@ -1678,7 +1678,7 @@
         {
           key: "binary",
           label: t("claude 可执行文件"),
-          hint: t("空 = 从 PATH 解析"),
+          hint: t("空 = 按名字找：先 PATH，再常见安装目录"),
           kind: "text",
           default: "",
         },
@@ -1738,7 +1738,7 @@
         {
           key: "binary",
           label: t("agy 可执行文件"),
-          hint: t("空 = 从 PATH 解析"),
+          hint: t("空 = 按名字找：先 PATH，再常见安装目录"),
           kind: "text",
           default: "",
         },
@@ -1809,7 +1809,7 @@
         {
           key: "binary",
           label: t("codex 可执行文件"),
-          hint: t("空 = 从 PATH 解析"),
+          hint: t("空 = 按名字找：先 PATH，再常见安装目录"),
           kind: "text",
           default: "",
         },
