@@ -8,14 +8,13 @@ use download::*;
 use providers::*;
 use ranking::*;
 
-use super::{vision, ToolProgress, ToolRegistry, ToolSpec};
+use super::{ToolProgress, ToolRegistry, ToolSpec};
 use anyhow::{bail, Context, Result};
 use futures_util::{future::join_all, StreamExt};
-use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, RgbImage};
-use miyu_base::config::{AppConfig, ProviderConfig, VisionPluginConfig};
+use image::GenericImageView;
+use miyu_base::config::AppConfig;
 use miyu_base::i18n::text as t;
 use miyu_base::paths::MiyuPaths;
-use miyu_core::llm::{ChatMessage, OpenAiCompatibleClient};
 use reqwest::{Client, Url};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -81,7 +80,7 @@ fn register_for_host(
 ) {
     registry.register(ToolSpec::new_with_progress(
         "search_web_images",
-        "Search web images with parallel multi-source retrieval, ranking, deduplication, and optional vision review. Sources adapt to global or mainland connectivity and can include SearXNG, DuckDuckGo, Bing CN, Baidu, and 360.",
+        "Search web images with parallel multi-source retrieval, ranking, and deduplication. Sources adapt to global or mainland connectivity and can include SearXNG, DuckDuckGo, Bing CN, Baidu, and 360.",
         json!({
             "type": "object",
             "properties": {
@@ -136,15 +135,7 @@ async fn search_web_images(
         .redirect(reqwest::redirect::Policy::limited(8))
         .build()?;
     progress.report(t("searching image candidates", "正在搜索图片候选"));
-    let search = search_images(
-        &client,
-        &config,
-        query,
-        count,
-        safe_search,
-        allow_download && vision_screening_available(&config),
-    )
-    .await?;
+    let search = search_images(&client, &config, query, count, safe_search).await?;
     let candidates = search.candidates;
     if !allow_download {
         return Ok(json!({
@@ -164,9 +155,8 @@ async fn search_web_images(
         None => paths.pictures_dir.clone(),
     };
     let cache_dir = pictures_base.join("web-images");
-    let download_result = download_and_store_images(
+    let stored = download_and_store_images(
         &config,
-        &paths,
         &cache_dir,
         query,
         candidates,
@@ -185,15 +175,12 @@ async fn search_web_images(
     //
     // 现在两条都撤:平台上由她挑了用 send_message_to_user 发,终端上由她调
     // print_image(已支持批量)。与生图 08-20 的裁定同一口径。
-    let stored = download_result.images;
     Ok(json!({
         "success": !stored.is_empty(),
         "query": query,
         "count": stored.len(),
         "result_role": "downloaded_image_candidates",
-        "vision_screening": if vision_screening_available(&config) { "enabled" } else { "unavailable" },
-        "description_policy": "vision.description is produced by the configured vision model after download; search_description is only search-engine metadata. Prefer vision.description when explaining whether an image matches the request.",
-        "rejected_by_vision": download_result.rejected_by_vision,
+        "description_policy": "search_description is search-engine metadata, not a look at the image. Check the picture before claiming it matches the request.",
         "providers": search.diagnostics,
         "cache_dir": cache_dir,
         "images": stored.into_iter().map(stored_json).collect::<Vec<_>>(),
@@ -208,10 +195,9 @@ async fn search_images(
     query: &str,
     count: usize,
     safe_search: bool,
-    vision_safety_available: bool,
 ) -> Result<ImageSearchResult> {
     let limit = image_candidate_pool_limit(count);
-    let all_providers = image_search_providers(config, query, safe_search, vision_safety_available);
+    let all_providers = image_search_providers(config, query, safe_search);
     let mut diagnostics = Vec::new();
     let mut providers = all_providers
         .iter()
@@ -324,30 +310,6 @@ mod tests {
         }
     }
 
-    fn provider() -> ProviderConfig {
-        ProviderConfig {
-            enabled: true,
-            id: "vision".to_string(),
-            display_name: "Vision".to_string(),
-            base_url: "https://example.com/v1".to_string(),
-            protocol: "openai-chat".to_string(),
-            api_key: None,
-            models: vec!["vision-model".to_string()],
-            custom_models: Vec::new(),
-            model_context_window: HashMap::new(),
-            model_temperature: HashMap::new(),
-            model_tools_loading_mode: HashMap::new(),
-            model_modalities: HashMap::new(),
-            tool_result_media: None,
-            model_costs: HashMap::new(),
-            default_model: "vision-model".to_string(),
-            timeout_seconds: 60,
-            temperature: 0.2,
-            anthropic_max_tokens: 4096,
-            extra_body: None,
-        }
-    }
-
     fn stored(path: PathBuf, rank: usize) -> StoredImage {
         StoredImage {
             candidate: candidate("test image", rank, 2, 2),
@@ -356,7 +318,6 @@ mod tests {
             size_bytes: 16,
             sha256: format!("hash-{rank}"),
             used_thumbnail: false,
-            vision: VisionScreening::not_requested(),
         }
     }
 
@@ -421,23 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_vision_batch_fails_closed() {
-        let screenings = parse_vision_screenings(
-            r#"{"items":[{"id":1,"relevance":90,"quality":80,"safe":true,"description":"匹配","reason":"主体正确"}]}"#,
-            &provider(),
-            2,
-        );
-        assert!(screenings[0].accepted);
-        assert!(screenings[0].safe);
-        assert!(!screenings[1].accepted);
-        assert!(!screenings[1].safe);
-        assert!(!parse_safe_bool(Some(&Value::String("unsafe".to_string()))));
-        assert!(!parse_safe_bool(Some(&Value::String(
-            "not safe".to_string()
-        ))));
-    }
-
-    #[test]
     fn parses_provider_result_shapes() {
         let ddg = parse_ddg_results(
             r#"{"results":[{"title":"cat","url":"https://example.com/page","image":"https://example.com/cat.jpg","thumbnail":"https://example.com/cat-small.jpg","width":800,"height":600}]}"#,
@@ -457,17 +401,19 @@ mod tests {
         let mut config = AppConfig::default();
         config.plugins.web_images.source_mode = "mainland".to_string();
         config.plugins.web.searxng_base_url.clear();
-        let ids = image_search_providers(&config, "猫", true, true)
+        let unsafe_ids = image_search_providers(&config, "猫", false)
             .into_iter()
             .map(ImageSearchProvider::id)
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["bing_cn", "baidu", "so360"]);
+        assert_eq!(unsafe_ids, vec!["bing_cn", "baidu", "so360"]);
 
-        let safe_without_vision = image_search_providers(&config, "猫", true, false)
+        // 百度和 360 不支持安全搜索参数。原来靠下载后的视觉审核兜底,审核 09-23
+        // 撤了,安全搜索开着时就不再用它们。
+        let safe_ids = image_search_providers(&config, "猫", true)
             .into_iter()
             .map(ImageSearchProvider::id)
             .collect::<Vec<_>>();
-        assert_eq!(safe_without_vision, vec!["bing_cn"]);
+        assert_eq!(safe_ids, vec!["bing_cn"]);
     }
 
     #[test]
@@ -475,25 +421,6 @@ mod tests {
         let config: miyu_base::config::WebImagesPluginConfig =
             serde_json::from_str(r#"{"enabled":true}"#).unwrap();
         assert_eq!(config.source_mode, "auto");
-    }
-
-    #[tokio::test]
-    async fn contact_sheet_skips_corrupt_images() {
-        let dir = tempfile::tempdir().unwrap();
-        let corrupt_path = dir.path().join("corrupt.png");
-        tokio::fs::write(&corrupt_path, b"not an image")
-            .await
-            .unwrap();
-        let valid_path = dir.path().join("valid.png");
-        RgbImage::from_pixel(2, 2, Rgb([255, 0, 0]))
-            .save(&valid_path)
-            .unwrap();
-
-        let (_, included) =
-            contact_sheet_data_url(&[stored(corrupt_path, 1), stored(valid_path, 2)])
-                .await
-                .unwrap();
-        assert_eq!(included, vec![1]);
     }
 
     #[test]

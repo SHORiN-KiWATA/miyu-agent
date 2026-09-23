@@ -317,8 +317,8 @@ pub struct WebImagesPluginConfig {
     pub max_download_mb: f64,
     #[serde(default = "default_true")]
     pub safe_search: bool,
-    #[serde(default = "default_true")]
-    pub vision_screening_enabled: bool,
+    // 09-23 撤掉的 `vision_screening_enabled`(下载后视觉审核)不留字段:老配置
+    // 里写着也照常解析(serde 默认忽略未知键),下次保存时自然消失。
     #[serde(default = "default_web_images_timeout")]
     pub timeout_seconds: u64,
 }
@@ -538,7 +538,6 @@ impl Default for WebImagesPluginConfig {
             max_results: default_web_images_max_results(),
             max_download_mb: default_web_images_max_download_mb(),
             safe_search: default_true(),
-            vision_screening_enabled: default_true(),
             timeout_seconds: default_web_images_timeout(),
         }
     }

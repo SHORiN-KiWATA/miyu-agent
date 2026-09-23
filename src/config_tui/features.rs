@@ -69,6 +69,8 @@ pub(in crate::config_tui) fn edit_features(
     if items.is_empty() {
         return Ok(());
     }
+    // 进来时的勾选:保存时只给这一轮新勾上的开机器开关(见 `newly_ticked`)。
+    let initial = items.clone();
     let mut selected = 0usize;
     let mut dirty = false;
     loop {
@@ -202,7 +204,10 @@ pub(in crate::config_tui) fn edit_features(
 
     if dirty {
         feature_catalog::apply_selection(&mut manifest, &items, &sources, default_persona);
-        feature_catalog::apply_machine_switches(config, &items);
+        feature_catalog::apply_machine_switches(
+            config,
+            &feature_catalog::newly_ticked(&initial, &items),
+        );
         // 不在这儿写盘：攒起来，跟配置一起走「保存并退出」。
         pending.set_manifest(&scope, manifest);
     }

@@ -151,10 +151,6 @@ pub(in crate::config_tui) fn plugin_fields(config: &AppConfig, id: &str) -> Vec<
                 config.plugins.web_images.source_mode.clone(),
             )
             .choices(&["auto", "global", "mainland"]),
-            Field::boolean(
-                t("Vision model review", "视觉模型审核"),
-                config.plugins.web_images.vision_screening_enabled,
-            ),
             Field::new(
                 t("Maximum results", "数量上限"),
                 config.plugins.web_images.max_results.to_string(),
@@ -446,17 +442,15 @@ pub(in crate::config_tui) fn apply_plugin_fields(
                     }
                 }
             };
-            config.plugins.web_images.vision_screening_enabled =
-                parse_bool_field(&fields[2].value)?;
+            // 下标两次整体前移:09-22 删「自动预览 / 默认预览数量」(搜图不再自己
+            // 显示),09-23 删「视觉模型审核」(审核整条撤掉)。
             config.plugins.web_images.max_results =
-                fields[3].value.trim().parse::<usize>()?.clamp(1, 10);
-            config.plugins.web_images.safe_search = parse_bool_field(&fields[4].value)?;
-            // 删掉「自动预览 / 默认预览数量」两项之后下标整体前移两位
-            // (09-22:搜图不再自己显示,那两项没有作用点了)。
+                fields[2].value.trim().parse::<usize>()?.clamp(1, 10);
+            config.plugins.web_images.safe_search = parse_bool_field(&fields[3].value)?;
             config.plugins.web_images.max_download_mb =
-                fields[5].value.trim().parse::<f64>()?.clamp(0.1, 50.0);
+                fields[4].value.trim().parse::<f64>()?.clamp(0.1, 50.0);
             config.plugins.web_images.timeout_seconds =
-                fields[6].value.trim().parse::<u64>()?.clamp(5, 120);
+                fields[5].value.trim().parse::<u64>()?.clamp(5, 120);
         }
         "print_image" => {
             config.plugins.print_image.enabled = parse_bool_field(&fields[0].value)?;

@@ -2107,7 +2107,6 @@ window.MIYU_I18N_EN = Object.freeze({
   "覆盖并发配置": "Override concurrency",
   "覆盖窗口(秒)": "Supersede window (seconds)",
   "视觉与生图": "Vision & image generation",
-  "视觉模型审核": "Vision model review",
   "视频": "Video",
   "视频分析 Provider/模型": "Video analysis provider/model",
   "角色": "Role",

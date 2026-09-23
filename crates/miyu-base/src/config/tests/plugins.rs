@@ -382,6 +382,21 @@ fn the_v4_migration_turns_arch_tools_off_on_a_non_arch_host() {
     assert_eq!(config.config_version, crate::config::CURRENT_CONFIG_VERSION);
 }
 
+/// v5 迁移：v4 之后引导又把它写回了 true（09-23 macOS 真机），再收一次。
+#[test]
+fn the_v5_migration_undoes_what_onboarding_turned_on() {
+    let mut config = AppConfig::default();
+    config.config_version = 4;
+    config.plugins.archlinux.enabled = true;
+    config.migrate().expect("migration runs");
+    assert_eq!(
+        config.plugins.archlinux.enabled,
+        crate::config::tool_plugins::arch_host(),
+        "Arch 上该留着，别处该关掉"
+    );
+    assert_eq!(config.config_version, crate::config::CURRENT_CONFIG_VERSION);
+}
+
 /// **只刷一次**。用户在那之后自己去菜单开了的，不能第二次被关掉。
 #[test]
 fn a_config_already_at_v4_is_never_touched_again() {
@@ -391,6 +406,6 @@ fn a_config_already_at_v4_is_never_touched_again() {
     config.migrate().expect("migration runs");
     assert!(
         config.plugins.archlinux.enabled,
-        "已经是 v4 的配置不该再被刷"
+        "已经是最新版本的配置不该再被刷"
     );
 }

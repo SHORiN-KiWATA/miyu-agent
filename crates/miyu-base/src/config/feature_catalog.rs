@@ -274,6 +274,11 @@ pub fn catalog(
         if !scope.everything() && !plugin.toggleable {
             continue;
         }
+        // 引导里不摆这台机器用不了的(macOS 上的 Arch 工具):摆出来就默认勾着,
+        // 一保存连机器开关也打开了。设置界面照摆,想用的人自己勾。
+        if !scope.everything() && !(plugin.host_supported)() {
+            continue;
+        }
         if unlisted(plugin.id) {
             continue;
         }
@@ -363,6 +368,25 @@ pub fn apply_machine_switches(config: &mut AppConfig, items: &[FeatureItem]) {
             (switch.set)(config, true);
         }
     }
+}
+
+/// 这一轮里从「没勾」变成「勾上」的那些行。
+///
+/// 设置界面只给它们开机器开关(09-23)。原来是「表上勾着的全开」,而表上的勾
+/// 是人格那层的:机器层关着的行照样显示勾着(标「本机未开」)——于是改了别的
+/// 任何一项再保存,那些行的机器开关也被一并打开(macOS 上 Arch 工具就是这么
+/// 回来的)。「勾 = 两层一起开」说的是用户勾的那一下,不是表上现有的勾。
+pub fn newly_ticked(before: &[FeatureItem], after: &[FeatureItem]) -> Vec<FeatureItem> {
+    after
+        .iter()
+        .filter(|item| item.on)
+        .filter(|item| {
+            !before
+                .iter()
+                .any(|old| old.kind == item.kind && old.id == item.id && old.on)
+        })
+        .cloned()
+        .collect()
 }
 
 /// 把表上的勾选写回清单。全开 = 白名单留空（`None`），关过才写明细；自定义人格
@@ -522,6 +546,39 @@ mod tests {
         }
     }
 
+    /// 09-23 真机:macOS 上走完引导,`plugins.archlinux.enabled` 被写成 true,
+    /// AUR 工具又回到了工具面。引导的功能屏默认全勾,保存时「勾 = 连机器开关
+    /// 一起开」,把「跟着宿主走」的默认值冲掉了。
+    ///
+    /// 断言按宿主分两支:非 Arch 上这一行不摆、保存后开关仍是关;Arch 上照旧。
+    /// 出问题的那一支只有在非 Arch 机器(macOS CI)上才跑得到。
+    #[test]
+    fn onboarding_leaves_host_bound_plugins_alone() {
+        let manifest = PersonaManifest::all();
+        let mut config = AppConfig::default();
+        let arch = crate::config::tool_plugins::arch_host();
+        assert_eq!(config.plugins.archlinux.enabled, arch);
+        let guided = catalog(&manifest, &sources(), true, CatalogScope::Onboarding, None);
+        let listed = guided
+            .iter()
+            .any(|item| item.kind == FeatureKind::Plugin && item.id == "archlinux");
+        assert_eq!(listed, arch, "引导里摆不摆 Arch 那一行要跟着宿主走");
+        // 引导一件不改就保存:机器开关不该被勾选连带打开。
+        apply_machine_switches(&mut config, &guided);
+        assert_eq!(config.plugins.archlinux.enabled, arch);
+        // 设置界面照摆,想用的人自己勾。
+        let full = catalog(
+            &manifest,
+            &sources(),
+            true,
+            CatalogScope::Settings,
+            Some(&config),
+        );
+        assert!(full
+            .iter()
+            .any(|item| item.kind == FeatureKind::Plugin && item.id == "archlinux"));
+    }
+
     /// 设置界面那档比引导多摆什么：机器级能力、记忆与技能、常开的内置插件。
     #[test]
     fn the_settings_scope_shows_what_onboarding_hides() {
@@ -572,6 +629,45 @@ mod tests {
             .expect("表情包在表上");
         assert!(memes.settings);
         assert_eq!(memes.machine_on, Some(config.plugins.memes.enabled));
+    }
+
+    /// 表上原本就勾着、但机器层关着的行(「本机未开」),保存别的改动时不连带
+    /// 打开;只有这一轮亲手勾上的才开(09-23,macOS 上 Arch 工具就是这么回来的)。
+    #[test]
+    fn saving_other_rows_leaves_machine_off_rows_alone() {
+        // 人格层全开、机器层关着的两行:表上显示勾着(「本机未开」)。
+        let mut config = AppConfig::default();
+        config.plugins.archlinux.enabled = false;
+        config.plugins.memes.enabled = false;
+        let manifest = PersonaManifest::all();
+        let before = catalog(
+            &manifest,
+            &sources(),
+            true,
+            CatalogScope::Settings,
+            Some(&config),
+        );
+        let arch = before.iter().find(|item| item.id == "archlinux").unwrap();
+        assert!(arch.on && arch.machine_on == Some(false));
+        // 用户只关掉汇率、再亲手勾上表情包(先取消再勾回来也算「勾那一下」)。
+        let mut after = before.clone();
+        for item in &mut after {
+            if item.id == "exchange_rate" {
+                item.on = false;
+            }
+        }
+        let mut before_memes_off = before.clone();
+        for item in &mut before_memes_off {
+            if item.id == "memes" {
+                item.on = false;
+            }
+        }
+        apply_machine_switches(&mut config, &newly_ticked(&before_memes_off, &after));
+        assert!(
+            !config.plugins.archlinux.enabled,
+            "表上原本就勾着的行,保存别的改动时不该连带打开机器开关"
+        );
+        assert!(config.plugins.memes.enabled, "这一轮亲手勾上的要打开");
     }
 
     /// 勾上 = 人格层与机器层一起开；取消勾选不碰机器层。
@@ -885,8 +981,6 @@ mod bilingual_tests {
 
 #[cfg(test)]
 mod locale_switch_tests {
-    use super::*;
-
     /// 同一张表在两种 locale 下给出不同语言——这是用户看到的那个现象的直接判据。
     #[test]
     fn the_same_entry_renders_in_the_requested_language() {

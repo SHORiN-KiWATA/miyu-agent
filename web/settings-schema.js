@@ -1231,12 +1231,6 @@
           default: "auto",
         },
         {
-          key: "vision_screening_enabled",
-          label: t("视觉模型审核"),
-          kind: "toggle",
-          default: true,
-        },
-        {
           key: "max_results",
           label: t("数量上限"),
           kind: "number",

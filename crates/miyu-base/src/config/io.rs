@@ -153,6 +153,14 @@ impl AppConfig {
         if self.config_version < 4 && !crate::config::tool_plugins::arch_host() {
             self.plugins.archlinux.enabled = false;
         }
+        // v5：同一件事再刷一次。v4 之后引导的功能屏仍把「Arch Linux 相关」默认
+        // 勾上，保存时连机器开关一起打开（09-23 macOS 真机），于是 v4 之后在非
+        // Arch 机器上跑过引导的配置又写回了 true。引导那头已经不摆这一行了，
+        // 这里把已经被写坏的收回来。与 v4 一样有损：v4 之后在非 Arch 机器上
+        // 主动开了的人要再开一次，此后不会再被刷。
+        if self.config_version < 5 && !crate::config::tool_plugins::arch_host() {
+            self.plugins.archlinux.enabled = false;
+        }
         if self.config_version < 1 {
             for provider in &mut self.providers {
                 if (provider.temperature - LEGACY_DEFAULT_TEMPERATURE).abs() < f32::EPSILON {

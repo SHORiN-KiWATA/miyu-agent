@@ -23,7 +23,6 @@ pub(in crate::tools::web_images) struct StoredImage {
     pub(in crate::tools::web_images) size_bytes: usize,
     pub(in crate::tools::web_images) sha256: String,
     pub(in crate::tools::web_images) used_thumbnail: bool,
-    pub(in crate::tools::web_images) vision: VisionScreening,
 }
 
 pub(in crate::tools::web_images) struct CallTempDir {
@@ -73,21 +72,15 @@ pub(in crate::tools::web_images) fn configured_max_download_bytes(max_download_m
     (max_download_mb * 1024.0 * 1024.0) as usize
 }
 
-pub(in crate::tools::web_images) struct DownloadResult {
-    pub(in crate::tools::web_images) images: Vec<StoredImage>,
-    pub(in crate::tools::web_images) rejected_by_vision: usize,
-}
-
 pub(in crate::tools::web_images) async fn download_and_store_images(
     config: &AppConfig,
-    paths: &MiyuPaths,
     cache_dir: &Path,
     query: &str,
     candidates: Vec<ImageCandidate>,
     count: usize,
     max_bytes: usize,
     progress: ToolProgress,
-) -> Result<DownloadResult> {
+) -> Result<Vec<StoredImage>> {
     tokio::fs::create_dir_all(cache_dir)
         .await
         .with_context(|| format!("failed to create {}", cache_dir.display()))?;
@@ -133,40 +126,29 @@ pub(in crate::tools::web_images) async fn download_and_store_images(
                 continue;
             }
         };
-        let Some(mut item) = result else {
+        let Some(item) = result else {
             continue;
         };
-        item.vision = VisionScreening::not_requested();
         completed.push((index, item));
     }
     if let Some(err) = download_error {
         return Err(err);
     }
-    let mut downloaded = dedupe_downloaded(completed);
+    let downloaded = dedupe_downloaded(completed);
     if downloaded.is_empty() {
         bail!("image search found candidates, but no image could be downloaded")
     }
-    if vision_screening_available(config) {
-        progress.report(t("reviewing images", "正在批量审核图片"));
-        screen_images_with_vision(config, paths, query, &mut downloaded).await;
-    }
-    let (mut stored, rejected_by_vision) = select_images(query, downloaded, count);
-    if stored.is_empty() {
-        bail!("image search candidates were unavailable or rejected by safety review")
-    }
+    let mut stored = select_images(query, downloaded, count);
     for item in &mut stored {
         publish_image(cache_dir, item).await?;
     }
     progress.report(format!(
         "{} {}/{}",
-        t("accepted images", "已通过图片"),
+        t("downloaded images", "已下载图片"),
         stored.len(),
         count
     ));
-    Ok(DownloadResult {
-        images: stored,
-        rejected_by_vision,
-    })
+    Ok(stored)
 }
 
 pub(in crate::tools::web_images) fn dedupe_downloaded(
@@ -182,31 +164,16 @@ pub(in crate::tools::web_images) fn dedupe_downloaded(
 
 pub(in crate::tools::web_images) fn select_images(
     query: &str,
-    downloaded: Vec<StoredImage>,
+    mut downloaded: Vec<StoredImage>,
     count: usize,
-) -> (Vec<StoredImage>, usize) {
-    let before_filter = downloaded.len();
-    let mut stored = Vec::new();
-    for item in downloaded {
-        if item.vision.accepted && item.vision.safe {
-            stored.push(item);
-        }
-    }
-    let rejected_by_vision = before_filter.saturating_sub(stored.len());
-    stored.sort_by(|left, right| {
-        right
-            .vision
-            .relevance
-            .cmp(&left.vision.relevance)
-            .then_with(|| right.vision.quality.cmp(&left.vision.quality))
-            .then_with(|| {
-                score_candidate(query, &right.candidate)
-                    .partial_cmp(&score_candidate(query, &left.candidate))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+) -> Vec<StoredImage> {
+    downloaded.sort_by(|left, right| {
+        score_candidate(query, &right.candidate)
+            .partial_cmp(&score_candidate(query, &left.candidate))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
-    stored.truncate(count);
-    (stored, rejected_by_vision)
+    downloaded.truncate(count);
+    downloaded
 }
 
 pub(in crate::tools::web_images) async fn download_candidate(
@@ -278,7 +245,6 @@ pub(in crate::tools::web_images) async fn download_candidate(
             size_bytes: bytes.len(),
             sha256,
             used_thumbnail,
-            vision: VisionScreening::not_requested(),
         }));
     }
     Ok(None)

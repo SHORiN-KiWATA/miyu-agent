@@ -78,6 +78,25 @@ fn register_with_resolver(
     );
 }
 
+/// 生图插件的设置按**调用这一刻**磁盘上的为准,不按回合开始时的快照。
+///
+/// 09-23 真机:她在回合里替用户把 API key 写进配置、跑了 `miyu reload`,再调
+/// 生图仍然是旧的(没 key 的)那份——在跑的回合拿着开工时的配置快照,reload
+/// 只管后面的回合。密钥、端点、模型这一段是「改了就该当场生效」的,每次调用
+/// 重读一次(生图本身要几秒到几十秒,读一次配置不值一提)。
+///
+/// 只换这一段:快照里别的字段可能带着成员 / 回合级的覆盖,整份换掉就丢了。
+/// 读不出来(文件正写到一半、校验不过)就退回快照,不让一次坏读拖垮生图。
+fn current_settings(snapshot: &AppConfig, paths: &MiyuPaths) -> ImageGenerationPluginConfig {
+    match AppConfig::load_or_default(paths) {
+        Ok(on_disk) => on_disk.plugins.image_generation,
+        Err(error) => {
+            tracing::warn!(error = %error, "image generation: config reread failed, using the turn snapshot");
+            snapshot.plugins.image_generation.clone()
+        }
+    }
+}
+
 async fn generate_image(
     args: Value,
     config: AppConfig,
@@ -85,7 +104,8 @@ async fn generate_image(
     progress: crate::tools::ToolProgress,
     platform: bool,
 ) -> Result<String> {
-    let plugin = &config.plugins.image_generation;
+    let plugin = current_settings(&config, &resolver.paths);
+    let plugin = &plugin;
     if !plugin.enabled {
         bail!("image generation plugin is disabled")
     }
@@ -512,6 +532,55 @@ fn preview(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 同一件事钉在调用这一层:开工时插件关着、回合中途在配置里打开了,这一回合
+    /// 的生图就该认新的。空 prompt 让它在发请求之前停下——认新配置报「缺
+    /// prompt」,还拿着快照就报「插件关着」。
+    #[tokio::test]
+    async fn a_call_reads_the_plugin_settings_on_disk_not_the_turn_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::tools::tests::test_paths(temp.path());
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        let mut snapshot = AppConfig::default();
+        snapshot.plugins.image_generation.enabled = false;
+        let mut written = AppConfig::default();
+        written.plugins.image_generation.enabled = true;
+        written.save(&paths).unwrap();
+        let resolver = Arc::new(ReferenceResolver::unscoped(snapshot.clone(), paths));
+        let error = generate_image(
+            json!({ "prompt": "" }),
+            snapshot,
+            resolver,
+            crate::tools::ToolProgress::default(),
+            false,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert_eq!(error, "prompt is required");
+    }
+
+    /// 回合开始后才写进配置的 key,这一回合里的生图就得用上(09-23 真机)。
+    #[test]
+    fn settings_written_mid_turn_are_used_by_the_next_call() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::tools::tests::test_paths(temp.path());
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        // 回合开工时的快照:没有 key。
+        let snapshot = AppConfig::default();
+        assert!(snapshot.plugins.image_generation.api_keys.is_empty());
+        // 回合中途,配置文件里写进了 key。
+        let mut written = AppConfig::default();
+        written.plugins.image_generation.api_keys = vec!["sk-written-mid-turn".to_string()];
+        written.save(&paths).unwrap();
+        assert_eq!(
+            current_settings(&snapshot, &paths).api_keys,
+            vec!["sk-written-mid-turn".to_string()]
+        );
+        // 读不出来就退回快照,不让生图跟着坏掉。
+        std::fs::write(&paths.config_file, "{ not json").unwrap();
+        assert!(current_settings(&snapshot, &paths).api_keys.is_empty());
+    }
 
     fn plugin(provider_type: &str, model: &str) -> ImageGenerationPluginConfig {
         let mut plugin = ImageGenerationPluginConfig::default();

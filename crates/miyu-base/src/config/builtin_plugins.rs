@@ -53,6 +53,14 @@ pub struct BuiltinPluginDescriptor {
     /// 有没有「怎么配」的设置页（密钥、尺寸、账号）。功能表上这一行摆个齿轮，
     /// 回车进去。设置页的实现在 `config_tui`，这里只记有没有。
     pub settings: bool,
+    /// 这台机器上用不用得了。引导里不摆用不了的（09-23：macOS 上引导默认把
+    /// 「Arch Linux 相关」勾上，保存时连机器开关一起打开，AUR 工具又回到了
+    /// 工具面）。设置界面照摆，想用的人仍能自己勾。
+    pub host_supported: fn() -> bool,
+}
+
+fn any_host() -> bool {
+    true
 }
 
 fn always(_: &AppConfig) -> bool {
@@ -97,6 +105,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "usage_query",
@@ -109,6 +118,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "alarm",
@@ -121,6 +131,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "exchange_rate",
@@ -136,6 +147,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.exchange_rate.enabled = on,
         }),
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "archlinux",
@@ -151,6 +163,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.archlinux.enabled = on,
         }),
         settings: true,
+        host_supported: super::tool_plugins::arch_host,
     },
     BuiltinPluginDescriptor {
         id: "print_image",
@@ -163,6 +176,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: true,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "memes",
@@ -178,6 +192,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.memes.enabled = on,
         }),
         settings: true,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "platform_outreach",
@@ -190,6 +205,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: platform_outreach_installed,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "web_images",
@@ -205,6 +221,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.web_images.enabled = on,
         }),
         settings: true,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "image_generation",
@@ -220,6 +237,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.image_generation.enabled = on,
         }),
         settings: true,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "knowledge_base",
@@ -235,6 +253,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.plugins.knowledge_base.enabled = on,
         }),
         settings: true,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "ledger",
@@ -247,6 +266,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     BuiltinPluginDescriptor {
         id: "scripts",
@@ -259,6 +279,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         installed: always,
         switch: None,
         settings: false,
+        host_supported: any_host,
     },
     // MCP 与脚本同级:插件闸之上还能按服务器 id 逐个勾(`plugins.mcp`)。
     BuiltinPluginDescriptor {
@@ -275,6 +296,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
             set: |config, on| config.mcp.enabled = on,
         }),
         settings: false,
+        host_supported: any_host,
     },
 ];
 

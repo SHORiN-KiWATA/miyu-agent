@@ -709,27 +709,10 @@ async fn run_remote_chat_inner(
                     .drain(..)
                     .partition(|(image, _)| ipc_text(image, "tool_id") == finished_tool);
                 deferred_images = rest;
-                for (image, size) in mine {
-                    let state = queue_state
-                        .as_ref()
-                        .expect("queue state exists for a remote turn");
-                    renderer.prepare_for_external_output()?;
-                    if let Some(live) = live.as_deref_mut() {
-                        live.apply_renderer_frame(&mut renderer)?;
-                        synchronized_terminal_update(CursorAfterUpdate::Hidden, || live.suspend())?;
-                        live.external_output_active = true;
-                    }
-                    if let Err(error) = render_remote_tool_image(state, &image, size).await {
-                        renderer.write_system_message(&format!(
-                            "{}: {error}",
-                            t("Could not display tool image", "工具图片显示失败")
-                        ))?;
-                    }
-                    // 图片打完不用再单独「抬进页内」:残影的根因不在图片的位置,
-                    // 而在受限区滚动本身(见 tail/frame.rs 的 queue_lifted_frame),
-                    // 此后的帧都会改走整屏滚,活动区 resume 时自己会把光标下方的
-                    // 溢出滚掉。
-                }
+                let state = queue_state
+                    .as_ref()
+                    .expect("queue state exists for a remote turn");
+                print_deferred_images(mine, state, &mut renderer, live.as_deref_mut()).await?;
                 if let Some(live) = live.as_deref_mut() {
                     if live.external_output_active {
                         live.external_output_active = false;
@@ -751,9 +734,20 @@ async fn run_remote_chat_inner(
                 // 全屏：图片得**进缓冲**才留得住。传输段发给终端（它要收像素），
                 // 占位格当普通文字进正文，于是重画、回翻都还在。
                 let fullscreen = live.as_deref().is_some_and(|live| live.screen.is_some());
+                image_trace(&format!(
+                    "tool.image tool_id={} fullscreen={fullscreen} asset={} error={}",
+                    ipc_text(&data, "tool_id"),
+                    remote_tool_image_asset_id(&data).unwrap_or("-"),
+                    ipc_text(&data, "error"),
+                ));
                 if fullscreen {
                     match remote_tool_image_parts(state, &data, size).await {
                         Ok((transfer, placeholder)) => {
+                            image_trace(&format!(
+                                "fullscreen parts transfer={}B placeholder={}B",
+                                transfer.len(),
+                                placeholder.len()
+                            ));
                             // 传输段随时可以发：`U=1` 是虚拟放置，画在哪儿由
                             // 占位格说了算，和它什么时候到终端无关。
                             if !transfer.is_empty() {
@@ -777,6 +771,7 @@ async fn run_remote_chat_inner(
                             }
                         }
                         Err(error) => {
+                            image_trace(&format!("fullscreen parts failed: {error}"));
                             renderer.write_system_message(&format!(
                                 "{}: {error}",
                                 t("Could not display tool image", "工具图片显示失败")
@@ -969,6 +964,37 @@ async fn run_remote_chat_inner(
             live.apply_renderer_frame(&mut renderer)?;
         }
     };
+    // 等到回合收尾还没打出去的图(等的那把工具的 `tool.finished` 一直没配上):
+    // 原来整批静默丢掉,屏上只剩一句「已交给宿主显示」(09-23 macOS 真机,
+    // 小红书登录二维码)。收尾时补打,并记一笔,好查为什么没配上。
+    if !deferred_images.is_empty() {
+        image_trace(&format!(
+            "run.completed with {} image(s) still waiting for tool.finished: {:?}",
+            deferred_images.len(),
+            deferred_images
+                .iter()
+                .map(|(image, _)| ipc_text(image, "tool_id").to_string())
+                .collect::<Vec<_>>()
+        ));
+        let state = queue_state
+            .as_ref()
+            .expect("queue state exists for a remote turn");
+        print_deferred_images(
+            std::mem::take(&mut deferred_images),
+            state,
+            &mut renderer,
+            live.as_deref_mut(),
+        )
+        .await?;
+        if let Some(live) = live.as_deref_mut() {
+            if live.external_output_active {
+                live.external_output_active = false;
+                live.output_cursor = cursor_position_or(live.output_cursor);
+                live.resume_at(live.output_cursor)?;
+                live.apply_renderer_frame(&mut renderer)?;
+            }
+        }
+    }
     renderer.finish()?;
     let focused = live.as_deref().map(|live| live.editor.focused);
     // 混合模型池的「本次供应商 / 模型」那行（BUG-05）：
@@ -1096,4 +1122,47 @@ async fn run_remote_chat_inner(
         context_window,
         cumulative_tokens,
     }))
+}
+
+/// 非全屏那条路攒下的图,一张张打出来。
+///
+/// 图片打完不用再单独「抬进页内」:残影的根因不在图片的位置,而在受限区滚动
+/// 本身(见 tail/frame.rs 的 queue_lifted_frame),此后的帧都会改走整屏滚,活动区
+/// resume 时自己会把光标下方的溢出滚掉。
+async fn print_deferred_images(
+    images: Vec<(serde_json::Value, Option<String>)>,
+    state: &StateStore,
+    renderer: &mut render::StreamRenderer,
+    mut live: Option<&mut LiveReplTail>,
+) -> Result<()> {
+    for (image, size) in images {
+        renderer.prepare_for_external_output()?;
+        if let Some(live) = live.as_deref_mut() {
+            live.apply_renderer_frame(renderer)?;
+            synchronized_terminal_update(CursorAfterUpdate::Hidden, || live.suspend())?;
+            live.external_output_active = true;
+        }
+        match render_remote_tool_image(state, &image, size).await {
+            Ok(()) => image_trace(&format!(
+                "printed deferred image tool_id={}",
+                ipc_text(&image, "tool_id")
+            )),
+            Err(error) => {
+                image_trace(&format!("deferred image failed: {error}"));
+                renderer.write_system_message(&format!(
+                    "{}: {error}",
+                    t("Could not display tool image", "工具图片显示失败")
+                ))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `MIYU_IMAGE_TRACE=1` 时把远端图片这一路记进 `image-trace.log`(与 chafa、
+/// kitty 那两条同一个文件)。「图有时出不来」只能靠它在真机上抓现场。
+fn image_trace(line: &str) {
+    if miyu_base::terminal::chafa::trace_enabled() {
+        miyu_base::terminal::chafa::trace(&format!("[remote] {line}"));
+    }
 }

@@ -35,10 +35,10 @@ pub(in crate::tools::web_images) fn image_search_providers(
     config: &AppConfig,
     query: &str,
     safe_search: bool,
-    vision_safety_available: bool,
 ) -> Vec<ImageSearchProvider> {
     let mode = config.plugins.web_images.source_mode.trim();
-    let allow_best_effort_domestic = !safe_search || vision_safety_available;
+    // 百度与 360 没有安全搜索参数,只在用户关掉安全搜索时才用。
+    let allow_best_effort_domestic = !safe_search;
     let mut providers = Vec::new();
     if !config.plugins.web.searxng_base_url.trim().is_empty() {
         providers.push(ImageSearchProvider::SearXng);

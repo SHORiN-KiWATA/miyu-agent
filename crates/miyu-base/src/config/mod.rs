@@ -60,7 +60,7 @@ pub const DEV_PROMPT_FILE: &str = "dev-prompt.md";
 pub const DEFAULT_DEV_SYSTEM_PROMPT: &str = "You are a helpful software engineer assistant.";
 /// Replay redraws whole turns, so a large value floods the screen on startup.
 pub const MAX_REPL_REPLAY_TURNS: usize = 20;
-pub const CURRENT_CONFIG_VERSION: u32 = 4;
+pub const CURRENT_CONFIG_VERSION: u32 = 5;
 
 /// dev 会话的保留人格 scope:dev 会话全部挂在它名下,借现有按人格隔离机制白拿
 /// 会话 / 记忆 / REPL 指针的分家;是不是 dev 由会话的 persona==DEV_PERSONA 推导。
