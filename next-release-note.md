@@ -17,6 +17,7 @@
 
 ## 修复
 
+- 程序调用 Miyu（`miyu ask`、`miyu stdio`）时给这一轮加的限制，在模型走中转线（claude-code、codebuddy、codex、agy）时终于生效了：`--tools a,b` 只给这几件工具、`--no-tools` 一件都不给、`--no-memory` 这一轮不写记忆。以前中转线一概不认——模型照样看到全部 Miyu 工具，`--no-memory` 的这一轮还摆着「记住」工具，`--no-tools` 时 CLI 自带的 Bash、Edit 也照开。现在只要带了 `--tools` 或 `--no-tools`，CLI 自带的原生工具这一轮一律关掉；带限制的回合另开一条中转会话，不会把工具清单的变化混进原来那条对话。普通模型下 `--tools`、`--no-tools` 以前还会漏出「本会话用量」这一件工具，也一并修了。平时直接聊天不受影响。
 - 在 herdr 里用 Miyu，一轮跑完侧栏不会再一直显示「进行中」了。原因是 daemon 由 herdr 某个 pane 里的 `miyu` 拉起时，带上了那个 pane 的身份；它起的 agy / claude / codex（这三家都装着 herdr 的钩子）一启动就把那个 pane 认领成自己的会话，herdr 从此把 Miyu 的上报全部丢掉。现在 daemon 和中转线的 CLI 都不再带 pane 身份。已经卡住的那个 pane 要关掉重开一次才能恢复。
 - 在 herdr 里，回合结束和「在等你回答」的弹窗又能看到了（改走系统通知：herdr 会吞掉 kitty 的通知协议）；提示音改由 herdr 自己放（它的 `[ui.sound]`，默认在切到别的 tab 或窗口时响），Miyu 在 herdr 里不再另响一声。
 - 对 Miyu 的终端界面发 SIGTERM / 关掉它所在的终端，现在会正常收尾退出，并把 herdr 侧栏那一行释放掉。以前 SIGTERM 要么直接把它杀掉、要么被憋住杀不掉，侧栏上会留着一个已经不在了的 miyu。
