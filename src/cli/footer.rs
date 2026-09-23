@@ -182,6 +182,34 @@ impl ReplFooterStatus {
 
     pub(in crate::cli) fn update_session_tokens(&mut self, session_tokens: u64) {
         self.token_usage.session_tokens = session_tokens;
+        self.token_usage.session_tokens_unknown = false;
+    }
+
+    /// 上下文读数；没数过（显示「—」）时是 `None`。
+    pub(in crate::cli) fn session_tokens(&self) -> Option<u64> {
+        (!self.token_usage.session_tokens_unknown).then_some(self.token_usage.session_tokens)
+    }
+
+    /// 这条车道的上下文还没数过（大厅里按 Tab 换过去、会话还没开）：显示成「—」。
+    pub(in crate::cli) fn mark_session_tokens_unknown(&mut self) {
+        self.token_usage.session_tokens = 0;
+        self.token_usage.session_tokens_unknown = true;
+    }
+
+    /// 把界面上那份的 Σ 收回来，返回收回的数。
+    ///
+    /// 空闲时轮询只改界面上的 footer（见 `JobsFeed::cumulative`），主循环手里这份
+    /// 是上次显式刷新时的。主循环每一圈都拿手里这份整份覆盖界面上的，不先收回来
+    /// 就把较新的 Σ 盖回旧值，下一次轮询才又改回来（用户 09-23）。
+    pub(in crate::cli) fn adopt_cumulative(&mut self, shown: &ReplFooterStatus) -> TurnTokens {
+        self.token_usage.cumulative_tokens = shown.token_usage.cumulative_tokens;
+        self.token_usage.cumulative_prompt_tokens = shown.token_usage.cumulative_prompt_tokens;
+        self.token_usage.cumulative_cached_tokens = shown.token_usage.cumulative_cached_tokens;
+        TurnTokens {
+            total: self.token_usage.cumulative_tokens.unwrap_or(0),
+            prompt: self.token_usage.cumulative_prompt_tokens,
+            cache_read: self.token_usage.cumulative_cached_tokens,
+        }
     }
 
     /// Σ 上那份「还没落进库里」的加数：正在跑的子代理。返回是否真的变了，
@@ -209,6 +237,7 @@ impl ReplFooterStatus {
         meter.generation_ms = speed.millis;
         if context_tokens > 0 {
             meter.session_tokens = context_tokens;
+            meter.session_tokens_unknown = false;
         }
         let cumulative = meter.cumulative_tokens.unwrap_or(0) + turn.total;
         meter.cumulative_tokens = (cumulative > 0).then_some(cumulative);

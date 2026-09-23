@@ -196,10 +196,13 @@ impl StateStore {
 
     /// 这条会话有没有可见回合。读不到就当**非空**（保守：宁可多开一条新的，
     /// 也不要把用户正在用的会话当空的复用掉）。
+    ///
+    /// 只问有没有，不读回合行：原来把整条会话的回合连大 JSON 列一起读出来再看
+    /// 长度，长会话里大厅按一下 Tab 就要读一遍（09-23）。
     pub fn session_is_empty(&self, session_id: &str) -> bool {
         self.conv_db
-            .load_visible_turns(session_id)
-            .is_ok_and(|turns| turns.is_empty())
+            .has_visible_turns(session_id)
+            .is_ok_and(|any| !any)
     }
 
     /// 给这条人格车道新建一个会话并钉住指针。

@@ -33,14 +33,17 @@
 mod cross_session;
 mod glyphs;
 mod live;
+mod panel_preview;
 mod question;
 mod subagent;
+mod thought_rows;
 
 // 后台子代理面板（根包 `cli::repl::tail::screen::overlay`）要按名字用这几样：
 // 它和前台面板**共用**排版、收缩、点开的规则，取数的地方不同，长相不该不同。
 pub use cross_session::write_cross_session_message;
 pub(crate) use cross_session::SEND_TOOL;
 pub use glyphs::{fold_open_lines, step_detail_lines, step_rows};
+pub use panel_preview::{panel_command_tail, panel_thought_window};
 pub use subagent::{fold_block_lines, thread_panel, PanelEntry};
 
 use super::{question_answer_text, StreamRenderer};
@@ -57,6 +60,7 @@ use live::indented_body;
 pub(crate) use live::undecorate;
 pub use live::{indent_body, peek_tail, render_speech_lines, summary_line, write_compact_summary};
 pub(crate) use subagent::SubagentLog;
+pub(crate) use thought_rows::{style_thought_rows, ThoughtRows};
 
 /// 竖线。它和 logo **同在一列**：logo 是这一步的节点，竖线是节点之间的连线，
 /// 各占一行。分成两列的话左边会多出一根从头贯到尾的栏杆，那是画框不是时间线。
@@ -458,14 +462,6 @@ pub(crate) struct ThoughtStream {
 /// 正在想的正文最多在 live 区里占几行：整屏减去转轮行、连线与页边距的余量。
 pub(crate) fn live_thought_rows() -> usize {
     crate::render::terminal_rows(24).saturating_sub(3).max(4)
-}
-
-/// 思考正文的行：折好行、上好色（和想完落地那份同一副样子）。
-pub(crate) fn thought_body_lines(text: &str) -> Vec<String> {
-    wrap_detail(text)
-        .into_iter()
-        .map(|line| format!("{THOUGHT_BODY_STYLE}{line}\x1b[0m"))
-        .collect()
 }
 
 /// 出错那一步：整行红色。
@@ -883,10 +879,7 @@ impl StreamRenderer {
         let detail = if caps.detail_inline() && !full_reasoning {
             Vec::new()
         } else {
-            wrap_detail(&self.reasoning_text)
-                .into_iter()
-                .map(|line| format!("{THOUGHT_BODY_STYLE}{line}\x1b[0m"))
-                .collect::<Vec<_>>()
+            style_thought_rows(self.thought_rows_all())
         };
         // 「显示思考过程 = 完整」= 这一步的内容默认看得见。能点开的面上是
         // **出来就是展开态**（再点一次收回去）；点不开的面上是就地印在抬头
@@ -939,9 +932,9 @@ impl StreamRenderer {
         };
         let max_rows = live_thought_rows();
         loop {
-            let rows = thought_body_lines(&self.reasoning_text);
-            let live = rows.len().saturating_sub(stream.flushed_rows)
-                + usize::from(!stream.heading_flushed);
+            let total = self.thought_row_count();
+            let live =
+                total.saturating_sub(stream.flushed_rows) + usize::from(!stream.heading_flushed);
             if live <= max_rows {
                 break;
             }
@@ -966,7 +959,7 @@ impl StreamRenderer {
             }
             // 只滚多出来的那几行；末尾两行永远留着——折行按词断，还在写的那一行
             // 可能把上一行的尾词拽下来，再往上的行已经定了。
-            let stable = rows.len().saturating_sub(2);
+            let stable = total.saturating_sub(2);
             let flushable = stable.saturating_sub(stream.flushed_rows);
             if flushable == 0 {
                 break;
@@ -974,7 +967,7 @@ impl StreamRenderer {
             let count = (live - max_rows).min(flushable);
             let from = stream.flushed_rows;
             let prefix = rail_prefix();
-            let committed = rows[from..from + count]
+            let committed = style_thought_rows(self.thought_rows_range(from, count))
                 .iter()
                 .map(|line| format!("{prefix}{line}"))
                 .collect::<Vec<_>>();
@@ -1016,11 +1009,7 @@ impl StreamRenderer {
         label: &str,
     ) -> anyhow::Result<()> {
         use std::io::Write as _;
-        let rows = thought_body_lines(&self.reasoning_text);
-        let rest = rows
-            .into_iter()
-            .skip(stream.flushed_rows)
-            .collect::<Vec<_>>();
+        let rest = style_thought_rows(self.thought_rows_range(stream.flushed_rows, usize::MAX));
         self.timeline.thoughts += 1;
         if !stream.heading_flushed {
             let mut step = Step::new(step_line(glyph_think(), label), rest, None);
@@ -1051,6 +1040,7 @@ impl StreamRenderer {
     /// 这一段思考收完了：计数、正文、起点全清，等下一段。
     fn clear_reasoning_phase(&mut self) {
         self.reasoning_text.clear();
+        self.thought_rows.borrow_mut().clear();
         self.reasoning_tokens = 0;
         self.reasoning_title = None;
         self.reasoning_started_at = None;

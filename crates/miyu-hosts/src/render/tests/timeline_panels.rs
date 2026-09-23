@@ -418,3 +418,112 @@ fn auto_compact_folds_its_summary_into_a_block_in_fullscreen() {
         );
     });
 }
+
+/// 命令那一步：抬头底下露**命令全文**（按「命令显示行数」折行），点开是全文加输出
+/// ——和主线一个样子。原来底下什么都不露，点开也只是截成一行 80 字的主题（用户
+/// 09-24 截图：「命令预览不对，只有一行，而且展开后看不到具体内容」）。
+#[test]
+fn a_subagent_command_shows_its_whole_command_under_the_head() {
+    with_blocks(|| {
+        let mut renderer = timeline_renderer();
+        renderer
+            .write_tool_call("subagent", r#"{"description":"查目录","prompt":"去看看"}"#)
+            .unwrap();
+        let command = format!(
+            "WT=/home/someone/{}/worktree && cd \"$WT\" && grep -rn skills src | head -40; echo 尾巴在这儿",
+            "很长的路径".repeat(8)
+        );
+        let args = serde_json::json!({"command": command, "title": "看看技能用在哪"}).to_string();
+        renderer.subagent_tool(
+            "subagent",
+            "run_command",
+            "运行命令",
+            &args,
+            true,
+            "第一行输出\n第二行输出",
+        );
+        let id = renderer.subagent_overlay_id("subagent").expect("没登记");
+        // 一步占的那几行（抬头 + 底下露的命令）是拼成一条存的，先按换行拆开。
+        let panel: Vec<String> = crate::render::blocks::get(id)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|line| {
+                crate::render::strip_ansi_text(line)
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let head = panel
+            .iter()
+            .position(|line| line.contains("看看技能用在哪"))
+            .unwrap_or_else(|| panic!("抬头上不是 title: {panel:?}"));
+        let tail: Vec<&String> = panel[head + 1..]
+            .iter()
+            .take_while(|line| !line.trim().is_empty())
+            .collect();
+        assert!(tail.len() > 1, "抬头底下的命令只露了一行: {panel:?}");
+        assert!(
+            tail.iter().any(|line| line.contains("尾巴在这儿")),
+            "命令没露全（尾巴没有）: {tail:?}"
+        );
+        let step_id = crate::render::blocks::get(id)
+            .unwrap_or_default()
+            .iter()
+            .find(|line| crate::render::strip_ansi_text(line).contains("看看技能用在哪"))
+            .and_then(|line| block_id_in(line))
+            .expect("那一步没挂块");
+        let detail = crate::render::blocks::get(step_id)
+            .unwrap_or_default()
+            .iter()
+            .map(|line| crate::render::strip_ansi_text(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            detail.contains("尾巴在这儿"),
+            "点开看不到命令全文: {detail}"
+        );
+        assert!(detail.contains("第二行输出"), "点开看不到输出: {detail}");
+    });
+}
+
+/// 正在想：抬头 `思考中 · …`，底下露最近几行，和主线那扇窗一个规矩（用户 09-24：
+/// 「思考的预览也没有」——原来只有一截单行窥视）。
+#[test]
+fn a_thinking_subagent_opens_a_scroll_window() {
+    with_blocks(|| {
+        let mut renderer = timeline_renderer();
+        renderer.thinking_scroll_lines = 3;
+        renderer
+            .write_tool_call("subagent", r#"{"description":"查目录","prompt":"去看看"}"#)
+            .unwrap();
+        renderer.subagent_thought(
+            "subagent",
+            "第一行想法\n第二行想法\n第三行想法\n第四行想法\n第五行想法",
+        );
+        let id = renderer.subagent_overlay_id("subagent").expect("没登记");
+        let panel: Vec<String> = crate::render::blocks::get(id)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|line| {
+                crate::render::strip_ansi_text(line)
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let head = panel
+            .iter()
+            .position(|line| line.contains(t("thinking", "思考中")))
+            .unwrap_or_else(|| panic!("没有「思考中」那一行: {panel:?}"));
+        let window: Vec<&String> = panel[head + 1..].iter().take(3).collect();
+        assert!(
+            window[0].contains("第三行想法") && window[2].contains("第五行想法"),
+            "窗里该是最近三行: {panel:?}"
+        );
+        assert!(
+            !panel.iter().any(|line| line.contains("第一行想法")),
+            "窗露多了: {panel:?}"
+        );
+    });
+}

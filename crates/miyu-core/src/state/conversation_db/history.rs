@@ -125,6 +125,34 @@ impl ConversationDb {
         Ok(turns)
     }
 
+    /// 某一轮之后的可见回合（`seq > after_seq`，按序）。
+    ///
+    /// 上下文计量只重估锚点之后那几轮（见 `load_last_measured_anchor`），不把整段
+    /// 历史再读一遍——整段读要把每一轮的 `tool_flow`、`context_messages` 大 JSON
+    /// 都拉出来解析（09-23：打断时整段重读重数，长会话 debug 下一两秒）。
+    pub fn load_visible_turns_after(&self, session_id: &str, after_seq: i64) -> Result<Vec<Turn>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {TURN_COLUMNS}
+             FROM turns WHERE session_id = ?1 AND hidden = 0 AND seq > ?2 ORDER BY seq ASC"
+        ))?;
+        let mut turns = stmt
+            .query_map(params![session_id, after_seq], map_turn_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        attach_turn_children_locked(&conn, &mut turns)?;
+        Ok(turns)
+    }
+
+    /// 这条会话有没有可见回合。只问有没有，不把回合行读出来。
+    pub fn has_visible_turns(&self, session_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE session_id = ?1 AND hidden = 0)",
+            params![session_id],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn load_visible_turns_excluding(
         &self,
         session_id: &str,

@@ -406,10 +406,10 @@ pub(in crate::cli) async fn run_direct_repl(
             let jobs_feed = JobsFeed::Local(Some(state.session_id().to_string()));
             let input = match read_live_repl_input(live, paths, &jobs_feed, None)? {
                 LiveReplOutcome::Exit | LiveReplOutcome::FollowWake { .. } => None,
-                // Direct mode owns its jobs in-process, so stop them here
-                // rather than through the daemon.
+                // Direct mode owns its jobs in-process: the `Local` feed stops
+                // them here rather than through the daemon.
                 LiveReplOutcome::StopJob { job_id } => {
-                    let _ = miyu_engine::tools::jobs::stop_job(&job_id).await;
+                    stop_background_job(paths, &jobs_feed, live, &job_id).await?;
                     continue;
                 }
                 LiveReplOutcome::StopJobs => {
@@ -1018,6 +1018,11 @@ pub(in crate::cli) async fn run_direct_repl(
                 continue;
             }
         }
+    }
+    // 交出去的 raw 模式没人接（发完一句紧接着 exit）：收回来关掉，连同键盘增强
+    // 一起还原，别把用户的 shell 留在 raw 模式里。
+    if let Some(live) = live_repl.as_mut() {
+        live.release_raw_handoff();
     }
     state.discard_queued_prompts()?;
     // Background jobs are children of this REPL process; never leave them

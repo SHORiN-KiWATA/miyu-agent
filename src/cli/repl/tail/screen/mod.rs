@@ -171,6 +171,8 @@ pub(in crate::cli) struct Screen {
     display_fold: bool,
     /// `命令显示行数`：命令那一步抬头底下露几行命令。同 `display_expand`。
     display_command_lines: usize,
+    /// `思考滚动窗行数`：面板里正在想的那一步底下露最近几行。同 `display_expand`。
+    display_thought_lines: usize,
     /// 盖在正文上的详情面板（子代理）。开着时正文与活动区都不画。
     overlay: Option<overlay::Overlay>,
     /// 鼠标停在哪一块上。可交互的东西要看得出来「这里能点」。
@@ -300,6 +302,7 @@ impl Screen {
             display_expand: (false, false),
             display_fold: true,
             display_command_lines: 8,
+            display_thought_lines: 10,
             overlay: None,
             hover: None,
             input_rows: Vec::new(),

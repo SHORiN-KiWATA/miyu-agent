@@ -1088,7 +1088,7 @@ fn the_job_panel_follows_the_expand_switches() {
 
         // 展开档：出来就是展开的，一次都不用点。
         let mut expanded = Screen::detached(100, 40);
-        expanded.set_display_expand(true, true, true, 8);
+        expanded.set_display_expand(true, true, true, 8, 10);
         assert!(expanded.open_log_overlay(path.clone(), "走查".into(), None, String::new()));
         let rows = expanded.overlay_rows();
         assert!(
@@ -1174,7 +1174,7 @@ fn the_job_panel_follows_the_fold_switch() {
         );
 
         let mut open = Screen::detached(100, 40);
-        open.set_display_expand(false, false, false, 8);
+        open.set_display_expand(false, false, false, 8, 10);
         assert!(open.open_log_overlay(path.clone(), "走查".into(), None, String::new()));
         let rows = open.overlay_rows();
         assert!(

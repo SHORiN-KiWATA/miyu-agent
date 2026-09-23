@@ -83,6 +83,10 @@ impl LogStep {
     /// 命令那一步的命令全文。抬头上只有 title，命令归正文（用户 09-17 拍的版）。
     ///
     /// 只有标记流那条路拿得到（参数在那儿）；读日志时抬头里就只剩 title 了。
+    ///
+    /// **全文**，和主线同一份（`command_from_arguments`）。原来取的是 `tool_subject`
+    /// ——那是给抬头当窥视用的，截成了一行 80 字：抬头底下只露一行加「..」，点开
+    /// 也还是那一行（用户 09-24 截图）。
     pub(super) fn command_text(&self) -> Option<String> {
         let (tool, args) = (self.tool.as_deref()?, self.args.as_deref()?);
         if !miyu_base::tool_names::is_command_tool(miyu_base::tool_names::tool_event_base_name(
@@ -90,7 +94,8 @@ impl LogStep {
         )) {
             return None;
         }
-        miyu_engine::tools::tool_subject(tool, args)
+        let command = miyu_hosts::render::command_from_arguments(args);
+        (!command.is_empty()).then_some(command)
     }
 
     /// 抬头底下该露命令吗。
@@ -493,6 +498,11 @@ pub(super) fn steps_from_events<'a>(
         if step.status.is_none() && is_tool_step(step) {
             step.running = true;
         }
+        // 末尾那段思考还没收到「想完了、花了多久」：它正在想。任务停了没有由面板
+        // 另外判（见 `Overlay::job_running`）——这儿只看得见过程本身。
+        if step.kind == StepKind::Thought && step.elapsed.is_none() {
+            step.running = true;
+        }
     }
     steps
 }
@@ -586,7 +596,7 @@ mod tests {
             "__subtool_preparing__run_command",
             "__subtool_preparing__run_command",
         ];
-        let steps = steps_from_events(markers.iter().filter_map(|m| from_marker(m)), true);
+        let steps = steps_from_events(markers.iter().flat_map(|m| from_marker(m)), true);
         assert_eq!(steps.len(), 1, "准备执行攒了一堆: {steps:?}");
     }
 
@@ -609,7 +619,7 @@ mod tests {
         })
         .to_string();
         let steps = steps_from_events(
-            std::iter::once(format!("__subtool_result__{result}")).filter_map(|m| from_marker(&m)),
+            std::iter::once(format!("__subtool_result__{result}")).flat_map(|m| from_marker(&m)),
             true,
         );
         assert_eq!(steps.len(), 1, "{steps:#?}");
@@ -644,7 +654,7 @@ mod tests {
         })
         .to_string();
         let steps = steps_from_events(
-            std::iter::once(format!("__subtool_call__{call}")).filter_map(|m| from_marker(&m)),
+            std::iter::once(format!("__subtool_call__{call}")).flat_map(|m| from_marker(&m)),
             true,
         );
         assert_eq!(steps.len(), 1, "{steps:#?}");
@@ -669,6 +679,50 @@ mod tests {
         );
     }
 
+    /// 订标记流时：命令那一步露**全文**、点开有输出。原来全文取的是截成一行 80 字的
+    /// 主题，而标记流解码又把结果里的输出丢了——底下只一行加「..」，点开也是空的
+    /// （用户 09-24 截图）。读日志那条路一直有输出，所以走查碰巧读日志时看不出来。
+    #[test]
+    fn a_marker_fed_command_step_keeps_its_whole_command_and_output() {
+        let command = format!(
+            "WT=/home/someone/{}/worktree && grep -rn skills src; echo 尾巴在这儿",
+            "很长的路径".repeat(8)
+        );
+        let args = serde_json::json!({"command": command, "title": "看看技能"}).to_string();
+        let call = serde_json::json!({"name": "run_command", "display": "运行命令", "args": args})
+            .to_string();
+        let result = serde_json::json!({
+            "name": "run_command",
+            "display": "运行命令",
+            "args": args,
+            "ok": true,
+            "ms": 1200,
+            "output": "第一行输出\n第二行输出",
+        })
+        .to_string();
+        let steps = steps_from_events(
+            [
+                format!("__subtool_call__{call}"),
+                format!("__subtool_result__{result}"),
+            ]
+            .iter()
+            .flat_map(|m| from_marker(m)),
+            false,
+        );
+        let step = steps
+            .iter()
+            .find(|step| step.head.contains("看看技能"))
+            .expect("那一步不见了");
+        assert_eq!(
+            step.command_tail().as_deref(),
+            Some(command.as_str()),
+            "命令不是全文"
+        );
+        let body = log_detail_body(step).join("\n");
+        assert!(body.contains("尾巴在这儿"), "点开看不到命令全文: {body}");
+        assert!(body.contains("第二行输出"), "点开看不到输出: {body}");
+    }
+
     /// 编辑那一步要有 diff：抬头上 `+N -M`，点开是渲染好的 diff。
     ///
     /// 子代理内层的编辑拿不到 `__patch_preview__` 的真 diff，只有调用参数里那份
@@ -685,7 +739,7 @@ mod tests {
         })
         .to_string();
         let steps = steps_from_events(
-            std::iter::once(format!("__subtool_call__{call}")).filter_map(|m| from_marker(&m)),
+            std::iter::once(format!("__subtool_call__{call}")).flat_map(|m| from_marker(&m)),
             true,
         );
         assert_eq!(steps.len(), 1, "{steps:#?}");
@@ -721,7 +775,7 @@ mod tests {
         // 它开口说话 = 前面那一段收成 `Worked for …`。
         markers.push("__subagent_content__跑完了。".to_string());
 
-        let steps = steps_from_events(markers.iter().filter_map(|m| from_marker(m)), true);
+        let steps = steps_from_events(markers.iter().flat_map(|m| from_marker(m)), true);
         let fold = steps
             .iter()
             .find(|step| step.kind == StepKind::Fold)
@@ -759,7 +813,7 @@ mod tests {
         for _ in 0..4 {
             markers.push("__subtool_preparing__run_command".to_string());
         }
-        let steps = steps_from_events(markers.iter().filter_map(|m| from_marker(m)), true);
+        let steps = steps_from_events(markers.iter().flat_map(|m| from_marker(m)), true);
         let preparing = steps.iter().filter(|step| step.preparing).count();
         assert_eq!(preparing, 1, "准备执行攒了一堆: {steps:#?}");
     }
@@ -777,7 +831,7 @@ mod tests {
             "__subagent_reasoning_done__1234",
         ];
         let steps = steps_from_events(
-            markers.iter().filter_map(|message| from_marker(message)),
+            markers.iter().flat_map(|message| from_marker(message)),
             true,
         );
         assert_eq!(steps.len(), 1, "逐 delta 的思考该并成一步: {steps:?}");

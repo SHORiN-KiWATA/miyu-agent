@@ -20,6 +20,9 @@ pub struct TokenMeter {
     pub turn_prompt_tokens: u64,
     pub turn_cached_tokens: u64,
     pub session_tokens: u64,
+    /// 这条会话的上下文还没数过：显示「—」、不出百分比。大厅里按 Tab 换到另一条
+    /// 车道、那边的会话还没开时就是这样——拿 0 或者另一条车道的数顶上都是编的。
+    pub session_tokens_unknown: bool,
     pub context_window: Option<usize>,
     /// `context_window` 是不是猜的（配置里的通用兜底常数，跟具体模型无关）。
     /// 猜的时候只显示带 `~` 的数、不出百分比——同 `cache_percent` 的规矩：
@@ -138,7 +141,7 @@ pub fn format_token_usage_inline_opts(
     // 实际分母是编的——用户没法分辨，还可能因此去手动 compact。宁可不给。
     let usage_ratio = context_window
         .filter(|value| *value > 0)
-        .filter(|_| !meter.context_window_assumed)
+        .filter(|_| !meter.context_window_assumed && !meter.session_tokens_unknown)
         .map(|context_window| {
             format!(
                 "{:.1}%",
@@ -146,13 +149,14 @@ pub fn format_token_usage_inline_opts(
             )
         });
 
+    let used = if meter.session_tokens_unknown {
+        "—".to_string()
+    } else {
+        format_compact_count(meter.session_tokens)
+    };
     let mut session = match usage_ratio {
-        Some(usage_ratio) if show_percent => format!(
-            "{}/{}({usage_ratio})",
-            format_compact_count(meter.session_tokens),
-            context,
-        ),
-        _ => format!("{}/{}", format_compact_count(meter.session_tokens), context),
+        Some(usage_ratio) if show_percent => format!("{used}/{context}({usage_ratio})"),
+        _ => format!("{used}/{context}"),
     };
     let cumulative_shown = match meter.cumulative_tokens {
         Some(total) => Some(total.saturating_add(meter.live_extra_tokens)),

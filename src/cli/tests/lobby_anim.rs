@@ -35,6 +35,8 @@ fn lobby_tail(banner: Option<BannerScene>) -> LiveReplTail {
         lobby_panel_rows: 0,
         suppress_switch_note: false,
         session_footer_stale: false,
+        cumulative_from_poll: false,
+        lobby_lane_pending: false,
         jobs: Vec::new(),
         suppressed_jobs: std::collections::HashMap::new(),
         live_turn_tokens: 0,

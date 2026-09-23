@@ -225,6 +225,19 @@ impl StateStore {
         self.conv_db.load_context_anchor(&self.session())
     }
 
+    /// 最近一条实测锚点，连同它之后的可见回合（被打断、用量是估的那几轮）。
+    /// 见 `ConversationDb::load_last_measured_anchor`。
+    pub fn load_context_anchor_and_tail(
+        &self,
+    ) -> Result<Option<(crate::state::ContextAnchor, Vec<Turn>)>> {
+        let session_id = self.session();
+        let Some((anchor, seq)) = self.conv_db.load_last_measured_anchor(&session_id)? else {
+            return Ok(None);
+        };
+        let tail = self.conv_db.load_visible_turns_after(&session_id, seq)?;
+        Ok(Some((anchor, tail)))
+    }
+
     /// 会话「当前上下文」落库(v38):算出来就写,`/session` 列表直接读。
     pub fn set_session_context_tokens(&self, session_id: &str, tokens: u64) -> Result<()> {
         self.conv_db.set_session_context_tokens(session_id, tokens)

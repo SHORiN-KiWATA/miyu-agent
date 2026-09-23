@@ -7,11 +7,13 @@
 //! 自动命名（`maybe_auto_name_session`）放在这里而不是回合模块：它是会话的属
 //! 性变更，只是恰好由第一条消息触发。
 
+mod empty_context;
 mod http;
 mod state;
 
 use crate::web::*;
 
+pub(in crate::web) use empty_context::empty_session_context;
 pub(in crate::web) use http::*;
 pub(in crate::web) use state::*;
 

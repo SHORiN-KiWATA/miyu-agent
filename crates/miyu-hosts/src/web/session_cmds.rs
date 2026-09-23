@@ -504,6 +504,11 @@ pub(in crate::web) async fn handle_session_command(
             let record = resolve_local_session_ref(state, &target)?;
             Ok(json!({ "goal": goal_status_json(state, &record.session_id) }))
         }
+        IpcCommand::EmptySessionContext { mode } => {
+            let tokens = empty_session_context(state, mode.as_deref() == Some("dev"))
+                .map_err(|error| safe_error_message(&error))?;
+            Ok(json!({ "context_tokens": tokens }))
+        }
         IpcCommand::DeleteSession { target } => {
             // Accepts `ask` too: a one-shot turn deletes its own session here.
             let record =

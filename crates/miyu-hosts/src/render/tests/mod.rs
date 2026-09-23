@@ -14,6 +14,7 @@ mod reasoning;
 mod shared;
 mod surface;
 mod table;
+mod thought_rows;
 mod timeline;
 mod timeline_panels;
 mod todo;

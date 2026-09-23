@@ -120,8 +120,44 @@ pub(in crate::cli) struct RemoteTurnSummary {
 /// Marker error for a remote turn interrupted by the user (Ctrl+C) or a
 /// cancel from another client. The REPL catches it and returns to the prompt
 /// instead of exiting; one-shot mode surfaces it as a normal error message.
-#[derive(Debug)]
-pub(in crate::cli) struct RemoteTurnCancelled;
+///
+/// 带着 daemon 在 `run.cancelled` 里报回的上下文数（有的话）：REPL 拿它刷 footer，
+/// 不必再同步问一次 daemon——那一次 daemon 要为这条会话现造 agent、重估上下文，
+/// 长会话里「已取消」之后输入框要等一两秒才回来（09-23）。
+#[derive(Debug, Default)]
+pub(in crate::cli) struct RemoteTurnCancelled {
+    pub(in crate::cli) context: Option<CancelledContext>,
+}
+
+/// `run.cancelled` 里的上下文数，键名与 `run.completed` 相同。窗口不在其中：
+/// 取消不会改变窗口。
+#[derive(Clone, Copy, Debug)]
+pub(in crate::cli) struct CancelledContext {
+    pub(in crate::cli) context_tokens: u64,
+    pub(in crate::cli) cumulative_tokens: TurnTokens,
+}
+
+impl CancelledContext {
+    /// daemon 只在这一轮更新了上下文时才带数；没带就是 None。
+    pub(in crate::cli) fn from_event(data: &serde_json::Value) -> Option<Self> {
+        let number = |key: &str| data.get(key).and_then(serde_json::Value::as_u64);
+        Some(Self {
+            context_tokens: number("context_tokens")?,
+            cumulative_tokens: TurnTokens {
+                total: number("cumulative_tokens").unwrap_or_default(),
+                prompt: number("cumulative_prompt_tokens").unwrap_or_default(),
+                cache_read: number("cumulative_cache_read_tokens").unwrap_or_default(),
+            },
+        })
+    }
+}
+
+/// 取消错误里带回来的上下文数。
+pub(in crate::cli) fn cancelled_context(error: &anyhow::Error) -> Option<CancelledContext> {
+    error
+        .downcast_ref::<RemoteTurnCancelled>()
+        .and_then(|cancelled| cancelled.context)
+}
 
 impl std::fmt::Display for RemoteTurnCancelled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -288,85 +324,9 @@ pub(in crate::cli) fn display_session_name(name: &str) -> &str {
 
 /// 会话有没有可见回合。空会话挂 banner、Tab 可换车道;读不到就当非空(保守)。
 pub(in crate::cli) fn session_is_empty(paths: &MiyuPaths, session_id: &str) -> bool {
-    StateStore::new(paths)
-        .ok()
-        .and_then(|store| store.pinned(session_id).load_visible_turns().ok())
-        .is_some_and(|turns| turns.is_empty())
-}
-
-/// 空会话里按 Tab:换到另一条车道(普通 ↔ 开发)。
-///
-/// 那条车道当前的会话要是已经有回合,就新开一条空的——banner 和 Tab 只在
-/// 空会话上有意义,不能一按掉进一个 200 轮的老会话还回不来。
-#[allow(clippy::too_many_arguments)]
-pub(in crate::cli) async fn switch_repl_lane(
-    paths: &MiyuPaths,
-    config: &AppConfig,
-    mode: PersonaLane,
-    active_session_id: &mut String,
-    history: &mut Vec<ReplHistoryEntry>,
-    live_repl: &mut LiveReplTail,
-    footer: &mut ReplFooterStatus,
-    cumulative_tokens: &mut TurnTokens,
-) -> Result<()> {
-    let lane = mode.is_dev().then(|| "dev".to_string());
-    let (state, _) = send_ipc_admin(
-        paths,
-        IpcCommand::GetReplSession {
-            mode: lane.clone(),
-            // 空会话里按 Tab 换车道:要的是那条车道**当前**的会话(下面自己
-            // 判空、非空才新开),不是每次都新建。
-            fresh: false,
-        },
-    )
-    .await?;
-    let state = if session_is_empty(paths, &state.session_id) {
-        state
-    } else {
-        let (_, data) = send_ipc_admin(
-            paths,
-            IpcCommand::CreateSession {
-                name: None,
-                switch: false,
-                kind: None,
-                mode: lane,
-            },
-        )
-        .await?;
-        let id = data
-            .get("session")
-            .and_then(|session| session.get("session_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                anyhow::anyhow!("{}", t("created session has no id", "新会话缺少 ID"))
-            })?;
-        let (state, _) = send_ipc_admin(
-            paths,
-            IpcCommand::GetSessionState {
-                target: miyu_core::ipc::SessionRef::Id { id },
-                cwd: std::env::current_dir().ok(),
-            },
-        )
-        .await?;
-        state
-    };
-    // 先换色再切:切换的回执行和输入框竖条都按新模式画。
-    live_repl.set_mode(mode);
-    // 换车道不打「已切换到会话」——用户按的是模式切换,不是换会话。
-    live_repl.suppress_switch_note = true;
-    apply_repl_session_switch(
-        paths,
-        config,
-        mode,
-        &state,
-        active_session_id,
-        history,
-        live_repl,
-        footer,
-        cumulative_tokens,
-    )
-    .await
+    // 只问有没有可见回合：原来把整条会话连大 JSON 列一起读出来再看长度，每换一次
+    // 会话都是一次整段读（09-23）。读不到照旧当非空。
+    StateStore::new(paths).is_ok_and(|store| store.session_is_empty(session_id))
 }
 
 /// 全屏：把这条会话最近几轮（`display.repl_replay_turns`）按当前宽度重画到正文
@@ -455,6 +415,8 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     }
     let store = StateStore::new(paths)?.pinned(&state.session_id);
     active_session_id.clone_from(&state.session_id);
+    // 换了会话，显示就是这条会话自己的车道：大厅里按 Tab 换的那一下作废。
+    live_repl.lobby_lane_pending = false;
     *history = load_repl_input_history(&store, paths)?;
     live_repl.editor.history = history.clone();
     live_repl.editor.history_index = live_repl.editor.history.len();

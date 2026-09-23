@@ -15,7 +15,7 @@ pub(in crate::cli) fn read_live_repl_input(
     // 这个 REPL 的会话：唤醒回合按它认领，输入历史也按它刷新。
     repl_session: Option<&str>,
 ) -> Result<LiveReplOutcome> {
-    let _raw_mode = if std::mem::take(&mut live.raw_mode_handoff) {
+    let mut raw_mode = if std::mem::take(&mut live.raw_mode_handoff) {
         LiveRawMode::adopt()
     } else {
         let guard = LiveRawMode::start()?;
@@ -179,13 +179,25 @@ pub(in crate::cli) fn read_live_repl_input(
             let cumulative_changed = jobs_feed
                 .cumulative()
                 .is_some_and(|totals| live.footer.update_cumulative_tokens(totals));
+            // 主循环整份覆盖 footer 之前要把这份收回去（见 `cumulative_from_poll`）。
+            live.cumulative_from_poll |= cumulative_changed;
+            // 大厅里按 Tab 换到的车道还显示「—」：事先那一问（空会话上下文）回来了就
+            // 补上。刚启动就按 Tab 时会碰上它还没回来。
+            let lane_counted = live.lobby_lane_pending
+                && live.footer.session_tokens().is_none()
+                && jobs_feed
+                    .empty_session_context(live.mode())
+                    .is_some_and(|tokens| {
+                        live.footer.update_session_tokens(tokens);
+                        true
+                    });
             live.expire_toast()?;
             live.expire_hover()?;
             live.tick_overlay()?;
             if let Some(job_id) = live.pending_stop_job.take() {
                 return Ok(LiveReplOutcome::StopJob { job_id });
             }
-            if live.set_jobs(jobs_feed.current()) || cumulative_changed {
+            if live.set_jobs(jobs_feed.current()) || cumulative_changed || lane_counted {
                 synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
             } else {
                 live.tick_job_strip()?;
@@ -294,11 +306,28 @@ pub(in crate::cli) fn read_live_repl_input(
                         continue;
                     }
                     let mode = live.mode();
+                    // 这一句要送进模型（不是斜杠命令）。
+                    let chat = submission_leaves_lobby(&submission.content);
                     // 回显和活动区重画在一个同步块里完成:光标不在左下角
                     // 落脚,kitty 的 cursor_trail 就没有东西可画(见 commit_submission)。
+                    //
+                    // 空会话里大厅也在同一帧撤掉（用户 09-23「回车提交会闪一下」）：
+                    // 原来这一帧画的是「输入框清空了的大厅」，要等主循环、开回合的
+                    // 往返回来才换成正文布局，两帧之间光标还露在大厅输入框里。
                     synchronized_terminal_update(CursorAfterUpdate::Shown, || {
+                        if chat && live.banner.is_some() {
+                            live.leave_lobby();
+                        }
                         live.commit_submission(&submission)
                     })?;
+                    // 紧接着就是回合：raw 模式直接交给回合循环，不在中间关一下再开。
+                    // 关着的那一小段终端回到回显模式，这时敲的键会被回显、回车会变
+                    // 成换行；关的那一下还会把光标露出来。没人接（发完就退出）由
+                    // 主循环收尾时 `release_raw_handoff` 收回。
+                    if chat {
+                        raw_mode.handoff();
+                        live.raw_mode_handoff = true;
+                    }
                     let entry = ReplHistoryEntry::from_submission(&submission);
                     return Ok(LiveReplOutcome::Submit(
                         mode,
@@ -313,6 +342,11 @@ pub(in crate::cli) fn read_live_repl_input(
                         PersonaLane::Active => PersonaLane::Dev,
                         PersonaLane::Dev => PersonaLane::Active,
                     };
+                    // 切车道只换显示（用户 09-23），用不着回显模式：raw 模式交给下一
+                    // 次读输入。原来这里一关一开，中间敲的 Tab 被终端回显成跳到下一
+                    // 个制表位，光标在输入框里左右晃，回来还要整屏重画一遍。
+                    raw_mode.handoff();
+                    live.raw_mode_handoff = true;
                     return Ok(LiveReplOutcome::SwitchMode(next));
                 }
                 // Ctrl+C rung 3: the draft was empty and no reply is running, but

@@ -327,6 +327,8 @@ pub(in crate::cli) async fn follow_wake_run(
                         }
                     }
                     if live.handle_screen_event(&event)? {
+                        // 浮层里按了 x：跟着别处起的回合时也当场停（见 `job_stop`）。
+                        stop_pending_job(paths, jobs_feed, live).await?;
                         continue;
                     }
                     match live.editor.handle_event(event, paths, true)? {

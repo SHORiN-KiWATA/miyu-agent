@@ -146,8 +146,12 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
         jobs_shared,
         jobs_feed,
         follow_depth: 0,
+        lane_context: Default::default(),
     };
     let outcome = repl.run().await;
+    // 交出去的 raw 模式没人接（发完一句紧接着 exit，或者中途出错）：收回来关掉，
+    // 连同键盘增强一起还原，别把用户的 shell 留在 raw 模式里。
+    repl.live_repl.release_raw_handoff();
     // 正常退出也要把 pane 的权威还回去（信号那条路另有一处）。跑不跑得成都要还，
     // 所以放在 `?` 之外。
     herdr::release_blocking();
@@ -169,6 +173,8 @@ pub(super) struct RemoteRepl {
     pub(super) live_repl: LiveReplTail,
     pub(super) jobs_shared: std::sync::Arc<SharedJobsFeed>,
     pub(super) jobs_feed: JobsFeed,
+    /// 大厅里两条车道各自的空会话上下文，按 Tab 换显示时用（见 `lobby_lane`）。
+    pub(super) lane_context: super::lobby_lane::LaneContext,
 }
 
 /// 斜杠命令或发回合之后主循环该怎么走。
@@ -184,6 +190,16 @@ impl RemoteRepl {
         loop {
             // Keep the poll thread's session filter in step with /new & /session.
             *self.jobs_shared.repl_session.lock().unwrap() = Some(self.active_session_id.clone());
+            // Σ：空闲时轮询只改界面上那份（上次显式刷新之后才开读的，见
+            // `footer_generation`），这儿不收回来就被下面的整份覆盖盖回旧值，下一次
+            // 轮询才又改回来——屏上先回到老数再加上去（用户 09-23）。放在追 footer
+            // 之前：那边是刚从 daemon 取的，比轮询的新。
+            if self.live_repl.cumulative_from_poll {
+                self.cumulative_tokens = self.footer.adopt_cumulative(&self.live_repl.footer);
+            }
+            // 大厅里换过去的车道：事先那一问回来之后屏上已经有数了，收回来（见
+            // `adopt_lane_baseline`）。
+            self.adopt_lane_baseline();
             // 回合中 `/models` 改过会话模型的话，先把手里的 footer 追上（09-20）；
             // 下面那次 set_footer 是整份覆盖，不追就把旧模型标签盖回去。
             self.adopt_stale_footer().await?;
@@ -200,31 +216,8 @@ impl RemoteRepl {
             )? {
                 LiveReplOutcome::Exit => break,
                 LiveReplOutcome::StopJob { job_id } => {
-                    let result = send_ipc_command(
-                        &self.paths,
-                        IpcCommand::StopJob {
-                            job_id: job_id.clone(),
-                        },
-                    )
-                    .await;
-                    let note = match result {
-                        Ok(_) => {
-                            // 压住它：紧接着那次轮询还带着它，状态行会闪一下。
-                            self.live_repl
-                                .suppress_jobs(std::iter::once(job_id.as_str()));
-                            let remaining: Vec<miyu_engine::tools::jobs::JobOverview> = self
-                                .live_repl
-                                .jobs
-                                .iter()
-                                .filter(|job| job.job_id != job_id)
-                                .cloned()
-                                .collect();
-                            self.live_repl.set_jobs(remaining);
-                            t("background task stopped", "已停止这个后台任务")
-                        }
-                        Err(_) => t("could not stop the task", "没能停掉这个后台任务"),
-                    };
-                    repl_note(&mut self.live_repl, &format!("\x1b[2m{note}\x1b[0m\n"))?;
+                    stop_background_job(&self.paths, &self.jobs_feed, &mut self.live_repl, &job_id)
+                        .await?;
                     continue;
                 }
                 LiveReplOutcome::StopJobs => {
@@ -276,6 +269,8 @@ impl RemoteRepl {
                     label,
                     from_start,
                 } => {
+                    // 接走的是这条会话上别处起的回合：大厅里按 Tab 换的显示作废。
+                    self.revert_lobby_lane()?;
                     if self
                         .follow_run_with_commands(&run_id, &label, from_start, None)
                         .await?
@@ -289,6 +284,10 @@ impl RemoteRepl {
                     (next_mode, input, images, entry)
                 }
                 LiveReplOutcome::ToggleReadonly => {
+                    // 只读是会话自己的开关：按过 Tab 就先把会话换到显示的那条车道。
+                    if !self.materialize_lobby_lane().await? {
+                        continue;
+                    }
                     toggle_repl_readonly(
                         &self.paths,
                         &mut self.live_repl,
@@ -299,31 +298,8 @@ impl RemoteRepl {
                     continue;
                 }
                 LiveReplOutcome::SwitchMode(next) => {
-                    match switch_repl_lane(
-                        &self.paths,
-                        &self.config,
-                        next,
-                        &mut self.active_session_id,
-                        &mut self.history,
-                        &mut self.live_repl,
-                        &mut self.footer,
-                        &mut self.cumulative_tokens,
-                    )
-                    .await
-                    {
-                        Ok(()) => self.mode = next,
-                        Err(error) => {
-                            // 切不过去就留在原车道,把颜色也换回来。
-                            self.live_repl.set_mode(self.mode);
-                            repl_note(
-                                &mut self.live_repl,
-                                &format!(
-                                    "\x1b[31m{}: {error:#}\x1b[0m\n",
-                                    t("could not switch self.mode", "切换模式失败")
-                                ),
-                            )?;
-                        }
-                    }
+                    // 只换显示，会话等真要用的时候再换（见 `lobby_lane`）。
+                    self.toggle_lobby_lane(next)?;
                     continue;
                 }
             };
@@ -336,6 +312,20 @@ impl RemoteRepl {
                 ReplInput::Chat => (None, ""),
                 ReplInput::Slash(command, args) => (Some(command), args),
             };
+            // 大厅里按 Tab 换过车道的话，发消息、敲命令之前先把会话换过去。本身就是
+            // 换会话的命令和 `/exit` 不用：换过去紧接着又换走（或退出），白开一条会话。
+            let replaces_session = matches!(
+                slash_command,
+                Some(
+                    ReplSlashCommand::Session
+                        | ReplSlashCommand::Dev
+                        | ReplSlashCommand::Normal
+                        | ReplSlashCommand::Exit
+                )
+            );
+            if !replaces_session && !self.materialize_lobby_lane().await? {
+                continue;
+            }
             // 第一条消息发出去,会话就不空了:banner 撤、模式钉死。
             if submission_leaves_lobby(input) {
                 self.live_repl

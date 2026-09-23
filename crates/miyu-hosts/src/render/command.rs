@@ -521,7 +521,7 @@ pub(crate) fn command_terminal_width() -> usize {
 /// claude-code 原生 Bash 的入参同样是 `command` 键,与 run_command 同构。
 pub(crate) use miyu_engine::tools::is_command_tool;
 
-pub(crate) fn command_from_arguments(arguments: &str) -> String {
+pub fn command_from_arguments(arguments: &str) -> String {
     let parsed = serde_json::from_str::<Value>(arguments).ok();
     let command = parsed
         .as_ref()
@@ -670,12 +670,26 @@ pub(crate) fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
 /// 能在空格处断就在空格处断。硬断在词中间是终端的默认行为，但既然折行这件事
 /// 已经自己接管了，顺手做对。
 pub fn wrap_display_text(text: &str, width: usize) -> Vec<String> {
+    wrap_display_rows(text, width)
+        .into_iter()
+        .map(|(row, _)| row)
+        .collect()
+}
+
+/// 同 [`wrap_display_text`]，每一行再带上它在原文里的起点（字节）。
+///
+/// 从某一行的起点接着往后折，折出来的和整段一起折一模一样（断点只看这一行里的
+/// 东西）。正在想的正文只往后长，靠它只重折末尾那两行，前面的记住
+///（`timeline::ThoughtRows`，用户 09-24：一大段不换行的思考越长越卡）。
+pub fn wrap_display_rows(text: &str, width: usize) -> Vec<(String, usize)> {
     let width = width.max(1);
     if display_width_skipping_escapes(text) <= width {
-        return vec![text.to_string()];
+        return vec![(text.to_string(), 0)];
     }
     let mut lines = Vec::new();
     let mut current = String::new();
+    // `current` 在原文里从哪儿起：它永远是原文里连续的一段。
+    let mut current_start = 0usize;
     let mut current_width = 0usize;
     // 最近一个可断处：`current` 里的字节位置 + 那时的显示宽度。
     let mut break_at: Option<(usize, usize)> = None;
@@ -696,12 +710,14 @@ pub fn wrap_display_text(text: &str, width: usize) -> Vec<String> {
                 Some((position, width_before)) if width_before > 0 => {
                     let tail = current.split_off(position);
                     let head = current.trim_end().to_string();
-                    lines.push(head);
+                    lines.push((head, current_start));
                     current = tail;
+                    current_start += position;
                     current_width = current_width.saturating_sub(width_before);
                 }
                 _ => {
-                    lines.push(std::mem::take(&mut current));
+                    lines.push((std::mem::take(&mut current), current_start));
+                    current_start = text.len() - rest.len();
                     current_width = 0;
                 }
             }
@@ -714,10 +730,10 @@ pub fn wrap_display_text(text: &str, width: usize) -> Vec<String> {
         rest = &rest[grapheme_len..];
     }
     if !current.is_empty() {
-        lines.push(current);
+        lines.push((current, current_start));
     }
     if lines.is_empty() {
-        lines.push(String::new());
+        lines.push((String::new(), 0));
     }
     lines
 }

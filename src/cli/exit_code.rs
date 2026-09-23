@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn remote_cancel_maps_to_130() {
-        let error = anyhow::Error::new(crate::cli::repl::session::RemoteTurnCancelled);
+        let error = anyhow::Error::new(crate::cli::repl::session::RemoteTurnCancelled::default());
         assert_eq!(exit_code_for(&error), EXIT_CANCELLED);
     }
 }

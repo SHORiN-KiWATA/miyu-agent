@@ -179,6 +179,7 @@ async fn run_remote_chat_inner(
             config.display.expand_tool_calls,
             config.display.fold_timeline,
             config.display.command_output_lines,
+            config.display.thinking_scroll_lines,
         );
         renderer.use_external_cursor_control();
         renderer.use_buffered_output();
@@ -423,6 +424,10 @@ async fn run_remote_chat_inner(
                         }
                     }
                     if live_tail.handle_screen_event(&event)? {
+                        // 浮层里按了 x：回合跑着也当场停（见 `job_stop`）。
+                        if let Some(feed) = jobs_feed {
+                            stop_pending_job(paths, feed, live_tail).await?;
+                        }
                         continue;
                     }
                     match live_tail.editor.handle_event(event, paths, true)? {
@@ -563,7 +568,7 @@ async fn run_remote_chat_inner(
                         live.apply_renderer_frame(&mut renderer)?;
                     }
                     handoff_raw!();
-                    return Err(anyhow::Error::new(RemoteTurnCancelled));
+                    return Err(anyhow::Error::new(RemoteTurnCancelled::default()));
                 }
             }
         };
@@ -964,7 +969,9 @@ async fn run_remote_chat_inner(
                     live.apply_renderer_frame(&mut renderer)?;
                 }
                 handoff_raw!();
-                return Err(anyhow::Error::new(RemoteTurnCancelled));
+                return Err(anyhow::Error::new(RemoteTurnCancelled {
+                    context: CancelledContext::from_event(&data),
+                }));
             }
             _ => {}
         }

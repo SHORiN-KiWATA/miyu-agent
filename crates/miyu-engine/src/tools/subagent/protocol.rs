@@ -255,10 +255,68 @@ pub fn parse_log_line(line: &str) -> LogEvent<'_> {
 /// 各拼一遍的话，`__subtool_call__` 的抬头在两条路上会慢慢长得不一样，而那正是
 /// 这次重构要根治的毛病。
 ///
-/// 返回 `None` 表示「这不是一条该进过程的标记」：`__subagent_metric__` 是中途
-/// 量报（每调一次工具来一条，进了时间线就把面板撑满），`__subagent_detach__`
-/// 走的是外层通道、根本不属于内层这段过程。
-pub fn from_marker(message: &str) -> Option<LogEvent<'static>> {
+/// 一条标记可能说好几件事：工具结果后面跟着它吐的那几行输出（[`LogEvent::Output`]），
+/// 和写日志那一侧的 `[结果]` + `[输出]` 一字不差（拆法共用 [`result_output_lines`]）。
+/// 原来这儿只解出结果那一条，面板一订上标记流，工具那一步点开就是空的（用户
+/// 09-23：「展开后看不到具体内容」——读日志时有，订标记流时没有）。
+///
+/// 返回空表示「这不是一条该进过程的标记」：`__subagent_metric__` 是中途量报
+///（每调一次工具来一条，进了时间线就把面板撑满），`__subagent_detach__` 走的是
+/// 外层通道、根本不属于内层这段过程。
+pub fn from_marker(message: &str) -> Vec<LogEvent<'static>> {
+    let Some(event) = single_event(message) else {
+        return Vec::new();
+    };
+    let mut events = vec![event];
+    if let Some(json) = message.strip_prefix("__subtool_result__") {
+        // 前面那个空格和读日志时一样：`[输出] x` 解出来是 ` x`，面板一直拿它当
+        // 输出的缩进（见 `parse_log_line` 的测试）。两条路必须一字不差。
+        events.extend(
+            result_output_lines(json)
+                .into_iter()
+                .map(|line| LogEvent::Output(Cow::Owned(format!(" {line}")))),
+        );
+    }
+    events
+}
+
+/// 一次工具结果最多带几行输出进过程。流水账和标记流是同一个数。
+pub const RESULT_OUTPUT_LINES: usize = 24;
+
+/// `__subtool_result__` 里那份输出 → 过程里该露的那几行。
+///
+/// 写日志那一侧（`[输出]` 行）与 [`from_marker`] 共用：两处各拆一遍的话，同一次
+/// 调用在两条路上露的输出会慢慢不一样。标记里的输出发的时候截过一道
+///（`clip_detail`，8KB），这儿再收到几十行，免得一条输出把面板撑成日志本体。
+pub fn result_output_lines(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json.trim()) else {
+        return Vec::new();
+    };
+    let Some(output) = value.get("output").and_then(serde_json::Value::as_str) else {
+        return Vec::new();
+    };
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(RESULT_OUTPUT_LINES)
+        .filter_map(|line| {
+            // 工具吐的是**原始输出**，里面有转义序列、回车、制表符。面板把它当普通
+            // 字符排版——原样留着，一行的真实宽度和算出来的宽度就对不上，右边那根
+            // 竖线跟着参差不齐。
+            let line = miyu_base::terminal::strip_ansi_text(line);
+            let line = line
+                .chars()
+                .map(|ch| if ch == '\t' { ' ' } else { ch })
+                .filter(|ch| !ch.is_control())
+                .collect::<String>();
+            let line = line.trim_end();
+            (!line.is_empty()).then(|| miyu_base::terminal::clip_to_display_width(line, 400))
+        })
+        .collect()
+}
+
+/// 一条标记的「主事件」。见 [`from_marker`]。
+fn single_event(message: &str) -> Option<LogEvent<'static>> {
     if let Some(name) = message.strip_prefix("__subtool_preparing__") {
         let name = name.trim();
         let phase = crate::tools::preparing_phase(name).unwrap_or("");
@@ -762,7 +820,7 @@ mod tests {
             if *marker == REASONING_DONE_MARKER {
                 assert_eq!(
                     direct,
-                    Some(LogEvent::ThoughtElapsed(Duration::from_millis(1234))),
+                    vec![LogEvent::ThoughtElapsed(Duration::from_millis(1234))],
                     "段末耗时没解出来"
                 );
                 assert!(written.is_empty(), "段末耗时不该进流水账: {written:?}");
@@ -770,27 +828,39 @@ mod tests {
             }
             // 中途量报两条路都该不产出：进了时间线就把面板撑满。
             if *marker == "__subagent_metric__" {
-                assert!(direct.is_none(), "中途量报不该解成过程事件");
+                assert!(direct.is_empty(), "中途量报不该解成过程事件");
                 assert!(written.is_empty(), "中途量报不该进流水账");
                 continue;
             }
-            let direct = direct.unwrap_or_else(|| panic!("{marker} 直接解不出事件"));
-            // 日志那条路要先落成行再解回来；结果事件还带着 `[输出]` 几行，只比
-            // 第一行（`[结果]`）。
-            let first = written.lines().next().unwrap_or_default();
-            let via_log = parse_log_line(first);
+            assert!(!direct.is_empty(), "{marker} 直接解不出事件");
+            // 日志那条路要先落成行再解回来。**整条都比**：结果事件后面跟着的
+            // `[输出]` 几行，标记流那条路也得一行不差地解出来（09-24 以前它只解
+            // 出结果那一条，面板订上标记流之后工具点开就是空的）。
+            let via_log: Vec<_> = written.lines().map(parse_log_line).collect();
             // **参数是例外**：标记流带得过来，日志行上只留了拼好的抬头（浮层画
             // diff 要用它，见 `ToolLine::args`）。比的时候把它摘出去——除了它，
             // 两条路必须一个字节都不差。
-            let (direct_args, direct) = strip_args(direct);
-            let (log_args, via_log) = strip_args(via_log);
+            let (direct_args, direct): (Vec<_>, Vec<_>) =
+                direct.into_iter().map(strip_args).unzip();
+            let (log_args, via_log): (Vec<_>, Vec<_>) = via_log.into_iter().map(strip_args).unzip();
             assert_eq!(
                 direct, via_log,
                 "{marker} 在两条路上解出来不一样\n  直接: {direct:?}\n  过日志: {via_log:?}"
             );
-            assert!(log_args.is_none(), "日志行上不该有参数: {log_args:?}");
+            assert!(
+                log_args.iter().all(Option::is_none),
+                "日志行上不该有参数: {log_args:?}"
+            );
             if matches!(*marker, "__subtool_call__" | "__subtool_result__") {
-                assert!(direct_args.is_some(), "{marker} 该把参数带过来");
+                assert!(direct_args[0].is_some(), "{marker} 该把参数带过来");
+            }
+            if *marker == "__subtool_result__" {
+                assert!(
+                    direct.iter().any(
+                        |event| matches!(event, LogEvent::Output(line) if line.trim() == "boom")
+                    ),
+                    "结果的输出没跟着出来: {direct:?}"
+                );
             }
         }
     }

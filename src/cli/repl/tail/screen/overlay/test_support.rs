@@ -68,10 +68,11 @@ impl Screen {
     /// 产品里这份是轮询线程从 `job.trace` 拉回来的，测试里起个 daemon 太重；
     /// 走的仍是 `steps_from_events` + `render_steps` 那条**同一条**路。
     pub(in crate::cli) fn overlay_feed_markers_for_test(&mut self, markers: &[String]) {
-        let (expand, fold, lines) = (
+        let (expand, fold, lines, thought_lines) = (
             self.display_expand,
             self.display_fold,
             self.display_command_lines,
+            self.display_thought_lines,
         );
         let Some(panel) = &mut self.overlay else {
             return;
@@ -79,6 +80,7 @@ impl Screen {
         panel.display_expand = expand;
         panel.display_fold = fold;
         panel.display_command_lines = lines;
+        panel.display_thought_lines = thought_lines;
         panel.render_from_markers(markers);
     }
 

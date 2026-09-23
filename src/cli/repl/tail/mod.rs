@@ -220,6 +220,12 @@ pub(in crate::cli) struct LiveReplTail {
     /// 的盖回来（主循环每圈 `set_footer`）。立这面旗让它在盖之前先重算一次。
     /// 一次性，用过即清。
     pub(in crate::cli) session_footer_stale: bool,
+    /// 界面上的 Σ 是空闲循环按轮询改的（上次显式刷新之后才读的那份）。主循环整份
+    /// 覆盖之前据此把它收回来，见 `ReplFooterStatus::adopt_cumulative`。
+    pub(in crate::cli) cumulative_from_poll: bool,
+    /// 大厅里按 Tab 换过车道，但会话还在原来那条车道上（用户 09-23：切模式只是换
+    /// 显示，发第一句话时后端才定）。发消息、敲命令、切只读之前据此把会话换过去。
+    pub(in crate::cli) lobby_lane_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,6 +648,8 @@ impl LiveReplTail {
             lobby_panel_rows: 0,
             suppress_switch_note: false,
             session_footer_stale: false,
+            cumulative_from_poll: false,
+            lobby_lane_pending: false,
         })
     }
 
@@ -676,11 +684,26 @@ impl LiveReplTail {
                 }
             }
         } else {
-            self.banner = None;
-            self.banner_rows = 0;
-            if let Some(screen) = &mut self.screen {
-                screen.set_banner(None);
-            }
+            self.leave_lobby();
+        }
+    }
+
+    /// 撤掉大厅：banner 退场、模式钉死。不需要配置，输入循环里回车那一帧就能调
+    /// （见 `read_live_repl_input` 的提交分支）。
+    pub(in crate::cli) fn leave_lobby(&mut self) {
+        self.editor.mode_switchable = false;
+        self.banner = None;
+        self.banner_rows = 0;
+        if let Some(screen) = &mut self.screen {
+            screen.set_banner(None);
+        }
+    }
+
+    /// 交出去的 raw 模式没人接（发完一句紧接着退出了）：收回来按正常路子关掉，
+    /// 别把用户的 shell 留在 raw 模式里。
+    pub(in crate::cli) fn release_raw_handoff(&mut self) {
+        if std::mem::take(&mut self.raw_mode_handoff) {
+            drop(LiveRawMode::adopt());
         }
     }
 
@@ -696,9 +719,10 @@ impl LiveReplTail {
         tools: bool,
         fold: bool,
         command_lines: usize,
+        thought_lines: usize,
     ) {
         if let Some(screen) = &mut self.screen {
-            screen.set_display_expand(reasoning, tools, fold, command_lines);
+            screen.set_display_expand(reasoning, tools, fold, command_lines, thought_lines);
         }
     }
 
@@ -796,6 +820,9 @@ impl LiveReplTail {
         self.footer = footer;
         self.round_base_footer = None;
         self.footer_spinner_last = None;
+        // 刷新之前开读的 Σ 作废，别让空闲循环拿它盖回来（见 `footer_generation`）。
+        crate::cli::repl::jobs::invalidate_polled_cumulative();
+        self.cumulative_from_poll = false;
     }
 
     /// 回合收尾:熄掉运行转轮并原地重绘 footer 行(不整帧重绘)。

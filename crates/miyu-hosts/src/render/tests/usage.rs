@@ -69,6 +69,7 @@ fn the_output_speed_sits_between_the_turn_figure_and_the_context_meter() {
         turn_prompt_tokens: 12_000,
         turn_cached_tokens: 11_200,
         session_tokens: 26_000,
+        session_tokens_unknown: false,
         context_window: Some(1_000_000),
         context_window_assumed: false,
         cumulative_tokens: Some(249_200),
@@ -180,4 +181,18 @@ fn an_unknown_window_stays_a_question_mark() {
         ..TokenMeter::default()
     };
     assert_eq!(format_token_usage_inline(&meter), "47k/?");
+}
+
+/// 上下文没数过（大厅里换到另一条车道、会话还没开）：分子是「—」，不出百分比——
+/// 同窗口是猜的时候的规矩，没依据的比率不渲染。
+#[test]
+fn an_uncounted_context_renders_as_a_dash_without_a_percent() {
+    let meter = TokenMeter {
+        session_tokens: 0,
+        session_tokens_unknown: true,
+        context_window: Some(1_000_000),
+        cumulative_tokens: Some(12_000),
+        ..Default::default()
+    };
+    assert_eq!(format_token_usage_inline(&meter), "—/1M · Σ12k");
 }

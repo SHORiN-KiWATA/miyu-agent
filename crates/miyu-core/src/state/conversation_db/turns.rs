@@ -754,6 +754,60 @@ impl ConversationDb {
         Ok(tokens.map(|value| value as u64))
     }
 
+    /// 最近一条带供应商实测占用的已完成普通回合，连同它的 `seq`——**不要求它是
+    /// 最新一条**。它之后压缩过（出现摘要行）就不算：摘要改写了前缀，这个数作废。
+    ///
+    /// 和 `load_context_anchor` 的差别：那个只看最新一条，最新一条被打断了就返回
+    /// None，调用方只好把整段历史重拼重数（09-23：打断一次要数两遍，80 万词元的
+    /// 会话 debug 下每遍一两秒）。这里把锚点往前找，调用方只估锚点之后那几轮。
+    pub fn load_last_measured_anchor(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(ContextAnchor, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                "SELECT seq, turn_id, assistant_provider_id, assistant_model, token_context_end
+                   FROM turns
+                  WHERE session_id = ?1 AND hidden = 0 AND is_summary = 0
+                    AND status = 'completed' AND token_usage_estimated = 0
+                    AND token_context_end > 0
+                  ORDER BY seq DESC LIMIT 1",
+                params![session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((seq, turn_id, provider_id, model, tokens)) = row else {
+            return Ok(None);
+        };
+        let compacted_since: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns
+                            WHERE session_id = ?1 AND hidden = 0 AND is_summary = 1 AND seq > ?2)",
+            params![session_id, seq],
+            |row| row.get(0),
+        )?;
+        if compacted_since {
+            return Ok(None);
+        }
+        Ok(Some((
+            ContextAnchor {
+                turn_id,
+                provider_id,
+                model,
+                tokens: tokens as u64,
+            },
+            seq,
+        )))
+    }
+
     pub fn load_context_anchor(&self, session_id: &str) -> Result<Option<ContextAnchor>> {
         let conn = self.conn.lock().unwrap();
         let row = conn

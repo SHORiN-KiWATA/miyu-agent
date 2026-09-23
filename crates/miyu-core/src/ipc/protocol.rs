@@ -285,6 +285,15 @@ pub enum Command {
     GoalStatus {
         target: SessionRef,
     },
+    /// 某条车道开一条新会话时的上下文（系统提示词 + 工具表），**不建会话**。
+    ///
+    /// REPL 大厅里按 Tab 只换显示（09-23），换过去那条车道还没有会话；footer 上那个
+    /// 数靠它事先算好（用户 09-24：「这个初始上下文数据不是可以事先计算好的吗？」）。
+    EmptySessionContext {
+        /// `dev` 算开发车道，缺省算普通车道。
+        #[serde(default)]
+        mode: Option<String>,
+    },
     StartTurn {
         content: String,
         mode: String,

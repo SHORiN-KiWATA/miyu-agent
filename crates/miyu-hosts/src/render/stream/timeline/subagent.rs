@@ -23,6 +23,7 @@ fn peek_head(text: &str, max: usize) -> String {
 /// 它原来是把全文挂在抬头底下当预览，09-17 用户拍掉了那种形态。
 fn flush_subagent_thought(log: &mut SubagentLog, expand: bool) {
     let text = std::mem::take(&mut log.reasoning);
+    log.reasoning_rows.clear();
     let elapsed = log
         .reasoning_since
         .take()
@@ -256,7 +257,17 @@ pub fn thread_panel(entries: Vec<PanelEntry>) -> Vec<String> {
     lines
 }
 
-fn subagent_lines(log: &mut SubagentLog) -> Vec<String> {
+/// 面板跟着主线走的两样设置，由 `publish_subagent` 交进来（`subagent_lines` 手上
+/// 没有渲染器）。
+#[derive(Clone, Copy)]
+struct PanelLook {
+    /// 「思考中」底下那扇窗露几行（`display.thinking_scroll_lines`，0 = 不开窗）。
+    thought_lines: usize,
+    /// 「展开思考内容」开着：正在想的那一块本来就是展开的，不另开窗。
+    expand_thought: bool,
+}
+
+fn subagent_lines(log: &mut SubagentLog, look: PanelLook) -> Vec<String> {
     if log.step_blocks.len() > log.steps.len() {
         // 步被从前面裁过，位置对不上了，重来一轮。
         log.step_blocks.clear();
@@ -267,54 +278,42 @@ fn subagent_lines(log: &mut SubagentLog) -> Vec<String> {
             entries.push(PanelEntry::Text(step.body.clone()));
             continue;
         }
-        if step.body.is_empty() {
-            entries.push(PanelEntry::Step(step.line.clone()));
-            if !step.tail.is_empty() {
-                entries.push(PanelEntry::Tail(step.tail.clone()));
-            }
-            continue;
-        }
-        let detail = step_detail(step);
-        let id = match log.step_blocks.get(index).copied() {
-            Some(id) => {
-                blocks::update(id, String::new(), detail);
-                Some(id)
-            }
-            None => {
-                let id = blocks::register(detail);
-                if let Some(id) = id {
-                    // 位置要对齐：正文为空的那些步不登记，用 0 占位。
-                    while log.step_blocks.len() < index {
-                        log.step_blocks.push(0);
-                    }
-                    log.step_blocks.push(id);
+        let id = if step.body.is_empty() {
+            None
+        } else {
+            let detail = step_detail(step);
+            match log.step_blocks.get(index).copied() {
+                Some(id) => {
+                    blocks::update(id, String::new(), detail);
+                    Some(id)
                 }
-                id
+                None => {
+                    let id = blocks::register(detail);
+                    if let Some(id) = id {
+                        // 位置要对齐：正文为空的那些步不登记，用 0 占位。
+                        while log.step_blocks.len() < index {
+                            log.step_blocks.push(0);
+                        }
+                        log.step_blocks.push(id);
+                    }
+                    id
+                }
             }
         };
-        // 起始标记带着「这一步默认开着吗」——和主线 `step_rows` 同一条规矩。
-        let line = match id.filter(|id| *id != 0) {
-            Some(id) => format!(
-                "{}{}{}",
-                blocks::begin_marker_in(id, step.open()),
-                step.line,
-                blocks::END_MARKER
-            ),
-            None => step.line.clone(),
-        };
+        // **走 `step_rows`**：抬头、底下露着的那几行（命令预览）、块的起止都在它
+        // 里面，和主线、后台面板一份。尾巴另推一项的话它落在块外面：点开只换掉抬头，
+        // 命令出现两遍——后台面板 09-17 就踩过（用户逐条报的 1/2/3）。
+        let row = step_rows(step, id.filter(|id| *id != 0));
         // 「提示词」是抬头，不进时间线（用户：提示词 tag 行可以不参与 timeline）。
         if index == 0 && log.has_prompt {
-            entries.push(PanelEntry::Header(line));
+            entries.push(PanelEntry::Header(row));
         } else {
-            entries.push(PanelEntry::Step(line));
-        }
-        if !step.tail.is_empty() {
-            entries.push(PanelEntry::Tail(step.tail.clone()));
+            entries.push(PanelEntry::Step(row));
         }
     }
     // 正在跑的内层工具 / 正在流参数的那一个，各露一行——和主线的 live 区一个
     // 规矩。面板不归转轮管（它按块版本刷新），所以这两行是静态文字。
-    if let Some((glyph, display, peek, since)) = &log.running {
+    if let Some((glyph, display, peek, since, tail)) = &log.running {
         let mut label = format!(
             "{display} · {} · {}",
             t("running", "运行中"),
@@ -325,6 +324,10 @@ fn subagent_lines(log: &mut SubagentLog) -> Vec<String> {
             label.push_str(peek);
         }
         entries.push(PanelEntry::Step(panel_live_step_line(glyph, &label)));
+        // 跑着的命令底下也露命令，和主线跑着的那一步一个样子。
+        if !tail.is_empty() {
+            entries.push(PanelEntry::Tail(tail.clone()));
+        }
     } else if let Some((phase, glyph, since)) = &log.preparing {
         entries.push(PanelEntry::Step(panel_live_step_line(
             glyph,
@@ -337,24 +340,44 @@ fn subagent_lines(log: &mut SubagentLog) -> Vec<String> {
     // 此刻最值得看的（用户实测：浮层内最下面一行无法交互）。块 id 存在
     // `live_block` 里复用，每刷新一次只更新内容。
     if !log.reasoning.trim().is_empty() {
-        let line = panel_live_step_line(
-            glyph_think(),
-            &format!(
+        // 「展开思考内容」关着、开了窗：抬头照主线写 `思考中 · 3.2s`，底下露最近几行
+        //（主线那扇窗的规矩，用户 09-17 定的；面板里原来只有一截单行窥视，用户
+        // 09-24：「思考的预览也没有」）。开着的话这一块本来就是展开的，不另开窗。
+        let window = (!look.expand_thought && look.thought_lines > 0)
+            .then(|| panel_thought_window(&log.reasoning, look.thought_lines))
+            .filter(|rows| !rows.is_empty());
+        let head = match &window {
+            Some(_) => format!(
+                "{} · {}",
+                t("thinking", "思考中"),
+                format_seconds(
+                    log.reasoning_since
+                        .map(|at| at.elapsed())
+                        .unwrap_or_default()
+                )
+            ),
+            None => format!(
                 "{}{PEEK_SEP}{}",
                 t("thinking", "思考中"),
                 peek_tail(&log.reasoning, panel_step_width())
             ),
-        );
-        let detail =
-            {
-                let indent = indent();
-                let mut lines = vec![line.clone(), String::new()];
-                lines.extend(wrap_detail(&log.reasoning).into_iter().map(|piece| {
-                    format!("{THOUGHT_BODY_STYLE}{indent}{DETAIL_INDENT}{piece}\x1b[0m")
-                }));
-                lines.push(String::new());
-                lines
-            };
+        };
+        let line = panel_live_step_line(glyph_think(), &head);
+        let detail = {
+            let indent = indent();
+            let mut lines = vec![line.clone(), String::new()];
+            log.reasoning_rows.sync(&log.reasoning, detail_width());
+            lines.extend(
+                log.reasoning_rows
+                    .range(0, usize::MAX)
+                    .into_iter()
+                    .map(|piece| {
+                        format!("{THOUGHT_BODY_STYLE}{indent}{DETAIL_INDENT}{piece}\x1b[0m")
+                    }),
+            );
+            lines.push(String::new());
+            lines
+        };
         let id = match log.live_block {
             Some(id) => {
                 blocks::update(id, String::new(), detail);
@@ -370,6 +393,9 @@ fn subagent_lines(log: &mut SubagentLog) -> Vec<String> {
             Some(id) => format!("{}{line}{}", blocks::begin_marker(id), blocks::END_MARKER),
             None => line,
         }));
+        if let Some(rows) = window {
+            entries.push(PanelEntry::Tail(rows));
+        }
     }
     // 还在说的那段话排在最底下——它是此刻正在发生的事。说完的会被
     // `seal_subagent_speech` 封成一步，按时序留在该在的位置上。
@@ -398,6 +424,9 @@ pub(crate) struct SubagentLog {
     steps: Vec<Step>,
     /// 正在累积的思考。下一步工具落下时（或收尾时）结算成一步。
     reasoning: String,
+    /// `reasoning` 折好的行，只往后补（见 `ThoughtRows`）：「思考中」那一块点开用的全文
+    /// 每次刷新面板都要，整段重折的话子代理想得越久越卡。
+    reasoning_rows: ThoughtRows,
     /// 这一段思考是什么时候开始的。
     reasoning_since: Option<Instant>,
     /// 正在跑的那个子工具是什么时候开始的。内层事件本身不带耗时，只能自己掐表。
@@ -415,7 +444,8 @@ pub(crate) struct SubagentLog {
     preparing: Option<(&'static str, &'static str, Instant)>,
     /// 内层正在跑的工具：`(图标, 名字, 窥视, 起点)`。原来调用发出到结果回来
     /// 之间面板里什么都没有，看着像卡住了。
-    running: Option<(&'static str, String, Option<String>, Instant)>,
+    /// 最后一项是命令那一步抬头底下露的命令（不是命令就空着）。
+    running: Option<(&'static str, String, Option<String>, Instant, Vec<String>)>,
     /// 它正在说的那段正文。见 [`StreamRenderer::subagent_content`]。
     speech: String,
     /// 这一段过程的计数与起点，收成 `Worked for …` 那一行时要用。
@@ -427,6 +457,18 @@ impl StreamRenderer {
     ///
     /// 取它内层时间线的**最后一步**：正在想就露想到哪儿了，正在跑工具就露那个
     /// 工具，正在说话就露说到哪儿了。每帧都在变，一眼看得出它还活着。
+    /// 命令那一步抬头底下露的命令（见 `panel_command_tail`）。模型没给 title 时抬头
+    /// 上已经是命令本身了，底下再露一遍就是同一句话说两遍，那就不露。
+    fn command_tail(&self, tool: &str, args: &str) -> Vec<String> {
+        if !crate::render::is_command_tool(tool) || super::command_peek(args).is_none() {
+            return Vec::new();
+        }
+        panel_command_tail(
+            &crate::render::command_from_arguments(args),
+            self.command_display_lines,
+        )
+    }
+
     pub(super) fn subagent_peek(&self, name: &str) -> Option<String> {
         let log = self.subagent_logs.get(name)?;
         let width = crate::render::command_terminal_width()
@@ -498,16 +540,30 @@ impl StreamRenderer {
         if !self.timeline_enabled() {
             return;
         }
-        let peek = crate::render::tool_peek(tool, args)
-            .filter(|subject| !subject.trim().is_empty())
-            .map(|subject| crate::render::clip_to_display_width(&subject, 72));
+        // 命令给 title、底下露命令——和跑完的那一步（`subagent_tool`）、和主线一个
+        // 样子。原来跑着时窥视是命令本身、截成一行，跑完又换成 title，同一步前后
+        // 两个样子。
+        let command_tail = self.command_tail(tool, args);
+        let peek = if crate::render::is_command_tool(tool) {
+            super::command_peek(args).or_else(|| crate::render::tool_peek(tool, args))
+        } else {
+            crate::render::tool_peek(tool, args)
+        }
+        .filter(|subject| !subject.trim().is_empty())
+        .map(|subject| crate::render::clip_to_display_width(&subject, 72));
         let expand_thought = self.reasoning_mode == ReasoningDisplayMode::Full;
         let log = self.subagent_logs.entry(name.to_string()).or_default();
         log.started.get_or_insert_with(Instant::now);
         seal_subagent_speech(log);
         flush_subagent_thought(log, expand_thought);
         log.preparing = None;
-        log.running = Some((tool_glyph(tool), display.to_string(), peek, Instant::now()));
+        log.running = Some((
+            tool_glyph(tool),
+            display.to_string(),
+            peek,
+            Instant::now(),
+            command_tail,
+        ));
         log.tool_since = Some(Instant::now());
         self.publish_subagent(name);
     }
@@ -528,7 +584,14 @@ impl StreamRenderer {
         // 窥视按工具自己的规矩摘一句，摘不出来才退回原文。原样甩一行
         // `{"patchText": "*** Begin Patch\n…"}` 出来，那一行就再也读不出是在
         // 改哪个文件了（用户实测截图）。
-        let subject = crate::render::tool_peek(tool, args).unwrap_or_default();
+        // 命令的主题是**全文**：`tool_peek` 那份截成了一行 80 字，点开看到的也只是
+        // 那一行加「..」（用户 09-24 截图）。
+        let subject = if crate::render::is_command_tool(tool) {
+            crate::render::command_from_arguments(args)
+        } else {
+            crate::render::tool_peek(tool, args).unwrap_or_default()
+        };
+        let command_tail = self.command_tail(tool, args);
         // 和主线同一套规矩:命令给 title,编辑给路径加 `+3 -1`。浮层拿不到
         // `__patch_preview__` 的真 diff,按调用参数里那份信封数。
         let peek = if crate::render::is_command_tool(tool) {
@@ -607,6 +670,7 @@ impl StreamRenderer {
             None,
         );
         step.kind = StepKind::Tool;
+        step.set_tail(command_tail);
         // 「展开工具内容」：这一步出来就是展开态——浮层跟着主线那两个开关走
         //（用户 todolist:11 最后一句）。
         step.set_open(expand_details);
@@ -645,11 +709,15 @@ impl StreamRenderer {
     /// 把一个子代理的时间线灌进它的覆盖层块。
     fn publish_subagent(&mut self, name: &str) {
         let display = self.display_tool_name(name);
+        let look = PanelLook {
+            thought_lines: self.thinking_scroll_lines,
+            expand_thought: self.reasoning_mode == ReasoningDisplayMode::Full,
+        };
         let Some(log) = self.subagent_logs.get_mut(name) else {
             return;
         };
         let title = subagent_title(log, &display);
-        let lines = subagent_lines(log);
+        let lines = subagent_lines(log, look);
         let id = log.id;
         match id {
             Some(id) => blocks::update(id, title, lines),

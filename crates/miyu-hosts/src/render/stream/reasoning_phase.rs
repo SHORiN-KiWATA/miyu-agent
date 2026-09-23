@@ -79,6 +79,7 @@ impl StreamRenderer {
             self.reasoning_elapsed = None;
             self.reasoning_title = None;
             self.reasoning_text.clear();
+            self.thought_rows.borrow_mut().clear();
             self.thought_stream = None;
             self.reasoning_tokens = 0;
         }
@@ -155,6 +156,7 @@ impl StreamRenderer {
         self.reasoning_elapsed = None;
         self.reasoning_title = None;
         self.reasoning_text.clear();
+        self.thought_rows.borrow_mut().clear();
         self.thought_stream = None;
         self.reasoning_tokens = 0;
         if mid_content && !has_pending_summary {
@@ -187,6 +189,7 @@ impl StreamRenderer {
         }
         self.reasoning_title = None;
         self.reasoning_text.clear();
+        self.thought_rows.borrow_mut().clear();
         self.thought_stream = None;
         self.reasoning_tokens = 0;
         self.reasoning_started_at = Some(received_at);
@@ -293,6 +296,7 @@ impl StreamRenderer {
             })?;
             stdout.flush()?;
             self.reasoning_text.clear();
+            self.thought_rows.borrow_mut().clear();
             self.thought_stream = None;
             self.reasoning_tokens = 0;
             self.reasoning_title = None;

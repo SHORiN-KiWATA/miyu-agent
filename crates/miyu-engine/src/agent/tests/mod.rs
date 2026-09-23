@@ -6,6 +6,7 @@ mod artifacts;
 mod compact_analysis;
 mod compact_extras;
 mod context;
+mod context_meter;
 mod input;
 mod prompt;
 mod queue_journal;

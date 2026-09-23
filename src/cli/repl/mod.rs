@@ -7,6 +7,7 @@ pub(in crate::cli) mod dictation;
 /// herdr 的状态上报（不在 herdr 里是 no-op）。
 pub(in crate::cli) mod herdr;
 pub(in crate::cli) mod input_layout;
+pub(in crate::cli) mod job_stop;
 pub(in crate::cli) mod jobs;
 pub(in crate::cli) mod layout;
 pub(in crate::cli) mod midturn_panel;

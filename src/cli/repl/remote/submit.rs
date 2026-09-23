@@ -119,7 +119,17 @@ impl RemoteRepl {
                 )?;
                 // The interrupted turn still entered the context; refresh the
                 // footer from the daemon's post-cancel state.
-                if let Ok((state, _)) =
+                //
+                // daemon 在「已取消」里就把数带回来了：直接用，和回合正常结束同一个
+                // 做法。原来这里还要同步再问一次，daemon 为这条会话现造 agent、重估
+                // 上下文，长会话里输入框要等一两秒才能打字（09-23）。
+                if let Some(context) = cancelled_context(&err) {
+                    self.cumulative_tokens = context.cumulative_tokens;
+                    self.footer.update_session_tokens(context.context_tokens);
+                    self.footer
+                        .update_cumulative_tokens(context.cumulative_tokens);
+                    self.live_repl.refresh_footer(self.footer.clone())?;
+                } else if let Ok((state, _)) =
                     repl_active_or_default_state(&self.paths, &self.active_session_id).await
                 {
                     self.cumulative_tokens = state_cumulative(&state);
@@ -128,6 +138,7 @@ impl RemoteRepl {
                         .update_cumulative_tokens(state_cumulative(&state));
                     self.footer
                         .update_context_window(state.context_window, state.context_window_assumed);
+                    self.live_repl.refresh_footer(self.footer.clone())?;
                 }
             }
             Err(err) => {

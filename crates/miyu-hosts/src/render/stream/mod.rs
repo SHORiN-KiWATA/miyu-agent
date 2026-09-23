@@ -74,6 +74,9 @@ pub struct StreamRenderer {
     pub(crate) output: RenderOutput,
     pub(crate) markdown: MarkdownStreamRenderer,
     pub(crate) reasoning_text: String,
+    /// `reasoning_text` 折好的行，只往后补（见 `timeline::ThoughtRows`）。读它的
+    /// 地方大多只拿 `&self`，所以装在 `RefCell` 里。
+    pub(crate) thought_rows: std::cell::RefCell<timeline::ThoughtRows>,
     pub(crate) reasoning_tokens: usize,
     pub(crate) reasoning_title: Option<String>,
     pub(crate) reasoning_started_at: Option<std::time::Instant>,
@@ -171,6 +174,7 @@ impl StreamRenderer {
             output: RenderOutput::Terminal,
             markdown: MarkdownStreamRenderer::new(),
             reasoning_text: String::new(),
+            thought_rows: Default::default(),
             reasoning_tokens: 0,
             reasoning_title: None,
             reasoning_started_at: None,

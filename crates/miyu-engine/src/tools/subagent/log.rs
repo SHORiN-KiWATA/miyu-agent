@@ -295,38 +295,14 @@ fn subtool_result_lines(json: &str, elapsed: Option<Duration>) -> String {
             }
         }
     }
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(json.trim()) else {
-        return out;
-    };
-    let Some(output) = value.get("output").and_then(serde_json::Value::as_str) else {
-        return out;
-    };
-    for line in output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .take(LOG_OUTPUT_LINES)
-    {
-        // 工具吐的是**原始输出**，里面有转义序列、回车、制表符。流水账是按行读
-        // 的纯文本，面板把它当普通字符排版——原样写进去，一行的真实宽度和算出来
-        // 的宽度就对不上，右边那根竖线跟着参差不齐。
-        let line = miyu_base::terminal::strip_ansi_text(line);
-        let line = line
-            .chars()
-            .map(|ch| if ch == '\t' { ' ' } else { ch })
-            .filter(|ch| !ch.is_control())
-            .collect::<String>();
-        let line = line.trim_end();
-        if line.is_empty() {
-            continue;
-        }
+    // 拆法与订标记流那一侧共用（`protocol::result_output_lines`），两条路露的输出
+    // 一行不差。
+    for line in super::protocol::result_output_lines(json) {
         out.push_str("\n[输出] ");
-        out.push_str(&miyu_base::terminal::clip_to_display_width(line, 400));
+        out.push_str(&line);
     }
     out
 }
-
-/// 一次工具结果最多往流水账里写几行输出。
-const LOG_OUTPUT_LINES: usize = 24;
 
 /// 同上，`elapsed` 是这次内层调用从发出到结果回来花的时间（只有结果事件带）。
 pub(super) fn readable_subagent_log_line_timed(message: &str, elapsed: Option<Duration>) -> String {

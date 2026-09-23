@@ -389,7 +389,7 @@ impl StreamRenderer {
             // `step_detail` 统一加，而这儿是直接当块内容用的，得自己加。
             // 不加的话点开之后正文贴着第 0 列，比它的抬头还靠左。
             lines.extend(
-                wrap_detail(&self.reasoning_text).into_iter().map(|line| {
+                self.thought_rows_all().into_iter().map(|line| {
                     format!("{THOUGHT_BODY_STYLE}{indent}{DETAIL_INDENT}{line}\x1b[0m")
                 }),
             );
@@ -434,10 +434,8 @@ impl StreamRenderer {
                 // 边想边往下流：还没滚进 scrollback 的正文整段挂在抬头底下。抬头还
                 // 在时转轮就挂在它上面、计数实时；抬头滚出去了，转轮落在露着的第一
                 // 行正文的左边距上。
-                let mut lines = thought_body_lines(&self.reasoning_text)
-                    .into_iter()
-                    .skip(stream.flushed_rows)
-                    .collect::<Vec<_>>();
+                let mut lines =
+                    style_thought_rows(self.thought_rows_range(stream.flushed_rows, usize::MAX));
                 let line = if !stream.heading_flushed {
                     format!("{} {}", glyph_think(), self.thinking_head())
                 } else if lines.is_empty() {
@@ -603,12 +601,10 @@ impl StreamRenderer {
     /// 「思考中」抬头底下那扇窗：正文折好行，取末尾 `thinking_scroll_lines` 行。
     /// 再多也不超过 live 区放得下的行数——静态面的 live 区高过一屏就擦不干净了。
     pub(crate) fn thought_window_rows(&self) -> Vec<String> {
-        let rows = thought_body_lines(&self.reasoning_text);
         let keep = self
             .thinking_scroll_lines
-            .min(live_thought_rows().saturating_sub(1))
-            .min(rows.len());
-        rows[rows.len() - keep..].to_vec()
+            .min(live_thought_rows().saturating_sub(1));
+        style_thought_rows(self.thought_rows_last(keep))
     }
 
     /// 正在想的抬头：`思考中 · N 词元 · Xs`（不带窥视）。
@@ -685,23 +681,37 @@ pub fn summary_line(elapsed: Duration, counts: Counts) -> String {
     parts.join(" · ")
 }
 
-/// 取文本末尾能放进 `width` 的一段，压成单行。
+/// 取文本末尾能放进 `width` 的一段，压成单行（连续空白并成一个空格，两头的不要）。
+///
+/// 从末尾往回走，够一行宽就停。原来先把**整段**按空白拆开重拼一遍再取末尾——思考
+/// 几万词元时，转轮每一拍都在重拼整段（用户 09-24：思考越长 TUI 越卡）。
 pub fn peek_tail(text: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     if width == 0 {
         return String::new();
     }
-    let flat: String = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .collect();
     let mut taken: Vec<char> = Vec::new();
     let mut used = 0usize;
-    for ch in flat.chars().rev() {
+    let mut truncated = false;
+    // 刚跨过一段空白：下一个字之前要补回那一个空格（只补在两个字之间）。
+    let mut gap = false;
+    for ch in text.chars().rev() {
+        if ch.is_whitespace() {
+            gap = !taken.is_empty();
+            continue;
+        }
+        if gap {
+            if used + 1 > width {
+                truncated = true;
+                break;
+            }
+            used += 1;
+            taken.push(' ');
+            gap = false;
+        }
         let w = ch.width().unwrap_or(0);
         if used + w > width {
+            truncated = true;
             break;
         }
         used += w;
@@ -709,7 +719,7 @@ pub fn peek_tail(text: &str, width: usize) -> String {
     }
     taken.reverse();
     let peek: String = taken.into_iter().collect();
-    if peek.len() < flat.len() {
+    if truncated {
         format!("…{peek}")
     } else {
         peek

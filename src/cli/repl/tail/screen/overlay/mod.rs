@@ -113,6 +113,8 @@ pub(in crate::cli) struct Overlay {
     display_fold: bool,
     /// `命令显示行数`。同上。
     display_command_lines: usize,
+    /// `思考滚动窗行数`：正在想的那一步底下露最近几行。同上。
+    display_thought_lines: usize,
     /// 正在跑的那一步是从什么时候开始的（抬头上那个计时）。
     ///
     /// 标记流和流水账里都没有时间戳，跑完那一步的耗时是结果行带回来的；**跑着
@@ -163,6 +165,7 @@ impl Overlay {
             display_expand: (false, false),
             display_fold: true,
             display_command_lines: 8,
+            display_thought_lines: 10,
             running_since: None,
             hover: None,
             selection: None,
@@ -185,6 +188,7 @@ impl Overlay {
         display_expand: (bool, bool),
         display_fold: bool,
         display_command_lines: usize,
+        display_thought_lines: usize,
     ) -> Self {
         let mut panel = Self {
             source: Source::File {
@@ -202,6 +206,7 @@ impl Overlay {
             display_expand,
             display_fold,
             display_command_lines,
+            display_thought_lines,
             running_since: None,
             hover: None,
             selection: None,
@@ -253,6 +258,23 @@ impl Overlay {
         }
     }
 
+    /// 这个面板讲的后台任务还在跑吗：daemon 那条路查轮询线程的任务表，直连模式查
+    /// 本进程的任务表。不是任务面板、表里没有它，都算停了。
+    fn job_running(&self) -> bool {
+        let Some(job_id) = self.job_id.as_deref() else {
+            return false;
+        };
+        match crate::cli::repl::jobs::feed() {
+            Some(feed) => feed
+                .jobs
+                .lock()
+                .is_ok_and(|jobs| jobs.iter().any(|job| job.job_id == job_id && job.running)),
+            None => miyu_engine::tools::jobs::overview()
+                .iter()
+                .any(|job| job.job_id == job_id && job.running),
+        }
+    }
+
     fn reload_file(&mut self, force: bool) {
         // 面板开着就告诉轮询线程「我在看这个任务」，它顺带把原始标记流拉回来。
         // 标记流不受日志那道「按自然段落盘」的闸限制——实测那道闸能让面板整整
@@ -292,9 +314,9 @@ impl Overlay {
             // 有标记流就走它（路 B）。攒步照旧无状态重算——省的是「等段落」那份
             // 延迟，不是重算那点开销。
             Some(markers) => {
-                let events = markers.iter().filter_map(|marker| {
-                    miyu_engine::tools::subagent::protocol::from_marker(marker)
-                });
+                let events = markers
+                    .iter()
+                    .flat_map(|marker| miyu_engine::tools::subagent::protocol::from_marker(marker));
                 let steps = log::steps_from_events(events, self.display_fold);
                 self.render_steps(steps)
             }
@@ -386,6 +408,7 @@ impl Overlay {
         // 原来这儿另有一份四状态的 `Previous` 状态机，和那边三状态的那份做的是
         // 同一件事（报告 §2.2 项 D）。合并之后 golden 逐字节不变。
         let mut entries: Vec<miyu_hosts::render::timeline::PanelEntry> = Vec::new();
+        let job_running = self.job_running();
         for (index, step) in steps.iter().enumerate() {
             // 正文不是"一步"：没有抬头、不挂块、也不连线，整段照排。
             if step.kind == StepKind::Speech {
@@ -401,8 +424,17 @@ impl Overlay {
                 continue;
             }
             // 跑着的那一步自己掐表：抬头上要有 `· 1.2s`，和主线一个样子。
-            let live = step.running.then(|| {
-                let key = step.head.clone();
+            //
+            // 思考那一步的「正在想」只在任务还跑着时算数：停在半截的思考（任务被
+            // 停了）不该一直挂着「思考中」。它的抬头就是思考正文、每来一截都在变，
+            // 计时不能拿它当钥匙，否则每一截都从零算起。
+            let running = step.running && (step.kind != StepKind::Thought || job_running);
+            let live = running.then(|| {
+                let key = if step.kind == StepKind::Thought {
+                    format!("\u{1}thought#{index}")
+                } else {
+                    step.head.clone()
+                };
                 match &self.running_since {
                     Some((seen, at)) if *seen == key => at.elapsed(),
                     _ => {
@@ -441,7 +473,13 @@ impl Overlay {
     /// **只有这一处**：可见的那几步和收缩行里的那几步都过它。原来收缩行那份是
     /// 另起一行 `Step::panel(...)` 就完事，于是收起来再点开，命令预览就没了
     ///（用户 09-17 第 3 条）。
-    fn dress_step(&self, step: &mut miyu_hosts::render::timeline::Step, log: &LogStep) {
+    fn dress_step(
+        &self,
+        step: &mut miyu_hosts::render::timeline::Step,
+        log: &LogStep,
+        // 这一步此刻正在进行（跑着的工具、还在想的思考）。
+        live: bool,
+    ) {
         // 「展开思考内容 / 展开工具内容」在这块面板上也算数：出来就是展开态。
         step.set_open(match log.kind {
             StepKind::Thought => self.display_expand.0,
@@ -452,21 +490,29 @@ impl Overlay {
         // 正文给命令）。露几行由用户的「命令显示行数」说了算；整段暗色，它是
         // 附注不是正文（用户 09-17：「tag 行是暗色，而命令预览是正常文字颜色，
         // 这不合理」）。
+        //
+        // 正在想的那一步底下开一扇窗，露最近几行——和主线、前台面板一个样子（用户
+        // 09-24：「思考的预览也没有」）。「展开思考内容」开着时这一步本来就是展开
+        // 的，不另开窗。
+        if log.kind == StepKind::Thought {
+            if live && !self.display_expand.0 && self.display_thought_lines > 0 {
+                step.set_tail(miyu_hosts::render::timeline::panel_thought_window(
+                    &log.head,
+                    self.display_thought_lines,
+                ));
+            }
+            return;
+        }
         if self.display_command_lines == 0 {
             return;
         }
         let Some(command) = log.command_tail() else {
             return;
         };
-        let width = miyu_hosts::render::timeline::panel_detail_width();
-        step.set_tail(
-            command
-                .lines()
-                .flat_map(|line| miyu_hosts::render::wrap_display_text(line, width))
-                .take(self.display_command_lines)
-                .map(|line| format!("\x1b[2m{line}\x1b[0m"))
-                .collect(),
-        );
+        step.set_tail(miyu_hosts::render::timeline::panel_command_tail(
+            &command,
+            self.display_command_lines,
+        ));
     }
 
     /// 第 `index` 步用的是哪一块——**按位置记**，不挂块的那些用 `0` 占位。
@@ -508,7 +554,7 @@ impl Overlay {
             self.fold_body(index, &log.inner, head_width)
         };
         let mut step = miyu_hosts::render::timeline::Step::panel(log.kind, line, body, block);
-        self.dress_step(&mut step, log);
+        self.dress_step(&mut step, log, live.is_some());
         // 这一步自己那块：按位置复用，内容每帧重灌（日志还在长）。
         let detail = miyu_hosts::render::timeline::step_detail_lines(&step);
         let id = match block {
@@ -545,11 +591,22 @@ impl Overlay {
         // 几步带耗时、也带窥视（那份构造在合并步模型时成了死代码，耗时因此从
         // 折叠里一起丢了，而 `#![allow(dead_code)]` 把警告盖住了）。现在一种。
         let head = if log.kind == StepKind::Thought {
-            let mut head = miyu_base::i18n::text("thought", "已思考").to_string();
-            if let Some(secs) = log
-                .elapsed
-                .and_then(miyu_hosts::render::timeline::reported_seconds)
-            {
+            // 还在想：`思考中 · 3.2s`（计时是面板自己掐的，见 `render_steps`），
+            // 想完才是 `已思考 · …`——和主线、前台面板一个说法。原来不管想没想完
+            // 都写「已思考」。
+            let (label, secs) = match live {
+                Some(live) => (
+                    miyu_base::i18n::text("thinking", "思考中"),
+                    Some(miyu_base::durations::format_seconds(live)),
+                ),
+                None => (
+                    miyu_base::i18n::text("thought", "已思考"),
+                    log.elapsed
+                        .and_then(miyu_hosts::render::timeline::reported_seconds),
+                ),
+            };
+            let mut head = label.to_string();
+            if let Some(secs) = secs {
                 head.push_str(" · ");
                 head.push_str(&secs);
             }
@@ -584,8 +641,9 @@ impl Overlay {
             head.push_str(" · ");
             head.push_str(&stat);
         }
-        // 正在跑／正在准备的那一行左边距上转着点阵，和主线一样。
-        if log.running || log.preparing {
+        // 正在跑／正在准备／正在想的那一行左边距上转着点阵，和主线一样。认 `live`
+        // 不认 `running`：停在半截的思考（任务已经停了）不算「正在」。
+        if live.is_some() || log.preparing {
             miyu_hosts::render::timeline::panel_live_step_line(glyph, &head)
         } else {
             miyu_hosts::render::timeline::panel_step_line(glyph, &head, log.status == Some("err"))
@@ -614,8 +672,9 @@ impl Overlay {
                     log_detail_body(log),
                     self.fold_blocks.get(&(fold_index, child_index)).copied(),
                 );
-                // 收起来的那几步和可见的那几步是同一种东西：档位一样要穿。
-                self.dress_step(&mut step, log);
+                // 收起来的那几步和可见的那几步是同一种东西：档位一样要穿。收起来的
+                // 都已经走完了，不会是「正在」。
+                self.dress_step(&mut step, log, false);
                 step
             })
             .collect();
@@ -633,7 +692,7 @@ impl Overlay {
     pub(super) fn render_from_markers(&mut self, markers: &[String]) {
         let events = markers
             .iter()
-            .filter_map(|marker| miyu_engine::tools::subagent::protocol::from_marker(marker));
+            .flat_map(|marker| miyu_engine::tools::subagent::protocol::from_marker(marker));
         let steps = log::steps_from_events(events, self.display_fold);
         let lines = self.render_steps(steps);
         self.body = parse_body(&lines, self.cols);

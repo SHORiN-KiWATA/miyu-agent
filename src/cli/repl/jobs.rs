@@ -180,11 +180,24 @@ pub(in crate::cli) struct SharedJobsFeed {
     /// bill to the session that launched them, but they finish long after the
     /// turn that spawned them published its totals — without this the footer
     /// sat on a stale Σ until the user happened to send another prompt.
-    pub(in crate::cli) cumulative: std::sync::Mutex<Option<TurnTokens>>,
+    ///
+    /// 带着读库那一刻的代次（见 `footer_generation`）。
+    pub(in crate::cli) cumulative: std::sync::Mutex<Option<(u64, TurnTokens)>>,
+    /// footer 每被显式刷新一次就换一代（`LiveReplTail::set_footer`）。
+    ///
+    /// 回合跑着时这一轮的用量还没落库，轮询读到的是回合前的旧 Σ；回合一结束
+    /// footer 刷成新数，空闲循环第一拍却把那份旧读数套了回去——屏上 Σ 先跳回
+    /// 这一轮开始前的数，下一次轮询才又改回来（用户 09-23：「取消之后它会先回到
+    /// 最开始的数然后再加上去」）。所以只认刷新之后才开读的那份。
+    pub(in crate::cli) footer_generation: std::sync::atomic::AtomicU64,
     /// 这条 REPL 的会话上挂着的目标。轮询线程一秒问一次（`GoalStatus`）——
     /// 输入框右上角那行 `/goal …` 靠它自己往前走（轮次、暂停、受阻、上一轮
     /// 空转停下来等人），不必等下一条命令或下一个回合。
     pub(in crate::cli) goal: std::sync::Mutex<Option<miyu_core::ipc::GoalHint>>,
+    /// 两条车道各自开一条新会话时的上下文（`[普通, 开发]`）。大厅里按 Tab 只换显示，
+    /// 换过去那条车道还没有会话，footer 上的数靠它（`EmptySessionContext`）。轮询
+    /// 线程起来时问一次。
+    pub(in crate::cli) empty_context: std::sync::Mutex<[Option<u64>; 2]>,
     /// Active daemon-initiated wake runs.
     pub(in crate::cli) wake_runs: std::sync::Mutex<Vec<WakeRun>>,
     /// 人起的活跃轮 `(run_id, session_id)`：同一个会话的**别的**客户端起的。
@@ -210,6 +223,14 @@ static FEED: std::sync::OnceLock<std::sync::Arc<SharedJobsFeed>> = std::sync::On
 
 pub(in crate::cli) fn feed() -> Option<&'static std::sync::Arc<SharedJobsFeed>> {
     FEED.get()
+}
+
+/// footer 刚被显式刷新：在这之前开读的 Σ 一律作废（见 `footer_generation`）。
+pub(in crate::cli) fn invalidate_polled_cumulative() {
+    if let Some(feed) = FEED.get() {
+        feed.footer_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// 两个去重集合的容量兜底。常开 REPL 的后台唤醒一直发生,集合只增不减;
@@ -267,7 +288,17 @@ impl JobsFeed {
     /// has no store behind it.
     pub(in crate::cli) fn cumulative(&self) -> Option<TurnTokens> {
         match self {
-            JobsFeed::Shared(shared) => *shared.cumulative.lock().unwrap(),
+            JobsFeed::Shared(shared) => {
+                let current = shared
+                    .footer_generation
+                    .load(std::sync::atomic::Ordering::Acquire);
+                shared
+                    .cumulative
+                    .lock()
+                    .unwrap()
+                    .filter(|(generation, _)| *generation == current)
+                    .map(|(_, totals)| totals)
+            }
             JobsFeed::Local(_) => None,
         }
     }
@@ -277,6 +308,17 @@ impl JobsFeed {
     pub(in crate::cli) fn goal(&self) -> Option<miyu_core::ipc::GoalHint> {
         match self {
             JobsFeed::Shared(shared) => shared.goal.lock().unwrap().clone(),
+            JobsFeed::Local(_) => None,
+        }
+    }
+
+    /// 这条车道开一条新会话时的上下文（事先问好的，见 `empty_context`）。还没问到
+    /// 是 `None`，直连模式没有这一问。
+    pub(in crate::cli) fn empty_session_context(&self, lane: PersonaLane) -> Option<u64> {
+        match self {
+            JobsFeed::Shared(shared) => {
+                shared.empty_context.lock().unwrap()[usize::from(lane.is_dev())]
+            }
             JobsFeed::Local(_) => None,
         }
     }
@@ -385,9 +427,27 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
         // The store open can lose a race against daemon writes (SQLITE_BUSY);
         // retry every cycle instead of deciding at startup forever.
         let mut store: Option<StateStore> = None;
+        // 两条车道的空会话上下文只问一次：配置不变它就不变（daemon 那侧也按配置缓存
+        // 着）。问不到（老 daemon 不认这条命令）就作罢，footer 照旧显示「—」。
+        let mut asked_empty_context = false;
         loop {
             if store.is_none() {
                 store = StateStore::new(&paths).ok();
+            }
+            if !std::mem::replace(&mut asked_empty_context, true) {
+                for lane in [PersonaLane::Active, PersonaLane::Dev] {
+                    let tokens = runtime.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            fetch_empty_session_context(&paths, lane),
+                        )
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .flatten()
+                    });
+                    feed.empty_context.lock().unwrap()[usize::from(lane.is_dev())] = tokens;
+                }
             }
             let (jobs, _daemon_session, wake_runs, peer_runs) = runtime
                 .block_on(async {
@@ -431,8 +491,12 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
                 }
             }
             if let (Some(store), Some(session)) = (store.as_ref(), repl_session.as_deref()) {
+                // 代次在**读库之前**取：读的中途 footer 被刷新了，这份就算旧的。
+                let generation = feed
+                    .footer_generation
+                    .load(std::sync::atomic::Ordering::Acquire);
                 if let Ok(totals) = store.pinned(session).session_cumulative_token_totals() {
-                    *feed.cumulative.lock().unwrap() = Some(totals);
+                    *feed.cumulative.lock().unwrap() = Some((generation, totals));
                 }
             }
             // 唤醒轮在这个终端挂上去之前就跑完了：从库里补印。按**这个 REPL 的
@@ -609,6 +673,28 @@ async fn report_presence(paths: &MiyuPaths, viewer: &str, session_id: &str) -> R
     .await?;
     let _ = ipc::receive::<IpcFrame>(&mut stream).await?;
     Ok(())
+}
+
+/// 这条车道开一条新会话时的上下文（`EmptySessionContext`）。daemon 不认这条命令
+/// 或者没带数，都是 `None`。
+pub(in crate::cli) async fn fetch_empty_session_context(
+    paths: &MiyuPaths,
+    lane: PersonaLane,
+) -> Result<Option<u64>> {
+    let mut stream = ipc::connect(&paths.ipc_socket()).await?;
+    ipc::send(
+        &mut stream,
+        &IpcRequest::new(IpcCommand::EmptySessionContext {
+            mode: lane.is_dev().then(|| "dev".to_string()),
+        }),
+    )
+    .await?;
+    match ipc::receive::<IpcFrame>(&mut stream).await? {
+        Some(IpcFrame::AdminResult { data, .. }) => Ok(data
+            .get("context_tokens")
+            .and_then(serde_json::Value::as_u64)),
+        _ => Ok(None),
+    }
 }
 
 /// `AdminResult` 的 data 里那份目标状态。`/goal` 命令的回执也带同一个键——

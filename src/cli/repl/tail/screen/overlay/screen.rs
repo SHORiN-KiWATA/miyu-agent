@@ -18,6 +18,7 @@ impl Screen {
         panel.display_expand = self.display_expand;
         panel.display_fold = self.display_fold;
         panel.display_command_lines = self.display_command_lines;
+        panel.display_thought_lines = self.display_thought_lines;
         self.overlay = Some(panel);
         self.invalidate();
         self.needs_clear = true;
@@ -48,10 +49,12 @@ impl Screen {
             self.display_expand,
             self.display_fold,
             self.display_command_lines,
+            self.display_thought_lines,
         );
         panel.display_expand = self.display_expand;
         panel.display_fold = self.display_fold;
         panel.display_command_lines = self.display_command_lines;
+        panel.display_thought_lines = self.display_thought_lines;
         self.overlay = Some(panel);
         self.invalidate();
         self.needs_clear = true;
@@ -186,21 +189,25 @@ impl Screen {
         tools: bool,
         fold: bool,
         command_lines: usize,
+        thought_lines: usize,
     ) {
         if self.display_expand == (reasoning, tools)
             && self.display_fold == fold
             && self.display_command_lines == command_lines
+            && self.display_thought_lines == thought_lines
         {
             return;
         }
         self.display_expand = (reasoning, tools);
         self.display_fold = fold;
         self.display_command_lines = command_lines;
+        self.display_thought_lines = thought_lines;
         // 档位变了：已经排好的那份要按新档位重排一次，不然要等下一次日志变动。
         if let Some(panel) = &mut self.overlay {
             panel.display_expand = (reasoning, tools);
             panel.display_fold = fold;
             panel.display_command_lines = command_lines;
+            panel.display_thought_lines = thought_lines;
             panel.force_reload();
         }
         self.invalidate();

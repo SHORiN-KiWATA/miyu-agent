@@ -27,6 +27,7 @@ impl Screen {
             display_expand: (false, false),
             display_fold: true,
             display_command_lines: 8,
+            display_thought_lines: 10,
             overlay: None,
             hover: None,
             input_rows: Vec::new(),
