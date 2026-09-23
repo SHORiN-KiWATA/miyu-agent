@@ -156,10 +156,10 @@ fn host_environment_rides_the_system_prompt_for_owners_only() {
     assert!(host_at < lock_at);
 }
 
-/// `/sandbox`(或成员)回合:环境块按 task-local 的策略带上根与放行摘要;作用域外
-/// 一个字不多——同一会话内策略不变,字节就不变。
+/// 沙盒不在环境块里(09-23 起:按 Tab 随开随关,写在系统提示词里每切一次就掰断
+/// 整段前缀),改走「变了才追加」的 `<sandbox>` 尾巴。退回修复前第一条断言报红。
 #[tokio::test]
-async fn host_environment_reads_the_sandbox_policy_from_the_turn_scope() {
+async fn sandbox_lives_in_the_tail_not_the_host_environment() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let build = || {
@@ -179,28 +179,37 @@ async fn host_environment_reads_the_sandbox_policy_from_the_turn_scope() {
         readable_summary: vec!["root".into(), "/tmp".into(), "system dirs".into()],
         ..Default::default()
     });
-    let (first, second) =
-        miyu_base::sandbox::with_sandbox(Some(policy), async { (build(), build()) }).await;
-    // 后端名与「读收没收」按平台走：macOS 那一版只收写（见 `sandbox::macos`）。
-    let (backend, readable) = if cfg!(target_os = "macos") {
-        (
-            "sandbox-exec",
-            " writable=\"root, /tmp\" readable=\"everything (this backend confines writes only)\"",
-        )
-    } else {
-        (
-            "landlock",
-            " writable=\"root, /tmp\" readable=\"root, /tmp, system dirs\"",
-        )
-    };
-    assert!(
-        first.contains(&format!(" sandbox=\"{backend}\" root=\"")),
-        "{first}"
-    );
-    assert!(first.contains(readable), "{first}");
-    assert_eq!(first, second, "same policy must render byte-identically");
     let outside = build();
-    assert!(!outside.contains("sandbox="), "{outside}");
+    let (inside, first, repeat, platform) =
+        miyu_base::sandbox::with_sandbox(Some(policy.clone()), async {
+            let first = sandbox_tail(PromptAudience::Owner, false, None);
+            let repeat = sandbox_tail(PromptAudience::Owner, false, first.as_deref());
+            let platform = sandbox_tail(PromptAudience::External, true, None);
+            (build(), first, repeat, platform)
+        })
+        .await;
+    assert_eq!(inside, outside, "环境块不随沙盒变");
+    assert!(!inside.contains("sandbox"), "{inside}");
+
+    let first = first.expect("第一次要说");
+    assert_eq!(first, miyu_base::host_info::sandbox_notice(&policy));
+    assert_eq!(repeat, None, "跟上一份逐字节相同就不再发");
+    assert_eq!(platform, None, "平台回合跟环境块一样不带");
+
+    // 作用域外 = 没沙盒:说过就补一条「关了」,从没说过就什么都不发。
+    assert_eq!(
+        sandbox_tail(PromptAudience::Owner, false, Some(&first)).as_deref(),
+        Some(miyu_base::host_info::SANDBOX_OFF_NOTICE)
+    );
+    assert_eq!(sandbox_tail(PromptAudience::Owner, false, None), None);
+    assert_eq!(
+        sandbox_tail(
+            PromptAudience::Owner,
+            false,
+            Some(miyu_base::host_info::SANDBOX_OFF_NOTICE)
+        ),
+        None
+    );
 }
 
 #[test]

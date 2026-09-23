@@ -61,6 +61,7 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
         daemon_state.context_window_assumed,
     );
     let mut live_repl = LiveReplTail::new(mode, history.clone(), Vec::new(), footer.clone())?;
+    live_repl.set_readonly(daemon_state.sandbox_readonly);
     // 空会话:挂 banner,Tab 可换车道;有过回合的会话直接是输入框。
     live_repl.set_session_empty(&config, paths, session_is_empty(paths, &active_session_id));
     let jobs_shared = spawn_jobs_poll_thread(paths.clone());
@@ -314,6 +315,16 @@ impl RemoteRepl {
                 }
                 LiveReplOutcome::Submit(next_mode, input, images, entry) => {
                     (next_mode, input, images, entry)
+                }
+                LiveReplOutcome::ToggleReadonly => {
+                    toggle_repl_readonly(
+                        &self.paths,
+                        &mut self.live_repl,
+                        &self.active_session_id,
+                        false,
+                    )
+                    .await?;
+                    continue;
                 }
                 LiveReplOutcome::SwitchMode(next) => {
                     match switch_repl_lane(

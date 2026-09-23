@@ -391,6 +391,7 @@ impl LiveReplTail {
             &mut rendered_rows,
             &mut drawn_input,
             self.editor.mode,
+            self.editor.readonly,
             &self.editor.input,
             self.editor.cursor,
             self.editor.raw_pasted_lines,

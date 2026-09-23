@@ -60,7 +60,7 @@ pub const DEV_PROMPT_FILE: &str = "dev-prompt.md";
 pub const DEFAULT_DEV_SYSTEM_PROMPT: &str = "You are a helpful software engineer assistant.";
 /// Replay redraws whole turns, so a large value floods the screen on startup.
 pub const MAX_REPL_REPLAY_TURNS: usize = 20;
-pub const CURRENT_CONFIG_VERSION: u32 = 5;
+pub const CURRENT_CONFIG_VERSION: u32 = 6;
 
 /// dev 会话的保留人格 scope:dev 会话全部挂在它名下,借现有按人格隔离机制白拿
 /// 会话 / 记忆 / REPL 指针的分家;是不是 dev 由会话的 persona==DEV_PERSONA 推导。
@@ -359,10 +359,14 @@ pub struct ToolsConfig {
 }
 
 /// `/sandbox <路径>` 之外还放行什么。根、`/tmp`、系统目录、Miyu 自己的产出目录
-/// 是固定的;这里只是工具链。清单进环境块,改了就是一次计划内的缓存冷启动。
+/// 是固定的;这里只是工具链。清单进 `<sandbox>` 尾巴(变了才追加,不掰前缀)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SandboxConfig {
+    /// 默认开启沙盒模式(09-23):没对会话说过「要不要沙盒」的会话,读全盘、
+    /// 只能写 `home/<属主>/workspace`。新装默认开;v6 之前的老配置迁移时关掉
+    /// (升级不该悄悄把人关进去),引导里有一页专门问。
+    pub default_enabled: bool,
     /// 根之外额外**只读**的目录/文件(`~` 展开)。默认:`~/.rustup ~/.local ~/.gitconfig`。
     pub readable: Vec<String>,
     /// 根之外额外**可写**的目录(`~` 展开)。默认构建缓存:`~/.cargo ~/.npm`。
@@ -372,6 +376,7 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
+            default_enabled: true,
             readable: default_sandbox_readable(),
             writable: default_sandbox_writable(),
         }

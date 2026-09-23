@@ -134,14 +134,12 @@ fn host_os_facts() -> &'static (String, Option<String>) {
     FACTS.get_or_init(|| (detect_os_name(), detect_kernel_release()))
 }
 
-/// 再带上沙盒信息(09-11 成员,09-13 起 `/sandbox` 会话):模型得知道自己关在哪、
-/// 根之外还能碰什么,别去猜为什么读 ~/.ssh 会 outside your workspace。属性由策略
-/// 的摘要生成,同一份策略两次生成逐字节相等(缓存前缀契约)。
+/// 沙盒信息不在这里(09-23 起):它会随用户按 Tab 切只读而变,写在系统提示词里
+/// 每切一次就掰断整段前缀缓存。改由 [`sandbox_notice`] 走「变了才追加」的尾巴。
 pub fn host_environment_block_full(
     root_dir: &Path,
     model: Option<&str>,
     effort: Option<&str>,
-    sandbox: Option<&crate::sandbox::SandboxPolicy>,
 ) -> String {
     let (os, kernel) = host_os_facts();
     let mut block = format!("<host-environment os=\"{}\"", xml_attr_escape(os));
@@ -164,28 +162,40 @@ pub fn host_environment_block_full(
     if let Some(effort) = effort.map(str::trim).filter(|value| !value.is_empty()) {
         block.push_str(&format!(" effort=\"{}\"", xml_attr_escape(effort)));
     }
-    if let Some(policy) = sandbox {
-        // 后端与「读收没收」必须照实报。macOS 走 sandbox-exec，而那一版**只收写**
-        // （见 `sandbox::macos` 模块头的三条真机探测）：照搬 landlock 的措辞会让
-        // 模型以为读也被关住，据此做出错误判断——比如以为读不到的东西就不必回避。
-        let (backend, readable) = if cfg!(target_os = "macos") {
-            (
-                "sandbox-exec",
-                "everything (this backend confines writes only)".to_string(),
-            )
-        } else {
-            ("landlock", policy.readable_summary.join(", "))
-        };
-        block.push_str(&format!(
-            " sandbox=\"{}\" root=\"{}\" writable=\"{}\" readable=\"{}\"",
-            backend,
-            xml_attr_escape(&policy.root.display().to_string()),
-            xml_attr_escape(&policy.writable_summary.join(", ")),
-            xml_attr_escape(&readable),
-        ));
-    }
     block.push_str("/>");
     block
+}
+
+/// 沙盒关掉时追加的那一条:之前告诉过她「关在哪」,现在得说一声不关了。
+pub const SANDBOX_OFF_NOTICE: &str = "<sandbox state=\"off\"/>";
+
+/// 这一轮的沙盒(09-11 成员,09-13 起 `/sandbox` 会话,09-23 起只读模式):模型得
+/// 知道自己关在哪、还能碰什么,别去猜为什么写文件会被拒。属性由策略摘要生成,
+/// 同一份策略两次生成逐字节相等——「变了才追加」靠逐字节比对上一份。
+pub fn sandbox_notice(policy: &crate::sandbox::SandboxPolicy) -> String {
+    // 后端与「读收没收」必须照实报。macOS 走 sandbox-exec，而那一版**只收写**
+    // （见 `sandbox::macos` 模块头的三条真机探测）：照搬 landlock 的措辞会让
+    // 模型以为读也被关住，据此做出错误判断——比如以为读不到的东西就不必回避。
+    let (backend, readable) = if cfg!(target_os = "macos") {
+        (
+            "sandbox-exec",
+            "everything (this backend confines writes only)".to_string(),
+        )
+    } else {
+        ("landlock", policy.readable_summary.join(", "))
+    };
+    let mode = if policy.read_only_mode {
+        " mode=\"read-only\""
+    } else {
+        ""
+    };
+    format!(
+        "<sandbox{mode} backend=\"{}\" root=\"{}\" writable=\"{}\" readable=\"{}\"/>",
+        backend,
+        xml_attr_escape(&policy.root.display().to_string()),
+        xml_attr_escape(&policy.writable_summary.join(", ")),
+        xml_attr_escape(&readable),
+    )
 }
 
 pub fn xml_attr_escape(value: &str) -> String {
@@ -241,7 +251,6 @@ mod tests {
             &PathBuf::from("/home/tester/.miyu"),
             Some("stub/stub-a"),
             Some("high"),
-            None,
         );
         assert!(block.contains(" harness=\"Miyu "));
         assert!(block.contains(" model=\"stub/stub-a\""));
@@ -255,36 +264,34 @@ mod tests {
         assert!(!block.contains("unknown"));
     }
 
-    /// 沙盒属性来自策略摘要:根 + 可写 + 可读,两次生成逐字节相等;没策略一个字不多。
+    /// 沙盒说明来自策略摘要:根 + 可写 + 可读,两次生成逐字节相等(「变了才追加」
+    /// 靠逐字节比对);只读模式多一个 mode。环境块里不再有沙盒(09-23)。
     #[test]
-    fn host_block_carries_the_sandbox_summary_byte_stably() {
-        let policy = crate::sandbox::SandboxPolicy {
+    fn sandbox_notice_carries_the_summary_byte_stably() {
+        let mut policy = crate::sandbox::SandboxPolicy {
             root: PathBuf::from("/home/tester/proj"),
             writable_summary: vec!["root".into(), "/tmp".into(), "~/.cargo".into()],
             readable_summary: vec!["root".into(), "/tmp".into(), "system dirs".into()],
             ..Default::default()
         };
-        let root = PathBuf::from("/home/tester/.miyu");
-        let block = host_environment_block_full(&root, Some("stub/a"), None, Some(&policy));
         // 后端与「读收没收」按平台不同——macOS 那一版只收写，照搬 landlock 的
         // 措辞会让模型以为读也关住了（见 `sandbox::macos` 模块头）。
         let expected = if cfg!(target_os = "macos") {
-            " sandbox=\"sandbox-exec\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"everything (this backend confines writes only)\"/>"
+            "<sandbox backend=\"sandbox-exec\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"everything (this backend confines writes only)\"/>"
         } else {
-            " sandbox=\"landlock\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"root, /tmp, system dirs\"/>"
+            "<sandbox backend=\"landlock\" root=\"/home/tester/proj\" writable=\"root, /tmp, ~/.cargo\" readable=\"root, /tmp, system dirs\"/>"
         };
-        assert!(block.contains(expected), "{block}");
-        assert_eq!(
-            block,
-            host_environment_block_full(&root, Some("stub/a"), None, Some(&policy))
-        );
-        let bare = host_environment_block_full(&root, Some("stub/a"), None, None);
-        assert!(!bare.contains("sandbox"));
+        assert_eq!(sandbox_notice(&policy), expected);
+        assert_eq!(sandbox_notice(&policy), sandbox_notice(&policy));
+        policy.read_only_mode = true;
+        assert!(sandbox_notice(&policy).starts_with("<sandbox mode=\"read-only\" backend="));
+        let root = PathBuf::from("/home/tester/.miyu");
+        assert!(!host_environment_block_full(&root, Some("stub/a"), None).contains("sandbox"));
     }
 
     #[test]
     fn host_block_escapes_paths_that_would_break_the_attribute() {
-        let block = host_environment_block_full(&PathBuf::from("/tmp/a\"b&c"), None, None, None);
+        let block = host_environment_block_full(&PathBuf::from("/tmp/a\"b&c"), None, None);
         // miyu_home 后面还有 harness 属性,不再是最后一个
         assert!(block.contains(" miyu_home=\"/tmp/a&quot;b&amp;c\" harness=\"Miyu "));
     }

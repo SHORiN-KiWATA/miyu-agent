@@ -123,6 +123,11 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
             .to_string(),
         )
         .choices(&["normal", "dev"]),
+        // 09-23:没对会话说过要不要沙盒的会话,读全盘、只能写 `home/<属主>/workspace`。
+        Field::boolean(
+            t("Sandbox mode on by default", "默认开启沙盒模式"),
+            config.tools.sandbox.default_enabled,
+        ),
     ];
     // The read-back below is by index, so an insert in the middle silently
     // writes every later value into the wrong setting. This catches that in
@@ -130,7 +135,7 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     // 提到第一行,后面的索引一并重排,见下面逐行对应)。
     debug_assert_eq!(
         fields.len(),
-        18,
+        19,
         "global settings fields changed: update the positional read-back below"
     );
     run_form_without_buttons(ui, t(" GLOBAL SETTINGS ", " 全局设置 "), &mut fields)?;
@@ -171,6 +176,7 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
         "normal"
     }
     .to_string();
+    config.tools.sandbox.default_enabled = parse_bool_field(&fields[18].value)?;
     Ok(())
 }
 

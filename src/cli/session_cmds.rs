@@ -60,6 +60,7 @@ async fn session_detail(paths: &MiyuPaths, entry: &SessionListEntry) -> Result<V
         paths,
         IpcCommand::GetSessionState {
             target: session_ref(entry),
+            cwd: None,
         },
     )
     .await?;

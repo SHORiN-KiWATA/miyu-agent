@@ -572,21 +572,12 @@ pub(in crate::web) async fn handle_session_command(
         } => {
             let record = resolve_local_session_ref(state, &target)?;
             // 成员的沙盒定死在自己家里,不归他们自己管。
-            if let Some(owner) = state.stores.owner_of_session(&record.session_id) {
-                let is_member = !owner.is_empty()
-                    && state
-                        .state_store
-                        .account_by_id(&owner)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|account| !account.is_admin());
-                if is_member {
-                    return Err(t(
-                        "member sessions are always sandboxed in their own home; /sandbox is admin only",
-                        "成员会话固定关在自己家里,/sandbox 只给管理员",
-                    )
-                    .to_string());
-                }
+            if member_owns_session(&state.state_store, &state.stores, &record.session_id) {
+                return Err(t(
+                    "member sessions are always sandboxed in their own home; /sandbox is admin only",
+                    "成员会话固定关在自己家里,/sandbox 只给管理员",
+                )
+                .to_string());
             }
             let root = match root {
                 Some(root) => {
@@ -623,15 +614,50 @@ pub(in crate::web) async fn handle_session_command(
                 .for_session(&record.session_id)
                 .set_session_sandbox(&record.session_id, root.as_deref(), read_all)
                 .map_err(|error| safe_error_message(&error))?;
+            // 正在跑的回合下一次工具调用就按新设置来(09-23 起沙盒是活的)。
+            miyu_base::sandbox::bump_sandbox_epoch();
             state.events.publish(
                 "session.updated",
                 json!({
                     "session_id": record.session_id,
                     "sandbox": root,
                     "sandbox_read_all": read_all,
+                    "sandbox_readonly": false,
                 }),
             );
             Ok(json!({}))
+        }
+        IpcCommand::SetSandboxReadonly { target, readonly } => {
+            let record = resolve_local_session_ref(state, &target)?;
+            if member_owns_session(&state.state_store, &state.stores, &record.session_id) {
+                return Err(t(
+                    "member sessions are always sandboxed in their own home; read-only mode is admin only",
+                    "成员会话固定关在自己家里,只读模式只给管理员",
+                )
+                .to_string());
+            }
+            // 只读靠沙盒后端落实;这台机器没有就当场说,别等到跑命令才失败关闭。
+            if readonly && miyu_base::sandbox::probe().is_none() {
+                return Err(t(
+                    "this system has no sandbox backend (Linux 5.13+ Landlock or macOS sandbox-exec); read-only mode is unavailable",
+                    "这台机器没有沙盒后端(需要 Linux 5.13+ 的 Landlock 或 macOS 的 sandbox-exec),用不了只读模式",
+                )
+                .to_string());
+            }
+            state
+                .stores
+                .for_session(&record.session_id)
+                .set_session_sandbox_readonly(&record.session_id, readonly)
+                .map_err(|error| safe_error_message(&error))?;
+            miyu_base::sandbox::bump_sandbox_epoch();
+            state.events.publish(
+                "session.updated",
+                json!({
+                    "session_id": record.session_id,
+                    "sandbox_readonly": readonly,
+                }),
+            );
+            Ok(json!({ "sandbox_readonly": readonly }))
         }
         IpcCommand::SetSessionModels { target, models } => {
             let record = resolve_local_session_ref(state, &target)?;

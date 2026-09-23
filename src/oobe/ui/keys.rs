@@ -249,7 +249,7 @@ pub(in crate::oobe) fn on_key(app: &mut App, raw: KeyCode, mods: KeyModifiers) -
                 KeyCode::Down => app.shell_cur = (app.shell_cur + 1).min(last),
                 KeyCode::Enter => match app.commit_shell() {
                     Ok(printed) => {
-                        app.goto(Screen::Provider);
+                        app.goto(Screen::Sandbox);
                         return printed;
                     }
                     Err(error) => app.notice = Some(error),
@@ -271,6 +271,18 @@ pub(in crate::oobe) fn on_key(app: &mut App, raw: KeyCode, mods: KeyModifiers) -
                 _ => {}
             }
         }
+
+        Screen::Sandbox => match code {
+            KeyCode::Up => app.sandbox_cur = 0,
+            KeyCode::Down => app.sandbox_cur = 1,
+            KeyCode::Enter => {
+                if app.commit_sandbox() {
+                    app.goto(Screen::Provider);
+                }
+            }
+            _ if tab_fwd || tab_back => app.sandbox_cur = 1 - app.sandbox_cur,
+            _ => {}
+        },
 
         Screen::Provider => match app.prov {
             Prov::Pick => {

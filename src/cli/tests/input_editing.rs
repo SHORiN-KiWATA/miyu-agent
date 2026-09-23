@@ -1086,3 +1086,53 @@ fn pdf_placeholders_are_found_despite_shorter_prefix() {
     assert_eq!(idx(1), 2);
     assert_eq!(idx(2), 3);
 }
+
+/// Tab / Shift+Tab 的分派(用户 09-23):
+/// - 斜杠命令照旧补全;
+/// - 空会话(大厅)里 Tab 换车道、Shift+Tab 切只读;
+/// - 非空会话里 Tab 也切只读(那时 Tab 本来空着);
+/// - kitty 键盘协议下 Shift+Tab 可能报成「Tab + SHIFT」,不能被当成 Tab 去换车道。
+#[test]
+fn tab_and_shift_tab_split_lane_switch_and_read_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = pop_test_paths(temp.path());
+    let key = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
+    let is_readonly =
+        |action: &LiveEditorAction| matches!(action, LiveEditorAction::ToggleReadonly);
+    let is_mode = |action: &LiveEditorAction| matches!(action, LiveEditorAction::ToggleMode);
+
+    let mut lobby = LiveReplEditor::new(PersonaLane::Active, Vec::new());
+    lobby.mode_switchable = true;
+    let tab = lobby
+        .handle_event(key(KeyCode::Tab, KeyModifiers::NONE), &paths, false)
+        .unwrap();
+    assert!(is_mode(&tab), "大厅里 Tab 照旧换车道");
+    let back = lobby
+        .handle_event(key(KeyCode::BackTab, KeyModifiers::SHIFT), &paths, false)
+        .unwrap();
+    assert!(is_readonly(&back), "Shift+Tab 切只读");
+    let kitty = lobby
+        .handle_event(key(KeyCode::Tab, KeyModifiers::SHIFT), &paths, false)
+        .unwrap();
+    assert!(is_readonly(&kitty), "Tab+SHIFT 也是 Shift+Tab,不能去换车道");
+
+    let mut session = LiveReplEditor::new(PersonaLane::Active, Vec::new());
+    session.mode_switchable = false;
+    session.input = "改一下这个文件".to_string();
+    let tab = session
+        .handle_event(key(KeyCode::Tab, KeyModifiers::NONE), &paths, true)
+        .unwrap();
+    assert!(
+        is_readonly(&tab),
+        "非空会话里 Tab 切只读,打了一半的字也一样"
+    );
+    assert_eq!(session.input, "改一下这个文件", "草稿不动");
+
+    session.input = "/sandb".to_string();
+    session.cursor = session.input.chars().count();
+    let complete = session
+        .handle_event(key(KeyCode::Tab, KeyModifiers::NONE), &paths, false)
+        .unwrap();
+    assert!(!is_readonly(&complete), "斜杠命令照旧补全");
+    assert_eq!(session.input, "/sandbox");
+}

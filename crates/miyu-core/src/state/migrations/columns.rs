@@ -366,3 +366,21 @@ pub(in crate::state) fn apply_v39_subagent_sessions(conn: &Connection) -> Result
     )?;
     Ok(())
 }
+
+/// v40: 沙盒随开随关(09-23)。`sandbox_opt_out`:用户对这个会话明确说过不要沙盒
+/// (`/sandbox clear`),之后不跟全局「默认开启沙盒」走;`sandbox_readonly`:按 Tab
+/// 切的只读模式,哪儿都不许写。两列默认 0,老会话升级后行为不变。
+pub(in crate::state) fn apply_v40_sandbox_toggle(conn: &Connection) -> Result<()> {
+    add_column_if_missing(
+        conn,
+        "sessions",
+        "sandbox_opt_out",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        conn,
+        "sessions",
+        "sandbox_readonly",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+}

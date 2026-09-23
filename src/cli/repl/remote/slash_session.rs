@@ -72,6 +72,7 @@ impl RemoteRepl {
             &mut self.live_repl,
             IpcCommand::GetSessionState {
                 target: miyu_core::ipc::SessionRef::Id { id: session_id },
+                cwd: std::env::current_dir().ok(),
             },
         )
         .await?
@@ -397,23 +398,8 @@ impl RemoteRepl {
             else {
                 return Ok(LoopStep::Continue);
             };
-            let note = match state.sandbox {
-                Some(root) => format!(
-                    "\x1b[2m{}: {root}\n{}: {}\n{}: {}\x1b[0m\n",
-                    t("sandbox root", "沙盒根"),
-                    t("writable", "可写"),
-                    state.sandbox_writable.join(", "),
-                    t("readable", "可读"),
-                    state.sandbox_readable.join(", "),
-                ),
-                None => format!(
-                    "\x1b[2m{}\x1b[0m\n",
-                    t(
-                        "no sandbox bound; using the client working directory, nothing confined",
-                        "未绑定沙盒;使用客户端当前目录,不设限"
-                    )
-                ),
-            };
+            // 09-23 起是一张表(根、只读、可写、可读),默认沙盒与只读照实报。
+            let note = sandbox_state_table(&state);
             repl_note(&mut self.live_repl, &note)?;
             return Ok(LoopStep::Continue);
         }
@@ -432,15 +418,11 @@ impl RemoteRepl {
             .await?
             .is_some()
             {
+                // daemon 解绑时把只读一起清了(`set_session_sandbox`),状态行跟上。
+                self.live_repl.set_readonly(false);
                 repl_note(
                     &mut self.live_repl,
-                    &format!(
-                        "\x1b[2m{}\x1b[0m\n",
-                        t(
-                            "sandbox unbound; later turns run unconfined",
-                            "已解绑沙盒;之后的回合不设限"
-                        )
-                    ),
+                    &format!("\x1b[2m{}\x1b[0m\n", t("Sandbox unbound.", "已解绑沙盒。")),
                 )?;
             }
             return Ok(LoopStep::Continue);
@@ -472,27 +454,31 @@ impl RemoteRepl {
         .await?
         .is_some()
         {
-            // 读放开是把「防提示注入读走密钥」那一半关掉,回执得说清楚
-            // ——网络本来就不在 Landlock 管辖内。
-            let scope = if allow_read {
-                t(
-                    "later turns write only inside it (plus /tmp and the configured dirs); reading is unrestricted, including ~/.ssh and your API keys",
-                    "之后的回合只能往这里面写(外加 /tmp 与配置里的目录);读不设限,~/.ssh 与 API key 也读得到",
-                )
-            } else {
-                t(
-                    "later turns read and write only inside it (plus /tmp and the configured toolchain dirs)",
-                    "之后的回合只能在这里面读写(外加 /tmp 与配置里的工具链目录)",
-                )
-            };
-            repl_note(
+            // 绑一个根 = 要在这里写,daemon 把只读清了,状态行跟上。
+            self.live_repl.set_readonly(false);
+            // 回执跟查看是同一张表(09-23)。读放开是把「防提示注入读走密钥」那一半
+            // 关掉,表格下面照样说一句——网络本来就不在 Landlock 管辖内。
+            if let Some(state) = repl_get_session_state(
+                &self.paths,
                 &mut self.live_repl,
-                &format!(
-                    "\x1b[2m{}: {}\n{scope}\x1b[0m\n",
-                    t("sandbox bound", "已绑定沙盒"),
-                    path.display(),
-                ),
-            )?;
+                miyu_core::ipc::SessionRef::Id {
+                    id: self.active_session_id.clone(),
+                },
+            )
+            .await?
+            {
+                let mut note = sandbox_state_table(&state);
+                if allow_read {
+                    note.push_str(&format!(
+                        "\x1b[2m{}\x1b[0m\n",
+                        t(
+                            "~/.ssh and your API keys are readable too.",
+                            "~/.ssh 和 API key 也读得到。"
+                        )
+                    ));
+                }
+                repl_note(&mut self.live_repl, &note)?;
+            }
         }
         Ok(LoopStep::Continue)
     }

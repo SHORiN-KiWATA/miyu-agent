@@ -278,6 +278,16 @@ pub(in crate::cli) async fn run_live_agent_turn(
                         LiveEditorAction::Interrupt | LiveEditorAction::Exit => break Ok(None),
                         // 回合跑着的时候会话已经不空了,不会出现;出现也不理。
                         LiveEditorAction::ToggleMode => {}
+                        // 直连模式不经 daemon,没有沙盒可切(`direct.rs` 模块头)。
+                        LiveEditorAction::ToggleReadonly => {
+                            live.toast_note_at(
+                                t(
+                                    "Direct mode has no read-only mode.",
+                                    "直连模式不支持只读。",
+                                ),
+                                true,
+                            );
+                        }
                     }
                     if live.mode() != mode_before {
                         control.set_lane(live.mode());

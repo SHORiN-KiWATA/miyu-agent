@@ -1258,3 +1258,99 @@ fn usable_pin(config: &AppConfig) -> miyu_base::config::ActiveProviderModelConfi
         model: provider.models[0].clone(),
     }
 }
+
+/// 沙盒随开随关(09-23)在回合作用域上的样子:
+/// - 全局「默认开启」:没对会话说过要不要沙盒 → 读全盘、只能写默认根——客户端在
+///   项目目录里就是那个目录(自动检测,细则见 `pick_default_root` 的单测);
+/// - `/sandbox clear` 过的会话不跟默认走;
+/// - 只读压过一切:读全盘、哪儿都不许写,`/tmp` 也不例外(用户 09-23「彻底只读」);
+/// - `/sandbox` 查看照实报「默认」与「只读」;不带目录的查询用上一回合的目录。
+#[test]
+fn session_scope_follows_the_default_and_the_readonly_switch() {
+    if miyu_base::sandbox::probe().is_none() {
+        eprintln!("SKIP: no sandbox backend on this machine");
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let persona = active_persona_scope(&state);
+    let session = state
+        .state_store
+        .create_session(&persona, "s", "user", None)
+        .unwrap();
+    let id = session.session_id.as_str();
+    let mut config = state.manager.lock().unwrap().config.clone();
+    // 项目目录得在 Miyu 家外面:家里面(`~/.miyu` 下)按规则不当项目用。
+    let outside = tempfile::tempdir().unwrap();
+    let client = outside.path().join("project");
+    std::fs::create_dir_all(&client).unwrap();
+    let client = client.canonicalize().unwrap();
+    let scope = |config: &AppConfig, cwd: Option<PathBuf>| {
+        session_scope(
+            &state.paths,
+            &state.state_store,
+            &state.stores,
+            config,
+            id,
+            cwd,
+        )
+    };
+
+    config.tools.sandbox.default_enabled = false;
+    let off = scope(&config, Some(client.clone()));
+    assert!(off.policy.is_none(), "默认关着就不套");
+    assert_eq!(off.workspace, client);
+
+    config.tools.sandbox.default_enabled = true;
+    let on = scope(&config, Some(client.clone()));
+    let policy = on.policy.expect("默认开着就套");
+    assert_eq!(on.workspace, client, "在项目目录里打开,写的就是它");
+    assert_eq!(policy.read_only, vec![PathBuf::from("/")], "读全盘");
+    assert!(policy.read_write.contains(&client));
+    assert!(!policy.read_only_mode);
+
+    // 回合开始时记下的目录:不带目录的查询(工具桥、`/sandbox` 查看)用的是同一个根。
+    remember_client_cwd(id, &client);
+    let snapshot = session_state_for(&state, id).unwrap();
+    assert!(snapshot.sandbox_default && !snapshot.sandbox_readonly);
+    assert_eq!(
+        snapshot.sandbox.as_deref(),
+        Some(client.to_string_lossy().as_ref())
+    );
+    assert_eq!(scope(&config, None).workspace, client);
+
+    state
+        .state_store
+        .set_session_sandbox_readonly(id, true)
+        .unwrap();
+    let readonly = scope(&config, Some(client.clone()));
+    let policy = readonly.policy.expect("只读也是一套策略");
+    assert!(policy.read_only_mode);
+    assert_eq!(readonly.workspace, client, "工作目录照旧是默认根");
+    assert!(!policy.read_write.contains(&client), "根不许写");
+    assert!(
+        !policy.read_write.contains(&PathBuf::from("/tmp")),
+        "彻底只读:/tmp 也不许写"
+    );
+    assert!(session_state_for(&state, id).unwrap().sandbox_readonly);
+
+    // `/sandbox clear`:明确不要沙盒,之后不跟默认走,只读一并清掉。
+    state
+        .state_store
+        .set_session_sandbox(id, None, false)
+        .unwrap();
+    assert!(
+        scope(&config, Some(client.clone())).policy.is_none(),
+        "说过不要就不跟默认走"
+    );
+
+    // 没绑、不跟默认,照样能开只读:工作目录是客户端 cwd,那里也不许写。
+    state
+        .state_store
+        .set_session_sandbox_readonly(id, true)
+        .unwrap();
+    let bare = scope(&config, Some(client.clone()));
+    let policy = bare.policy.expect("只读不依赖绑定");
+    assert_eq!(bare.workspace, client);
+    assert!(!policy.read_write.contains(&client));
+}

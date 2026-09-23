@@ -616,6 +616,8 @@ impl ConversationDb {
             parent_session_id: None,
             sandbox: None,
             sandbox_read_all: false,
+            sandbox_opt_out: false,
+            sandbox_readonly: false,
             archived: false,
             created_at: now.clone(),
             updated_at: now,
@@ -650,8 +652,12 @@ impl ConversationDb {
     }
 
     /// `/sandbox` 绑定/解绑:根目录进 `workspace` 列(列名沿用,语义=沙盒根),
-    /// `--allow-read` 的读放开开关进 `sandbox_read_all`。两列一条语句写,解绑时
+    /// `--allow-read` 的读放开开关进 `sandbox_read_all`。一条语句写,解绑时
     /// 开关跟着归零——不然下次绑定会悄悄继承上一次的尺度。
+    ///
+    /// 09-23 起顺带归位两件事:解绑 = 用户明确不要沙盒(`sandbox_opt_out`,之后不跟
+    /// 全局默认走),绑定则撤回这个声明;只读模式两种情况都清掉——绑一个根是
+    /// 「要在这里写」,解绑是「不要任何限制」,留着只读都跟这句话对不上。
     pub fn set_session_sandbox(
         &self,
         session_id: &str,
@@ -660,18 +666,50 @@ impl ConversationDb {
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let updated = conn.execute(
-            "UPDATE sessions SET workspace = ?2, sandbox_read_all = ?3, updated_at = ?4 \
-             WHERE session_id = ?1",
+            "UPDATE sessions SET workspace = ?2, sandbox_read_all = ?3, sandbox_opt_out = ?4, \
+             sandbox_readonly = 0, updated_at = ?5 WHERE session_id = ?1",
             params![
                 session_id,
                 root,
                 root.is_some() && read_all,
+                root.is_none(),
                 Utc::now().to_rfc3339()
             ],
         )?;
         if updated == 0 {
             bail!("session not found: {session_id}");
         }
+        Ok(())
+    }
+
+    /// 只读模式(09-23,Tab 切换)。绑没绑沙盒都能开:读放开、哪儿都不许写。
+    pub fn set_session_sandbox_readonly(&self, session_id: &str, readonly: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE sessions SET sandbox_readonly = ?2, updated_at = ?3 WHERE session_id = ?1",
+            params![session_id, readonly, Utc::now().to_rfc3339()],
+        )?;
+        if updated == 0 {
+            bail!("session not found: {session_id}");
+        }
+        Ok(())
+    }
+
+    /// 子代理照抄父会话的沙盒设置(09-23 起连「明确不要」与只读一起抄):父会话
+    /// 按了只读,它开的子代理不能反倒写得了。
+    pub fn copy_session_sandbox(&self, from: &SessionRecord, to_session_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET workspace = ?2, sandbox_read_all = ?3, sandbox_opt_out = ?4, \
+             sandbox_readonly = ?5 WHERE session_id = ?1",
+            params![
+                to_session_id,
+                from.sandbox,
+                from.sandbox_read_all,
+                from.sandbox_opt_out,
+                from.sandbox_readonly
+            ],
+        )?;
         Ok(())
     }
 

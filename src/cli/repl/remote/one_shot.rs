@@ -495,6 +495,9 @@ async fn run_remote_chat_inner(
                             .await;
                         }
                         LiveEditorAction::ToggleMode => {}
+                        LiveEditorAction::ToggleReadonly => {
+                            toggle_repl_readonly(paths, live_tail, &turn_session_id, true).await?;
+                        }
                         LiveEditorAction::Exit => {
                             renderer.finish()?;
                             if let Some(live) = live.as_deref_mut() {

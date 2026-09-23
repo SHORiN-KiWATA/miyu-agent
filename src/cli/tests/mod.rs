@@ -12,6 +12,7 @@ mod input_editing;
 mod lobby_anim;
 mod lobby_layout;
 mod pop_menu;
+mod sandbox_view;
 mod shared;
 mod slash_commands;
 mod static_timeline;

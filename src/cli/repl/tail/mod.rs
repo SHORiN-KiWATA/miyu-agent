@@ -663,6 +663,9 @@ impl LiveReplTail {
                         banner.settle();
                     }
                 }
+                if let Some(banner) = &mut banner {
+                    banner.set_readonly(self.editor.readonly);
+                }
                 self.banner = banner;
             }
             // 回到大厅就是新会话：旧对话不再属于它，画布一起清掉，下一句话从
@@ -703,6 +706,14 @@ impl LiveReplTail {
         self.editor.mode = mode;
         if let Some(banner) = &mut self.banner {
             banner.set_mode(mode);
+        }
+    }
+
+    /// 只读模式(09-23):状态行的「只读」、大厅模式行的那个点,跟着这一处走。
+    pub(in crate::cli) fn set_readonly(&mut self, readonly: bool) {
+        self.editor.readonly = readonly;
+        if let Some(banner) = &mut self.banner {
+            banner.set_readonly(readonly);
         }
     }
 
@@ -804,8 +815,12 @@ impl LiveReplTail {
         if row >= rows {
             return Ok(());
         }
-        let line =
-            crate::cli::footer::repl_footer_line(self.editor.mode, &self.footer, usize::from(cols));
+        let line = crate::cli::footer::repl_footer_line(
+            self.editor.mode,
+            self.editor.readonly,
+            &self.footer,
+            usize::from(cols),
+        );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
             let mut stdout = io::stdout();
@@ -1046,8 +1061,12 @@ impl LiveReplTail {
         if row >= rows {
             return Ok(());
         }
-        let line =
-            crate::cli::footer::repl_footer_line(self.editor.mode, &self.footer, usize::from(cols));
+        let line = crate::cli::footer::repl_footer_line(
+            self.editor.mode,
+            self.editor.readonly,
+            &self.footer,
+            usize::from(cols),
+        );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
             let mut stdout = io::stdout();

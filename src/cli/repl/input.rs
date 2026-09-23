@@ -298,6 +298,7 @@ pub(in crate::cli) fn read_live_repl_input(
                         entry,
                     ));
                 }
+                LiveEditorAction::ToggleReadonly => return Ok(LiveReplOutcome::ToggleReadonly),
                 LiveEditorAction::ToggleMode => {
                     let next = match live.mode() {
                         PersonaLane::Active => PersonaLane::Dev,
@@ -389,6 +390,8 @@ pub(in crate::cli) fn read_repl_input(
             rendered_rows,
             &mut Vec::new(),
             mode,
+            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切。
+            false,
             input,
             cursor,
             raw_pasted_lines,
@@ -870,6 +873,8 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     // 输入区不在正文缓冲里，不记下来就没法知道某一格上是什么字。
     drawn: &mut Vec<(u16, String)>,
     mode: PersonaLane,
+    // 只读模式开着(09-23):状态行模式标签后面跟「只读」。
+    readonly: bool,
     input: &str,
     cursor: usize,
     raw_pasted_lines: usize,
@@ -971,7 +976,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
         queue!(
             stdout,
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
-            Print(repl_footer_line(mode, footer, cols))
+            Print(repl_footer_line(mode, readonly, footer, cols))
         )?;
         if show_hint {
             row_offset = row_offset.saturating_add(1);

@@ -130,14 +130,9 @@ async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<C
     state
         .stores
         .note_session_owner(&child.session_id, &parent.owner);
-    // 沙盒跟父:`/sandbox` 绑了根的会话,它开的子代理同一把锁。
-    if parent.sandbox.is_some() {
-        parent_store.set_session_sandbox(
-            &child.session_id,
-            parent.sandbox.as_deref(),
-            parent.sandbox_read_all,
-        )?;
-    }
+    // 沙盒跟父:`/sandbox` 绑了根的会话,它开的子代理同一把锁;「明确不要沙盒」
+    // 与只读模式也一起跟(09-23)——父会话按了只读,子代理不能反倒写得了。
+    parent_store.copy_session_sandbox(&parent, &child.session_id)?;
     // 档位 → 会话级模型池覆盖:回合路按会话覆盖选池,子会话就吃这个池;配置里没配
     // 这一档就跟父的全局池(与 `from_tier` 的退回口径一致)。
     let config = state.manager.lock().unwrap().config.clone();

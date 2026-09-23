@@ -351,6 +351,15 @@ impl MiyuPaths {
         self.home_admin().map(|admin| self.user_home_dir(&admin))
     }
 
+    /// 默认沙盒的根(09-23):属主家里的 `workspace`——终端开的会话不登录,但在库里
+    /// 记在属主名下,落在同一个家里。老布局(没有 `home/`)退回 `~/.miyu/workspace`。
+    /// 不保证存在:用的人自己建。
+    pub fn default_sandbox_dir(&self) -> PathBuf {
+        self.admin_home_dir()
+            .unwrap_or_else(|| self.root_dir.clone())
+            .join("workspace")
+    }
+
     /// 共享人格目录:新布局 `personas/`,老布局 `data/personas`。
     pub fn personas_dir(&self) -> PathBuf {
         if self.home_admin().is_some() {

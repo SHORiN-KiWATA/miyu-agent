@@ -137,6 +137,7 @@ pub async fn resolve_managed_session(paths: &MiyuPaths, target: &str) -> Result<
                 target: miyu_core::ipc::SessionRef::Id {
                     id: trimmed.to_string(),
                 },
+                cwd: None,
             },
         )
         .await

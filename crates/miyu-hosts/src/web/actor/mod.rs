@@ -57,11 +57,13 @@ pub(in crate::web) async fn actor_loop(
                 let store = session_store.pinned_for_turn(&session_id);
                 // Per-turn workspace + sandbox(见 sandbox_scope):成员固定在家里、
                 // 管理员按 `/sandbox` 绑定,都没有就客户端 cwd / daemon cwd 不套沙盒。
-                // The resolved path scopes the whole turn task.
-                let TurnScope {
-                    workspace,
-                    policy: sandbox,
-                } = session_scope(&paths, &state_store, &stores, &config, &session_id, cwd);
+                // The resolved path scopes the whole turn task. 沙盒是活的(09-23):
+                // 回合中按 Tab 切只读,下一次工具调用就用上新策略。
+                if let Some(cwd) = cwd.as_deref() {
+                    remember_client_cwd(&session_id, cwd);
+                }
+                let (workspace, sandbox) =
+                    live_session_scope(&paths, &state_store, &stores, &config, &session_id, cwd);
                 // 平台回合的真实发起者。后台任务 spawn 时从 task-local 捕获,
                 // 完成唤醒凭它还原身份(issue #29)。
                 let platform_sender = profile
@@ -110,7 +112,7 @@ pub(in crate::web) async fn actor_loop(
                         )),
                         None => Box::pin(task),
                     };
-                tokio::task::spawn_local(miyu_base::sandbox::with_sandbox(
+                tokio::task::spawn_local(miyu_base::sandbox::with_live_sandbox(
                     sandbox,
                     miyu_base::workspace::with_workspace(
                         workspace,
@@ -138,10 +140,8 @@ pub(in crate::web) async fn actor_loop(
                 let session_store = stores.for_session(&session_id);
                 let _ = session_store.recover_stale_turns();
                 let store = session_store.pinned_for_turn(&session_id);
-                let TurnScope {
-                    workspace,
-                    policy: sandbox,
-                } = session_scope(&paths, &state_store, &stores, &config, &session_id, None);
+                let (workspace, sandbox) =
+                    live_session_scope(&paths, &state_store, &stores, &config, &session_id, None);
                 let task = run_turn_task(
                     config.clone(),
                     paths.clone(),
@@ -161,7 +161,7 @@ pub(in crate::web) async fn actor_loop(
                     turn_engine.clone(),
                     memory_organizer.clone(),
                 );
-                tokio::task::spawn_local(miyu_base::sandbox::with_sandbox(
+                tokio::task::spawn_local(miyu_base::sandbox::with_live_sandbox(
                     sandbox,
                     miyu_base::workspace::with_workspace(
                         workspace,

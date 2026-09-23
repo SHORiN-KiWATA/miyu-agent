@@ -179,6 +179,18 @@ impl Agent {
         if last_fossil_with_prefix(&messages, "<runtime ") != Some(runtime.as_str()) {
             messages.push(ChatMessage::turn_context(runtime));
         }
+        // 沙盒说明(09-23 起不在系统提示词里:按 Tab 随开随关,写在前缀里每切一次
+        // 就掰断整段缓存)。整体替换了系统提示词的会话连主机环境块都没有,也不发。
+        if self.input.system_prompt_override.is_none() {
+            let last = last_fossil_with_prefix(&messages, "<sandbox ").map(str::to_string);
+            if let Some(notice) = sandbox_tail(
+                self.core.prompt_audience,
+                self.input.platform_context.is_some(),
+                last.as_deref(),
+            ) {
+                messages.push(ChatMessage::turn_context(notice));
+            }
+        }
         // 防失忆提醒(08-16 起):不再浮动,每隔 interval 轮以化石身份进
         // 历史——纯追加,不掰前缀。计数以历史里最近一份提醒化石所在的
         // 轮为锚。(08-23 试过"上一轮工具轮次多则提前补一针"的工具后

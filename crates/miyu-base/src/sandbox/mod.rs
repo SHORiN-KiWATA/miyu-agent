@@ -16,7 +16,8 @@
 //! 不执行任何 Linux syscall。没有策略的命令保持正常执行。
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -64,6 +65,9 @@ pub struct SandboxPolicy {
     /// 系统目录、Miyu 内部目录不逐条列,只写 `system dirs`。
     pub writable_summary: Vec<String>,
     pub readable_summary: Vec<String>,
+    /// 用户按 Tab 切的「只读模式」(09-23):哪儿都不许写。只影响报错措辞——
+    /// 模型撞上的是「只读模式开着」,不是「出了工作区」,后者会让它去换个目录再试。
+    pub read_only_mode: bool,
 }
 
 /// 进程内工具(read/edit/glob/grep/print_image/看图……)读路径前过一遍:
@@ -101,6 +105,11 @@ fn guard(path: &std::path::Path, write: bool) -> anyhow::Result<()> {
         });
     if allowed {
         Ok(())
+    } else if write && policy.read_only_mode {
+        anyhow::bail!(
+            "sandbox: read-only mode is on, writing {} is not allowed. The user can turn it off",
+            path.display()
+        )
     } else {
         anyhow::bail!(
             "sandbox: {} is outside your workspace ({} not allowed there)",
@@ -135,21 +144,86 @@ fn resolve_existing_prefix(path: &std::path::Path) -> PathBuf {
     resolved
 }
 
+/// 回合里「现在该套哪套策略」从哪来。回合层实现(按会话记录与配置现算),
+/// 这一层只管什么时候去问它。
+pub trait SandboxSource: Send + Sync {
+    fn resolve(&self) -> Option<Arc<SandboxPolicy>>;
+}
+
+/// 任一会话的沙盒设置变了就加一(绑定、解绑、切只读)。活的作用域凭它判断
+/// 手里那份策略过没过期——没变就不去读库,变了下一次工具调用就用上新的。
+static SANDBOX_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+pub fn bump_sandbox_epoch() {
+    SANDBOX_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+/// 一个回合的活沙盒(09-23 用户拍板:回合进行中按 Tab 切只读,下一次工具调用
+/// 就生效)。先读版本号再算,算的途中又被改过的话,下次取时版本号对不上会重算。
+pub struct LiveSandbox {
+    source: Box<dyn SandboxSource>,
+    cached: Mutex<(u64, Option<Arc<SandboxPolicy>>)>,
+}
+
+impl LiveSandbox {
+    pub fn new(source: Box<dyn SandboxSource>) -> Self {
+        let epoch = SANDBOX_EPOCH.load(Ordering::SeqCst);
+        let policy = source.resolve();
+        Self {
+            source,
+            cached: Mutex::new((epoch, policy)),
+        }
+    }
+
+    pub fn current(&self) -> Option<Arc<SandboxPolicy>> {
+        let epoch = SANDBOX_EPOCH.load(Ordering::SeqCst);
+        let mut cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if cached.0 != epoch {
+            *cached = (epoch, self.source.resolve());
+        }
+        cached.1.clone()
+    }
+}
+
+#[derive(Clone)]
+enum Scope {
+    Fixed(Option<Arc<SandboxPolicy>>),
+    Live(Arc<LiveSandbox>),
+}
+
 tokio::task_local! {
-    static SANDBOX: Option<Arc<SandboxPolicy>>;
+    static SANDBOX: Scope;
 }
 
 /// 在这个 future 里起的子进程(经 [`confine`] / [`confine_std`])都套这套策略;
-/// `None` = 不套(管理员、终端、平台回合的老路)。
+/// `None` = 不套(管理员、终端、平台回合的老路)。策略在整段 future 里不变
+/// (工具桥单次调用、后台 job、后台子代理——它们起跑时抓一份带走)。
 pub async fn with_sandbox<F: std::future::Future>(
     policy: Option<Arc<SandboxPolicy>>,
     future: F,
 ) -> F::Output {
-    SANDBOX.scope(policy, future).await
+    SANDBOX.scope(Scope::Fixed(policy), future).await
+}
+
+/// 同上,但每次取策略时看一眼有没有人改过设置(回合用)。
+pub async fn with_live_sandbox<F: std::future::Future>(
+    live: Arc<LiveSandbox>,
+    future: F,
+) -> F::Output {
+    SANDBOX.scope(Scope::Live(live), future).await
 }
 
 pub fn current_sandbox() -> Option<Arc<SandboxPolicy>> {
-    SANDBOX.try_with(|policy| policy.clone()).ok().flatten()
+    SANDBOX
+        .try_with(|scope| match scope {
+            Scope::Fixed(policy) => policy.clone(),
+            Scope::Live(live) => live.current(),
+        })
+        .ok()
+        .flatten()
 }
 
 /// 子进程环境:HOME 换成沙盒根(`keep_home` 时不换——中转线 CLI 得按真家找

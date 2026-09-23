@@ -122,9 +122,16 @@
           default: ["rm -rf /", "rm -rf ~", "mkfs.", "dd if=/dev/zero of=/dev/", ":(){ :|:& };:"],
         },
         {
+          path: "tools.sandbox.default_enabled",
+          label: t("默认开启沙盒模式"),
+          hint: t("没绑定沙盒的会话能读全盘,只能写 Miyu 家里的 workspace;某个会话不要就 /sandbox clear"),
+          kind: "toggle",
+          default: true,
+        },
+        {
           path: "tools.sandbox.writable",
           label: t("沙盒额外可写"),
-          hint: t("/sandbox 绑定后根之外还能写的目录(构建缓存);改了会掰一次缓存"),
+          hint: t("/sandbox 绑定后根之外还能写的目录(构建缓存)"),
           kind: "string-list",
           default: ["~/.cargo", "~/.npm"],
         },

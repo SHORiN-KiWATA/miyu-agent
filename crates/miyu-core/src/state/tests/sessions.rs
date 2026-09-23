@@ -606,3 +606,41 @@ fn clearing_pinned_session_content_is_isolated_and_preserves_usage_and_binding()
         usage_before.conversation_tokens
     );
 }
+
+/// 沙盒随开随关(09-23):解绑 = 明确不要沙盒(之后不跟全局默认走),绑定撤回这个
+/// 声明;只读两种情况都清掉——绑根是「要在这里写」,解绑是「不要任何限制」。
+/// 子代理把整套设置照抄过去,父会话按了只读,子代理不能反倒写得了。
+#[test]
+fn sandbox_bind_clear_and_readonly_reset_each_other() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path())).unwrap();
+    let session = store.create_session("miyu", "s", "user", None).unwrap();
+    let id = session.session_id.as_str();
+    let record = |store: &StateStore| store.session_record(id).unwrap().unwrap();
+    assert!(!record(&store).sandbox_opt_out && !record(&store).sandbox_readonly);
+
+    store.set_session_sandbox_readonly(id, true).unwrap();
+    assert!(record(&store).sandbox_readonly);
+
+    store.set_session_sandbox(id, None, false).unwrap();
+    let cleared = record(&store);
+    assert!(cleared.sandbox_opt_out, "解绑 = 明确不要沙盒");
+    assert!(!cleared.sandbox_readonly, "解绑把只读一起清掉");
+
+    store.set_session_sandbox_readonly(id, true).unwrap();
+    store.set_session_sandbox(id, Some("/tmp"), true).unwrap();
+    let bound = record(&store);
+    assert_eq!(bound.sandbox.as_deref(), Some("/tmp"));
+    assert!(bound.sandbox_read_all);
+    assert!(!bound.sandbox_opt_out, "绑定撤回「不要沙盒」");
+    assert!(!bound.sandbox_readonly, "绑定把只读清掉");
+
+    store.set_session_sandbox_readonly(id, true).unwrap();
+    let child = store.create_session("miyu", "child", "user", None).unwrap();
+    store
+        .copy_session_sandbox(&record(&store), &child.session_id)
+        .unwrap();
+    let copied = store.session_record(&child.session_id).unwrap().unwrap();
+    assert_eq!(copied.sandbox.as_deref(), Some("/tmp"));
+    assert!(copied.sandbox_read_all && copied.sandbox_readonly);
+}

@@ -419,6 +419,14 @@ pub(in crate::cli) async fn run_direct_repl(
                 LiveReplOutcome::Submit(next_mode, input, images, entry) => {
                     Some((next_mode, input, images, entry))
                 }
+                // 直连模式不经 daemon,没有沙盒可切(见模块头)。
+                LiveReplOutcome::ToggleReadonly => {
+                    live.toast_note_at(
+                        t("Direct mode has no read-only mode.", "直连模式不支持只读。"),
+                        true,
+                    );
+                    continue;
+                }
                 LiveReplOutcome::SwitchMode(next) => {
                     // 直连模式换车道:与启动时同一条语义——那条车道当前会话
                     // 非空就新开一条,再按新模式重建客户端与工具面。

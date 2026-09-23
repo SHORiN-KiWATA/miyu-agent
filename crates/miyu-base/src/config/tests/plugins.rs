@@ -409,3 +409,28 @@ fn a_config_already_at_v4_is_never_touched_again() {
         "已经是最新版本的配置不该再被刷"
     );
 }
+
+/// 「默认开启沙盒模式」(用户 09-23 拍板):新装默认开;老配置(v6 之前)迁移时
+/// 关掉——升级后悄悄把每个会话关进沙盒比不开更糟。只刷一次:迁移之后自己开的
+/// 不会再被关。老配置文件里压根没有这一项时也一样(缺省先读成 true 再被刷掉)。
+#[test]
+fn default_sandbox_is_on_for_new_installs_and_off_for_upgrades() {
+    assert!(AppConfig::default().tools.sandbox.default_enabled);
+
+    let section: crate::config::SandboxConfig =
+        serde_json::from_str("{}").expect("an empty sandbox section parses");
+    assert!(section.default_enabled, "缺省先读成 true");
+    let mut upgraded = AppConfig::default();
+    upgraded.config_version = 5;
+    upgraded.tools.sandbox = section;
+    upgraded.migrate().expect("migration runs");
+    assert!(!upgraded.tools.sandbox.default_enabled, "老配置升级后关着");
+
+    let mut current = AppConfig::default();
+    current.tools.sandbox.default_enabled = true;
+    current.migrate().expect("migration runs");
+    assert!(
+        current.tools.sandbox.default_enabled,
+        "已经是最新版本的配置不该再被刷"
+    );
+}

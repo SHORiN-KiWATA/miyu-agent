@@ -222,10 +222,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "subagent_sessions",
         apply: apply_v39_subagent_sessions,
     },
+    Migration {
+        version: 40,
+        name: "sandbox_toggle",
+        apply: apply_v40_sandbox_toggle,
+    },
 ];
 
 /// Latest schema version this build produces.
-pub const LATEST_VERSION: i64 = 39;
+pub const LATEST_VERSION: i64 = 40;
 
 /// Returns the schema version currently recorded in the database.
 pub fn current_version(conn: &Connection) -> Result<i64> {
@@ -804,6 +809,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(read_all, 0);
+    }
+
+    /// v40 给老会话补上「明确不要沙盒」与只读两列,默认都关:升级后行为不变。
+    #[test]
+    fn v40_defaults_sandbox_toggles_to_off() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut conn, 0, &MIGRATIONS[..39]).unwrap();
+        assert_eq!(user_version(&conn).unwrap(), 39);
+        conn.execute(
+            "INSERT INTO sessions (session_id, persona, name, kind, created_at, updated_at) \
+             VALUES ('s1', 'miyu', 'old', 'user', '2026-01-01', '2026-01-01')",
+            [],
+        )
+        .unwrap();
+        run_migrations(&mut conn).unwrap();
+        assert_eq!(user_version(&conn).unwrap(), LATEST_VERSION);
+        let (opt_out, readonly): (i64, i64) = conn
+            .query_row(
+                "SELECT sandbox_opt_out, sandbox_readonly FROM sessions WHERE session_id = 's1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((opt_out, readonly), (0, 0));
     }
 
     #[test]

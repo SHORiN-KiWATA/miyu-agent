@@ -44,6 +44,105 @@ async fn member_policy_confines_shell_writes() {
     assert!(!denied.join("b.txt").exists());
 }
 
+/// 只读模式(09-23)的形状:根是工作目录,但不在可写清单里——写进根必须失败,
+/// 放行的临时目录能写,全盘能读。macOS 那一版以前会把 `root` 隐式放开,这条在
+/// 两个平台都跑,守的就是那个口子。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn readonly_policy_keeps_the_root_itself_unwritable() {
+    probe().expect("BLOCKED: no sandbox backend on this machine");
+    let temp = tempfile::tempdir().unwrap();
+    let workdir = temp.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+    let scratch = temp.path().join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let policy = Arc::new(SandboxPolicy {
+        root: workdir.clone(),
+        read_only: vec![PathBuf::from("/")],
+        read_write: vec![scratch.clone(), PathBuf::from("/dev/null")],
+        read_only_mode: true,
+        ..Default::default()
+    });
+    let script = format!(
+        "! (echo no > {}/a.txt) 2>/dev/null && echo ok > {}/b.txt && cat /etc/hosts >/dev/null",
+        workdir.display(),
+        scratch.display()
+    );
+    let status = with_sandbox(Some(policy), async move {
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg(script);
+        confine(&mut command);
+        command.status().await.unwrap()
+    })
+    .await;
+    assert!(status.success(), "sandboxed shell script failed: {status}");
+    assert!(!workdir.join("a.txt").exists());
+    assert!(scratch.join("b.txt").is_file());
+}
+
+/// 只读模式下进程内写被拒时,报错说的是「只读模式开着」而不是「出了工作区」——
+/// 后者会让模型去换个目录再试。
+#[tokio::test]
+async fn readonly_mode_says_so_when_a_write_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy = Arc::new(SandboxPolicy {
+        root: temp.path().to_path_buf(),
+        read_only: vec![PathBuf::from("/")],
+        read_only_mode: true,
+        ..Default::default()
+    });
+    let target = temp.path().join("a.txt");
+    let (write, read) = with_sandbox(Some(policy), async {
+        (guard_write(&target), guard_read(&target))
+    })
+    .await;
+    let error = write.expect_err("writes are refused").to_string();
+    assert!(error.contains("read-only mode is on"), "{error}");
+    assert!(read.is_ok());
+}
+
+/// 活沙盒(09-23):版本号不变就不去重算(不是每次工具调用都读库),有人改过设置
+/// 下一次取就是新的——回合进行中按 Tab 切只读靠的就是这个。
+#[tokio::test]
+async fn live_sandbox_recomputes_only_after_an_epoch_bump() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    struct Source {
+        calls: Arc<AtomicUsize>,
+        readonly: Arc<AtomicBool>,
+    }
+    impl SandboxSource for Source {
+        fn resolve(&self) -> Option<Arc<SandboxPolicy>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Some(Arc::new(SandboxPolicy {
+                read_only_mode: self.readonly.load(Ordering::SeqCst),
+                ..Default::default()
+            }))
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let readonly = Arc::new(AtomicBool::new(false));
+    let live = Arc::new(LiveSandbox::new(Box::new(Source {
+        calls: calls.clone(),
+        readonly: readonly.clone(),
+    })));
+    let (before, after) = with_live_sandbox(live, async {
+        let before = (0..3)
+            .map(|_| current_sandbox().unwrap().read_only_mode)
+            .collect::<Vec<_>>();
+        let resolves_before = calls.load(Ordering::SeqCst);
+        readonly.store(true, Ordering::SeqCst);
+        bump_sandbox_epoch();
+        let after = current_sandbox().unwrap().read_only_mode;
+        (
+            (before, resolves_before),
+            (after, calls.load(Ordering::SeqCst)),
+        )
+    })
+    .await;
+    assert_eq!(before, (vec![false, false, false], 1), "没改过就不重算");
+    assert_eq!(after, (true, 2), "改过之后下一次取就是新的");
+}
+
 /// 进程内守卫:可写根里能读能写,只读根里只能读,别处都不行;`..` 绕不出去。
 #[tokio::test]
 async fn in_process_guard_follows_the_policy() {

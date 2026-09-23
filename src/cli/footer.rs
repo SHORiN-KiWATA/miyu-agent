@@ -259,8 +259,12 @@ impl ReplFooterStatus {
     }
 }
 
+/// `readonly`:这个会话开着只读模式(09-23,Tab 切换),模式标签后面跟一段「只读」。
+/// 它不放在 `ReplFooterStatus` 里:那份是被 `set_footer` 整份覆盖的,会话级的开关
+/// 放进去每次覆盖都得记着带回来(`goal` 就是这么漏过的)。
 pub(in crate::cli) fn repl_footer_line(
     mode: PersonaLane,
+    readonly: bool,
     footer: &ReplFooterStatus,
     cols: usize,
 ) -> String {
@@ -300,7 +304,7 @@ pub(in crate::cli) fn repl_footer_line(
     let right = format!("\x1b[2m{right_plain}\x1b[0m");
     let right_width = footer_display_width(&right);
     let left_budget = cols.saturating_sub(bar_width.saturating_add(right_width).saturating_add(1));
-    let left = repl_footer_left(mode, footer, left_budget);
+    let left = repl_footer_left(mode, readonly, footer, left_budget);
     let gap = cols
         .saturating_sub(
             bar_width
@@ -318,6 +322,7 @@ pub(in crate::cli) fn repl_footer_line(
 
 pub(in crate::cli) fn repl_footer_left(
     mode: PersonaLane,
+    readonly: bool,
     footer: &ReplFooterStatus,
     width: usize,
 ) -> String {
@@ -335,7 +340,17 @@ pub(in crate::cli) fn repl_footer_left(
         None => text,
     };
     let provider = format!("\x1b[2m{}\x1b[0m", footer.provider);
-    let mode = colored_footer_mode_label(mode);
+    // 只读开着时直接顶替模式那几个字(用户 09-23:「普通 · 只读」太长,车道看
+    // 输入框竖条的颜色就知道)。窄屏时模式标签最后才裁,它同样一直看得见。
+    let mode = if readonly {
+        format!(
+            "{}{}\x1b[0m",
+            readonly_label_style(),
+            t("read-only", "只读")
+        )
+    } else {
+        colored_footer_mode_label(mode)
+    };
     let full = with_wave(repl_footer_left_parts(
         &mode,
         &footer.model,
@@ -428,6 +443,17 @@ pub(in crate::cli) fn sound_wave_frame(frame: usize, dev: bool) -> String {
         out.push_str("\x1b[0m");
     }
     out
+}
+
+/// 「只读」用金色(用户 09-23):跟空会话模式行上提示按键(`Tab`、`Shift+Tab`)的
+/// 那个金同源(`palette::GOLD`),而且按同一个色深降级——256 色的终端(macOS 自带
+/// 的 Terminal.app 就是)里写死真彩色,状态行和大厅会是两种金。
+pub(in crate::cli) fn readonly_label_style() -> String {
+    let theme = miyu_base::terminal::palette::Theme::detect();
+    format!(
+        "\x1b[1m{}",
+        theme.fg_ansi(miyu_base::terminal::palette::GOLD)
+    )
 }
 
 pub(in crate::cli) fn colored_footer_mode_label(mode: PersonaLane) -> String {

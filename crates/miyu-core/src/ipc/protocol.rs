@@ -33,9 +33,16 @@ pub struct SessionState {
     #[serde(default)]
     pub session_name: String,
     /// `/sandbox` 绑的根目录;None = 没绑(成员会话这里也是 None,他们的沙盒不在
-    /// 会话记录里)。
+    /// 会话记录里)。跟着全局「默认开启沙盒」走的会话,这里是默认根
+    /// (`sandbox_default` 为真)。
     #[serde(default)]
     pub sandbox: Option<String>,
+    /// 上面那个根来自全局默认,不是这个会话自己绑的(09-23)。
+    #[serde(default)]
+    pub sandbox_default: bool,
+    /// 只读模式开着(09-23,Tab 切换):读全盘、哪儿都不许写。
+    #[serde(default)]
+    pub sandbox_readonly: bool,
     /// 绑了沙盒时,根之外还能写/读什么(给 `/sandbox` 查看用;`session_state_for` 填)。
     #[serde(default)]
     pub sandbox_writable: Vec<String>,
@@ -197,6 +204,10 @@ pub enum Command {
     },
     GetSessionState {
         target: SessionRef,
+        /// 发起查询的客户端当前目录(REPL 带,09-23):默认沙盒的根跟着它走(自动
+        /// 检测),daemon 记下来,查看与工具桥用的就是下一轮会用的那个根。
+        #[serde(default)]
+        cwd: Option<std::path::PathBuf>,
     },
     /// Re-initializes one conversation: history, queue, per-session usage and
     /// the recall caches that belong to it. Only ever sent by the first-party
@@ -403,6 +414,12 @@ pub enum Command {
         /// 解绑(`root: None`)时忽略。默认 false = 读也锁,老客户端发来的帧照旧。
         #[serde(default)]
         allow_read: bool,
+    },
+    /// Tab / Shift+Tab:切只读模式(09-23)。读全盘、哪儿都不许写;下一次工具调用
+    /// 就生效(回合中也是)。成员会话拒绝(他们固定关在自己家里)。
+    SetSandboxReadonly {
+        target: SessionRef,
+        readonly: bool,
     },
     /// Pins the target session to its own model pool. An empty list clears
     /// the override so the session follows the global active pool again.

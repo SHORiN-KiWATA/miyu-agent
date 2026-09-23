@@ -1138,6 +1138,7 @@ async fn a_handler_error_comes_back_as_an_error_frame() {
         &mut client,
         &IpcRequest::new(IpcCommand::GetSessionState {
             target: ipc::SessionRef::Id { id: other },
+            cwd: None,
         }),
     )
     .await

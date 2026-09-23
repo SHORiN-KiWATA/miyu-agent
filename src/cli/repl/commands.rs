@@ -50,9 +50,14 @@ pub(in crate::cli) fn repl_help_text() -> String {
         out,
         "  Tab         {}",
         t(
-            "switch normal/dev while the session is empty, or complete slash commands",
-            "空会话时切换 普通/开发，或补全斜杠命令"
+            "complete slash commands; switch normal/dev in an empty session, toggle read-only otherwise",
+            "补全斜杠命令；空会话时切换 普通/开发，否则切换只读"
         )
+    );
+    let _ = writeln!(
+        out,
+        "  Shift+Tab   {}",
+        t("toggle full read-only mode", "切换全盘只读模式")
     );
     let _ = writeln!(out, "  Enter       {}", t("send message", "发送消息"));
     let _ = writeln!(out, "  Shift+Enter {}", t("insert newline", "插入换行"));

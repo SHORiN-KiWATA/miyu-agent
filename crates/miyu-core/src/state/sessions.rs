@@ -371,6 +371,15 @@ impl StateStore {
         self.conv_db.set_session_sandbox(session_id, root, read_all)
     }
 
+    pub fn set_session_sandbox_readonly(&self, session_id: &str, readonly: bool) -> Result<()> {
+        self.conv_db
+            .set_session_sandbox_readonly(session_id, readonly)
+    }
+
+    pub fn copy_session_sandbox(&self, from: &SessionRecord, to_session_id: &str) -> Result<()> {
+        self.conv_db.copy_session_sandbox(from, to_session_id)
+    }
+
     /// Per-session model pool override. None follows the global active pool.
     pub fn session_model_override(
         &self,

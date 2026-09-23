@@ -7,6 +7,7 @@
 //! | 功能 | 启用集 | `<persona_memory_data_dir>/persona.toml` |
 //! | 认识你 | 用户自述 | `profile.md`（`config.user_identity_path`） |
 //! | 终端 | shell hook | shell rc（**仅当用户选「装上」**） |
+//! | 沙盒 | 默认开启沙盒模式 | `config.tools.sandbox.default_enabled` |
 //! | 模型 | 供应商 | `config.providers` / `active_provider` / `active_provider_models` |
 //! | → | 完成标志 | `config.oobe_done` |
 
@@ -181,6 +182,16 @@ pub(super) fn save_provider(
     model: &str,
 ) -> Result<()> {
     super::providers::apply(config, paths, provider, model);
+    config.save(paths).context("保存配置失败")
+}
+
+/// 沙盒屏(09-23):默认以沙盒运行吗。
+pub(super) fn save_sandbox_default(
+    config: &mut AppConfig,
+    paths: &MiyuPaths,
+    enabled: bool,
+) -> Result<()> {
+    config.tools.sandbox.default_enabled = enabled;
     config.save(paths).context("保存配置失败")
 }
 

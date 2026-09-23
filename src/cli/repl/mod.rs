@@ -14,6 +14,8 @@ pub(in crate::cli) mod panel;
 pub(in crate::cli) mod pickers;
 pub(in crate::cli) mod placeholder;
 pub(in crate::cli) mod question_flow;
+/// `/sandbox` 查看与绑定回执的表格。
+pub(in crate::cli) mod sandbox_view;
 pub(in crate::cli) mod session;
 mod session_picker;
 

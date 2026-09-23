@@ -8,7 +8,7 @@
 MIYU_OOBE_NO_IME=1 免得反复开关真输入法。
 
 走一遍：欢迎 → 人格（自己捏，起名）→ 功能（关一项）→ 认识你 → 终端（不装）
-→ 接模型（opencode Zen，会真的联网拉目录；没网就停在报错那屏）→ Ctrl+S 跳过收尾。
+→ 沙盒模式（开启）→ 接模型（opencode Zen，会真的联网拉目录；没网就停在报错那屏）→ Ctrl+S 跳过收尾。
 最后打印临时家目录里落了哪些文件。
 """
 import fcntl, os, pty, select, struct, sys, tempfile, termios, time
@@ -120,14 +120,16 @@ for _ in range(4):
     send(DOWN, 0.15)
 shot("04 终端（选到不装）")
 send(ENTER, 0.6)
-shot("05 接模型")
+shot("05 沙盒模式")
+send(ENTER, 0.6)  # 开启(默认)
+shot("06 接模型")
 for _ in range(3):
     send(DOWN, 0.15)
-shot("05 接模型（光标在 opencode Zen 上）")
+shot("06 接模型（光标在 opencode Zen 上）")
 send(ENTER, 0.5)
-shot("05 填 key（Zen，默认用公共密钥）")
+shot("06 填 key（Zen，默认用公共密钥）")
 send(TAB, 0.4)
-shot("05 填 key（Zen，切到自己的 key）")
+shot("06 填 key（Zen，切到自己的 key）")
 send(TAB, 0.4)  # 切回公共密钥
 send(DOWN, 0.3)  # 焦点到 API key（公共密钥开着它也在，可留空）
 send(DOWN, 0.3)  # 焦点到「获取模型列表」
@@ -137,12 +139,12 @@ for _ in range(50):
     pump(0.5)
     if any("选个模型" in line for line in display()):
         break
-shot("05 选模型（目录拉回来了才有）")
+shot("06 选模型（目录拉回来了才有）")
 rows = display()
 if any("选个模型" in line for line in rows):
     send(b"/", 0.3)
     send(b"glm", 0.5)
-    shot("05 选模型（/glm 筛选中）")
+    shot("06 选模型（/glm 筛选中）")
     rows = display()
     # 进度轨那行也有 ● ，按「── 」排掉
     listed = [line for line in rows if ("○" in line or "●" in line) and "──" not in line]
@@ -150,11 +152,11 @@ if any("选个模型" in line for line in rows):
     print("表头显示匹配数:", any("匹配" in line for line in rows))
     send(ENTER, 0.3)  # 收起搜索，筛选留着
     send(DOWN, 0.3)  # j 也行，这里用方向键
-    shot("05 选模型（收起搜索、下移一格）")
+    shot("06 选模型（收起搜索、下移一格）")
     rows = display()
     print("筛选仍在:", any("/glm" in line for line in rows))  # 那一行左边可能有星
     send(ESC, 0.4)  # 清筛选
-    shot("05 选模型（Esc 清掉筛选）")
+    shot("06 选模型（Esc 清掉筛选）")
     rows = display()
     print("筛选已清:", not any("/glm" in line for line in rows))
     send(ESC, 0.5)  # 回到供应商列表

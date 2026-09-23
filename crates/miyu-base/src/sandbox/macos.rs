@@ -130,16 +130,13 @@ fn resolved(path: &Path) -> std::path::PathBuf {
 }
 
 /// 默认放行、禁写、再逐条放开可写目录。见模块头：这只收写，不收读。
+///
+/// 可写的只认 `read_write`，与 Landlock 那边同一口径。原先还把 `root` 隐式放开
+/// ——成员与管理员的策略本来就把根放进了 `read_write`，那条是重复的；而只读模式
+/// （09-23）的 `root` 是工作目录、偏偏不许写，隐式放开就把只读打穿了。
 fn profile(policy: &SandboxPolicy) -> String {
     let mut out = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
-    let mut writable: Vec<&Path> = Vec::new();
-    if !policy.root.as_os_str().is_empty() {
-        writable.push(policy.root.as_path());
-    }
     for path in &policy.read_write {
-        writable.push(path.as_path());
-    }
-    for path in writable {
         out.push_str("(allow file-write* (subpath \"");
         out.push_str(&quote(&resolved(path)));
         out.push_str("\"))\n");
@@ -167,7 +164,7 @@ mod tests {
 
     #[test]
     fn the_profile_denies_writes_and_then_opens_the_allowed_roots() {
-        let text = profile(&policy("/tmp/box", &["/tmp/box/work"]));
+        let text = profile(&policy("/tmp/box", &["/tmp/box", "/tmp/box/work"]));
         assert!(text.contains("(deny file-write*)"), "{text}");
         assert!(text.contains("(subpath \"/tmp/box\")"), "{text}");
         assert!(text.contains("(subpath \"/tmp/box/work\")"), "{text}");
@@ -182,8 +179,15 @@ mod tests {
     #[test]
     fn a_path_with_a_quote_cannot_break_out_of_the_profile() {
         // 带引号的目录名不转义的话，一条规则就能把后面的策略整段截断。
-        let text = profile(&policy("/tmp/a\"b", &[]));
+        let text = profile(&policy("/tmp/a\"b", &["/tmp/a\"b"]));
         assert!(text.contains("/tmp/a\\\"b"), "{text}");
+    }
+
+    /// 只读模式（09-23）：根是工作目录但不许写，可写清单里没有它就不能放开。
+    #[test]
+    fn the_root_alone_is_not_writable() {
+        let text = profile(&policy("/tmp/box", &[]));
+        assert!(!text.contains("(subpath \"/tmp/box\")"), "{text}");
     }
 
     #[test]

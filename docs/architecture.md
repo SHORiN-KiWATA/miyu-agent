@@ -181,8 +181,20 @@ state/cache/models。目录名用用户名，账号 id 另存账号表，princip
   系统目录 + 脚本目录 + 可执行文件 + `tools.sandbox.readable`（默认 `~/.rustup ~/.local ~/.gitconfig`）。
   HOME 换成 root，清单里放行了的工具链目录经 `CARGO_HOME / RUSTUP_HOME / npm_config_cache /
   GIT_CONFIG_GLOBAL` 指回真家，`~/.cargo/bin ~/.local/bin` 补进 PATH。绑定时探测内核，成员会话拒绝。
-  环境块 `<host-environment sandbox="landlock" root=… writable=… readable=…>` 由策略摘要生成
-  （成员回合同一条路径），绑定/解绑各一次缓存冷启动；没有 on/off。
+  沙盒说明 09-23 起不在环境块里：`<sandbox backend=… root=… writable=… readable=…>` 由策略摘要
+  生成（成员回合同一条路径），走「变了才追加」的尾巴（同 `<runtime>`），关掉时补一条
+  `<sandbox state="off"/>`——绑定、解绑、切只读都不掰前缀。回合里的策略是活的（`LiveSandbox` +
+  全局版本号）：设置一变，下一次工具调用就按新的来；中转线 CLI 起进程时就装上了，等下一轮。
+- **只读模式（09-23）**：Tab（非空会话）/ Shift+Tab 切，会话列 `sandbox_readonly`（v40），状态行上
+  「只读」顶替模式那几个字。读全盘、哪儿都不许写，`/tmp` 也不例外（用户拍板「彻底只读」）；例外
+  只有 `/dev/null` 与运行时 socket（中转线另放行 CLI 配置目录）。只管子进程与进程内的编辑/删除：
+  记忆、todo、知识库、生图/搜图落盘这些在 daemon 进程里写，不受影响。绑定与解绑都把它清零。
+- **默认开启沙盒模式（09-23）**：`tools.sandbox.default_enabled`，新装开、v6 之前的老配置迁移时关，
+  引导里单独一页问。没对会话说过要不要沙盒（`sandbox_opt_out`，`/sandbox clear` 置位）的非成员会话
+  读全盘、只能写默认根（`pick_default_root`，自动检测）：客户端在项目目录里就是那个目录；家目录本身、
+  `/`、它们与 `~/.miyu` 的上级、`~/.miyu` 里面、家下的隐藏目录、没有当前目录的入口（WebUI、语音）与
+  通讯平台，都退回 `home/<属主>/workspace`（`MiyuPaths::default_sandbox_dir`）。回合开始时 daemon 记下
+  客户端目录，工具桥与 `/sandbox` 查看（REPL 查询时也带 cwd）用同一个根。机器没有沙盒后端时静默不套。
 - **只锁写**：`/sandbox <root> --allow-read`（会话列 `sandbox_read_all`，v37）把只读侧换成一条
   `/` 规则——Landlock 是 allow-list，这一条就覆盖全盘；写侧一个字不动，`guard_read` 吃的是同一个
   列表所以进程内工具跟着放开，摘要写成 `readable="everything (read-only)"`。开关在绑定时定，解绑

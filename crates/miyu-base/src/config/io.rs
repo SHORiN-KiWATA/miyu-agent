@@ -161,6 +161,12 @@ impl AppConfig {
         if self.config_version < 5 && !crate::config::tool_plugins::arch_host() {
             self.plugins.archlinux.enabled = false;
         }
+        // v6：「默认开启沙盒模式」新装默认开，已经在用的机器关着（用户 09-23 拍板）
+        // ——升级后悄悄把每个会话关进沙盒，写文件、跑构建突然被拒，比不开更糟。
+        // 想要的去设置里开，或者重跑一次引导。
+        if self.config_version < 6 {
+            self.tools.sandbox.default_enabled = false;
+        }
         if self.config_version < 1 {
             for provider in &mut self.providers {
                 if (provider.temperature - LEGACY_DEFAULT_TEMPERATURE).abs() < f32::EPSILON {

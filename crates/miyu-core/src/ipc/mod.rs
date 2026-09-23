@@ -483,6 +483,8 @@ mod tests {
                 session_name: "终端集成会话".to_string(),
                 mode: "normal".to_string(),
                 sandbox: None,
+                sandbox_default: false,
+                sandbox_readonly: false,
                 sandbox_writable: Vec::new(),
                 sandbox_readable: Vec::new(),
             },

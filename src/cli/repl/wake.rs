@@ -379,6 +379,9 @@ pub(in crate::cli) async fn follow_wake_run(
                             break 'outer;
                         }
                         LiveEditorAction::ToggleMode => {}
+                        LiveEditorAction::ToggleReadonly => {
+                            toggle_repl_readonly(paths, live, session_id, true).await?;
+                        }
                     }
                 }
                 frame = &mut recv => break frame?,

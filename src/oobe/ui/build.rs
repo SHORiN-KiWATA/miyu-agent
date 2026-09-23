@@ -303,7 +303,52 @@ pub(super) fn build(app: &App, cx: &Cx) -> View {
             keys.push(("Esc", "上一步"));
         }
 
-        // ── 05 接模型 ─────────────────────────────────────────
+        // ── 05 沙盒模式（09-23）──────────────────────────────
+        Screen::Sandbox => {
+            sticky.push(cx.bold("沙盒模式"));
+            sticky.push(nil());
+            // 每行控制在 80 列内：这一屏不折行，长句在窄终端上会被截掉。
+            for line in [
+                "开着的话，AI 能读你电脑上的文件，但只能写你打开 Miyu 的那个项目目录；",
+                "在家目录里打开（或从网页、QQ 来）时，只能写 Miyu 家里的 workspace。",
+                "目的是防误改、误删：AI 听岔了话，或者被网页、群聊里的内容骗去动文件，",
+                "都碰不到这个目录以外。",
+                "要换地方，在会话里用 /sandbox <路径> 绑。",
+                "在会话内使用 /sandbox clear 清除该会话的沙盒。",
+                "空会话按 Shift+Tab，非空会话按 Tab 可切换全盘只读模式。",
+            ] {
+                body.push(cx.txt(line, theme.dim(DIM)));
+            }
+            if miyu_base::sandbox::probe().is_none() {
+                body.push(nil());
+                body.push(cx.txt(
+                    "这台机器没有沙盒后端（需要 Linux 5.13+ 或 macOS），开了也暂时不生效。",
+                    theme.dim(DIM),
+                ));
+            }
+            body.push(nil());
+            let base = body.len();
+            body.push(cx.radio(
+                app.sandbox_cur == 0,
+                app.sandbox_cur == 0,
+                "开启",
+                "推荐",
+                20,
+            ));
+            body.push(cx.radio(
+                app.sandbox_cur == 1,
+                app.sandbox_cur == 1,
+                "不开",
+                "不设限，之后可以在设置里打开",
+                20,
+            ));
+            cursor_row = base + app.sandbox_cur;
+            keys.push(("↑↓ jk", "选"));
+            keys.push(("⏎", "下一步"));
+            keys.push(("Esc", "上一步"));
+        }
+
+        // ── 06 接模型 ─────────────────────────────────────────
         Screen::Provider => match app.prov {
             Prov::Pick => {
                 sticky.push(cx.bold("接模型"));

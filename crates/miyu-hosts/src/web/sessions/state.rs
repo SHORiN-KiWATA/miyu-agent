@@ -326,14 +326,25 @@ pub(in crate::web) fn session_state_for(
         context.window = Some(window);
         context.window_assumed = matches!(source, miyu_base::config::ContextWindowSource::Assumed);
     }
-    // `/sandbox` 查看:摘要来自真正会装进规则集的策略(清单里不存在的路径不列)。
-    let read_all = record.sandbox_read_all;
-    let (sandbox_writable, sandbox_readable) = record
-        .sandbox
-        .as_deref()
-        .map(PathBuf::from)
-        .filter(|root| root.is_dir())
-        .and_then(|root| admin_scope(&state.paths, &config, root, read_all).policy)
+    // `/sandbox` 查看与状态行:摘要来自真正会装进规则集的策略(清单里不存在的路径
+    // 不列),跟回合走同一个 session_scope——绑定、默认沙盒、只读三种都照实报。
+    // 成员不在这里报(他们的沙盒不归自己管,查看照旧说「没绑」)。
+    let member = member_owns_session(&state.state_store, &state.stores, session_id);
+    let policy = (!member)
+        .then(|| {
+            session_scope(
+                &state.paths,
+                &state.state_store,
+                &state.stores,
+                &config,
+                session_id,
+                None,
+            )
+            .policy
+        })
+        .flatten();
+    let (sandbox_writable, sandbox_readable) = policy
+        .as_ref()
         .map(|policy| {
             (
                 policy.writable_summary.clone(),
@@ -341,6 +352,20 @@ pub(in crate::web) fn session_state_for(
             )
         })
         .unwrap_or_default();
+    // 默认根跟客户端目录走(自动检测),查看时就是回合那边算出来的那一个:
+    // 没绑、没说过不要、默认开着时,策略的根就是它。
+    let default_root = (!member
+        && record.sandbox.is_none()
+        && !record.sandbox_opt_out
+        && !record.sandbox_readonly
+        && config.tools.sandbox.default_enabled)
+        .then(|| policy.as_ref().map(|policy| policy.root.clone()))
+        .flatten();
+    let sandbox_default = default_root.is_some();
+    let sandbox = record
+        .sandbox
+        .clone()
+        .or_else(|| default_root.map(|root| root.to_string_lossy().into_owned()));
     Ok(ipc::SessionState {
         context_tokens: context.tokens,
         context_window: context.window,
@@ -351,7 +376,9 @@ pub(in crate::web) fn session_state_for(
         mode: super::session_mode_label(&record).to_string(),
         session_id: record.session_id,
         session_name: record.name,
-        sandbox: record.sandbox,
+        sandbox,
+        sandbox_default,
+        sandbox_readonly: !member && record.sandbox_readonly,
         sandbox_writable,
         sandbox_readable,
     })

@@ -33,7 +33,7 @@ fn assert_single_row(line: &str, cols: usize) {
 #[test]
 fn running_footer_reserves_wave_width_at_48_columns() {
     let footer = status("a-very-long-model-name-with-a-version-suffix", true);
-    let line = repl_footer_line(PersonaLane::Active, &footer, 48);
+    let line = repl_footer_line(PersonaLane::Active, false, &footer, 48);
     assert_single_row(&line, 48);
     assert!(line.contains(&sound_wave_frame(7, false)));
     assert!(line.contains(&primary_footer_text("high")));
@@ -51,7 +51,7 @@ fn footer_stays_on_one_terminal_row_at_every_narrow_width() {
             let footer = status(model, running);
             for mode in [PersonaLane::Active, PersonaLane::Dev] {
                 for cols in 1..=160 {
-                    assert_single_row(&repl_footer_line(mode, &footer, cols), cols);
+                    assert_single_row(&repl_footer_line(mode, false, &footer, cols), cols);
                 }
             }
         }
@@ -62,7 +62,7 @@ fn footer_stays_on_one_terminal_row_at_every_narrow_width() {
 fn footer_left_also_respects_its_own_width_budget() {
     let footer = status("中文模型名称附带很长版本后缀", true);
     for width in 0..=80 {
-        let left = repl_footer_left(PersonaLane::Active, &footer, width);
+        let left = repl_footer_left(PersonaLane::Active, false, &footer, width);
         let plain = strip_terminal_control_sequences(&left);
         assert!(
             UnicodeWidthStr::width(plain.as_str()) <= width,
@@ -81,8 +81,8 @@ fn wide_footer_keeps_all_fields_and_wave_unchanged() {
             primary_footer_text("high"),
             sound_wave_frame(7, mode == PersonaLane::Dev),
         );
-        assert_eq!(repl_footer_left(mode, &footer, 120), expected);
-        let line = repl_footer_line(mode, &footer, 160);
+        assert_eq!(repl_footer_left(mode, false, &footer, 120), expected);
+        let line = repl_footer_line(mode, false, &footer, 160);
         assert!(line.contains(&expected));
         assert_single_row(&line, 160);
     }

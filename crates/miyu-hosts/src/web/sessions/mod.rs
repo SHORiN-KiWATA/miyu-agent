@@ -280,6 +280,7 @@ pub(in crate::web) fn session_record_json(record: &miyu_core::state::SessionReco
         "kind": record.kind,
         "sandbox": record.sandbox,
         "sandbox_read_all": record.sandbox_read_all,
+        "sandbox_readonly": record.sandbox_readonly,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "mode": session_mode_label(record),
@@ -598,7 +599,11 @@ pub(in crate::web) fn session_state(
             .as_ref()
             .map(|record| record.name.clone())
             .unwrap_or_default(),
+        sandbox_readonly: record
+            .as_ref()
+            .is_some_and(|record| record.sandbox_readonly),
         sandbox: record.and_then(|record| record.sandbox),
+        sandbox_default: false,
         sandbox_writable: Vec::new(),
         sandbox_readable: Vec::new(),
     })

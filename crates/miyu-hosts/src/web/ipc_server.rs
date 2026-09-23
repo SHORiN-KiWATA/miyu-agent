@@ -350,7 +350,7 @@ async fn dispatch_ipc_connection(
             )
             .await?;
         }
-        IpcCommand::GetSessionState { target } => {
+        IpcCommand::GetSessionState { target, cwd } => {
             // 子代理会话也能看(09-18 会话化):访问子会话时 footer / 回放靠它。
             let record = match resolve_local_session_ref_with_kinds(
                 &state,
@@ -364,6 +364,11 @@ async fn dispatch_ipc_connection(
                     return Ok(());
                 }
             };
+            // REPL 带着自己的当前目录来查:记下来,默认沙盒的根(自动检测)在查看、
+            // 工具桥、下一轮里是同一个。
+            if let Some(cwd) = cwd.as_deref().filter(|cwd| cwd.is_dir()) {
+                remember_client_cwd(&record.session_id, cwd);
+            }
             ipc::send(
                 &mut stream,
                 &IpcFrame::AdminResult {

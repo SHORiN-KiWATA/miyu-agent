@@ -167,6 +167,17 @@ impl Theme {
         }
     }
 
+    /// 同 [`Theme::fg`]，给直接写 ANSI 的地方用（REPL 状态行这类不走 ratatui 的
+    /// 输出）：两边按同一个色深降级，同一个颜色才画得一样（09-23 只读的金色）。
+    pub fn fg_ansi(self, color: Rgb) -> String {
+        match self.depth {
+            Depth::True => format!("\x1b[38;2;{};{};{}m", color.0, color.1, color.2),
+            Depth::X256 => format!("\x1b[38;5;{}m", to_256(color)),
+            Depth::Ansi16 => format!("\x1b[38;5;{}m", to_16(color)),
+            Depth::Mono => String::new(),
+        }
+    }
+
     /// 暗淡。低色深下没有「更暗的灰」可用，退回 DIM modifier。
     pub fn dim(self, color: Rgb) -> Style {
         match self.depth {

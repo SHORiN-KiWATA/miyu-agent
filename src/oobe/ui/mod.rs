@@ -24,7 +24,7 @@ use miyu_base::terminal::palette::{Depth, Theme};
 use miyu_base::terminal::starfield::BannerArt;
 use widgets::Cx;
 
-pub(super) const STEPS: [&str; 5] = ["人格", "功能", "认识你", "终端", "模型"];
+pub(super) const STEPS: [&str; 6] = ["人格", "功能", "认识你", "终端", "沙盒", "模型"];
 
 // ── 开场时间轴（30ms 一帧）──
 /// 纯星空，先让它闪一会儿。
@@ -40,7 +40,7 @@ pub(super) const INTRO_END: usize = 240;
 /// 引导怎么收场。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Outcome {
-    /// 五屏走完，供应商已写好。
+    /// 六屏走完，供应商已写好。
     Completed,
     /// Ctrl+S 跳过：只置完成标志，别的一个字不写。
     Skipped,
@@ -57,6 +57,8 @@ pub(super) enum Screen {
     Features,
     Identity,
     ShellHook,
+    /// 默认以沙盒运行吗(09-23)。
+    Sandbox,
     Provider,
 }
 
@@ -67,7 +69,8 @@ impl Screen {
             Screen::Features => Some(1),
             Screen::Identity => Some(2),
             Screen::ShellHook => Some(3),
-            Screen::Provider => Some(4),
+            Screen::Sandbox => Some(4),
+            Screen::Provider => Some(5),
             Screen::Welcome => None,
         }
     }
@@ -78,7 +81,8 @@ impl Screen {
             Screen::Features => Screen::Persona,
             Screen::Identity => Screen::Features,
             Screen::ShellHook => Screen::Identity,
-            Screen::Provider => Screen::ShellHook,
+            Screen::Sandbox => Screen::ShellHook,
+            Screen::Provider => Screen::Sandbox,
         }
     }
 }
@@ -147,6 +151,8 @@ pub(super) struct App {
 
     // 终端
     pub shell_cur: usize,
+    /// 沙盒屏的光标:0 = 开启,1 = 不开。
+    pub sandbox_cur: usize,
     /// (shell 名, 已装)。
     pub shells: Vec<(&'static str, bool)>,
 
@@ -235,6 +241,7 @@ impl App {
             feats_for: None,
             identity,
             shell_cur: 0,
+            sandbox_cur: 0,
             shells: Vec::new(),
             prov: Prov::Pick,
             prov_cur: 0,
@@ -435,6 +442,10 @@ impl App {
                 .position(|(_, installed)| *installed)
                 .unwrap_or(0);
         }
+        if screen == Screen::Sandbox {
+            // 光标停在配置里现在的值上:新装是开着的,回来改的看到的是上次选的。
+            self.sandbox_cur = usize::from(!self.config.tools.sandbox.default_enabled);
+        }
         if screen == Screen::Provider {
             self.prov = Prov::Pick;
             self.options = super::providers::options(&self.config, |bin| self.facts.has(bin));
@@ -508,6 +519,17 @@ impl App {
             entry.1 = true;
         }
         Ok(true)
+    }
+
+    /// 沙盒屏：选了就写（开/不开都写，回来改也是这一处）。
+    pub fn commit_sandbox(&mut self) -> bool {
+        match apply::save_sandbox_default(&mut self.config, &self.paths, self.sandbox_cur == 0) {
+            Ok(()) => true,
+            Err(error) => {
+                self.notice = Some(format!("{error:#}"));
+                false
+            }
+        }
     }
 
     /// 选定模型：写配置、收场。

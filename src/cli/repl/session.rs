@@ -345,6 +345,7 @@ pub(in crate::cli) async fn switch_repl_lane(
             paths,
             IpcCommand::GetSessionState {
                 target: miyu_core::ipc::SessionRef::Id { id },
+                cwd: std::env::current_dir().ok(),
             },
         )
         .await?;
@@ -460,6 +461,8 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     live_repl.editor.history_clean_index = None;
     live_repl.editor.input.clear();
     live_repl.editor.cursor = 0;
+    // 只读是会话自己的开关(09-23),换到哪个会话就显示哪个会话的。
+    live_repl.set_readonly(state.sandbox_readonly);
     // 每一次换会话都经过这里:空会话挂 banner、Tab 可换车道,非空就钉死。
     let empty = session_is_empty(paths, &state.session_id);
     live_repl.set_session_empty(config, paths, empty);
@@ -855,6 +858,45 @@ pub(in crate::cli) async fn await_in_lobby<T>(
     }
 }
 
+/// Tab / Shift+Tab 切只读(用户 09-23)。发给 daemon,成功就翻状态行上那两个字——
+/// 不另打回执(用户 09-23:「只读已开：能读，哪儿都写不了」这种通知 AI 味太重,
+/// 状态行本身就是回执)。只有失败才说一句。
+///
+/// 回合进行中也走这里(`in_turn`):不用分离回合,daemon 那边下一次工具调用就按新
+/// 设置来。全屏用 toast;inline 空闲时退回打一行,回合中不往正文里插字。
+pub(in crate::cli) async fn toggle_repl_readonly(
+    paths: &MiyuPaths,
+    live: &mut LiveReplTail,
+    session_id: &str,
+    in_turn: bool,
+) -> Result<()> {
+    let next = !live.editor.readonly;
+    let command = IpcCommand::SetSandboxReadonly {
+        target: miyu_core::ipc::SessionRef::Id {
+            id: session_id.to_string(),
+        },
+        readonly: next,
+    };
+    match await_in_lobby(live, send_ipc_admin(paths, command)).await {
+        Ok(_) => {
+            live.set_readonly(next);
+            if !live.external_output_active {
+                synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
+            }
+        }
+        Err(error) => {
+            let text = format!(
+                "{}: {error:#}",
+                t("could not toggle read-only", "切换只读失败")
+            );
+            if !live.toast_note_at(&text, true) && !in_turn {
+                repl_note(live, &format!("\x1b[31m{text}\x1b[0m\n"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Sends an admin command from inside the REPL loop, printing failures (core
 /// busy, core restarting, …) through the live tail instead of propagating
 /// them so the REPL survives.
@@ -877,8 +919,10 @@ pub(in crate::cli) async fn repl_get_session_state(
     live: &mut LiveReplTail,
     target: miyu_core::ipc::SessionRef,
 ) -> Result<Option<ipc::SessionState>> {
+    // 带上 REPL 的当前目录:下一轮 StartTurn 也带它,默认沙盒的根跟着它走。
+    let cwd = std::env::current_dir().ok();
     Ok(
-        repl_ipc_admin(paths, live, IpcCommand::GetSessionState { target })
+        repl_ipc_admin(paths, live, IpcCommand::GetSessionState { target, cwd })
             .await?
             .map(|(state, _)| state),
     )
@@ -1010,6 +1054,7 @@ pub(in crate::cli) async fn repl_active_or_default_state(
             target: miyu_core::ipc::SessionRef::Id {
                 id: active_session_id.to_string(),
             },
+            cwd: std::env::current_dir().ok(),
         },
     )
     .await

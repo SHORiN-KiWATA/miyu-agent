@@ -45,6 +45,8 @@ pub(in crate::cli) struct BannerScene {
     theme: Theme,
     art: BannerArt,
     mode: PersonaLane,
+    /// 这个会话开着只读模式(09-23):模式行末尾那个「只读」点亮。
+    readonly: bool,
     tick: usize,
     /// 出场淡入：前几帧从底色浮出来。
     born: usize,
@@ -54,8 +56,8 @@ pub(in crate::cli) struct BannerScene {
     lobby_cache: RefCell<Option<(LobbyKey, Lobby)>>,
 }
 
-/// (cols, rows, activity_rows, bottom_rows, tick, born, dev)
-type LobbyKey = (usize, usize, usize, usize, usize, usize, bool);
+/// (cols, rows, activity_rows, bottom_rows, tick, born, dev, readonly)
+type LobbyKey = (usize, usize, usize, usize, usize, usize, bool, bool);
 
 impl BannerScene {
     /// 按配置决定画不画、画哪份艺术字。`None` = 关掉了。
@@ -72,6 +74,7 @@ impl BannerScene {
             theme,
             art,
             mode,
+            readonly: false,
             tick: 0,
             born: 0,
             lobby_cache: RefCell::new(None),
@@ -80,6 +83,10 @@ impl BannerScene {
 
     pub(in crate::cli) fn set_mode(&mut self, mode: PersonaLane) {
         self.mode = mode;
+    }
+
+    pub(in crate::cli) fn set_readonly(&mut self, readonly: bool) {
+        self.readonly = readonly;
     }
 
     /// 跳过出场淡入。`/reset`、`/new` 从非空会话回到大厅时用:画面本来就亮着,
@@ -105,6 +112,7 @@ impl BannerScene {
             theme,
             art: BannerArt::builtin(theme.ascii),
             mode,
+            readonly: false,
             tick: 0,
             born: 0,
             lobby_cache: RefCell::new(None),
@@ -178,7 +186,8 @@ impl BannerScene {
         ]
     }
 
-    /// `◉ 普通   ○ 开发     Tab 切换`。当前模式用它自己的颜色（普通=雾蓝，开发=酒红）。
+    /// `◉ 普通   ○ 开发     Tab 切换   Shift+Tab ○ 只读`。当前模式用它自己的颜色
+    /// （普通=雾蓝，开发=酒红）；只读开着时那个点和字点亮成金色（09-23）。
     fn mode_row(&self) -> Vec<Seg> {
         let theme = self.theme;
         let fade_t = self.fade_in();
@@ -218,6 +227,21 @@ impl BannerScene {
         segs.push(Seg::new("Tab", fade(theme, GOLD, fade_t)));
         segs.push(Seg::raw(" "));
         segs.push(Seg::new(t("switch", "切换"), fade(theme, FAINT, fade_t)));
+        segs.push(Seg::raw("   "));
+        segs.push(Seg::new("Shift+Tab", fade(theme, GOLD, fade_t)));
+        segs.push(Seg::raw(" "));
+        // 开着时点与字都是金色(用户 09-23),跟状态行上的「只读」同色。
+        let (dot, style) = if self.readonly {
+            (
+                theme.dot_here(),
+                fade(theme, GOLD, fade_t).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (theme.dot_todo(), fade(theme, FAINT, fade_t))
+        };
+        segs.push(Seg::new(dot, style));
+        segs.push(Seg::raw(" "));
+        segs.push(Seg::new(t("read-only", "只读"), style));
         segs
     }
 
@@ -314,6 +338,7 @@ impl BannerScene {
             self.tick,
             self.born,
             matches!(self.mode, PersonaLane::Dev),
+            self.readonly,
         );
         if let Some((cached_key, lobby)) = &*self.lobby_cache.borrow() {
             if *cached_key == key {
@@ -550,6 +575,7 @@ mod tests {
             },
             art: BannerArt::builtin(false),
             mode: PersonaLane::Active,
+            readonly: false,
             tick: 0,
             born: 24,
             lobby_cache: RefCell::new(None),

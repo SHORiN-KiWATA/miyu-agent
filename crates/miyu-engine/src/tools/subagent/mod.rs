@@ -732,7 +732,8 @@ async fn spawn_background(
 /// 第一段是用户自己的 dev 提示词(`dev-prompt.md`,与 dev 会话读同一份),
 /// 改它对子代理同时生效。第二段是主体也在用的主机环境块——子代理没有
 /// 每轮瞬态尾巴,工作目录只能从这里知道,否则第一步永远浪费在 `pwd` 上。
-/// 末尾是那句交付约定。
+/// 沙盒说明同理(09-23 起不在环境块里了):子代理起跑时抓的那份策略整趟不变,
+/// 放这里就是常量。末尾是那句交付约定。
 ///
 /// 三段在一个会话里都是常量(工作目录跟着会话工作区走),多次 dev 子代理
 /// 之间前缀缓存照样命中。
@@ -748,6 +749,10 @@ fn build_dev_system_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<Stri
                 .to_string()
         )
     ));
+    if let Some(policy) = miyu_base::sandbox::current_sandbox() {
+        prompt.push('\n');
+        prompt.push_str(&miyu_base::host_info::sandbox_notice(&policy));
+    }
     prompt.push_str("\n\n");
     prompt.push_str(SUBAGENT_DEV_CONTRACT);
     Ok(prompt)

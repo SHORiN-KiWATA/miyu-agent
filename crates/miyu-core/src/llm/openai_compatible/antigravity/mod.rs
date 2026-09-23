@@ -297,6 +297,7 @@ impl OpenAiCompatibleClient {
                 workdir,
                 plan.host_tools(),
                 eager_tools,
+                miyu_base::sandbox::current_sandbox().as_deref(),
             )
         });
         let mut pooled: Option<(RelayProcess, u32)> = None;

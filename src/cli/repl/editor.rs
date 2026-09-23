@@ -86,6 +86,8 @@ pub(in crate::cli) struct LiveReplEditor {
     pub(in crate::cli) mode: PersonaLane,
     /// 会话还是空的:Tab 可以换车道(普通 ↔ 开发)。第一条消息一发就钉死。
     pub(in crate::cli) mode_switchable: bool,
+    /// 这个会话开着只读模式(09-23)。编辑器只拿它画状态行,开关本身在 daemon。
+    pub(in crate::cli) readonly: bool,
     pub(in crate::cli) input: String,
     pub(in crate::cli) cursor: usize,
     pub(in crate::cli) history: Vec<ReplHistoryEntry>,
@@ -118,6 +120,8 @@ pub(in crate::cli) enum LiveEditorAction {
     Exit,
     /// 空会话里按了 Tab:换到另一条车道。
     ToggleMode,
+    /// 切只读模式(09-23):非空会话按 Tab,或任何时候按 Shift+Tab。
+    ToggleReadonly,
 }
 
 impl LiveReplEditor {
@@ -126,6 +130,7 @@ impl LiveReplEditor {
         Self {
             mode,
             mode_switchable: false,
+            readonly: false,
             input: String::new(),
             cursor: 0,
             history,
@@ -241,6 +246,13 @@ impl LiveReplEditor {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match code {
+                // Shift+Tab 切只读(用户 09-23)。kitty 键盘协议下它可能报成
+                // 「Tab + SHIFT」而不是 BackTab,两种都认,而且得排在裸 Tab
+                // 前面——不然大厅里按 Shift+Tab 会被当成 Tab 去换车道。
+                KeyCode::BackTab => return Ok(LiveEditorAction::ToggleReadonly),
+                KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => {
+                    return Ok(LiveEditorAction::ToggleReadonly)
+                }
                 KeyCode::Tab => {
                     if self.input.starts_with('/') {
                         if let Some(completed) = complete_repl_command(&self.input) {
@@ -248,10 +260,15 @@ impl LiveReplEditor {
                             self.cursor = self.input.chars().count();
                             self.history_clean_index = None;
                         }
-                    } else if self.mode_switchable && self.input.trim().is_empty() {
+                    } else if self.mode_switchable {
                         // 只有空会话能换车道:一旦有了回合,模式就钉死
                         // (中途换模式=系统提示词换血=全量缓存作废)。
-                        return Ok(LiveEditorAction::ToggleMode);
+                        if self.input.trim().is_empty() {
+                            return Ok(LiveEditorAction::ToggleMode);
+                        }
+                    } else {
+                        // 非空会话里 Tab 空出来了,给只读开关(用户 09-23)。
+                        return Ok(LiveEditorAction::ToggleReadonly);
                     }
                 }
                 KeyCode::Esc => {

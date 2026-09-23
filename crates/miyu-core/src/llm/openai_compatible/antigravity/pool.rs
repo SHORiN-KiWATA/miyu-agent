@@ -39,7 +39,11 @@ struct Parked {
 static POOL: Mutex<Vec<Parked>> = Mutex::new(Vec::new());
 
 /// 一个进程「能不能接着用」的指纹:启动参数(不含 `--conversation`)、环境、
-/// 二进制、工作目录、工具面档位、桥的 eager 名单。
+/// 二进制、工作目录、工具面档位、桥的 eager 名单、沙盒策略。
+///
+/// 沙盒是起进程时装上的、装上就撤不掉。09-23 之前策略变了总会连带改掉提示词
+/// (进 `--agent`)或工作目录,指纹间接跟着变;沙盒说明挪出系统提示词、又能按 Tab
+/// 在同一个目录下切只读之后,不直接算进来就会把没受限或规则过期的进程借出去。
 pub(super) fn fingerprint(
     binary: &std::path::Path,
     base_args: &[String],
@@ -47,6 +51,7 @@ pub(super) fn fingerprint(
     workdir: &std::path::Path,
     host_tools: bool,
     eager_tools: &[String],
+    sandbox: Option<&miyu_base::sandbox::SandboxPolicy>,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(binary.display().to_string().as_bytes());
@@ -69,6 +74,10 @@ pub(super) fn fingerprint(
     for tool in eager_tools {
         hasher.update(tool.as_bytes());
         hasher.update(b"\0");
+    }
+    hasher.update(b"\0sandbox\0");
+    if let Some(policy) = sandbox {
+        hasher.update(format!("{policy:?}").as_bytes());
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -313,9 +322,15 @@ mod tests {
     fn fingerprint_changes_with_any_ingredient() {
         let bin = std::path::Path::new("agy");
         let wd = std::path::Path::new("/w");
-        let base = fingerprint(bin, &["--a".into()], &[], wd, true, &[]);
-        assert_eq!(base, fingerprint(bin, &["--a".into()], &[], wd, true, &[]));
-        assert_ne!(base, fingerprint(bin, &["--b".into()], &[], wd, true, &[]));
+        let base = fingerprint(bin, &["--a".into()], &[], wd, true, &[], None);
+        assert_eq!(
+            base,
+            fingerprint(bin, &["--a".into()], &[], wd, true, &[], None)
+        );
+        assert_ne!(
+            base,
+            fingerprint(bin, &["--b".into()], &[], wd, true, &[], None)
+        );
         assert_ne!(
             base,
             fingerprint(
@@ -324,13 +339,17 @@ mod tests {
                 &[("K".into(), Some("v".into()))],
                 wd,
                 true,
-                &[]
+                &[],
+                None
             )
         );
-        assert_ne!(base, fingerprint(bin, &["--a".into()], &[], wd, false, &[]));
         assert_ne!(
             base,
-            fingerprint(bin, &["--a".into()], &[], wd, true, &["t".into()])
+            fingerprint(bin, &["--a".into()], &[], wd, false, &[], None)
+        );
+        assert_ne!(
+            base,
+            fingerprint(bin, &["--a".into()], &[], wd, true, &["t".into()], None)
         );
         assert_ne!(
             base,
@@ -340,8 +359,18 @@ mod tests {
                 &[],
                 std::path::Path::new("/x"),
                 true,
-                &[]
+                &[],
+                None
             )
+        );
+        // 同一目录下切只读(09-23):沙盒不同就不能复用同一个进程。
+        let readonly = miyu_base::sandbox::SandboxPolicy {
+            read_only_mode: true,
+            ..Default::default()
+        };
+        assert_ne!(
+            base,
+            fingerprint(bin, &["--a".into()], &[], wd, true, &[], Some(&readonly))
         );
     }
 

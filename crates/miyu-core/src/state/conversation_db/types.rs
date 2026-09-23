@@ -458,6 +458,11 @@ pub struct SessionRecord {
     /// `--allow-read`(v37):读放开到整个文件系统,写照旧只在根与放行清单里。
     /// 没绑沙盒时无意义。
     pub sandbox_read_all: bool,
+    /// 用户对这个会话明确说过不要沙盒(`/sandbox clear`,v40):不跟全局「默认
+    /// 开启沙盒」走。
+    pub sandbox_opt_out: bool,
+    /// 只读模式(v40,Tab 切换):读放开,哪儿都不许写。
+    pub sandbox_readonly: bool,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,

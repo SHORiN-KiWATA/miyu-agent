@@ -181,9 +181,14 @@ fn footer_turn_completion_updates_the_rendered_token_accounting() {
     assert_eq!(footer.token_usage.session_tokens, 240);
     assert_eq!(footer.token_usage.cumulative_tokens, Some(100));
     assert_eq!(
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Active, &footer, 80))
-            .split_whitespace()
-            .last(),
+        strip_terminal_control_sequences(&repl_footer_line(
+            PersonaLane::Active,
+            false,
+            &footer,
+            80
+        ))
+        .split_whitespace()
+        .last(),
         Some("Σ100")
     );
 }
@@ -235,14 +240,22 @@ fn the_footer_drops_the_output_speed_before_the_cumulative_total() {
         },
     );
 
-    let wide =
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Active, &footer, 100));
+    let wide = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Active,
+        false,
+        &footer,
+        100,
+    ));
     assert!(
         wide.contains("361 tok/s · 21.7k/1M(2.2%) · Σ180.1k(C24%)"),
         "{wide}"
     );
-    let narrow =
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Active, &footer, 64));
+    let narrow = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Active,
+        false,
+        &footer,
+        64,
+    ));
     assert!(!narrow.contains("tok/s"), "{narrow}");
     assert!(narrow.contains("Σ180.1k(C24%)"), "{narrow}");
 }
@@ -267,8 +280,12 @@ fn the_footer_leaves_the_per_turn_figure_to_the_token_line() {
         },
     );
 
-    let line =
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Active, &footer, 80));
+    let line = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Active,
+        false,
+        &footer,
+        80,
+    ));
     // Two standing gauges only. Carrying the turn figure as well cost 14
     // columns and pushed the whole footer past 80.
     assert!(line.contains("21.7k/1M(2.2%)"), "{line}");
@@ -289,7 +306,7 @@ fn footer_variant_always_uses_the_fixed_primary_color() {
     footer.update_thinking_variant(Some("high"));
 
     for mode in [PersonaLane::Active, PersonaLane::Dev] {
-        let line = repl_footer_left(mode, &footer, 120);
+        let line = repl_footer_left(mode, false, &footer, 120);
         assert!(line.contains("\x1b[1m\x1b[34mhigh\x1b[0m"));
         assert_eq!(
             strip_terminal_control_sequences(&line),
@@ -328,7 +345,7 @@ fn mixed_footer_uses_dim_provider_and_hides_global_variant() {
     let mut footer = ReplFooterStatus::from_config(&config, 0, TurnTokens::default());
     footer.update_thinking_variant(Some("mixed"));
 
-    let line = repl_footer_left(PersonaLane::Active, &footer, 120);
+    let line = repl_footer_left(PersonaLane::Active, false, &footer, 120);
 
     assert_eq!(footer.provider, "mixed");
     assert!(footer.thinking.is_none());
@@ -835,4 +852,30 @@ fn the_sigma_meter_counts_running_subagents() {
     assert!(line(&meter).contains("Σ10k"), "{}", line(&meter));
     meter.live_extra_tokens = 2_500;
     assert!(line(&meter).contains("Σ12.5k"), "{}", line(&meter));
+}
+
+/// 只读开着(09-23):「只读」直接顶替模式那几个字;窄屏时它跟模式标签一样最后才裁。
+#[test]
+fn footer_shows_read_only_in_place_of_the_mode_label() {
+    let config = AppConfig::default();
+    let footer = ReplFooterStatus::from_config(&config, 0, TurnTokens::default());
+    let label = t("read-only", "只读");
+    let on = strip_terminal_control_sequences(&repl_footer_left(
+        PersonaLane::Active,
+        true,
+        &footer,
+        120,
+    ));
+    assert!(on.starts_with(&format!("{label} · ")), "{on}");
+    assert!(!on.contains(PersonaLane::Active.label()), "{on}");
+    let off = strip_terminal_control_sequences(&repl_footer_left(
+        PersonaLane::Active,
+        false,
+        &footer,
+        120,
+    ));
+    assert!(!off.contains(label), "{off}");
+    let narrow =
+        strip_terminal_control_sequences(&repl_footer_left(PersonaLane::Active, true, &footer, 16));
+    assert!(narrow.contains(label), "窄屏也看得见: {narrow}");
 }
