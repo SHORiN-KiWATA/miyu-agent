@@ -40,14 +40,14 @@ pub fn prepare_script_refresh(
     config: &miyu_base::config::AppConfig,
     paths: &MiyuPaths,
 ) -> Result<Option<ScriptRefreshSnapshot>> {
-    let roots = script_scan_roots(config, paths);
+    let root_layers = script_scan_root_layers(config, paths);
+    let roots: Vec<PathBuf> = root_layers.iter().map(|root| root.path.clone()).collect();
     for _ in 0..3 {
         let before = catalog_fingerprint(&roots)?;
         if Some(before) == current {
             return Ok(None);
         }
-        let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-        let mut scan = scan_scripts(&dirs)?;
+        let mut scan = scan_scripts_at(&root_layers)?;
         retain_persona_visible(config, paths, &mut scan.entries);
         let after = catalog_fingerprint(&roots)?;
         if before == after {
@@ -69,10 +69,12 @@ pub(crate) fn retain_persona_visible(
     entries: &mut Vec<super::ScriptEntry>,
 ) {
     let default_persona = miyu_core::skills::is_default_persona(config);
-    let allow =
-        miyu_base::config::PersonaManifest::load(config, paths, &config.active_persona_scope())
-            .plugins
-            .scripts;
+    let full_manifest =
+        miyu_base::config::PersonaManifest::load(config, paths, &config.active_persona_scope());
+    // 技能子系统整个关掉时,技能一件不挂,带路脚本也跟着不可用。
+    let skills_on = full_manifest.enabled_subsystems(config).skills;
+    let manifest = full_manifest.plugins;
+    let allow = &manifest.scripts;
     // 人格自己那一层(`<scripts>/personas/<人格>/`)永远算数:那是它自己写的、
     // 或专门给它放的,白名单是给内置层和全局层用的——不然它刚 register 完的
     // 脚本自己都调不到(用户实测)。
@@ -84,6 +86,17 @@ pub(crate) fn retain_persona_visible(
         let listed = allow
             .as_ref()
             .is_some_and(|list| list.iter().any(|id| id == &entry.id));
+        // 技能带路的脚本:开关跟着那份技能走——技能关掉,它带的脚本也一并不可用
+        // (09-23)。功能表把技能开关连动写进了脚本白名单,这里再兜一道,手写的
+        // persona.toml 也不会出现「技能开着、脚本没开」或反过来的断裂。
+        if let Some(skill) = entry.origin.skill.as_deref() {
+            return skills_on
+                && miyu_core::skills::builtin_skill_enabled(
+                    default_persona,
+                    &manifest.skills,
+                    skill,
+                );
+        }
         if super::is_builtin_script(paths, entry) && !default_persona {
             return listed;
         }
@@ -129,6 +142,61 @@ mod persona_gate_tests {
         (config, paths, temp)
     }
 
+    /// 同上,但写的是**技能**白名单(`plugins.skills`)——技能带路的脚本那道门
+    /// 看的是它,不是脚本白名单。
+    fn setup_skills(
+        persona: &str,
+        allow: Option<&[&str]>,
+    ) -> (miyu_base::config::AppConfig, MiyuPaths, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = MiyuPaths::new().unwrap();
+        paths.root_dir = temp.path().to_path_buf();
+        paths.system_scripts_dir = temp.path().join("system");
+        paths.scripts_dir = temp.path().join("scripts");
+        paths.data_dir = temp.path().join("data");
+        paths.state_dir = temp.path().join("state");
+        let mut config = miyu_base::config::AppConfig::default();
+        config.prompt.active_persona = persona.to_string();
+        if let Some(allow) = allow {
+            let scope = config.active_persona_scope();
+            let dir = miyu_base::config::PersonaManifest::manifest_path(&config, &paths, &scope);
+            std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+            let mut manifest = miyu_base::config::PersonaManifest::all();
+            manifest.plugins.skills = Some(allow.iter().map(|name| name.to_string()).collect());
+            std::fs::write(&dir, manifest.to_toml()).unwrap();
+        }
+        (config, paths, temp)
+    }
+
+    /// 技能子系统整个关掉(`subsystems.skills = false`)时,技能一件都不挂,
+    /// 它们带路的脚本也不能再经工具桥调到——哪怕白名单是「全开」。
+    #[test]
+    fn skill_carried_scripts_go_with_the_skills_subsystem() {
+        let (config, paths, _temp) = setup("", None);
+        let scope = config.active_persona_scope();
+        let manifest_path =
+            miyu_base::config::PersonaManifest::manifest_path(&config, &paths, &scope);
+        std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        let mut manifest = miyu_base::config::PersonaManifest::all();
+        manifest.subsystems.skills = false;
+        std::fs::write(&manifest_path, manifest.to_toml()).unwrap();
+        let carried = paths
+            .system_personas_dir()
+            .unwrap()
+            .join("default/skills/travel/scripts");
+        let mut entries = vec![
+            entry("flight", &carried),
+            entry("global_tool", &paths.scripts_dir),
+        ];
+        entries[0].origin = super::super::ScriptOrigin {
+            layer: super::super::ScriptLayerKind::BuiltinSkill,
+            skill: Some("travel".to_string()),
+        };
+        retain_persona_visible(&config, &paths, &mut entries);
+        let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(ids, vec!["global_tool"]);
+    }
+
     #[test]
     fn own_layer_survives_the_allowlist_and_builtins_need_naming() {
         let (config, paths, _temp) = setup("alter.md", Some(&["bili"]));
@@ -158,6 +226,72 @@ mod persona_gate_tests {
         retain_persona_visible(&config, &paths, &mut entries);
         let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
         assert_eq!(ids, vec!["mine", "global_tool"]);
+    }
+
+    /// 09-23:技能带路的脚本开关跟着那份技能走——技能关掉,它带的脚本也一并
+    /// 不可用;技能打开就回来。自定义人格下不会出现「技能开着、脚本没开」。
+    #[test]
+    fn skill_carried_scripts_follow_the_skill_allowlist() {
+        let (config, paths, _temp) = setup("alter.md", None);
+        let skills_dir = paths.system_personas_dir().unwrap().join("default/skills");
+        let carried = skills_dir.join("travel/scripts");
+        let mut entries = vec![
+            entry("flight", &carried),
+            entry("hotel", &carried),
+            entry("global_tool", &paths.scripts_dir),
+        ];
+        for entry in &mut entries {
+            if Path::new(&entry.path).starts_with(&carried) {
+                entry.origin = super::super::ScriptOrigin {
+                    layer: super::super::ScriptLayerKind::BuiltinSkill,
+                    skill: Some("travel".to_string()),
+                };
+            }
+        }
+        // 自定义人格、清单没点名:技能不挂,带路脚本也不挂;全局层照旧。
+        retain_persona_visible(&config, &paths, &mut entries);
+        let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(ids, vec!["global_tool"]);
+
+        // 技能点开(清单里点名 travel):带路脚本一起回来。清单里也点名脚本,
+        // 免得被「内置脚本要逐个点名」那条门挡下——这里验的是技能这一道。
+        let (config, paths, _temp) = setup_skills("alter.md", Some(&["travel"]));
+        let skills_dir = paths.system_personas_dir().unwrap().join("default/skills");
+        let carried = skills_dir.join("travel/scripts");
+        let mut entries = vec![entry("flight", &carried), entry("hotel", &carried)];
+        for entry in &mut entries {
+            entry.origin = super::super::ScriptOrigin {
+                layer: super::super::ScriptLayerKind::BuiltinSkill,
+                skill: Some("travel".to_string()),
+            };
+        }
+        // 技能开着:带路脚本放行(脚本白名单里也点了名)。
+        retain_persona_visible(&config, &paths, &mut entries);
+        let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(ids, vec!["flight", "hotel"]);
+
+        // 技能关掉(清单里没有 travel):脚本白名单点没点名都不算数。
+        let (config, paths, _temp) = setup_skills("alter.md", None);
+        let carried = paths
+            .system_personas_dir()
+            .unwrap()
+            .join("default/skills/travel/scripts");
+        let mut entries = vec![entry("flight", &carried), entry("hotel", &carried)];
+        for entry in &mut entries {
+            entry.origin = super::super::ScriptOrigin {
+                layer: super::super::ScriptLayerKind::BuiltinSkill,
+                skill: Some("travel".to_string()),
+            };
+        }
+        retain_persona_visible(&config, &paths, &mut entries);
+        assert!(
+            entries.is_empty(),
+            "技能关掉,它带路的脚本不该还在: {:?}",
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 }
 

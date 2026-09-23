@@ -11,6 +11,49 @@ fn ids(list: &Value) -> Vec<String> {
         .collect()
 }
 
+/// 层名跟着扫描根走,不按位置查表(09-23)。
+///
+/// 根链随带路技能的个数变长:这里摆两个技能各带一件脚本,根链就有 7 个根。
+/// 按位置查 5 格的标签表时,`global` 被标成 `persona`,`persona` 那格越界 panic。
+#[test]
+fn overview_labels_layers_by_root_not_by_position() {
+    let temp = tempfile::tempdir().unwrap();
+    let (config, paths) = test_env(temp.path());
+    // 新布局的资源根 = 内置脚本目录的父目录 = temp 本身。
+    let factory = temp.path().join("personas/default");
+    for skill in ["alpha", "beta"] {
+        write_script(
+            &factory.join(format!("skills/{skill}/scripts")),
+            &format!("{skill}_tool.sh"),
+            "#!/bin/sh\n# Description: Skill tool\necho\n",
+        );
+    }
+    write_script(
+        &paths.scripts_dir,
+        "global_tool.sh",
+        "#!/bin/sh\n# Description: G\necho\n",
+    );
+    write_script(
+        &config.active_persona_scripts_dir(&paths),
+        "persona_tool.sh",
+        "#!/bin/sh\n# Description: P\necho\n",
+    );
+
+    let overview = scripts_dashboard_overview(&config, &paths).unwrap();
+    let scripts = overview["scripts"].as_array().unwrap();
+    let layer_of = |id: &str| {
+        scripts
+            .iter()
+            .find(|s| s["id"] == id)
+            .map(|s| s["layer"].as_str().unwrap().to_string())
+            .unwrap_or_else(|| panic!("{id} 不在概览里"))
+    };
+    assert_eq!(layer_of("alpha_tool"), "builtin-skill");
+    assert_eq!(layer_of("beta_tool"), "builtin-skill");
+    assert_eq!(layer_of("global_tool"), "global");
+    assert_eq!(layer_of("persona_tool"), "persona");
+}
+
 #[test]
 fn overview_reports_layers_counts_overrides_unregistered_and_disabled() {
     let temp = tempfile::tempdir().unwrap();

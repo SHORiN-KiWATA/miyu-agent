@@ -2,7 +2,6 @@
 # 显示名称：哔哩哔哩直播控制
 # Description: Control a Bilibili live room. status and areas are read-only; update changes title and/or area atomically; start goes live and returns the RTMP address and stream key; stop ends it; login/logout manage credentials. Areas accept a Chinese name, pinyin or 'parent/child' and are resolved to an id; an ambiguous one fails with candidates in error.detail.candidates. WARNING: start makes the room public at once and notifies followers, and cannot be silently undone — get the user's explicit consent first; update during a stream is visible to viewers immediately. Not logged in returns kind=auth: walk the user through login (two-step QR code written as a PNG whose path is returned).
 # 描述：控制哔哩哔哩直播间：改标题分区、开播拿推流码、下播、扫码登录。
-# Expose: skill
 # Timeout: 120
 # Group: streaming
 # Parameters:

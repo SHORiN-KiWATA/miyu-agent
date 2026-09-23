@@ -389,11 +389,12 @@ fn malformed_index_entries_do_not_hide_valid_scripts() {
     assert_eq!(scan.entries[0].id, "valid_script");
 }
 
-/// 四层扫描根:内置(system)与全局(data)各含「顶层 + personas/<人格>」。
-/// 内置脚本装在 `<system>/personas/default/`。09-13 起这一层对**每个**人格都扫
-/// (自定义人格能在引导里逐个勾内置脚本),自定义人格是否真挂由
-/// `prepare_script_refresh` 按清单白名单裁决;没写清单 = 一件不挂,纯净不变。
-/// 覆盖顺序低→高:内置平台 < 内置默认 < 内置人格 < 全局 < 全局人格。
+/// 扫描根与来源层:老布局(内置 `<system>/personas/<人格>/`)与新布局
+/// (`<资源根>/personas/<人格>/{scripts,skills/<技能>/scripts}`)并存,
+/// 用户层最后(优先级最高)。内置脚本装在 `personas/` 下,自定义人格在资源树里
+/// 没有自己的目录=天然拿不到;09-13 起出厂人格那层照扫,自定义人格能在引导里
+/// 逐个勾内置脚本,是否真挂由 `prepare_script_refresh` 按清单白名单裁决。
+/// 覆盖顺序低→高:内置平台 < 内置默认 < 内置人格 < 新布局 < 全局 < 全局人格。
 #[test]
 fn script_scan_roots_resolve_persona_substructure_per_layer() {
     let temp = tempfile::tempdir().unwrap();
@@ -401,37 +402,72 @@ fn script_scan_roots_resolve_persona_substructure_per_layer() {
     paths.system_scripts_dir = temp.path().join("system");
     paths.scripts_dir = temp.path().join("data/scripts");
 
+    // 新布局的资源根 = 内置脚本目录的父目录 = temp 本身。
+    let personas = temp.path().join("personas");
+    let layers = |config: &miyu_base::config::AppConfig| {
+        script_scan_root_layers(config, &paths)
+            .into_iter()
+            .map(|root| (root.path, root.origin.layer))
+            .collect::<Vec<_>>()
+    };
     let default_config = miyu_base::config::AppConfig::default();
-    let roots = script_scan_roots(&default_config, &paths);
+    let roots = layers(&default_config);
     assert_eq!(
         roots,
         vec![
-            paths.system_scripts_dir.clone(),
-            paths.system_scripts_dir.join("personas/default"),
-            paths.scripts_dir.clone(),
-            paths.scripts_dir.join("personas/default"),
+            (paths.system_scripts_dir.clone(), ScriptLayerKind::Builtin),
+            (
+                paths.system_scripts_dir.join("personas/default"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (
+                personas.join("default/scripts"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (paths.scripts_dir.clone(), ScriptLayerKind::Global),
+            (
+                paths.scripts_dir.join("personas/default"),
+                ScriptLayerKind::Persona
+            ),
         ],
-        "默认人格:四层,内置人格层解析到 personas/default"
+        "默认人格:老布局内置两层 + 新布局内置一层 + 用户两层"
     );
 
     let mut custom = miyu_base::config::AppConfig::default();
     custom.prompt.active_persona = "alter".to_string();
-    let custom_roots = script_scan_roots(&custom, &paths);
+    let custom_roots = layers(&custom);
     assert_eq!(
         custom_roots,
         vec![
-            paths.system_scripts_dir.clone(),
-            paths.system_scripts_dir.join("personas/default"),
-            paths.system_scripts_dir.join("personas/alter"),
-            paths.scripts_dir.clone(),
-            paths.scripts_dir.join("personas/alter"),
+            (paths.system_scripts_dir.clone(), ScriptLayerKind::Builtin),
+            (
+                paths.system_scripts_dir.join("personas/default"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (
+                paths.system_scripts_dir.join("personas/alter"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (
+                personas.join("default/scripts"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (
+                personas.join("alter/scripts"),
+                ScriptLayerKind::BuiltinPersona
+            ),
+            (paths.scripts_dir.clone(), ScriptLayerKind::Global),
+            (
+                paths.scripts_dir.join("personas/alter"),
+                ScriptLayerKind::Persona
+            ),
         ],
-        "自定义人格:内置默认层照扫(可选件),再多一层不存在的 personas/alter"
+        "自定义人格:出厂层照扫(可选件),再各多一层不存在的 personas/alter"
     );
-    // 顶层(平台)与内置默认层无论人格都在;差异只在 personas/<人格> 这一维。
+    // 顶层(平台)与出厂层无论人格都在;差异只在 personas/<人格> 这一维。
     assert_eq!(roots[0], custom_roots[0]);
     assert_eq!(roots[1], custom_roots[1]);
-    assert_eq!(roots[2], custom_roots[3]);
+    assert_eq!(roots[3], custom_roots[5]);
 }
 
 /// 用户机器实查(09-05):`gpustoggle.bak`(无描述头)与 index 里的 gpustoggle
@@ -545,4 +581,154 @@ echo ok";
         &extract_metadata("#!/bin/sh\n# Description: x\n# Trust: owner\necho"),
     );
     assert_eq!(pinned.trust, crate::tools::ToolTrust::External);
+}
+
+/// 新布局(09-23)的隔离资源树:`<root>/share/scripts` 是内置脚本目录
+/// (`system_scripts_dir`),它旁边的 `<root>/share/personas/` 就是新布局的资源根。
+fn resource_paths(root: &std::path::Path) -> miyu_base::paths::MiyuPaths {
+    let mut paths = miyu_base::paths::MiyuPaths::new().unwrap();
+    paths.root_dir = root.join("home");
+    paths.data_dir = root.join("home/data");
+    paths.state_dir = root.join("home/state");
+    paths.cache_dir = root.join("cache");
+    paths.scripts_dir = root.join("home/extensions/scripts");
+    paths.system_scripts_dir = root.join("share/scripts");
+    paths
+}
+
+fn write_test_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, body).unwrap();
+    path
+}
+
+/// 新布局:人格自己的脚本 `<前缀>/personas/<人格>/scripts/` 与技能带路的脚本
+/// `<前缀>/personas/<人格>/skills/<技能名>/scripts/` 都要被扫到,并标出来源层;
+/// 技能带路那条还要带技能名——第二批据此做「不单独列行 + 开关连动」。
+#[test]
+fn new_persona_layout_scans_scripts_and_marks_skill_carried_ones() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = resource_paths(temp.path());
+    let config = miyu_base::config::AppConfig::default();
+
+    // 人格自己的脚本。
+    write_test_script(
+        &temp.path().join("share/personas/default/scripts"),
+        "persona_tool",
+        "#!/bin/sh\n# Description: A persona-owned tool\n",
+    );
+    // 技能带路的脚本 + 同一棵技能树里的 SKILL.md。
+    let skill_dir = temp.path().join("share/personas/default/skills/travel");
+    write_test_script(
+        &skill_dir.join("scripts"),
+        "flight",
+        "#!/bin/sh\n# Description: A skill-carried tool\n",
+    );
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: travel\ndescription: Plan a trip\n---\n\nBody.",
+    )
+    .unwrap();
+
+    let roots = script_scan_root_layers(&config, &paths);
+    let scan = scan_scripts_at(&roots).unwrap();
+    let by_id = |id: &str| scan.entries.iter().find(|entry| entry.id == id).unwrap();
+
+    let persona_tool = by_id("persona_tool");
+    assert_eq!(persona_tool.origin.layer, ScriptLayerKind::BuiltinPersona);
+    assert!(persona_tool.origin.is_builtin());
+    assert_eq!(persona_tool.origin.skill, None);
+    assert!(is_builtin_script(&paths, persona_tool));
+
+    let flight = by_id("flight");
+    assert_eq!(flight.origin.layer, ScriptLayerKind::BuiltinSkill);
+    assert_eq!(flight.origin.skill.as_deref(), Some("travel"));
+    assert!(is_builtin_script(&paths, flight));
+
+    // 同一棵树里的技能也走读盘,而且认得带路脚本属于哪个技能。
+    let loaded = miyu_core::skills::load("travel", &config, &paths).unwrap();
+    assert_eq!(loaded.source, miyu_core::skills::SkillSource::BuiltIn);
+    assert!(loaded.files.iter().any(|file| file.ends_with("scripts")));
+}
+
+/// 老布局 `<前缀>/scripts/personas/<人格>/` 必须继续被扫到:升级后老用户装在
+/// 旧路径下的脚本不能凭空消失,而且仍算内置层(人格白名单照旧管得着)。
+#[test]
+fn legacy_persona_script_layout_still_scans() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = resource_paths(temp.path());
+    let config = miyu_base::config::AppConfig::default();
+    let legacy = temp.path().join("share/scripts/personas/default");
+    write_test_script(
+        &legacy,
+        "legacy_tool",
+        "#!/bin/sh\n# Description: Legacy layout tool\n",
+    );
+
+    let roots = script_scan_root_layers(&config, &paths);
+    assert!(roots.iter().any(|root| root.path == legacy));
+    let scan = scan_scripts_at(&roots).unwrap();
+    let entry = scan
+        .entries
+        .iter()
+        .find(|entry| entry.id == "legacy_tool")
+        .unwrap();
+    assert_eq!(entry.origin.layer, ScriptLayerKind::BuiltinPersona);
+    assert!(is_builtin_script(&paths, entry));
+}
+
+/// 09-23:一个脚本进不进模型的常驻 tools 数组,只看它住在哪——
+/// `skills/<技能名>/scripts/` 里的由技能带路(不进面,可经工具桥调用),
+/// 其余照旧进面。判据是 layout,不再看脚本头部的一行声明。
+#[test]
+fn skill_carried_scripts_stay_off_the_tool_face_by_layout() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = resource_paths(temp.path());
+    let config = miyu_base::config::AppConfig::default();
+
+    // 人格自己的脚本(住在 `scripts/`):进面。
+    write_test_script(
+        &temp.path().join("share/personas/default/scripts"),
+        "persona_tool",
+        "#!/bin/sh\n# Description: A persona-owned tool\n",
+    );
+    // 技能带路的脚本(住在 `skills/<技能名>/scripts/`):不进面。
+    write_test_script(
+        &temp
+            .path()
+            .join("share/personas/default/skills/travel/scripts"),
+        "flight",
+        "#!/bin/sh\n# Description: A skill-carried tool\n",
+    );
+
+    let roots = script_scan_root_layers(&config, &paths);
+    let scan = scan_scripts_at(&roots).unwrap();
+    let specs = script_specs(&scan.entries, &paths.scripts_dir, &paths.cache_dir);
+    let exposed = |id: &str| {
+        specs
+            .iter()
+            .find(|spec| spec.name == id)
+            .unwrap_or_else(|| panic!("{id} missing from specs"))
+            .exposed
+    };
+    assert!(exposed("persona_tool"), "住在 scripts/ 的照旧进常驻面");
+    assert!(!exposed("flight"), "技能带路的不进常驻面");
+
+    // 头部写没写声明都不影响:同一份脚本,住哪儿就是哪儿。
+    let mut registry = ToolRegistry::new();
+    crate::tools::load_tools::register(&mut registry);
+    registry
+        .replace_script_tools(specs, scan.unregistered)
+        .unwrap();
+    let names: Vec<String> = registry
+        .stub_definitions()
+        .into_iter()
+        .map(|definition| definition.function.name)
+        .collect();
+    assert!(names.contains(&"persona_tool".to_string()));
+    assert!(
+        !names.contains(&"flight".to_string()),
+        "技能带路的脚本连桩都不该进常驻面"
+    );
 }

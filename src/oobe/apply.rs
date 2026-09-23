@@ -11,7 +11,7 @@
 //! | → | 完成标志 | `config.oobe_done` |
 
 use anyhow::{bail, Context, Result};
-use miyu_base::config::feature_catalog::{self, FeatureItem};
+use miyu_base::config::feature_catalog::{self, FeatureItem, FeatureSources};
 use miyu_base::config::{AppConfig, PersonaManifest, ProviderConfig};
 use miyu_base::paths::MiyuPaths;
 
@@ -80,13 +80,14 @@ pub(super) fn save_features(
     paths: &MiyuPaths,
     scope: &str,
     items: &[FeatureItem],
+    sources: &FeatureSources,
     default_persona: bool,
 ) -> Result<()> {
     let before = serde_json::to_string(&config.plugins).ok();
     let mcp_before = config.mcp.enabled;
     feature_catalog::apply_machine_switches(config, items);
     let mut manifest = PersonaManifest::load(config, paths, scope);
-    feature_catalog::apply_selection(&mut manifest, items, default_persona);
+    feature_catalog::apply_selection(&mut manifest, items, sources, default_persona);
     let path = PersonaManifest::manifest_path(config, paths, scope);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)

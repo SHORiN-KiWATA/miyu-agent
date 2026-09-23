@@ -15,47 +15,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use yaml_rust2::scanner::{Scanner, Token, TokenType};
 use yaml_rust2::{Yaml, YamlLoader};
 
-/// Skills compiled into the binary: (name, raw SKILL.md, platform_wide). A
-/// user skill of the same name in the persona/global directories overrides the
-/// built-in.
+/// 平台级内置技能:任何人格(包括从白板捏起的)都得拿到的元能力。
 ///
-/// 内置技能默认属于 Miyu 这个出厂人格,只在默认人格下可见——别人换上自定义
-/// 人格拿到的是纯净状态(09-01)。唯一例外是 `platform_wide=true` 的
-/// skill-creator:它是"如何扩展自己"的元能力,任何人格(包括从白板捏起的)
-/// 想给自己加技能都得用它,归人格等于锁死自定义角色的自我扩展入口。
+/// skill-creator 是「如何扩展自己」:自定义人格想给自己加技能就得用它,归人格
+/// 等于锁死自定义角色的自我扩展入口。script-creator 是脚本接口契约(头部/
+/// stdin JSON/退出码),同样是元能力,缺了自定义人格写出的脚本注册不上(09-05)。
 ///
-/// 源码布局与脚本对齐:平台级(skill-creator)在 `src/skills/` 顶层,人格级在
-/// `src/skills/personas/default/`。技能是 `include_str!` 编译进二进制的,目录
-/// 只是组织形式;运行时门控靠 `platform_wide` 标记,不靠目录(与脚本层用
-/// 目录做隐式门不同——脚本是磁盘扫描,技能是编译常量)。
-const BUILTIN_SKILLS: &[(&str, &str, bool)] = &[
-    (
-        "skill-creator",
-        include_str!("../../../../src/skills/skill-creator.md"),
-        true,
-    ),
-    // 脚本接口契约(头部/stdin JSON/退出码)同样是"如何扩展自己"的元能力,
-    // 任何人格都得拿到,否则自定义人格写出的脚本注册不上(09-05)。
-    (
-        "script-creator",
-        include_str!("../../../../src/skills/script-creator.md"),
-        true,
-    ),
-    // 09-21:机票/酒店比价两件脚本改成技能资源(`# Expose: skill`),这份技能
-    // 是它们唯一的入口——漏登记的话两件能力就整个消失。
-    (
-        "travel-planner",
-        include_str!("../../../../src/skills/personas/default/travel-planner.md"),
-        false,
-    ),
-    // 同上:开播是不可悄悄撤销的公开动作(立刻公开 + 推送粉丝),一年用不了
-    // 几次,藏一层既省常驻也更安全。
-    (
-        "bilibili-live",
-        include_str!("../../../../src/skills/personas/default/bilibili-live.md"),
-        false,
-    ),
-];
+/// 09-23 起技能不再 `include_str!` 编进二进制,改与脚本同一条路线:从资源树的
+/// `<资源根>/personas/<人格>/skills/<技能名>/SKILL.md` 读盘(见 [`skill_roots`])。
+/// 目录决定**属于谁**,这份名单决定**谁能跨人格用**——门控语义与从前一致:
+/// 平台级永远放行,其余内置技能只在出厂人格下默认可见,自定义人格按人格清单的
+/// `plugins.skills` 白名单逐个勾回来(09-01 / 09-13)。
+const PLATFORM_WIDE_SKILLS: &[&str] = &["skill-creator", "script-creator"];
 
 /// 内置资源(技能/脚本)默认只属于 Miyu 出厂人格。判据:`active_persona` 去空
 /// 白后为空 = scope "default" = Miyu 本人。非默认人格下,非平台级的内置资源
@@ -76,16 +47,7 @@ fn skill_allowlist(config: &AppConfig, paths: &MiyuPaths) -> Option<Vec<String>>
 
 /// 平台级内置技能(skill-creator / script-creator):任何人格、任何白名单都放行。
 pub(crate) fn is_platform_wide_builtin(name: &str) -> bool {
-    BUILTIN_SKILLS
-        .iter()
-        .any(|(builtin, _, platform_wide)| *builtin == name && *platform_wide)
-}
-
-/// 非平台级的内置技能(travel-planner、bilibili-live 这类 Miyu 配件)。
-fn is_optional_builtin(name: &str) -> bool {
-    BUILTIN_SKILLS
-        .iter()
-        .any(|(builtin, _, platform_wide)| *builtin == name && !*platform_wide)
+    PLATFORM_WIDE_SKILLS.contains(&name)
 }
 
 /// 这个技能在本人格下能不能用。
@@ -109,10 +71,32 @@ fn allowed_by(
     let listed = allowlist
         .as_ref()
         .is_some_and(|list| list.iter().any(|item| item == name));
-    if is_optional_builtin(name) && !default_persona {
+    // 非平台级的内置技能(travel-planner、bilibili-live 这类 Miyu 配件)。
+    if source == SkillSource::BuiltIn && !default_persona {
         return listed;
     }
     allowlist.is_none() || listed
+}
+
+/// 一个内置技能在本人格下开没开。技能带路的脚本用它当门:技能关掉,它
+/// `skills/<技能名>/scripts/` 下的脚本也一并不可用(09-23)。判据与目录技能的
+/// [`allowed_by`] 一致——非平台级内置技能在自定义人格下只有清单点了名才开。
+pub fn builtin_skill_enabled(
+    default_persona: bool,
+    allowlist: &Option<Vec<String>>,
+    name: &str,
+) -> bool {
+    if is_platform_wide_builtin(name) {
+        return true;
+    }
+    let listed = allowlist
+        .as_ref()
+        .is_some_and(|list| list.iter().any(|item| item == name));
+    if default_persona {
+        allowlist.is_none() || listed
+    } else {
+        listed
+    }
 }
 
 /// 引导里可以逐个勾的技能:目录里的 + 非平台级内置的,(id, 界面名, 界面说明, 是否内置)。
@@ -189,7 +173,9 @@ fn discover_visible(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillEn
                 }
             };
             if seen.insert(metadata.name.clone()) {
-                if entries.len() >= MAX_SKILL_CATALOG_ENTRIES.saturating_sub(1) {
+                // 内置技能 09-23 起也走这条扫盘路,不再在循环外补一批,
+                // 所以这里不需要给它留一个空位。
+                if entries.len() >= MAX_SKILL_CATALOG_ENTRIES {
                     bail!("skill catalog exceeds the {MAX_SKILL_CATALOG_ENTRIES} entry limit");
                 }
                 entries.push(SkillEntry {
@@ -198,15 +184,6 @@ fn discover_visible(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillEn
                     directory: Some(directory),
                 });
             }
-        }
-    }
-    for (name, raw, _) in BUILTIN_SKILLS {
-        if !seen.contains(*name) {
-            entries.push(SkillEntry {
-                metadata: parse_skill_metadata(raw, Some(name))?,
-                source: SkillSource::BuiltIn,
-                directory: None,
-            });
         }
     }
     Ok(entries)
@@ -224,15 +201,10 @@ pub fn catalog_fingerprint(config: &AppConfig, paths: &MiyuPaths) -> Result<[u8;
         }
     }
     // 指纹要把「本人格能看见哪些内置技能」也算进去:否则切换人格后目录没变、
-    // 指纹不变,而可见的内置集合已经变了,催化缓存会拿旧目录充数。
-    let default_persona = is_default_persona(config);
-    for (name, raw, platform_wide) in BUILTIN_SKILLS {
-        if !platform_wide && !default_persona {
-            continue;
-        }
-        hasher.update(name.as_bytes());
-        hasher.update(raw.as_bytes());
-    }
+    // 指纹不变,而可见的内置集合已经变了,催化缓存会拿旧目录充数。内置技能的
+    // 内容现在也在根目录里(上面哈希过了),这里补上「出厂人格与否」这一个
+    // 判据——非默认人格会隐掉非平台级内置件。
+    hasher.update(&[is_default_persona(config) as u8]);
     // 白名单同理:清单一改,可见集合就变了(自定义人格靠它把内置技能勾回来)。
     if let Some(allowlist) = skill_allowlist(config, paths) {
         hasher.update(b"allowlist");
@@ -255,46 +227,33 @@ pub fn load(name: &str, config: &AppConfig, paths: &MiyuPaths) -> Result<LoadedS
         .into_iter()
         .find(|entry| entry.metadata.name == name)
         .ok_or_else(|| anyhow::anyhow!("skill not found: {name}"))?;
-    if let Some(directory) = entry.directory {
-        let raw = read_skill_file(&directory.join("SKILL.md"))?;
-        let (metadata, body) = parse_skill_document(&raw, Some(name))?;
-        let mut files = Vec::new();
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            if name == "SKILL.md" || name.to_string_lossy().starts_with('.') {
-                continue;
-            }
-            if files.len() >= MAX_SKILL_RESOURCE_ENTRIES {
-                bail!(
-                    "skill resource manifest exceeds the {MAX_SKILL_RESOURCE_ENTRIES} entry limit"
-                );
-            }
-            files.push(entry.path());
-        }
-        files.sort();
-        return Ok(LoadedSkill {
-            metadata,
-            body,
-            source: entry.source,
-            base_dir: Some(directory),
-            files,
-        });
-    }
-    // 非默认人格看不见非平台级内置技能,自然也加载不了——与 discover 的
-    // 可见性保持一致,不然模型照着历史 load 能把隐藏技能捞回来。
-    let raw = BUILTIN_SKILLS
-        .iter()
-        .find(|(builtin_name, _, _)| *builtin_name == name)
-        .map(|(_, raw, _)| *raw)
+    // 09-23 起内置技能也住磁盘,`discover` 找得到的技能一定有目录;缺失/坏掉的
+    // SKILL.md 在扫描时就被跳过,于是这里只会落到「找不到」——与隐藏技能的
+    // 报错同一条路,模型照着历史 load 也捞不回来。
+    let directory = entry
+        .directory
         .with_context(|| format!("skill not found: {name}"))?;
-    let (metadata, body) = parse_skill_document(raw, Some(name))?;
+    let raw = read_skill_file(&directory.join("SKILL.md"))?;
+    let (metadata, body) = parse_skill_document(&raw, Some(name))?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == "SKILL.md" || name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if files.len() >= MAX_SKILL_RESOURCE_ENTRIES {
+            bail!("skill resource manifest exceeds the {MAX_SKILL_RESOURCE_ENTRIES} entry limit");
+        }
+        files.push(entry.path());
+    }
+    files.sort();
     Ok(LoadedSkill {
         metadata,
         body,
-        source: SkillSource::BuiltIn,
-        base_dir: None,
-        files: Vec::new(),
+        source: entry.source,
+        base_dir: Some(directory),
+        files,
     })
 }
 
@@ -309,13 +268,30 @@ pub fn is_generated_skill(raw: &str) -> bool {
 }
 
 fn skill_roots(config: &AppConfig, paths: &MiyuPaths) -> Vec<(PathBuf, SkillSource)> {
-    vec![
+    // 优先级从高到低:人格自己的(data 层)> 全局(data 层)> 资源树里的内置。
+    let mut roots = vec![
         (
             config.active_persona_skills_dir(paths),
             SkillSource::Persona,
         ),
         (paths.skills_dir.clone(), SkillSource::Global),
-    ]
+    ];
+    // 内置技能(09-23):`<资源根>/personas/<人格>/skills/<技能名>/SKILL.md`。
+    // 候选链按优先级排;人格内部先当前人格再出厂人格——资源树里真给了这个人格
+    // 一份技能,它就压过出厂那份。出厂人格那层对谁都扫:平台级技能任何人格都要
+    // 拿得到,非平台级内置件由白名单决定勾不勾(09-01 / 09-13)。
+    let factory = miyu_base::config::persona_scope_name("");
+    let active = config.active_persona_scope();
+    for root in paths.system_personas_dirs() {
+        let mut scopes = vec![active.clone()];
+        if !scopes.contains(&factory) {
+            scopes.push(factory.clone());
+        }
+        for scope in scopes {
+            roots.push((root.join(scope).join("skills"), SkillSource::BuiltIn));
+        }
+    }
+    roots
 }
 
 fn sorted_skill_directories(root: &Path) -> Result<Vec<PathBuf>> {
@@ -348,38 +324,44 @@ fn sorted_skill_directories(root: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
 
-    /// 仓库里的每份内置技能都必须登记进 [`BUILTIN_SKILLS`]。
-    ///
-    /// 技能是 `include_str!` 编译进来的，目录里多一个文件不会自动生效——
-    /// 09-20 加的 `travel-planner.md` 就这么静默躺了一整天，谁都加载不到
-    /// (09-21 实测发现)。与 AGENTS §2.1 说 descriptions 宏行的是同一个坑。
+    /// 仓库里的内置技能必须按新布局摆在资源树里,而且 `SKILL.md` 的 `name`
+    /// 与目录名一致——09-23 起技能是**读盘**的,目录形态就是契约,摆错位置或
+    /// 名字对不上等于这份技能根本加载不到。09-20 加的 `travel-planner` 曾因
+    /// 忘了登记静默躺了一天(09-21 实测发现),与 AGENTS §2.1 说 descriptions
+    /// 宏行的是同一个坑。
     #[test]
-    fn every_bundled_skill_file_is_registered() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/skills");
-        let registered: std::collections::BTreeSet<&str> =
-            BUILTIN_SKILLS.iter().map(|(name, _, _)| *name).collect();
-        let mut missing = Vec::new();
-        let mut stack = vec![root.clone()];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    stack.push(path);
+    fn bundled_skills_follow_the_persona_resource_layout() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/personas");
+        let mut personas: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .collect::<std::io::Result<Vec<_>>>()
+            .unwrap();
+        personas.sort_by_key(|entry| entry.path());
+        let mut found = BTreeSet::new();
+        for persona in personas {
+            let skills = persona.path().join("skills");
+            if !skills.is_dir() {
+                continue;
+            }
+            for skill in std::fs::read_dir(&skills).unwrap() {
+                let directory = skill.unwrap().path();
+                if !directory.is_dir() {
                     continue;
                 }
-                if path.extension().is_some_and(|ext| ext == "md") {
-                    let stem = path.file_stem().unwrap().to_string_lossy().to_string();
-                    if !registered.contains(stem.as_str()) {
-                        missing.push(stem);
-                    }
-                }
+                let name = directory.file_name().unwrap().to_string_lossy().to_string();
+                let raw = read_skill_file(&directory.join("SKILL.md")).unwrap_or_else(|error| {
+                    panic!("skill {name} has no readable SKILL.md: {error}")
+                });
+                parse_skill_metadata(&raw, Some(&name)).unwrap_or_else(|error| {
+                    panic!("skill {name} has an invalid SKILL.md: {error}")
+                });
+                found.insert(name);
             }
         }
-        missing.sort();
-        assert!(
-            missing.is_empty(),
-            "these bundled skills are not in BUILTIN_SKILLS and can never be loaded: {missing:?}"
-        );
+        // 出厂人格必须带齐平台级技能(任何人格都要拿得到的两件元能力)。
+        for name in PLATFORM_WIDE_SKILLS {
+            assert!(found.contains(*name), "factory persona is missing {name}");
+        }
     }
 
     fn test_paths(root: &Path) -> MiyuPaths {
@@ -396,8 +378,26 @@ mod tests {
             bash_hook_file: root.join("config/shell/bash-hook.sh"),
             zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
             scripts_dir: root.join("data/scripts"),
-            system_scripts_dir: PathBuf::new(),
+            // 内置资源根 = 它的父目录 = `<root>/system`,新布局的 personas/ 就在
+            // 那下面(与生产里 `system_scripts_dir=<前缀>/scripts` 同构)。
+            system_scripts_dir: root.join("system/scripts"),
         }
+    }
+
+    /// 按资源树布局写一份技能:`<root>/system/personas/<人格>/skills/<名>/SKILL.md`。
+    fn write_persona_skill(root: &Path, persona: &str, name: &str, description: &str) -> PathBuf {
+        let directory = root
+            .join("system/personas")
+            .join(persona)
+            .join("skills")
+            .join(name);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n\nBody of {name}."),
+        )
+        .unwrap();
+        directory
     }
 
     #[test]
@@ -425,28 +425,33 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path());
         let config = AppConfig::default();
-        let global = paths.skills_dir.join(BUILTIN_SKILLS[0].0);
+        // 三层同名:资源树里的出厂件 < 全局层 < 人格自己。
+        write_persona_skill(temp.path(), "default", "sample-skill", "builtin");
+        let global = paths.skills_dir.join("sample-skill");
         let persona = config
             .active_persona_skills_dir(&paths)
-            .join(BUILTIN_SKILLS[0].0);
+            .join("sample-skill");
         for (directory, description) in [(&global, "global"), (&persona, "persona")] {
             fs::create_dir_all(directory).unwrap();
             fs::write(
                 directory.join("SKILL.md"),
-                format!(
-                    "---\nname: {}\ndescription: {description}\n---\n",
-                    BUILTIN_SKILLS[0].0
-                ),
+                format!("---\nname: sample-skill\ndescription: {description}\n---\n"),
             )
             .unwrap();
         }
-        let entries = discover(&config, &paths).unwrap();
-        let creator = entries
-            .iter()
-            .find(|entry| entry.metadata.name == BUILTIN_SKILLS[0].0)
-            .unwrap();
-        assert_eq!(creator.source, SkillSource::Persona);
-        assert_eq!(creator.metadata.description, "persona");
+        let source_of = |config: &AppConfig| {
+            discover(config, &paths)
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.metadata.name == "sample-skill")
+                .map(|entry| (entry.source, entry.metadata.description))
+                .unwrap()
+        };
+        assert_eq!(source_of(&config), (SkillSource::Persona, "persona".into()));
+        fs::remove_dir_all(&persona).unwrap();
+        assert_eq!(source_of(&config), (SkillSource::Global, "global".into()));
+        fs::remove_dir_all(&global).unwrap();
+        assert_eq!(source_of(&config), (SkillSource::BuiltIn, "builtin".into()));
     }
 
     /// 内置技能默认属于 Miyu 出厂人格:默认人格看得见非平台级内置技能,
@@ -455,6 +460,15 @@ mod tests {
     fn builtin_skills_are_persona_gated_except_platform_wide() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path());
+        // 出厂人格的技能现在住磁盘:`<root>/system/personas/default/skills/<名>/SKILL.md`。
+        for (name, description) in [
+            ("skill-creator", "Author skills"),
+            ("script-creator", "Author scripts"),
+            ("travel-planner", "Plan travel"),
+            ("bilibili-live", "Control a live room"),
+        ] {
+            write_persona_skill(temp.path(), "default", name, description);
+        }
 
         let default_config = AppConfig::default();
         let names: BTreeSet<String> = discover(&default_config, &paths)
@@ -489,6 +503,91 @@ mod tests {
             catalog_fingerprint(&default_config, &paths).unwrap(),
             catalog_fingerprint(&custom, &paths).unwrap(),
         );
+    }
+
+    /// 新布局的技能读盘:成功、`SKILL.md` 缺失、`SKILL.md` 坏掉三条路。
+    /// 坏掉的那份不该把好技能一起带走(扫描逐目录跳过,不是整层 bail)。
+    #[test]
+    fn skills_load_from_the_persona_disk_layout() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let config = AppConfig::default();
+
+        let directory =
+            write_persona_skill(temp.path(), "default", "sample-skill", "Use for samples");
+        // 技能带路的资源(脚本)也要被 load 收进 files,第二批据此做开关连动。
+        fs::create_dir_all(directory.join("scripts")).unwrap();
+        fs::write(directory.join("scripts/tool.sh"), "#!/bin/sh\necho hi\n").unwrap();
+
+        let entry = discover(&config, &paths)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.metadata.name == "sample-skill")
+            .unwrap();
+        assert_eq!(entry.source, SkillSource::BuiltIn);
+        assert_eq!(entry.directory.as_deref(), Some(directory.as_path()));
+
+        let loaded = load("sample-skill", &config, &paths).unwrap();
+        assert!(loaded.body.contains("Body of sample-skill."));
+        assert_eq!(loaded.base_dir.as_deref(), Some(directory.as_path()));
+        // files 是技能根下的直接子项(第二批据此做技能带路脚本的开关连动)。
+        assert!(loaded.files.iter().any(|file| file.ends_with("scripts")));
+
+        // SKILL.md 缺失:扫描跳过,load 报「找不到」而不是崩。
+        let missing = temp
+            .path()
+            .join("system/personas/default/skills/no-skill-md");
+        fs::create_dir_all(&missing).unwrap();
+        assert!(!discover(&config, &paths)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.metadata.name == "no-skill-md"));
+        let error = load("no-skill-md", &config, &paths)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("skill not found"), "{error}");
+
+        // SKILL.md 坏掉(frontmatter 的 name 与目录对不上):同样跳过并报错。
+        let broken = write_persona_skill(temp.path(), "default", "broken-skill", "Broken");
+        fs::write(
+            broken.join("SKILL.md"),
+            "---\nname: other-name\ndescription: nope\n---\n",
+        )
+        .unwrap();
+        assert!(!discover(&config, &paths)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.metadata.name == "broken-skill"));
+        let error = load("broken-skill", &config, &paths)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("skill not found"), "{error}");
+
+        // 坏掉的那份不该把好技能一起带走。
+        assert!(load("sample-skill", &config, &paths).is_ok());
+    }
+
+    /// 开发态(debug)的资源解析必须把仓库源码树算进来:内置技能 09-23 起读盘,
+    /// `<资源根>` 若只认安装目录,从源码树跑起来的 Miyu 会一件内置技能都没有。
+    /// 走真实 [`MiyuPaths::new`],按 `discover_visible` 判(绕开白名单/人格门)。
+    #[test]
+    #[cfg(debug_assertions)]
+    fn source_tree_skills_are_reachable_through_the_real_resource_paths() {
+        let paths = MiyuPaths::new().unwrap();
+        let config = AppConfig::default();
+        let names: BTreeSet<String> = discover_visible(&config, &paths)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.source == SkillSource::BuiltIn)
+            .map(|entry| entry.metadata.name)
+            .collect();
+        for name in PLATFORM_WIDE_SKILLS {
+            assert!(
+                names.contains(*name),
+                "内置技能 {name} 没从资源树里扫到,资源根候选: {:?};扫到:{names:?}",
+                paths.system_personas_dirs()
+            );
+        }
     }
 
     #[test]

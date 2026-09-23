@@ -96,7 +96,8 @@ fn definition_tokens(name: &str, description: &str, parameters: &serde_json::Val
 ///
 /// 读的是两处真相源本身（`src/tools/descriptions/*.json` 与内置脚本头），
 /// 不建注册表——注册表要扫本机的脚本目录，装机环境会把结果搅乱。
-/// `# Expose: skill` 的脚本不进 tools 数组，自然不占预算。
+/// 技能带路的脚本住在 `personas/<人格>/skills/<技能名>/scripts/`，不在本探针扫的
+/// 目录里，自然不占预算。
 #[test]
 fn bundled_tool_face_stays_within_its_token_budget() {
     // 注册着、但不进 tools 数组的内置工具(`ToolSpec::with_exposed(false)`):
@@ -130,12 +131,6 @@ fn bundled_tool_face_stays_within_its_token_budget() {
             continue;
         };
         let metadata = super::scripts::header::extract_metadata(&raw);
-        if metadata
-            .expose
-            .is_some_and(super::scripts::header::ScriptExposure::is_skill_only)
-        {
-            continue;
-        }
         let Some(description) = metadata.descriptions.en.as_deref() else {
             continue;
         };

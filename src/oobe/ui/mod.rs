@@ -466,11 +466,15 @@ impl App {
 
     pub fn commit_features(&mut self) -> bool {
         let default_persona = miyu_core::skills::is_default_persona(&self.config);
+        // 技能带路的脚本没有自己的行,白名单要按带路技能连动——重扫一次,
+        // 与摆表用的是同一份外装件清单。
+        let sources = crate::feature_sources::collect(&self.config, &self.paths);
         match apply::save_features(
             &mut self.config,
             &self.paths,
             &self.persona_scope,
             &self.feats,
+            &sources,
             default_persona,
         ) {
             Ok(()) => true,

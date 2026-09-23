@@ -349,7 +349,6 @@ fn xml_escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn test_paths(root: &std::path::Path) -> MiyuPaths {
         MiyuPaths {
@@ -365,13 +364,15 @@ mod tests {
             bash_hook_file: root.join("config/shell/bash-hook.sh"),
             zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
             scripts_dir: root.join("data/scripts"),
-            system_scripts_dir: PathBuf::new(),
+            // 内置资源根 = 父目录 = `<root>`;技能读盘后内置技能从这里进来。
+            system_scripts_dir: root.join("system-scripts"),
         }
     }
 
     #[test]
     fn load_skill_description_includes_builtin_creator() {
         let temp = tempfile::tempdir().unwrap();
+        crate::tools::tests::install_bundled_skills(temp.path());
         let paths = test_paths(temp.path());
         let config = AppConfig::default();
         let mut registry = ToolRegistry::new();
@@ -427,6 +428,8 @@ mod tests {
     #[test]
     fn load_skill_is_always_loaded_so_its_catalog_is_visible() {
         let temp = tempfile::tempdir().unwrap();
+        // 技能 09-23 起读盘:内置技能得先摆进隔离资源树,清单里才有 skill-creator。
+        crate::tools::tests::install_bundled_skills(temp.path());
         let paths = test_paths(temp.path());
         let config = AppConfig::default();
         let mut registry = ToolRegistry::new();

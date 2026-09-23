@@ -1,6 +1,6 @@
 # Miyu 脚本工具接口
 
-一个脚本工具 = 一个可执行文件。Miyu 从文件开头的注释里读工具契约，用 JSON 传参把它跑起来，再把 stdout 交给模型。本文是编写者（人或 AI）的接口说明；模型侧的同一份契约在内置技能 `script-creator`（`src/skills/script-creator.md`）里。
+一个脚本工具 = 一个可执行文件。Miyu 从文件开头的注释里读工具契约，用 JSON 传参把它跑起来，再把 stdout 交给模型。本文是编写者（人或 AI）的接口说明；模型侧的同一份契约在内置技能 `script-creator`（`src/personas/default/skills/script-creator/SKILL.md`）里。
 
 ## 目录与优先级
 

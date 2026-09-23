@@ -227,6 +227,51 @@ pub(super) fn test_paths(root: &std::path::Path) -> MiyuPaths {
     }
 }
 
+/// 把仓库里出厂人格的技能摆进隔离资源树:`<root>/personas/default/skills/`。
+///
+/// 技能 09-23 起读盘(不再 `include_str!`),夹具要看到内置技能(如
+/// skill-creator)就得先把它们放进临时树。[`test_paths`] 的
+/// `system_scripts_dir=<root>/system-scripts`,父目录 `<root>` 正是资源根。
+/// 拷真实文件而不是软链:`read_skill_file` 拒绝符号链接的 SKILL.md。
+///
+/// 技能树里还住着技能带路的脚本(机票/酒店/直播):它们**不进**常驻工具面,
+/// 所以形状夹具里不该出现它们——拷贝时跳过 `scripts/`,免得把脚本面也搬进来。
+pub(super) fn install_bundled_skills(root: &std::path::Path) {
+    let source =
+        std::path::Path::new(miyu_base::WORKSPACE_ROOT).join("src/personas/default/skills");
+    copy_tree_without_scripts(&source, &root.join("personas/default/skills"));
+}
+
+/// 同 [`copy_tree`],但跳过名为 `scripts` 的目录:技能带路的脚本不在常驻面上。
+fn copy_tree_without_scripts(source: &std::path::Path, target: &std::path::Path) {
+    std::fs::create_dir_all(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() == "scripts" {
+            continue;
+        }
+        let destination = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree_without_scripts(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+fn copy_tree(source: &std::path::Path, target: &std::path::Path) {
+    std::fs::create_dir_all(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
 #[test]
 fn preparing_phase_covers_the_slow_argument_tools_only() {
     for name in [

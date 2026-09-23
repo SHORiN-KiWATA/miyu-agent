@@ -77,39 +77,10 @@ pub(crate) struct ScriptMetadata {
     pub(crate) hints: Vec<(String, String)>,
     /// `Requires: tool_a, tool_b`:本回合先调用过其中之一才放行。
     pub(crate) requires: Vec<String>,
-    /// `Expose: skill`:脚本照常注册、照常可经工具桥调用,但不进发给模型的
-    /// tools 数组。给「重量级、低频、由技能带路」的脚本用——常驻一份几百
-    /// token 的契约,换一年调用不了几次,不划算。缺省 `tool`(进数组)。
-    pub(crate) expose: Option<ScriptExposure>,
     /// `Capabilities: providers.read, host.info`:脚本要向宿主查的信息
     /// (`host_ports::HOST_CAPABILITIES`)。只有 `Trust: owner`(缺省)的脚本在 daemon
     /// 里跑时才拿到令牌;不认识的 id 记 warn 并忽略。
     pub(crate) capabilities: Vec<String>,
-}
-
-/// 脚本进不进模型看得见的工具面。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ScriptExposure {
-    /// 缺省:像别的脚本一样进 tools 数组。
-    #[default]
-    Tool,
-    /// 只当技能资源:不进 tools 数组,由 `load_skill` 带出来的技能正文告诉
-    /// 模型怎么用 `miyu tool-call <id> --stdin` 调它。
-    Skill,
-}
-
-impl ScriptExposure {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "tool" | "tools" | "工具" => Some(Self::Tool),
-            "skill" | "skill-only" | "技能" => Some(Self::Skill),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn is_skill_only(self) -> bool {
-        matches!(self, Self::Skill)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +100,6 @@ enum HeaderKey {
     Hint,
     Requires,
     Capabilities,
-    Expose,
 }
 
 /// 读脚本开头(最多 32KB),UTF-8 边界截断按 lossy 处理——头部在前,截在
@@ -289,7 +259,6 @@ pub(crate) fn extract_metadata(raw: &str) -> ScriptMetadata {
             }
             HeaderKey::Requires => metadata.requires = split_groups(value),
             HeaderKey::Capabilities => metadata.capabilities = split_groups(value),
-            HeaderKey::Expose => metadata.expose = ScriptExposure::parse(value),
         }
     }
     metadata
@@ -328,7 +297,6 @@ fn header_key(raw: &str) -> Option<HeaderKey> {
         "hint" | "cross_hint" | "指路" | "指路句" => HeaderKey::Hint,
         "requires" | "requires_prior" | "需先调用" | "前置工具" => HeaderKey::Requires,
         "capabilities" | "capability" | "能力" | "宿主能力" => HeaderKey::Capabilities,
-        "expose" | "暴露" => HeaderKey::Expose,
         _ => return None,
     })
 }

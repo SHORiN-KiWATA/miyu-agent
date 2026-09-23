@@ -18,6 +18,28 @@ class StagingTests(unittest.TestCase):
                 with self.subTest(rule=rule['id']):
                     self.assertTrue(selected_files(rule, {'source': source}))
 
+    def test_every_persona_resource_is_packaged(self):
+        # 技能 09-23 起从资源树读盘:包里漏一个 SKILL.md,那份技能就静默消失,
+        # 漏一件技能脚本就是运行时 unknown tool / Permission denied。
+        catalog = validate_assets(load_json(COMMON/'assets.json'))
+        source = COMMON.parents[1]
+        personas = source/'src/personas'
+        installed = {}
+        for rule in catalog['assets']:
+            if rule['source_root'] != 'source':
+                continue
+            for path, destination in selected_files(rule, {'source': source}):
+                installed[path.resolve()] = (destination, rule['mode'])
+        files = [path for path in sorted(personas.rglob('*')) if path.is_file()]
+        self.assertTrue(any(path.name == 'SKILL.md' for path in files))
+        for path in files:
+            with self.subTest(path=str(path.relative_to(personas))):
+                self.assertIn(path.resolve(), installed)
+                destination, mode = installed[path.resolve()]
+                self.assertEqual(destination, Path('share/miyu/personas')/path.relative_to(personas))
+                if path.parent.name == 'scripts':
+                    self.assertEqual(mode, '0755')
+
     def test_missing_font_license_or_model_fails(self):
         catalog = validate_assets(load_json(COMMON/'assets.json'))
         with tempfile.TemporaryDirectory() as tmp:

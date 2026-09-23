@@ -164,7 +164,9 @@ fn locate_by_id(id: &str, layers: &[ScriptLayer; 2]) -> Result<Option<(ScriptLay
 
 fn validate_parameters(parameters: &Value) -> Result<()> {
     let Some(object) = parameters.as_object() else {
-        bail!("parameters must be a JSON Schema object such as {{\"type\":\"object\",\"properties\":{{...}}}}");
+        bail!(
+            "parameters must be a JSON Schema object such as {{\"type\":\"object\",\"properties\":{{...}}}}"
+        );
     };
     if let Some(kind) = object.get("type") {
         if kind.as_str() != Some("object") {
@@ -226,7 +228,9 @@ pub(crate) fn register_script(
     let mut copied = false;
     let (layer, script_path) = if path_arg.is_empty() {
         if requested_id.is_empty() {
-            bail!("path is required: pass the script's absolute path (it is copied into the scripts directory) or its file name inside one");
+            bail!(
+                "path is required: pass the script's absolute path (it is copied into the scripts directory) or its file name inside one"
+            );
         }
         match locate_by_id(&requested_id, &layers)? {
             Some(located) => located,
@@ -283,7 +287,9 @@ pub(crate) fn register_script(
 
     let header = read_header(&script_path).unwrap_or_default();
     if !header.starts_with("#!") {
-        bail!("script has no shebang: the first line must be an interpreter line such as #!/usr/bin/env python3. {CONTRACT_HINT}");
+        bail!(
+            "script has no shebang: the first line must be an interpreter line such as #!/usr/bin/env python3. {CONTRACT_HINT}"
+        );
     }
     make_executable(&script_path)?;
     let metadata = extract_metadata(&header);
@@ -344,7 +350,9 @@ pub(crate) fn register_script(
     let mut effective = entry.clone();
     merge_header_defaults(&mut effective, &metadata);
     if effective.description.trim().is_empty() {
-        bail!("description is required: pass description, or add a `# Description:` line to the script header. {CONTRACT_HINT}");
+        bail!(
+            "description is required: pass description, or add a `# Description:` line to the script header. {CONTRACT_HINT}"
+        );
     }
     if !effective.parameters.is_null() {
         validate_parameters(&effective.parameters)
@@ -390,9 +398,11 @@ pub(crate) fn register_script(
 }
 
 fn builtin_has_script(config: &AppConfig, paths: &MiyuPaths, id: &str) -> Result<bool> {
-    let roots = script_scan_roots(config, paths);
-    let dirs: Vec<&Path> = roots.iter().take(2).map(PathBuf::as_path).collect();
-    let scan = scan_scripts(&dirs)?;
+    let roots: Vec<ScriptScanRoot> = script_scan_root_layers(config, paths)
+        .into_iter()
+        .filter(|root| root.origin.is_builtin())
+        .collect();
+    let scan = scan_scripts_at(&roots)?;
     Ok(scan.entries.iter().any(|entry| entry.id == id))
 }
 
@@ -439,10 +449,14 @@ pub(crate) fn unregister_script(
     }
     let builtin = located.is_none() && builtin_has_script(config, paths, &id)?;
     if located.is_none() && !builtin {
-        bail!("script id '{id}' not found. Use action=list to see registered, unregistered and disabled scripts.");
+        bail!(
+            "script id '{id}' not found. Use action=list to see registered, unregistered and disabled scripts."
+        );
     }
     if builtin && delete_file {
-        bail!("built-in scripts cannot be deleted; unregister without delete_file hides '{id}' for this persona");
+        bail!(
+            "built-in scripts cannot be deleted; unregister without delete_file hides '{id}' for this persona"
+        );
     }
     let (layer, path) = located.unwrap_or_else(|| (layers[0].clone(), String::new()));
 
@@ -481,29 +495,12 @@ pub(crate) fn unregister_script(
 }
 
 pub(crate) fn list_scripts_handler(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
-    let roots = script_scan_roots(config, paths);
-    let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-    let mut scan = scan_scripts(&dirs)?;
+    let roots = script_scan_root_layers(config, paths);
+    let mut scan = scan_scripts_at(&roots)?;
     // 模型看到的目录 = 真挂上的工具面:本人格没启用的脚本不列(用户实测:列了
     // 又加载不了,只会让它反复去 load)。
     super::retain_persona_visible(config, paths, &mut scan.entries);
     let layers = user_layers(config, paths);
-
-    let canonical_roots: Vec<Option<PathBuf>> =
-        roots.iter().map(|root| root.canonicalize().ok()).collect();
-    let labels = ["builtin", "builtin-persona", "global", "persona"];
-    let layer_of = |path: &str| -> &'static str {
-        let parent = Path::new(path)
-            .parent()
-            .and_then(|parent| parent.canonicalize().ok());
-        canonical_roots
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, root)| root.is_some() && **root == parent)
-            .map(|(index, _)| labels[index])
-            .unwrap_or("unknown")
-    };
 
     let registered: Vec<Value> = scan
         .entries
@@ -512,13 +509,14 @@ pub(crate) fn list_scripts_handler(config: &AppConfig, paths: &MiyuPaths) -> Res
             json!({
                 "id": entry.id,
                 "display_name": entry_display_name(entry),
-                "layer": layer_of(&entry.path),
+                "layer": entry.origin.label(),
                 "path": entry.path,
+                "skill": entry.origin.skill,
                 "parameters": if entry.parameters.is_null() { "generic stdin" } else { "schema" },
                 "argv": entry.argv.as_str(),
                 "always_loaded": entry.always_loaded.unwrap_or(false),
-                // `# Expose: skill`:注册着、可经工具桥调用,但不在工具面上。
-                "exposure": if entry.skill_only { "skill" } else { "tool" },
+                // 技能带路的脚本:注册着、可经工具桥调用,但不在常驻工具面上。
+                "exposure": if entry.origin.is_skill_carried() { "skill" } else { "tool" },
             })
         })
         .collect();

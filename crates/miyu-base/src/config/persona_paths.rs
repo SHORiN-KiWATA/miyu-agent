@@ -264,6 +264,37 @@ impl AppConfig {
             .join(self.active_persona_scope())
     }
 
+    /// 新布局(09-23):资源树里这一人格的根 `<资源根>/personas/<人格>`。
+    /// 技能与脚本一个家——脚本住 `scripts/`,技能住 `skills/<技能名>/`。
+    pub fn persona_system_dir(&self, paths: &MiyuPaths, persona: &str) -> Option<PathBuf> {
+        Some(
+            paths
+                .system_personas_dir()?
+                .join(persona_scope_name(persona)),
+        )
+    }
+
+    /// 新布局:资源树候选里这一人格的全部根目录,优先级从高到低
+    /// (安装前缀 > 系统前缀 > debug 源码树,见 [`MiyuPaths::system_personas_dirs`])。
+    pub fn persona_system_dirs(&self, paths: &MiyuPaths, persona: &str) -> Vec<PathBuf> {
+        let scope = persona_scope_name(persona);
+        paths
+            .system_personas_dirs()
+            .into_iter()
+            .map(|root| root.join(&scope))
+            .collect()
+    }
+
+    /// 出厂人格(Miyu 本人 = scope `default`)在资源树里的根。
+    pub fn default_persona_system_dir(&self, paths: &MiyuPaths) -> Option<PathBuf> {
+        self.persona_system_dir(paths, "")
+    }
+
+    /// 新布局:当前人格在资源树(最高优先级候选)里的根。
+    pub fn active_persona_system_dir(&self, paths: &MiyuPaths) -> Option<PathBuf> {
+        self.persona_system_dir(paths, &self.active_persona_scope())
+    }
+
     /// Sanitized scope name of the active persona; also the namespace key for
     /// sessions and per-persona state directories.
     pub fn active_persona_scope(&self) -> String {
