@@ -2,6 +2,7 @@
 
 ## 重要更新
 
+- **macOS（Apple Silicon）可以用 Homebrew 安装了**：`brew install shorin-kiwata/miyu/miyu`，要求 macOS 15 及以上，chafa、ripgrep、onnxruntime 会一起装好。Release 页上的 macOS 包没有签名，用浏览器直接下载会被 Gatekeeper 拦，请用 Homebrew 安装。
 - **功能表（OOBE 与 `miyu config`）里名字改清楚了**：语音→语音功能、识图→视觉识别、汇率→汇率查询、Arch Linux→Arch Linux 相关、文件→读写文件、番组日历→番剧信息、游戏兼容性→游戏兼容性调查、在线手册→查询man命令手册。
 - **功能表支持 `Ctrl+A`**：一次全开、再按一次全关（有没勾的就先全勾）。`miyu config` 里是新加的，OOBE 里本来就有、只是按键条没写出来。
 - **「启用的功能」不再摆这四件**：读写文件、外发、人格提醒、情绪与好感度——开关照旧生效，只是不占表上的位置（想摆回来删一行即可）。
@@ -13,6 +14,8 @@
 
 ## 修复
 
+- 终端集成在 PATH 之外找到的 Miyu（比如 Homebrew 装在 `/opt/homebrew/bin`，而 shell 没配 `brew shellenv`），现在也找得到同一目录下的 `rg`、`chafa`。以前搜索会报「`rg` 不在 PATH 上，请安装」，其实早就装着。
+- `miyu bash-init` 遇到 bash 4 以下（macOS 自带的是 3.2）会直接说明：自然语言交给 Miyu 要 bash 4 以上，请改用 zsh 或 Homebrew 装的新版 bash；直接敲 `miyu` 不受影响。以前装完没有任何提示，敲中文只会报 command not found。
 - QQ 长文转图里的链接又有颜色了。她给来源写的是「标题 (地址)」这种纯文本（提示词就是这么要求的），而转图只认 Markdown 链接写法，于是来源和正文里直接贴的地址都跟正文一个颜色。现在图里凡是地址都上链接色（句尾标点不算进去，行内代码里的不算）；标题和括号保持正文色——Markdown 写法的 `[标题](地址)` 也改成同一口径，只有地址是蓝的。另外长图里段落中的单个换行现在照画成换行：以前会被并成一段，「每个来源一行」的几行在图里首尾相接，而同样的话在终端、网页、QQ 短回复里都是分行的。**需要重启 daemon**。
 - 知识库设置里不会再说「未配置 Embedding」了。主页明明写着「本地 · bge-small-zh…」，「人格和功能 → 知识库」（以及网页设置 → 插件 → 知识库）却说没配置——那一行读的是早就不用的旧设置项，知识库实际一直在用主页配的那个模型。现在这一行显示的就是主页那个全局 Embedding 模型：在 `miyu config` 里回车直接进主页同一个 Embedding 菜单，网页里点「去设置」跳到「通用 → Embedding」。知识库表单里的「语义最低分」「Embedding 超时秒数」也不摆了：改了从来不生效，真正起作用的是全局 Embedding 高级设置里的同名项。`miyu kb stats` 报的也改成实际在用的模型。网页那部分**需要重启 daemon**。
 - 终端集成在 macOS 上能用了。hook 里直接调 `miyu`，PATH 上找不到它时自然语言输入会被悄悄忽略——而 macOS 上 Homebrew 装在 `/opt/homebrew/bin`，没配过 `brew shellenv` 的 shell（fish 常见）找不到。现在 PATH 上没有时 hook 会去 Homebrew、`~/.local/bin`、`~/.cargo/bin` 等常见位置找；哪儿都没有的话，装的时候会提示怎么把它加进 PATH。bash 在 macOS 上改写进 `~/.bash_profile`（macOS 的终端开的是登录 shell，不读 `~/.bashrc`，以前写进去等于没装）；zsh 跟着 `ZDOTDIR` 走。已经装过的 hook 升级后会自动更新；macOS 上用 bash 的需要重跑一次 `miyu bash-init`。

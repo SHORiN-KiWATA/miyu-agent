@@ -2,6 +2,8 @@ use super::startup::{remove_file_if_exists, remove_source_block};
 use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
 use anyhow::Result;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 const BEGIN_MARKER: &str = "# >>> miyu bash hook >>>";
 const END_MARKER: &str = "# <<< miyu bash hook <<<";
@@ -44,7 +46,50 @@ pub fn install(paths: &MiyuPaths) -> Result<()> {
     println!("{}: {}", t("updated", "已更新"), rc_path.display());
     super::print_reload_hint("bash", &paths.bash_hook_file);
     super::locate::warn_if_unreachable("bash", Some(&rc_path));
+    warn_if_bash_lacks_handler();
     Ok(())
+}
+
+/// 自然语言靠 `command_not_found_handle` 接住，那是 bash 4.0 才有的；macOS 自带的
+/// bash 3.2 根本不会调它，敲中文直接 `command not found`（09-23 真机）。hook 照装——
+/// 兜底找 `miyu` 的那段在 3.2 上照样管用——但装的时候得把话说明白。
+fn warn_if_bash_lacks_handler() {
+    let Some((major, minor)) = user_bash_version() else {
+        return;
+    };
+    if major >= 4 {
+        return;
+    }
+    println!(
+        "{}",
+        t(
+            "note: bash {version} cannot hand natural-language input to Miyu: that needs command_not_found_handle from bash 4 or newer, and macOS ships bash 3.2. Use zsh (the macOS default) or a newer bash (brew install bash). Calling `miyu` directly still works.",
+            "注意：bash {version} 没法把自然语言交给 Miyu——这要靠 bash 4 起才有的 command_not_found_handle，macOS 自带的是 3.2。请改用 zsh（macOS 默认的 shell），或装新版 bash（brew install bash）。直接敲 `miyu` 照常可用。",
+        )
+        .replace("{version}", &format!("{major}.{minor}"))
+    );
+}
+
+/// 用户会用的那个 bash：登录 shell 是 bash 就认它，否则认 PATH 上的 `bash`。
+fn user_bash_version() -> Option<(u32, u32)> {
+    let program = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|shell| shell.file_name().is_some_and(|name| name == "bash"))
+        .unwrap_or_else(|| PathBuf::from("bash"));
+    let output = Command::new(program)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_bash_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)` → `(3, 2)`。
+fn parse_bash_version(text: &str) -> Option<(u32, u32)> {
+    let rest = text.lines().next()?.split("version ").nth(1)?;
+    let mut numbers = rest.split(|c: char| !c.is_ascii_digit());
+    Some((numbers.next()?.parse().ok()?, numbers.next()?.parse().ok()?))
 }
 
 pub fn uninstall(paths: &MiyuPaths) -> Result<bool> {
@@ -76,6 +121,22 @@ mod tests {
         assert!(hook.contains("command_not_found_handle"));
         assert!(hook.contains("--shell bash"));
         assert!(hook.contains("return 127"));
+    }
+
+    #[test]
+    fn bash_version_parses_the_first_line_of_version_output() {
+        assert_eq!(
+            parse_bash_version(
+                "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)\nCopyright"
+            ),
+            Some((3, 2))
+        );
+        assert_eq!(
+            parse_bash_version("GNU bash, version 5.3.3(1)-release (x86_64-pc-linux-gnu)"),
+            Some((5, 3))
+        );
+        assert_eq!(parse_bash_version("zsh 5.9 (arm64-apple-darwin25)"), None);
+        assert_eq!(parse_bash_version(""), None);
     }
 
     #[test]
