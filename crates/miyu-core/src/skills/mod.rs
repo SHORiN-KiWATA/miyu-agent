@@ -53,13 +53,6 @@ const BUILTIN_SKILLS: &[(&str, &str, bool)] = &[
         include_str!("../../../../src/skills/personas/default/travel-planner.md"),
         false,
     ),
-    // 同上:query_deepseek_status 的入口。顺带承接 09-21 退役的 api_quota——
-    // 「供应商是不是挂了」本来就该是一段排查流程,不是一件常驻工具。
-    (
-        "provider-status",
-        include_str!("../../../../src/skills/personas/default/provider-status.md"),
-        false,
-    ),
     // 同上:开播是不可悄悄撤销的公开动作(立刻公开 + 推送粉丝),一年用不了
     // 几次,藏一层既省常驻也更安全。
     (
