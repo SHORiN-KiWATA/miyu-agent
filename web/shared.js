@@ -29,7 +29,7 @@ window.MiyuShared = (() => {
     upload: [["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }], ["polyline", { points: "17 8 12 3 7 8" }], ["line", { x1: "12", x2: "12", y1: "3", y2: "15" }]]
   };
   const KIND_ICON = { video: "film", audio: "music", image: "image", other: "file" };
-  const MODE_LABEL = { reference: "引用", snapshot: "快照" };
+  const MODE_LABEL = { reference: t("引用"), snapshot: t("快照") };
   let panel = null;
   let listBox = null;
   let uploadButton = null;
@@ -128,8 +128,8 @@ window.MiyuShared = (() => {
     const playButton = document.createElement("button");
     playButton.type = "button";
     playButton.className = "media-audio-play";
-    playButton.title = "播放";
-    playButton.setAttribute("aria-label", "播放");
+    playButton.title = t("播放");
+    playButton.setAttribute("aria-label", t("播放"));
     playButton.appendChild(createIcon("play"));
 
     const timeNow = document.createElement("span");
@@ -143,7 +143,7 @@ window.MiyuShared = (() => {
     track.className = "media-audio-track";
     track.setAttribute("role", "slider");
     track.setAttribute("tabindex", "0");
-    track.setAttribute("aria-label", "播放进度");
+    track.setAttribute("aria-label", t("播放进度"));
     track.setAttribute("aria-valuemin", "0");
     track.setAttribute("aria-valuenow", "0");
     const fill = document.createElement("div");
@@ -153,8 +153,8 @@ window.MiyuShared = (() => {
     const muteButton = document.createElement("button");
     muteButton.type = "button";
     muteButton.className = "media-audio-icon-btn";
-    muteButton.title = "静音";
-    muteButton.setAttribute("aria-label", "静音");
+    muteButton.title = t("静音");
+    muteButton.setAttribute("aria-label", t("静音"));
     muteButton.appendChild(createIcon("volume-2"));
 
     const volume = document.createElement("input");
@@ -164,15 +164,15 @@ window.MiyuShared = (() => {
     volume.max = "1";
     volume.step = "0.05";
     volume.value = "1";
-    volume.title = "音量";
-    volume.setAttribute("aria-label", "音量");
+    volume.title = t("音量");
+    volume.setAttribute("aria-label", t("音量"));
 
     const downloadLink = document.createElement("a");
     downloadLink.className = "media-audio-icon-btn";
     downloadLink.href = `${src}?download=1`;
     downloadLink.setAttribute("download", fileName);
-    downloadLink.title = "下载";
-    downloadLink.setAttribute("aria-label", "下载");
+    downloadLink.title = t("下载");
+    downloadLink.setAttribute("aria-label", t("下载"));
     downloadLink.appendChild(createIcon("download"));
 
     controls.append(playButton, timeNow, track, timeTotal, muteButton, volume, downloadLink);
@@ -182,8 +182,8 @@ window.MiyuShared = (() => {
     function syncPlayIcon() {
       const playing = !audio.paused && !audio.ended;
       playButton.replaceChildren(createIcon(playing ? "pause" : "play"));
-      playButton.title = playing ? "暂停" : "播放";
-      playButton.setAttribute("aria-label", playing ? "暂停" : "播放");
+      playButton.title = playing ? t("暂停") : t("播放");
+      playButton.setAttribute("aria-label", playing ? t("暂停") : t("播放"));
       card.classList.toggle("is-playing", playing);
     }
 
@@ -211,8 +211,8 @@ window.MiyuShared = (() => {
     function syncVolume() {
       const muted = audio.muted || audio.volume === 0;
       muteButton.replaceChildren(createIcon(muted ? "volume-x" : "volume-2"));
-      muteButton.title = muted ? "取消静音" : "静音";
-      muteButton.setAttribute("aria-label", muted ? "取消静音" : "静音");
+      muteButton.title = muted ? t("取消静音") : t("静音");
+      muteButton.setAttribute("aria-label", muted ? t("取消静音") : t("静音"));
       volume.value = String(audio.muted ? 0 : audio.volume);
     }
 
@@ -236,7 +236,7 @@ window.MiyuShared = (() => {
     audio.addEventListener("timeupdate", syncProgress);
     audio.addEventListener("volumechange", syncVolume);
     audio.addEventListener("error", () => {
-      meta.textContent = `${sizeText} · 无法加载`;
+      meta.textContent = t("{size} · cannot load", { size: sizeText });
       card.classList.add("is-error");
     });
 
@@ -313,16 +313,18 @@ window.MiyuShared = (() => {
     panel = document.createElement("div");
     panel.className = "shared-files-overlay";
     panel.hidden = true;
+    // i18n-allow: 面板骨架是 HTML 模板,文案由 data-i18n* 标记、插入后 applyDom 统一应用
     panel.innerHTML = `
-      <div class="shared-files-panel" role="dialog" aria-label="分享文件">
+      <div class="shared-files-panel" role="dialog" data-i18n-aria-label="分享文件" aria-label="分享文件">
         <header class="shared-files-header">
-          <strong>分享文件</strong>
-          <span class="shared-files-hint">局域网内能打开本 WebUI 的人都可下载</span>
-          <button type="button" class="shared-files-refresh" title="刷新">↻</button>
-          <button type="button" class="shared-files-close" title="关闭">×</button>
+          <strong data-i18n="分享文件">分享文件</strong>
+          <span class="shared-files-hint" data-i18n="局域网内能打开本 WebUI 的人都可下载">局域网内能打开本 WebUI 的人都可下载</span>
+          <button type="button" class="shared-files-refresh" data-i18n-title="刷新" title="刷新">↻</button>
+          <button type="button" class="shared-files-close" data-i18n-title="关闭" title="关闭">×</button>
         </header>
         <div class="shared-files-list"></div>
       </div>`;
+    MiyuI18n.applyDom(panel);
     panel.addEventListener("click", (event) => {
       if (event.target === panel) hide();
     });
@@ -342,10 +344,10 @@ window.MiyuShared = (() => {
       uploadInput.value = "";
       uploadFiles(files);
     });
-    uploadButton = toolButton("upload", "上传", () => uploadInput.click());
-    selectAllButton = toolButton("check-square", "全选", toggleSelectAll);
-    downloadSelectedButton = toolButton("download", "下载所选", downloadSelected);
-    deleteSelectedButton = toolButton("trash-2", "删除所选", deleteSelected, "danger");
+    uploadButton = toolButton("upload", t("上传"), () => uploadInput.click());
+    selectAllButton = toolButton("check-square", t("全选"), toggleSelectAll);
+    downloadSelectedButton = toolButton("download", t("下载所选"), downloadSelected);
+    deleteSelectedButton = toolButton("trash-2", t("删除所选"), deleteSelected, "danger");
     uploadStatus = document.createElement("span");
     uploadStatus.className = "shared-files-upload-status";
     uploadStatus.hidden = true;
@@ -419,7 +421,7 @@ window.MiyuShared = (() => {
     const failures = [];
     for (let index = 0; index < list.length; index += 1) {
       const file = list[index];
-      setUploadStatus(`上传中 ${index + 1}/${list.length}:${file.name}(${formatSize(file.size)})`);
+      setUploadStatus(t("上传中 {index}/{total}:{name}({size})", { index: index + 1, total: list.length, name: file.name, size: formatSize(file.size) }));
       try {
         const response = await fetch("/api/shared", {
           method: "POST",
@@ -443,7 +445,7 @@ window.MiyuShared = (() => {
     }
     uploading = false;
     uploadButton.disabled = false;
-    setUploadStatus(failures.length ? `失败 ${failures.length} 个:${failures.join(";")}` : "");
+    setUploadStatus(failures.length ? t("失败 {count} 个:{names}", { count: failures.length, names: failures.join(";") }) : "");
     await refresh();
   }
 
@@ -453,7 +455,7 @@ window.MiyuShared = (() => {
     const count = selectedIds.size;
     const allSelected = total > 0 && count >= total;
     selectAllButton.disabled = total === 0;
-    selectAllButton.querySelector("span").textContent = allSelected ? "取消全选" : "全选";
+    selectAllButton.querySelector("span").textContent = allSelected ? t("取消全选") : t("全选");
     downloadSelectedButton.disabled = count === 0;
     deleteSelectedButton.disabled = count === 0;
   }
@@ -475,7 +477,7 @@ window.MiyuShared = (() => {
   async function deleteSelected() {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    if (!window.confirm(`删除 ${ids.length} 个分享?`)) return;
+    if (!window.confirm(t("删除 {count} 个分享?", { count: ids.length }))) return;
     for (const id of ids) {
       try {
         await fetch(`/api/shared/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -509,14 +511,14 @@ window.MiyuShared = (() => {
 
   async function refresh() {
     ensurePanel();
-    listBox.textContent = "加载中…";
+    listBox.textContent = t("加载中…");
     let payload;
     try {
       const response = await fetch("/api/shared");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       payload = await response.json();
     } catch (error) {
-      listBox.textContent = `加载失败:${error.message || error}`;
+      listBox.textContent = t("加载失败:{reason}", { reason: error.message || error });
       return;
     }
     render(Array.isArray(payload?.shares) ? payload.shares : []);
@@ -532,7 +534,7 @@ window.MiyuShared = (() => {
     if (!shares.length) {
       const empty = document.createElement("p");
       empty.className = "shared-files-empty";
-      empty.textContent = "还没有分享任何文件。点「上传」或把文件拖进来,也可以让 AI 调用 share_file。";
+      empty.textContent = t("还没有分享任何文件。点「上传」或把文件拖进来,也可以让 AI 调用 share_file。");
       listBox.appendChild(empty);
       syncToolbar();
       return;
@@ -554,7 +556,7 @@ window.MiyuShared = (() => {
     check.className = "shared-files-check";
     check.dataset.shareId = shareId;
     check.checked = selectedIds.has(shareId);
-    check.setAttribute("aria-label", `选择 ${share.file_name}`);
+    check.setAttribute("aria-label", t("选择 {name}", { name: share.file_name }));
     check.addEventListener("change", () => {
       if (check.checked) selectedIds.add(shareId);
       else selectedIds.delete(shareId);
@@ -575,17 +577,17 @@ window.MiyuShared = (() => {
     const actions = document.createElement("div");
     actions.className = "shared-files-actions";
     if (share.kind === "video" || share.kind === "audio" || share.kind === "image") {
-      actions.appendChild(actionButton("预览", () => togglePreview(row, share)));
+      actions.appendChild(actionButton(t("预览"), () => togglePreview(row, share)));
     }
-    actions.appendChild(actionButton("复制链接", async (button) => {
+    actions.appendChild(actionButton(t("复制链接"), async (button) => {
       await copyText(url);
       const label = button.textContent;
-      button.textContent = "已复制";
+      button.textContent = t("已复制");
       setTimeout(() => { button.textContent = label; }, 1200);
     }));
-    actions.appendChild(actionButton("下载", () => { window.open(url, "_blank"); }));
-    actions.appendChild(actionButton("删除", async () => {
-      if (!window.confirm(`删除分享「${share.file_name}」?`)) return;
+    actions.appendChild(actionButton(t("下载"), () => { window.open(url, "_blank"); }));
+    actions.appendChild(actionButton(t("删除"), async () => {
+      if (!window.confirm(t("删除分享「{name}」?", { name: share.file_name }))) return;
       await fetch(`/api/shared/${encodeURIComponent(share.share_id)}`, { method: "DELETE" });
       refresh();
     }, "danger"));
@@ -701,7 +703,7 @@ window.MiyuShared = (() => {
     row.className = "shared-attachment-row";
     row.href = `${src}?download=1`;
     row.setAttribute("download", payload.file_name);
-    row.title = "下载";
+    row.title = t("下载");
     const icon = document.createElement("span");
     icon.className = "shared-attachment-icon";
     icon.appendChild(kindIcon(kind));

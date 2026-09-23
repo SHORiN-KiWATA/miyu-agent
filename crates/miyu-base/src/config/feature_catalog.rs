@@ -64,7 +64,7 @@ pub struct SubsystemDescriptor {
 pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
     SubsystemDescriptor {
         id: "voice",
-        name_zh: "语音",
+        name_zh: "语音功能",
         hint_zh: "唤醒对话、听写、朗读",
         name_en: "Voice",
         hint_en: "Wake word, dictation, speech",
@@ -123,6 +123,16 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         settings: false,
     },
 ];
+
+/// 功能表上不摆的几项(用户 09-23 拍板):读写文件、外发是「能用」的底线,
+/// 人格提醒与情绪好感度不常动。**开关本身照旧生效**,只是不占表上的位置——
+/// 引导与设置两处都按这张表跳过(`catalog` 里统一拦)。
+pub const UNLISTED_FEATURES: &[&str] =
+    &["files", "platform_outreach", "persona_reminder", "emotion"];
+
+pub fn unlisted(id: &str) -> bool {
+    UNLISTED_FEATURES.contains(&id)
+}
 
 pub fn subsystem(id: &str) -> Option<&'static SubsystemDescriptor> {
     SUBSYSTEMS.iter().find(|item| item.id == id)
@@ -237,6 +247,9 @@ pub fn catalog(
         if !scope.everything() && !descriptor.in_onboarding {
             continue;
         }
+        if unlisted(descriptor.id) {
+            continue;
+        }
         if !(descriptor.available)(sources) {
             continue;
         }
@@ -258,6 +271,9 @@ pub fn catalog(
         if !scope.everything() && !plugin.toggleable {
             continue;
         }
+        if unlisted(plugin.id) {
+            continue;
+        }
         items.push(FeatureItem {
             kind: FeatureKind::Plugin,
             id: plugin.id.into(),
@@ -271,6 +287,9 @@ pub fn catalog(
     }
 
     for (id, name, hint, builtin) in &sources.scripts {
+        if unlisted(id) {
+            continue;
+        }
         items.push(FeatureItem {
             kind: FeatureKind::Script,
             id: id.clone(),
@@ -466,9 +485,20 @@ mod tests {
             .iter()
             .any(|id| id == "memory" || id == "skills"));
         assert!(ids(&full, FeatureKind::Subsystem).contains(&"memory".to_string()));
-        // 常开的内置插件（文件、脚本）也只在设置界面。
-        assert!(!ids(&guided, FeatureKind::Plugin).contains(&"files".to_string()));
-        assert!(ids(&full, FeatureKind::Plugin).contains(&"files".to_string()));
+        // 常开的内置插件（用量查询）也只在设置界面。
+        assert!(!ids(&guided, FeatureKind::Plugin).contains(&"usage_query".to_string()));
+        assert!(ids(&full, FeatureKind::Plugin).contains(&"usage_query".to_string()));
+        // 09-23 起这四件两个 scope 都不摆(UNLISTED_FEATURES):开关照旧生效,
+        // 只是不在表上占位置。
+        for id in ["files", "platform_outreach", "persona_reminder", "emotion"] {
+            assert!(
+                !ids(&full, FeatureKind::Plugin).contains(&id.to_string())
+                    && !ids(&full, FeatureKind::Subsystem).contains(&id.to_string())
+                    && !ids(&guided, FeatureKind::Plugin).contains(&id.to_string())
+                    && !ids(&guided, FeatureKind::Subsystem).contains(&id.to_string()),
+                "{id} 不该出现在功能表上"
+            );
+        }
         // 有设置页的那些带着齿轮标记。
         let memes = full
             .iter()
@@ -622,9 +652,10 @@ mod tests {
         assert_eq!(manifest.plugins.mcp, Some(vec!["m2".to_string()]));
     }
 
-    /// 人格提醒与情绪两个开关从此有 UI 入口:摆表能看见、关掉能写回清单、机器没装就不摆。
+    /// 09-23 起人格提醒与情绪不在功能表上(用户拍板),但开关本身还在清单里:
+    /// 摆表看不见它们,`apply_selection` 也不许碰它们。
     #[test]
-    fn persona_reminder_and_emotion_toggles_round_trip() {
+    fn unlisted_switches_stay_off_the_table_and_untouched() {
         let mut manifest = PersonaManifest::all();
         let mut items = catalog(&manifest, &sources(), true, CatalogScope::Onboarding, None);
         let ids: Vec<&str> = items
@@ -632,15 +663,25 @@ mod tests {
             .filter(|item| item.kind == FeatureKind::Subsystem)
             .map(|item| item.id.as_str())
             .collect();
-        assert_eq!(ids, ["voice", "persona_reminder", "emotion"]);
+        assert_eq!(ids, ["voice"]);
+        // 表上没有它们,勾选写回也不该动到这两个开关。
         for item in &mut items {
-            if item.id == "persona_reminder" || item.id == "emotion" {
-                item.on = false;
-            }
+            item.on = false;
         }
+        let before = (
+            manifest.subsystems.persona_reminder,
+            manifest.subsystems.emotion,
+        );
         apply_selection(&mut manifest, &items, true);
-        assert!(!manifest.subsystems.persona_reminder && !manifest.subsystems.emotion);
-        assert!(manifest.subsystems.voice, "没动的开关不受影响");
+        assert_eq!(
+            (
+                manifest.subsystems.persona_reminder,
+                manifest.subsystems.emotion
+            ),
+            before,
+            "不在表上的开关不该被写回改掉"
+        );
+        assert!(!manifest.subsystems.voice, "表上的开关照旧能关");
         assert_eq!(
             catalog(&manifest, &sources(), true, CatalogScope::Onboarding, None),
             items

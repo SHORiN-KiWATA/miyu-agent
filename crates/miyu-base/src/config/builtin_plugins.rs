@@ -89,7 +89,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
     BuiltinPluginDescriptor {
         id: "files",
         kind: PluginKind::Core,
-        name_zh: "文件",
+        name_zh: "读写文件",
         hint_zh: "读写工作区文件",
         name_en: "Files",
         hint_en: "Read and write workspace files",
@@ -125,7 +125,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
     BuiltinPluginDescriptor {
         id: "exchange_rate",
         kind: PluginKind::Builtin,
-        name_zh: "汇率",
+        name_zh: "汇率查询",
         hint_zh: "货币换算",
         name_en: "Exchange rate",
         hint_en: "Currency conversion",
@@ -140,7 +140,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
     BuiltinPluginDescriptor {
         id: "archlinux",
         kind: PluginKind::Builtin,
-        name_zh: "Arch Linux",
+        name_zh: "Arch Linux 相关",
         hint_zh: "AUR 查询与审查安装、Arch 新闻",
         name_en: "Arch Linux",
         hint_en: "AUR search and audited install, Arch news",
@@ -354,7 +354,7 @@ pub const MACHINE_FEATURES: &[MachineFeature] = &[
     },
     MachineFeature {
         id: "vision",
-        name_zh: "识图",
+        name_zh: "视觉识别",
         hint_zh: "图片理解与终端预览",
         name_en: "Vision",
         hint_en: "Image understanding and terminal preview",

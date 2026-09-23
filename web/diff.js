@@ -124,7 +124,7 @@ window.MiyuDiff = (() => {
     return files.length ? files : null;
   }
 
-  const OP_LABEL = { add: "新建", update: "修改", delete: "删除" };
+  const OP_LABEL = { add: t("新建"), update: t("修改"), delete: t("已删除") };
 
   function counts(file) {
     let adds = 0, dels = 0;

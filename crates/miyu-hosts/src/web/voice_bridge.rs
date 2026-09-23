@@ -18,6 +18,7 @@
 
 use crate::runtime::DaemonState;
 use anyhow::{Context, Result};
+use miyu_base::i18n::text as t;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -231,7 +232,7 @@ pub(crate) fn ensure_worker(state: &DaemonState) {
             if let Some(sink) = DICTATION.lock().unwrap().take() {
                 let _ = sink.send(DictationRelay::Ended);
             }
-            fail_all_transcribes("语音前端退出");
+            fail_all_transcribes(t("The voice frontend exited.", "语音前端退出"));
             if SHUTTING_DOWN.load(Ordering::Relaxed) || STOP_REQUESTED.load(Ordering::Relaxed) {
                 break;
             }
@@ -279,7 +280,7 @@ pub(crate) async fn handle_voice_attach(
     if let Some(sink) = DICTATION.lock().unwrap().take() {
         let _ = sink.send(DictationRelay::Ended);
     }
-    fail_all_transcribes("语音前端断开");
+    fail_all_transcribes(t("The voice frontend disconnected.", "语音前端断开"));
     Ok(())
 }
 
@@ -292,7 +293,6 @@ fn text_field(data: &Value, key: &str) -> String {
 }
 
 fn handle_worker_event(state: &DaemonState, kind: &str, data: Value) {
-    use miyu_base::i18n::text as t;
     match kind {
         "voice.ready" => {
             *DEVICE.lock().unwrap() = Some(text_field(&data, "device"));
@@ -488,8 +488,9 @@ fn resolve_voice_session(state: &DaemonState) -> Result<String> {
         miyu_core::state::VOICE_SESSION_KIND,
         None,
     )?;
-    std::fs::write(&marker, &record.session_id)
-        .with_context(|| format!("写入 {}", marker.display()))?;
+    std::fs::write(&marker, &record.session_id).with_context(|| {
+        t("failed to write {path}", "写入 {path}").replace("{path}", &marker.display().to_string())
+    })?;
     Ok(record.session_id)
 }
 
@@ -520,7 +521,6 @@ fn cancel_active_run(state: &DaemonState) {
 /// 一轮语音回合:经自己的 IPC 口提交(复用全部校验与回合机制),读事件流
 /// 攒回复文本,完成后通知摘要 + done 提示音。
 async fn run_voice_turn(state: &DaemonState, content: String) -> Result<()> {
-    use miyu_base::i18n::text as t;
     let session_id = resolve_voice_session(state)?;
     let (reply_chars, tts) = {
         let manager = state.manager.lock().unwrap();
@@ -682,7 +682,13 @@ pub(crate) async fn speak_with(
         return Ok(());
     }
     if !tts.is_active() {
-        anyhow::bail!("回复播报未激活(语音功能 → 文本转语音开关 + 播报供应商填 key)");
+        anyhow::bail!(
+            "{}",
+            t(
+                "Reply playback is not active (Voice → text to speech on + a speech provider key)",
+                "回复播报未激活(语音功能 → 文本转语音开关 + 播报供应商填 key)",
+            )
+        );
     }
     let path = synthesize_to_cache(state, &tts, text).await?;
     send_signal(
@@ -803,16 +809,25 @@ pub(crate) async fn handle_voice_reset(
 async fn wait_attached(state: &DaemonState, timeout_ms: u64) -> Result<(), &'static str> {
     let wanted = worker_wanted(&state.manager.lock().unwrap().config.voice);
     if !wanted {
-        return Err("语音唤醒和文本转语音都没开(设置 → 语音功能)");
+        return Err(t(
+            "Wake word and text to speech are both off (Settings → Voice)",
+            "语音唤醒和文本转语音都没开(设置 → 语音功能)",
+        ));
     }
     if locate_binary().is_none() {
-        return Err("找不到 miyu-voice 可执行文件,请安装语音组件");
+        return Err(t(
+            "miyu-voice executable not found; install the voice component",
+            "找不到 miyu-voice 可执行文件,请安装语音组件",
+        ));
     }
     ensure_worker(state);
     let mut waited = 0u64;
     while !worker_running() {
         if waited >= timeout_ms {
-            return Err("语音前端未就绪(模型缺失或启动失败,见 voice-worker.log)");
+            return Err(t(
+                "The voice frontend is not ready (model missing or startup failed; see voice-worker.log)",
+                "语音前端未就绪(模型缺失或启动失败,见 voice-worker.log)",
+            ));
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         waited += 250;
@@ -828,14 +843,20 @@ pub(crate) async fn claim_dictation(
     external: bool,
 ) -> std::result::Result<UnboundedReceiver<DictationRelay>, &'static str> {
     if !state.manager.lock().unwrap().config.voice.enabled {
-        return Err("语音唤醒未开启(设置 → 语音功能),听写需要麦克风");
+        return Err(t(
+            "Wake word is off (Settings → Voice); dictation needs the microphone",
+            "语音唤醒未开启(设置 → 语音功能),听写需要麦克风",
+        ));
     }
     wait_attached(state, 20_000).await?;
     let (tx, rx) = unbounded_channel();
     {
         let mut slot = DICTATION.lock().unwrap();
         if slot.is_some() {
-            return Err("已有一个听写会话在进行");
+            return Err(t(
+                "A dictation session is already running",
+                "已有一个听写会话在进行",
+            ));
         }
         *slot = Some(tx);
     }
@@ -921,7 +942,10 @@ pub(crate) async fn handle_voice_listen(
     if !state.manager.lock().unwrap().config.voice.enabled {
         miyu_core::ipc::send(
             stream,
-            &miyu_core::ipc::Frame::error("语音唤醒未开启(设置 → 语音功能)"),
+            &miyu_core::ipc::Frame::error(t(
+                "Wake word is off (Settings → Voice)",
+                "语音唤醒未开启(设置 → 语音功能)",
+            )),
         )
         .await?;
         return Ok(());
@@ -933,7 +957,10 @@ pub(crate) async fn handle_voice_listen(
     if DICTATION.lock().unwrap().is_some() {
         miyu_core::ipc::send(
             stream,
-            &miyu_core::ipc::Frame::error("听写进行中,先结束听写"),
+            &miyu_core::ipc::Frame::error(t(
+                "A dictation is in progress; end it first",
+                "听写进行中,先结束听写",
+            )),
         )
         .await?;
         return Ok(());
@@ -996,12 +1023,15 @@ pub(crate) async fn transcribe_wav(state: &DaemonState, wav: &[u8]) -> Result<St
     match outcome {
         Ok(Ok(Ok(text))) => Ok(text),
         Ok(Ok(Err(message))) => anyhow::bail!("{message}"),
-        Ok(Err(_)) => anyhow::bail!("语音前端未应答"),
+        Ok(Err(_)) => anyhow::bail!(
+            "{}",
+            t("The voice frontend did not respond", "语音前端未应答")
+        ),
         Err(_) => {
             if let Some(map) = TRANSCRIBES.lock().unwrap().as_mut() {
                 map.remove(&request_id);
             }
-            anyhow::bail!("转写超时")
+            anyhow::bail!("{}", t("Transcription timed out", "转写超时"))
         }
     }
 }

@@ -422,7 +422,8 @@ mod tests {
     /// 懒加载，stub 模式只留描述第一行，清单被整段砍掉，模型**看不到任何技能
     /// 名**，只能瞎猜。实测过一次：模型连试 gaming / linux-game-compat /
     /// linux-gaming 三个名字，真名是 linux-game-compatibility，一个没蒙对，
-    /// 一轮烧掉 208k token 去找一个一直都在的内置技能。
+    /// 一轮烧掉 208k token 去找一个一直都在的内置技能。（那个技能 09-23 已删，
+    /// 由 game_compat 脚本独自承担能力；这条教训本身与技能在不在无关。）
     #[test]
     fn load_skill_is_always_loaded_so_its_catalog_is_visible() {
         let temp = tempfile::tempdir().unwrap();

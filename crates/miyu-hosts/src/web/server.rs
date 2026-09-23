@@ -501,6 +501,9 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         )
         .route("/shared.js", get(shared_js_asset))
         .route("/diff.js", get(diff_js_asset))
+        // WebUI 双语:运行时与英文词典,语言由服务端注入(见 ui_locale.rs)。
+        .route("/i18n.js", get(i18n_js_asset))
+        .route("/i18n-en.js", get(i18n_en_js_asset))
         .route("/dash/{script}", get(dash_script_asset))
         .route("/api/dash/memory/personas", get(dash_memory_personas))
         .route("/api/dash/memory/stats", get(dash_memory_stats))
@@ -724,6 +727,13 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
             get(platforms::onebot::onebot_ws_on_web_port),
         )
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
+        // 请求级界面语言:解析 Accept-Language × config,scope 进 i18n 的
+        // task-local,让本请求内所有 i18n::text/is_zh 按浏览器语言输出
+        // (2026-09-23 拍板;CLI/TUI 的进程级语言不受影响)。
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::web::ui_locale::middleware,
+        ))
         .with_state(state)
 }
 

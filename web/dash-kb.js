@@ -27,7 +27,7 @@
   };
   const ui = {};
 
-  const INDEX_LABEL = { fresh: "已索引", stale: "陈旧", unindexed: "未索引" };
+  const INDEX_LABEL = { fresh: t("已索引"), stale: t("陈旧"), unindexed: t("未索引") };
   const INDEX_CLASS = { fresh: "is-fresh", stale: "is-stale", unindexed: "is-none" };
 
   function bytes(n) {
@@ -45,21 +45,21 @@
     ui.dirInput = D.el("input", { type: "file", multiple: true, hidden: true, onchange: () => queueUploads(Array.from(ui.dirInput.files).map((file) => ({ file, name: file.webkitRelativePath || file.name }))) });
     ui.dirInput.setAttribute("webkitdirectory", "");
     const head = D.el("div.con-head", null,
-      D.el("h2", { text: "知识库" }),
-      D.iconButton("refresh-cw", "刷新", () => reloadAll()),
+      D.el("h2", { text: t("知识库") }),
+      D.iconButton("refresh-cw", t("刷新"), () => reloadAll()),
       ui.stamp,
       D.el("span.dash-scope", null,
-        D.el("button.dash-button.is-primary", { type: "button", title: "也可以直接把文件拖到这个页面上", onclick: () => ui.fileInput.click() }, D.icon("plus"), "上传文件"),
-        D.el("button.dash-button", { type: "button", onclick: () => ui.dirInput.click() }, D.icon("archive"), "上传文件夹"),
+        D.el("button.dash-button.is-primary", { type: "button", title: t("也可以直接把文件拖到这个页面上"), onclick: () => ui.fileInput.click() }, D.icon("plus"), t("上传文件")),
+        D.el("button.dash-button", { type: "button", onclick: () => ui.dirInput.click() }, D.icon("archive"), t("上传文件夹")),
         ui.fileInput, ui.dirInput));
 
     ui.cards = D.el("div");
     ui.defaultCard = D.el("div");
-    ui.search = D.el("input.dash-search", { type: "search", placeholder: "搜索知识库…", oninput: () => {
+    ui.search = D.el("input.dash-search", { type: "search", placeholder: t("搜索知识库…"), oninput: () => {
       clearTimeout(ui.searchTimer);
       ui.searchTimer = setTimeout(() => { state.q = ui.search.value.trim(); state.mode = state.q ? "search" : "browse"; renderMain(); }, 280);
     } });
-    ui.by = D.segmented([{ value: "content", label: "按内容" }, { value: "name", label: "按文件名" }], state.searchBy, (value) => { state.searchBy = value; if (state.q) renderMain(); });
+    ui.by = D.segmented([{ value: "content", label: t("按内容") }, { value: "name", label: t("按文件名") }], state.searchBy, (value) => { state.searchBy = value; if (state.q) renderMain(); });
     const toolbar = D.el("div.dash-toolbar", null, ui.by.el, D.el("label.dash-search-box", null, D.icon("search"), ui.search));
 
     ui.tree = D.el("div.dash-tree-pane");
@@ -78,7 +78,7 @@
     const host = root.parentElement || root;
     host.classList.add("dash-drop-host");
     ui.veil = D.el("div.dash-drop-veil", { hidden: true },
-      D.el("div.dash-drop-label", null, D.icon("plus"), "松开即上传到知识库"));
+      D.el("div.dash-drop-label", null, D.icon("plus"), t("松开即上传到知识库")));
     host.append(ui.veil);
     // 拖的是文字/链接时既不显示指示层也不 preventDefault,事件照常冒泡出去。
     const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes("Files");
@@ -118,7 +118,7 @@
   /* ── 概览 ─────────────────────────────────────────────── */
   async function loadOverview() {
     const seq = ++state.loadSeq;
-    ui.stamp.textContent = "载入中…";
+    ui.stamp.textContent = t("载入中…");
     try {
       const o = await D.api("/api/dash/kb/overview");
       if (seq !== state.loadSeq) return;
@@ -127,10 +127,10 @@
       renderTree();
       if (state.mode === "browse" && state.selected && !o.files.some((f) => f.name === state.selected)) state.selected = "";
       renderMain();
-      ui.stamp.textContent = o.exists ? `${o.file_count} 个文件 · ${bytes(o.total_size_bytes)}` : "库尚未建立";
+      ui.stamp.textContent = o.exists ? t("{count} 个文件 · {size}", { count: o.file_count, size: bytes(o.total_size_bytes) }) : t("库尚未建立");
       if (o.reindex?.running) pollReindex();
     } catch (error) {
-      ui.stamp.textContent = `加载失败:${error.message}`;
+      ui.stamp.textContent = t("加载失败:{message}", { message: error.message });
     }
   }
 
@@ -138,18 +138,18 @@
      以前只有前两态加一个「空闲」,失败和「跑完但一个都没嵌上」都长成空闲的样子。 */
   function reindexCard(r) {
     if (r.stale_lock) {
-      return { label: "重建", value: "锁陈旧", hint: `锁已 ${Math.round((r.lock_age_secs || 0) / 60)} 分钟` };
+      return { label: t("重建"), value: t("锁陈旧"), hint: t("锁已 {count} 分钟", { count: Math.round((r.lock_age_secs || 0) / 60) }) };
     }
     if (r.running) {
-      const value = r.total > 0 ? `${reindexPercent(r.done, r.total)}%` : "进行中";
+      const value = r.total > 0 ? `${reindexPercent(r.done, r.total)}%` : t("进行中");
       const where = r.current ? ` · ${r.current.split("/").pop()}` : "";
-      const hint = r.total > 0 ? `${r.done}/${r.total} 个文件${where}`
-        : (r.phase === "starting" ? "正在启动…" : "统计文件中…");
-      return { label: "重建", value, hint };
+      const hint = r.total > 0 ? t("{done}/{total} 个文件{where}", { done: r.done, total: r.total, where })
+        : (r.phase === "starting" ? t("正在启动…") : t("统计文件中…"));
+      return { label: t("重建"), value, hint };
     }
-    if (r.last_error) return { label: "重建", value: "上次失败", hint: `上次重建失败:${firstLine(r.last_error)}` };
-    if (r.failed > 0) return { label: "重建", value: "空闲", hint: `上次有 ${r.failed} 个文件没能嵌入:${firstLine(r.last_file_error || "")}` };
-    return { label: "重建", value: "空闲", hint: r.configured ? "可以重建" : "嵌入未配置,不会重建" };
+    if (r.last_error) return { label: t("重建"), value: t("上次失败"), hint: t("上次重建失败:{message}", { message: firstLine(r.last_error) }) };
+    if (r.failed > 0) return { label: t("重建"), value: t("空闲"), hint: t("上次有 {count} 个文件没能嵌入:{message}", { count: r.failed, message: firstLine(r.last_file_error || "") }) };
+    return { label: t("重建"), value: t("空闲"), hint: r.configured ? t("可以重建") : t("嵌入未配置,不会重建") };
   }
 
   /** 进行中的百分比。
@@ -170,14 +170,14 @@
   function renderCards() {
     const o = state.overview;
     // 和重建卡用同一个判断(后端给的 embedding_configured),否则同一屏会自相矛盾。
-    const embed = !o.embedding_enabled ? "已关闭"
-      : o.embedding_configured ? `嵌入:${o.embedding_model_id}` : "嵌入:未配置模型";
+    const embed = !o.embedding_enabled ? t("已关闭")
+      : o.embedding_configured ? t("嵌入:{model}", { model: o.embedding_model_id }) : t("嵌入:未配置模型");
     const r = o.reindex || {};
     const cards = D.statCards([
-      { label: "文件", value: o.file_count, hint: `内置 ${o.files.filter((f) => f.builtin).length} · 自有 ${o.files.filter((f) => !f.builtin).length}` },
-      { label: "总大小", value: bytes(o.total_size_bytes), hint: `单文件上限 ${o.max_file_size_kb} KB` },
-      { label: "语义块", value: o.semantic_chunks, hint: embed },
-      { label: "待重建", value: o.stale_files + o.unindexed_files, hint: `陈旧 ${o.stale_files} · 未索引 ${o.unindexed_files}` },
+      { label: t("文件"), value: o.file_count, hint: t("内置 {builtin} · 自有 {own}", { builtin: o.files.filter((f) => f.builtin).length, own: o.files.filter((f) => !f.builtin).length }) },
+      { label: t("总大小"), value: bytes(o.total_size_bytes), hint: t("单文件上限 {max} KB", { max: o.max_file_size_kb }) },
+      { label: t("语义块"), value: o.semantic_chunks, hint: embed },
+      { label: t("待重建"), value: o.stale_files + o.unindexed_files, hint: t("陈旧 {stale} · 未索引 {unindexed}", { stale: o.stale_files, unindexed: o.unindexed_files }) },
       reindexCard(r)
     ]);
     const last = cards.lastElementChild;
@@ -189,9 +189,9 @@
     }
     const actions = D.el("div.dash-card-actions");
     if (r.stale_lock) {
-      actions.append(D.el("button.dash-button", { type: "button", text: "清理陈旧锁", onclick: unlockReindex }));
+      actions.append(D.el("button.dash-button", { type: "button", text: t("清理陈旧锁"), onclick: unlockReindex }));
     } else if (!r.running) {
-      const button = D.el("button.dash-button", { type: "button", text: "重建语义索引", onclick: startReindex });
+      const button = D.el("button.dash-button", { type: "button", text: t("重建语义索引"), onclick: startReindex });
       button.disabled = !r.configured;
       actions.append(button);
     }
@@ -199,10 +199,10 @@
     // 报错在卡片里必然被截断,完整原文挂 title(日志路径也在里面)。
     const hint = last.querySelector(".dash-card-hint");
     if (hint && (r.last_error || r.last_file_error)) {
-      hint.title = [r.last_error, r.last_file_error, r.log_path && `日志:${r.log_path}`].filter(Boolean).join("\n");
+      hint.title = [r.last_error, r.last_file_error, r.log_path && t("日志:{path}", { path: r.log_path })].filter(Boolean).join("\n");
     }
     ui.cards.replaceChildren(cards);
-    if (!o.enabled) ui.cards.prepend(D.el("p.dash-banner", { text: "知识库插件在配置里是关闭的:模型用不到它,面板仍可查看与整理文件。" }));
+    if (!o.enabled) ui.cards.prepend(D.el("p.dash-banner", { text: t("知识库插件在配置里是关闭的:模型用不到它,面板仍可查看与整理文件。") }));
   }
 
   async function loadDefault() {
@@ -211,7 +211,7 @@
       renderDefault();
       if (state.defaultKb.task?.running) pollUpdate();
     } catch (error) {
-      ui.defaultCard.replaceChildren(D.el("p.dash-empty", { text: `内置库状态加载失败:${error.message}` }));
+      ui.defaultCard.replaceChildren(D.el("p.dash-empty", { text: t("内置库状态加载失败:{message}", { message: error.message }) }));
     }
   }
 
@@ -220,10 +220,10 @@
     const s = d.state || {};
     const task = d.task || {};
     const short = (hash) => (hash || "").slice(0, 10) || "—";
-    const status = task.running ? task.stage || "进行中…"
-      : task.error ? `上次失败:${task.error}`
-        : s.update_available ? "有可用更新" : "已是最新";
-    const button = D.el("button.dash-button.is-slim", { type: "button", text: task.running ? "更新中…" : "更新", onclick: startUpdate });
+    const status = task.running ? task.stage || t("进行中…")
+      : task.error ? t("上次失败:{message}", { message: task.error })
+        : s.update_available ? t("有可用更新") : t("已是最新");
+    const button = D.el("button.dash-button.is-slim", { type: "button", text: task.running ? t("更新中…") : t("更新"), onclick: startUpdate });
     button.disabled = task.running || !d.bundled && !s.shorin_wiki_commit;
     // 版本号一致时只写一个:同一串哈希写两遍撑满一行,再把按钮挤到第二行,整条
     // 就长得像一根进度条了(09-09 用户反馈)。完整信息挂在 title 上。
@@ -232,9 +232,9 @@
     const version = local === remote ? local : `${local} → ${remote}`;
     const imported = s.last_imported_at ? D.formatTime(s.last_imported_at) : "—";
     const detail = D.el("span.dash-cell-muted", { text: `${version} · ${imported}` });
-    detail.title = `本地 ${short(s.shorin_wiki_commit)} · 远端 ${short(s.remote_commit)} · 上次导入 ${imported}`;
+    detail.title = t("本地 {local} · 远端 {remote} · 上次导入 {imported}", { local: short(s.shorin_wiki_commit), remote: short(s.remote_commit), imported });
     ui.defaultCard.replaceChildren(D.el("div.dash-inline-card.is-tight", null,
-      D.el("span.dash-chip.is-builtin", { text: "内置库" }),
+      D.el("span.dash-chip.is-builtin", { text: t("内置") }),
       D.el("span.dash-inline-main", { text: "Shorin ArchLinux Guide" }),
       detail,
       D.el(`span.dash-chip${s.update_available && !task.running ? ".is-warn" : ""}`, { text: status }),
@@ -260,7 +260,7 @@
     const o = state.overview;
     ui.tree.textContent = "";
     if (!o.files.length) {
-      ui.tree.append(D.el("p.dash-empty", { text: "库里还没有文件。把文本、Markdown 或配置文件拖到这个页面上,或者用右上角的按钮选。" }));
+      ui.tree.append(D.el("p.dash-empty", { text: t("库里还没有文件。把文本、Markdown 或配置文件拖到这个页面上,或者用右上角的按钮选。") }));
       return;
     }
     const tree = buildTree(o.files);
@@ -269,10 +269,10 @@
     if (state.picked.size) {
       const all = o.files.map((file) => file.name);
       ui.tree.append(D.bulkBar({
-        count: state.picked.size, total: all.length, noun: "个文件", compact: true,
+        count: state.picked.size, total: all.length, noun: t("个文件"), compact: true,
         onAll: () => { for (const name of all) state.picked.add(name); renderTree(); },
         onNone: () => { state.picked.clear(); renderTree(); },
-        actions: [{ label: "删除所选", icon: "trash-2", danger: true, onClick: bulkRemove }]
+        actions: [{ label: t("删除所选"), icon: "trash-2", danger: true, onClick: bulkRemove }]
       }));
     }
     const list = D.el("ul.dash-tree");
@@ -294,7 +294,7 @@
       D.icon(collapsed ? "chevron-right" : "chevron-down"),
       dirCheck(node, name),
       D.el("span.dash-tree-name", { text: name }),
-      builtin ? D.el("span.dash-chip.is-builtin", { text: "内置" }) : null,
+      builtin ? D.el("span.dash-chip.is-builtin", { text: t("内置") }) : null,
       D.el("span.dash-tree-count", { text: String(count) }));
     row.firstChild.style.width = `${depth * 14}px`;
     li.append(row);
@@ -331,7 +331,7 @@
     const names = filesUnder(node);
     const picked = names.filter((name) => state.picked.has(name)).length;
     const box = D.el("input.dash-row-check.dash-tree-check", {
-      type: "checkbox", "aria-label": `选择 ${label} 下的全部文件`,
+      type: "checkbox", "aria-label": t("选择 {label} 下的全部文件", { label }),
     });
     box.checked = picked > 0 && picked === names.length;
     box.indeterminate = picked > 0 && picked < names.length;
@@ -350,7 +350,7 @@
 
   function fileNode(file, depth) {
     const short = file.name.split("/").pop();
-    const box = D.el("input.dash-row-check.dash-tree-check", { type: "checkbox", "aria-label": `选择 ${short}` });
+    const box = D.el("input.dash-row-check.dash-tree-check", { type: "checkbox", "aria-label": t("选择 {name}", { name: short }) });
     box.checked = state.picked.has(file.name);
     box.addEventListener("click", (event) => event.stopPropagation());
     box.addEventListener("change", () => { if (box.checked) state.picked.add(file.name); else state.picked.delete(file.name); renderTree(); });
@@ -360,7 +360,7 @@
       D.el(`span.dash-index-dot.${INDEX_CLASS[file.index] || "is-none"}`, { title: INDEX_LABEL[file.index] || file.index }),
       D.el("span.dash-tree-name", { text: short }),
       D.el("span.dash-tree-size", { text: bytes(file.size_bytes) }),
-      D.iconButton("trash-2", "删除", (event) => { event.stopPropagation(); removeFile(file); }, "is-danger"));
+      D.iconButton("trash-2", t("删除"), (event) => { event.stopPropagation(); removeFile(file); }, "is-danger"));
     row.firstChild.style.width = `${depth * 14 + 16}px`;
     row.classList.toggle("is-selected", state.selected === file.name);
     return D.el("li", null, row);
@@ -370,7 +370,7 @@
   function renderMain() {
     if (state.mode === "search" && state.q) return renderSearch();
     if (!state.selected) {
-      ui.main.replaceChildren(D.el("p.dash-empty", { text: "点左侧文件预览,或在上方搜索。" }));
+      ui.main.replaceChildren(D.el("p.dash-empty", { text: t("点左侧文件预览,或在上方搜索。") }));
       return;
     }
     renderPreview(state.selected, 1, true);
@@ -386,19 +386,19 @@
         ui.codeMore = D.el("div.dash-code-more");
         const head = D.el("div.dash-preview-head", null,
           D.el("strong.dash-preview-name", { text: name }),
-          file ? D.el("span.dash-cell-muted", { text: `${bytes(file.size_bytes)} · ${page.total_lines} 行 · ${INDEX_LABEL[file.index] || ""}${file.chunks ? ` ${file.chunks} 块` : ""}` }) : null,
-          file?.builtin ? D.el("span.dash-chip.is-builtin", { text: "内置(更新时会被覆盖)" }) : null,
+          file ? D.el("span.dash-cell-muted", { text: t("{size} · {lines} 行 · {index}{chunks}", { size: bytes(file.size_bytes), lines: page.total_lines, index: INDEX_LABEL[file.index] || "", chunks: file.chunks ? t(" {chunks} 块", { chunks: file.chunks }) : "" }) }) : null,
+          file?.builtin ? D.el("span.dash-chip.is-builtin", { text: t("内置(更新时会被覆盖)") }) : null,
           D.el("span.dash-actions-gap"),
-          D.iconButton("trash-2", "删除此文件", () => file && removeFile(file), "is-danger"));
+          D.iconButton("trash-2", t("删除此文件"), () => file && removeFile(file), "is-danger"));
         ui.main.replaceChildren(head, ui.code, ui.codeMore);
       }
       appendLines(ui.code, page.text, page.start);
       ui.codeMore.textContent = "";
       if (page.has_more) {
-        ui.codeMore.append(D.el("button.dash-button", { type: "button", text: `继续加载(还有 ${page.total_lines - page.end} 行)`, onclick: () => renderPreview(name, page.end + 1, false) }));
+        ui.codeMore.append(D.el("button.dash-button", { type: "button", text: t("继续加载(还有 {count} 行)", { count: page.total_lines - page.end }), onclick: () => renderPreview(name, page.end + 1, false) }));
       }
     } catch (error) {
-      ui.main.replaceChildren(D.el("p.dash-empty", { text: `读取失败:${error.message}` }));
+      ui.main.replaceChildren(D.el("p.dash-empty", { text: t("读取失败:{message}", { message: error.message }) }));
     }
   }
 
@@ -411,23 +411,23 @@
 
   async function renderSearch() {
     const seq = ++state.loadSeq;
-    ui.main.replaceChildren(D.el("p.dash-empty", { text: "搜索中…" }));
+    ui.main.replaceChildren(D.el("p.dash-empty", { text: t("搜索中…") }));
     try {
       const result = await D.api(`/api/dash/kb/search?${new URLSearchParams({ q: state.q, by: state.searchBy, limit: "20" })}`);
       if (seq !== state.loadSeq) return;
       const list = D.el("div.dash-results");
       const head = D.el("div.dash-preview-head", null,
-        D.el("strong", { text: `“${state.q}” 命中 ${result.total_matches} 个文件` }),
-        state.searchBy === "content" ? D.el("span.dash-cell-muted", { text: result.semantic_used ? "关键词 + 语义" : "仅关键词" }) : null);
+        D.el("strong", { text: t("“{query}” 命中 {count} 个文件", { query: state.q, count: result.total_matches }) }),
+        state.searchBy === "content" ? D.el("span.dash-cell-muted", { text: result.semantic_used ? t("关键词 + 语义") : t("仅关键词") }) : null);
       list.append(head);
-      if (!result.results.length) list.append(D.el("p.dash-empty", { text: "没有匹配。关键词搜索是逐文件扫描,试试换个词或按文件名找。" }));
+      if (!result.results.length) list.append(D.el("p.dash-empty", { text: t("没有匹配。关键词搜索是逐文件扫描,试试换个词或按文件名找。") }));
       for (const hit of result.results) {
         const card = D.el("div.dash-result", { onclick: () => { state.selected = hit.path; state.mode = "browse"; ui.search.value = ""; state.q = ""; renderTree(); renderMain(); } },
           D.el("div.dash-result-head", null,
             D.el("strong", { text: hit.name }),
             D.el("span.dash-cell-muted", { text: hit.directory || "" }),
             D.el("span.dash-actions-gap"),
-            hit.source ? D.el(`span.dash-chip${hit.source === "semantic" ? ".is-builtin" : ""}`, { text: hit.source === "semantic" ? "语义" : "关键词" }) : null,
+            hit.source ? D.el(`span.dash-chip${hit.source === "semantic" ? ".is-builtin" : ""}`, { text: hit.source === "semantic" ? t("语义") : t("关键词") }) : null,
             hit.match_reason ? D.el("span.dash-chip", { text: hit.match_reason }) : null,
             D.el("span.dash-cell-mono", { text: Number(hit.score).toFixed(0) })));
         for (const snippet of (hit.snippets || []).slice(0, 3)) {
@@ -437,7 +437,7 @@
       }
       ui.main.replaceChildren(list);
     } catch (error) {
-      ui.main.replaceChildren(D.el("p.dash-empty", { text: `搜索失败:${error.message}` }));
+      ui.main.replaceChildren(D.el("p.dash-empty", { text: t("搜索失败:{message}", { message: error.message }) }));
     }
   }
 
@@ -464,15 +464,15 @@
   /* 前端预检,判据抄的是 Rust 侧 validate_file(大小 / 扩展名或整名 / UTF-8),
      只为省掉一趟明知会被 400 回来的网络。overview 没载入时全放行,由服务端说了算。 */
   function precheck(name, file) {
-    if (file.size === 0) return "空文件";
+    if (file.size === 0) return t("空文件");
     const o = state.overview;
     if (!o) return "";
-    if (file.size > o.max_file_size_kb * 1024) return `超过 ${o.max_file_size_kb} KB`;
+    if (file.size > o.max_file_size_kb * 1024) return t("超过 {max} KB", { max: o.max_file_size_kb });
     const base = name.split("/").pop().toLowerCase();
     const ext = extOf(base);
     if (csvList(o.allowed_extensions).includes(ext) || csvList(o.allowed_filenames).includes(base)) return "";
-    if (BINARY_EXTS.has(ext) || /^(image|video|audio)\//.test(file.type)) return "不是文本文件";
-    return `类型不允许(${ext || "无扩展名"})`;
+    if (BINARY_EXTS.has(ext) || /^(image|video|audio)\//.test(file.type)) return t("不是文本文件");
+    return t("类型不允许({ext})", { ext: ext || t("无扩展名") });
   }
 
   function isUtf8Text(buffer) {
@@ -493,7 +493,7 @@
     if (!entries.some(Boolean)) {
       // 拿不到 entry(老内核)时只能要平铺的 files,目录在这条路上本就看不见。
       for (const file of files.slice(0, MAX_DROP_FILES)) items.push({ file, name: file.name });
-      if (files.length > MAX_DROP_FILES) notes.push(`一次最多 ${MAX_DROP_FILES} 个文件,其余忽略`);
+      if (files.length > MAX_DROP_FILES) notes.push(t("一次最多 {max} 个文件,其余忽略", { max: MAX_DROP_FILES }));
       return { items, notes };
     }
     let tooDeep = 0;
@@ -517,16 +517,16 @@
       }
     };
     for (const entry of entries) await walk(entry, "", 0);
-    if (tooDeep) notes.push(`目录只展开 ${MAX_DROP_DEPTH} 层,更深的 ${tooDeep} 个目录没有进来`);
-    if (items.length >= MAX_DROP_FILES) notes.push(`一次最多 ${MAX_DROP_FILES} 个文件,其余忽略`);
+    if (tooDeep) notes.push(t("目录只展开 {depth} 层,更深的 {skipped} 个目录没有进来", { depth: MAX_DROP_DEPTH, skipped: tooDeep }));
+    if (items.length >= MAX_DROP_FILES) notes.push(t("一次最多 {max} 个文件,其余忽略", { max: MAX_DROP_FILES }));
     return { items, notes };
   }
 
   function resetLog() {
-    ui.uploadHead = D.el("strong", { text: "上传记录" });
+    ui.uploadHead = D.el("strong", { text: t("上传记录") });
     ui.uploadList = D.el("ul.dash-upload-list");
     ui.uploadLog.replaceChildren(
-      D.el("div.dash-upload-head", null, ui.uploadHead, D.el("span.dash-actions-gap"), D.iconButton("x", "收起", () => { ui.uploadLog.hidden = true; })),
+      D.el("div.dash-upload-head", null, ui.uploadHead, D.el("span.dash-actions-gap"), D.iconButton("x", t("收起"), () => { ui.uploadLog.hidden = true; })),
       ui.uploadList);
     ui.uploadLog.hidden = false;
   }
@@ -549,7 +549,7 @@
     ui.fileInput.value = "";
     ui.dirInput.value = "";
     if (!items.length && !notes.length) return;   // 空投放:什么也不做,也不报错
-    if (state.uploading) { D.toast("上一批还在传,等它完", "error"); return; }
+    if (state.uploading) { D.toast(t("上一批还在传,等它完"), "error"); return; }
     state.uploading = true;
     resetLog();
     for (const note of notes) logRow("—", note, "is-muted");
@@ -557,41 +557,41 @@
     const known = new Set((state.overview?.files || []).map((file) => file.name));
     let stored = 0, replaced = 0, skipped = 0, rejected = 0, failed = 0;
     try {
-      const rows = items.map((item) => ({ item, update: logRow(item.name, "等待中", "is-muted") }));
+      const rows = items.map((item) => ({ item, update: logRow(item.name, t("等待中"), "is-muted") }));
       for (const [index, row] of rows.entries()) {
         const { file, name } = row.item;
-        ui.uploadHead.textContent = `上传记录(${index + 1}/${rows.length})`;
+        ui.uploadHead.textContent = t("上传记录({index}/{total})", { index: index + 1, total: rows.length });
         const reason = precheck(name, file);
-        if (reason) { skipped += 1; row.update(`跳过:${reason}`, "is-muted"); continue; }
-        row.update("上传中…", "");
+        if (reason) { skipped += 1; row.update(t("跳过:{reason}", { reason }), "is-muted"); continue; }
+        row.update(t("上传中…"), "");
         try {
           const buffer = await file.arrayBuffer();
-          if (!isUtf8Text(buffer)) { skipped += 1; row.update("跳过:不是 UTF-8 文本", "is-muted"); continue; }
+          if (!isUtf8Text(buffer)) { skipped += 1; row.update(t("跳过:不是 UTF-8 文本"), "is-muted"); continue; }
           const response = await fetch(`/api/dash/kb/files?name=${encodeURIComponent(name)}`, { method: "POST", body: buffer, headers: { "content-type": "application/octet-stream" } });
           const payload = await response.json().catch(() => null);
           const message = payload?.error?.message || "";
           // 400 是服务端那三道闸(路径 / 类型 / 「这是 Miyu 自己的东西」)判的,理由原样给人看。
-          if (response.status === 400) { rejected += 1; row.update(`被拒:${message || "服务端不收这个文件"}`, "is-danger"); continue; }
-          if (!response.ok) { failed += 1; row.update(`失败:HTTP ${response.status}${message ? ` ${message}` : ""}`, "is-danger"); continue; }
+          if (response.status === 400) { rejected += 1; row.update(t("被拒:{message}", { message: message || t("服务端不收这个文件") }), "is-danger"); continue; }
+          if (!response.ok) { failed += 1; row.update(t("失败:HTTP {status}{message}", { status: response.status, message: message ? ` ${message}` : "" }), "is-danger"); continue; }
           const saved = payload?.name || name;
-          if (known.has(saved)) { replaced += 1; row.update("已存在:已覆盖", "is-warn"); } else { stored += 1; row.update("成功", "is-active"); }
+          if (known.has(saved)) { replaced += 1; row.update(t("已存在:已覆盖"), "is-warn"); } else { stored += 1; row.update(t("成功"), "is-active"); }
           known.add(saved);
         } catch (error) {
           failed += 1;
-          row.update(`失败:${error.message}`, "is-danger");
+          row.update(t("失败:{message}", { message: error.message }), "is-danger");
         }
       }
-      ui.uploadHead.textContent = `上传记录(${rows.length})`;
+      ui.uploadHead.textContent = t("上传记录({count})", { count: rows.length });
     } finally {
       state.uploading = false;
     }
     const parts = [];
-    if (stored) parts.push(`入库 ${stored} 个`);
-    if (replaced) parts.push(`覆盖 ${replaced} 个`);
-    if (skipped) parts.push(`跳过 ${skipped} 个`);
-    if (rejected) parts.push(`被拒 ${rejected} 个`);
-    if (failed) parts.push(`失败 ${failed} 个`);
-    D.toast(parts.join(" · ") || "没有文件入库", rejected || failed ? "error" : undefined);
+    if (stored) parts.push(t("入库 {count} 个", { count: stored }));
+    if (replaced) parts.push(t("覆盖 {count} 个", { count: replaced }));
+    if (skipped) parts.push(t("跳过 {count} 个", { count: skipped }));
+    if (rejected) parts.push(t("被拒 {count} 个", { count: rejected }));
+    if (failed) parts.push(t("失败 {count} 个", { count: failed }));
+    D.toast(parts.join(" · ") || t("没有文件入库"), rejected || failed ? "error" : undefined);
     if (stored || replaced) {
       // 逐文件导入不触发重建;整批完了起一次。失败(嵌入未配置)不算错。
       // 已经有一趟在跑时后端会排队(它的清单里没有这一批),所以这里照样接轮询。
@@ -608,37 +608,37 @@
     const files = state.overview.files.filter((file) => state.picked.has(file.name));
     if (!files.length) return;
     const builtin = files.filter((file) => file.builtin).length;
-    const ok = await D.confirmAction(`删除选中的 ${files.length} 个文件?${builtin ? `其中 ${builtin} 个是内置库文件,下次更新内置库时会回来。` : ""}\n\n文件和它们的语义块一起删除,不可撤销。`);
+    const ok = await D.confirmAction(t("删除选中的 {count} 个文件?{builtin}\n\n文件和它们的语义块一起删除,不可撤销。", { count: files.length, builtin: builtin ? t("其中 {count} 个是内置库文件,下次更新内置库时会回来。", { count: builtin }) : "" }));
     if (!ok) return;
-    await D.runBatch(files, (file) => D.api(`/api/dash/kb/files?name=${encodeURIComponent(file.name)}`, { method: "DELETE" }), "删除");
+    await D.runBatch(files, (file) => D.api(`/api/dash/kb/files?name=${encodeURIComponent(file.name)}`, { method: "DELETE" }), t("删除"));
     state.picked.clear();
     if (files.some((file) => file.name === state.selected)) state.selected = null;
     await loadOverview();
   }
 
   async function removeFile(file) {
-    const ok = await D.confirmAction(`删除 ${file.name}?${file.builtin ? "\n\n这是内置库文件,下次更新内置库时会回来。" : "\n\n文件和它的语义块一起删除,不可撤销。"}`);
+    const ok = await D.confirmAction(t("删除 {name}?", { name: file.name }) + "\n\n" + (file.builtin ? t("这是内置库文件,下次更新内置库时会回来。") : t("文件和它的语义块一起删除,不可撤销。")));
     if (!ok) return;
     try {
       await D.api(`/api/dash/kb/files?name=${encodeURIComponent(file.name)}`, { method: "DELETE" });
       if (state.selected === file.name) state.selected = "";
-      D.toast("已删除");
+      D.toast(t("已删除"));
       await loadOverview();
     } catch (error) {
-      D.toast(`删除失败:${error.message}`, "error");
+      D.toast(t("删除失败:{message}", { message: error.message }), "error");
     }
   }
 
   async function startReindex() {
     try {
       const result = await D.api("/api/dash/kb/reindex", { method: "POST" });
-      D.toast(result.started ? "已开始重建语义索引" : "已排队:当前这趟跑完接着建");
+      D.toast(result.started ? t("已开始重建语义索引") : t("已排队:当前这趟跑完接着建"));
       // 子进程从起到建锁有几百毫秒,后端会先写一帧「正在启动」占住这个窗口;
       // 这里再主动接上轮询,不指望概览那一帧恰好读到。
       pollReindex(700);
       await loadOverview();
     } catch (error) {
-      D.toast(`无法重建:${error.message}`, "error");
+      D.toast(t("无法重建:{message}", { message: error.message }), "error");
     }
   }
 
@@ -669,8 +669,8 @@
       const hintNode = card.querySelector(".dash-card-hint");
       if (hintNode && hint != null) hintNode.textContent = hint;
     };
-    set("语义块", o.semantic_chunks);
-    set("待重建", o.stale_files + o.unindexed_files, `陈旧 ${o.stale_files} · 未索引 ${o.unindexed_files}`);
+    set(t("语义块"), o.semantic_chunks);
+    set(t("待重建"), o.stale_files + o.unindexed_files, t("陈旧 {stale} · 未索引 {unindexed}", { stale: o.stale_files, unindexed: o.unindexed_files }));
     const info = reindexCard(status);
     set(info.label, info.value, info.hint);
     const fill = grid.lastElementChild.querySelector(".dash-card-progress > i");
@@ -693,7 +693,7 @@
       }
       applyReindexStatus(status);
       if (status.running) { pollReindex(); return; }
-      D.toast(status.last_error ? `重建失败:${firstLine(status.last_error)}` : "语义索引重建完成",
+      D.toast(status.last_error ? t("重建失败:{message}", { message: firstLine(status.last_error) }) : t("语义索引重建完成"),
         status.last_error ? "error" : undefined);
       await loadOverview();
     }, delay);
@@ -702,21 +702,21 @@
   async function unlockReindex() {
     try {
       const result = await D.api("/api/dash/kb/reindex/lock", { method: "DELETE" });
-      D.toast(result.cleared ? "已清理陈旧锁" : "锁不陈旧,未动");
+      D.toast(result.cleared ? t("已清理陈旧锁") : t("锁不陈旧,未动"));
       await loadOverview();
     } catch (error) {
-      D.toast(`失败:${error.message}`, "error");
+      D.toast(t("失败:{message}", { message: error.message }), "error");
     }
   }
 
   async function startUpdate() {
-    const ok = await D.confirmAction("从上游仓库拉取内置库并重新导入 default-kb/ 下全部文件?需要 git 与网络,通常几十秒。", "更新");
+    const ok = await D.confirmAction(t("从上游仓库拉取内置库并重新导入 default-kb/ 下全部文件?需要 git 与网络,通常几十秒。"), t("更新"));
     if (!ok) return;
     try {
       await D.api("/api/dash/kb/default/update", { method: "POST" });
       await loadDefault();
     } catch (error) {
-      D.toast(`无法开始更新:${error.message}`, "error");
+      D.toast(t("无法开始更新:{message}", { message: error.message }), "error");
     }
   }
 
@@ -727,7 +727,7 @@
         state.defaultKb = await D.api("/api/dash/kb/default");
         renderDefault();
         if (state.defaultKb.task?.running) { pollUpdate(); return; }
-        D.toast(state.defaultKb.task?.error ? "内置库更新失败" : "内置库已更新", state.defaultKb.task?.error ? "error" : undefined);
+        D.toast(state.defaultKb.task?.error ? t("内置库更新失败") : t("内置库已更新"), state.defaultKb.task?.error ? "error" : undefined);
         await loadOverview();
       } catch (_) { pollUpdate(); }
     }, 2500);

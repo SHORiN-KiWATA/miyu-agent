@@ -6,6 +6,7 @@
 //! 条都对应一种能拿到任意文件的写法。
 
 use crate::web::*;
+use miyu_base::i18n::Locale;
 
 #[derive(Serialize)]
 pub(in crate::web) struct SafeImageAsset {
@@ -155,7 +156,11 @@ fn inflate(gzipped: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-pub(in crate::web) async fn index_asset(headers: HeaderMap) -> Response {
+pub(in crate::web) async fn index_asset(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+) -> Response {
+    let locale = asset_locale(&state, &headers);
     // Version the asset references so browsers and intermediaries can never
     // serve a stale app.js/styles.css after an upgrade.
     static VERSIONED_INDEX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -197,6 +202,14 @@ pub(in crate::web) async fn index_asset(headers: HeaderMap) -> Response {
                 &format!("src=\"/shared.js?v={}\"", miyu_base::build_id()),
             )
             .replace(
+                "src=\"/i18n-en.js\"",
+                &format!("src=\"/i18n-en.js?v={}\"", miyu_base::build_id()),
+            )
+            .replace(
+                "src=\"/i18n.js\"",
+                &format!("src=\"/i18n.js?v={}\"", miyu_base::build_id()),
+            )
+            .replace(
                 "src=\"/diff.js\"",
                 &format!("src=\"/diff.js?v={}\"", miyu_base::build_id()),
             )
@@ -233,11 +246,14 @@ pub(in crate::web) async fn index_asset(headers: HeaderMap) -> Response {
         }
         html
     });
-    embedded_asset(
-        &headers,
-        VERSIONED_INDEX.as_bytes(),
-        "text/html; charset=utf-8",
-    )
+    // 根页面的 lang 跟请求语言:i18n.js 启动时还会再设一次,但脚本跑起来之前
+    // (以及读 HTML 的无障碍工具)就得是对的。
+    let html_lang = match locale {
+        Locale::Zh => "zh-CN",
+        Locale::En => "en-US",
+    };
+    let html = VERSIONED_INDEX.replace("lang=\"zh-CN\"", &format!("lang=\"{html_lang}\""));
+    localized_asset(&headers, &html, locale, "text/html; charset=utf-8")
 }
 
 pub(in crate::web) async fn styles_asset(headers: HeaderMap) -> Response {
@@ -250,6 +266,109 @@ pub(in crate::web) async fn app_asset(headers: HeaderMap) -> Response {
         APP_JS.as_bytes(),
         "application/javascript; charset=utf-8",
     )
+}
+
+/// 请求的界面语言。web 侧所有「随语言变」的资源都从这里取,规则只有
+/// `crate::web::ui_locale::resolve` 一处(2026-09-23 拍板:config 明确 en/zh 优先,
+/// auto 看浏览器)。
+fn asset_locale(state: &DaemonState, headers: &HeaderMap) -> Locale {
+    let manager = state.manager.lock().unwrap();
+    crate::web::ui_locale::resolve(&manager.config, headers)
+}
+
+fn locale_tag(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Zh => "zh",
+        Locale::En => "en",
+    }
+}
+
+/// `/i18n.js`:双语运行时。语言在这里注入 —— 前端拿到的是"已解析"的结果,
+/// 注入后的字节是常量,ETag 走 locale 维度(`localized_etag`)。
+pub(in crate::web) async fn i18n_js_asset(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+) -> Response {
+    let locale = asset_locale(&state, &headers);
+    let body = format!("window.MIYU_LANG=\"{}\";\n{}", locale_tag(locale), I18N_JS);
+    localized_asset(
+        &headers,
+        &body,
+        locale,
+        "application/javascript; charset=utf-8",
+    )
+}
+
+/// `/i18n-en.js`:英文词典。中文界面发空壳而不是 404 —— script 标签是写死的,
+/// 404 会在控制台留一行红字,空壳又小又不吵。
+pub(in crate::web) async fn i18n_en_js_asset(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+) -> Response {
+    let locale = asset_locale(&state, &headers);
+    let body = if locale == Locale::En {
+        I18N_EN_JS.to_string()
+    } else {
+        "window.MIYU_I18N_EN = Object.freeze({});\n".to_string()
+    };
+    localized_asset(
+        &headers,
+        &body,
+        locale,
+        "application/javascript; charset=utf-8",
+    )
+}
+
+/// 随语言变的资源:ETag 加 locale 后缀,配 `Vary: Accept-Language`,让浏览器
+/// 与中间缓存永远不会把中英两份串用。
+fn localized_asset(
+    headers: &HeaderMap,
+    body: &str,
+    locale: Locale,
+    content_type: &'static str,
+) -> Response {
+    let etag = localized_etag(locale);
+    if headers
+        .get(axum::http::header::IF_NONE_MATCH)
+        .is_some_and(|value| value == etag)
+    {
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        response
+            .headers_mut()
+            .insert(axum::http::header::ETAG, etag);
+        response.headers_mut().insert(
+            axum::http::header::VARY,
+            HeaderValue::from_static("Accept-Language"),
+        );
+        return response;
+    }
+    let mut response = finish_asset_response(body.to_string().into_response(), content_type);
+    response
+        .headers_mut()
+        .insert(axum::http::header::ETAG, etag);
+    response.headers_mut().insert(
+        axum::http::header::VARY,
+        HeaderValue::from_static("Accept-Language"),
+    );
+    response
+}
+
+fn localized_etag(locale: Locale) -> HeaderValue {
+    static ETAGS: std::sync::OnceLock<[HeaderValue; 2]> = std::sync::OnceLock::new();
+    let tags = ETAGS.get_or_init(|| {
+        [Locale::Zh, Locale::En].map(|locale| {
+            HeaderValue::from_str(&format!(
+                "\"{}-{}\"",
+                miyu_base::build_id(),
+                locale_tag(locale)
+            ))
+            .expect("build id forms a valid header value")
+        })
+    });
+    match locale {
+        Locale::Zh => tags[0].clone(),
+        Locale::En => tags[1].clone(),
+    }
 }
 
 pub(in crate::web) async fn commands_js_asset(headers: HeaderMap) -> Response {
@@ -459,7 +578,7 @@ pub(in crate::web) async fn upload_persona_asset(
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "unsupported image format",
-            ))
+            ));
         }
     };
     let hash = format!("{:x}", Sha256::digest(&body));

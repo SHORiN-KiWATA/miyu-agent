@@ -695,7 +695,9 @@ pub(in crate::web) fn prepare_web_attachment_data(
         ));
     }
     let mut content = if display_content.is_empty() {
-        "请查看附件。".to_string()
+        // 用户只传附件没写字时替用户写的那句:是**用户消息**,跟界面语言走
+        // (2026-09-23 WebUI 双语;模型读到的就是用户语言的这句)。
+        t("See the attachment.", "请查看附件。").to_string()
     } else {
         display_content.to_string()
     };

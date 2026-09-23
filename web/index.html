@@ -14,6 +14,10 @@
   <!-- 语法高亮:data-manual 必须留着,否则 Prism 会自己扫全页并用 innerHTML 重写
        每个 code[class*=language-];我们只借它的分词器,DOM 由 highlight.js 亲手搭。 -->
   <script defer src="/vendor/prism/prism.min.js" data-manual></script>
+  <!-- 双语运行时先于一切业务脚本:defer 按文档顺序执行,commands.js 之类的
+       顶层就要用到 t()。语言由服务端注入(见 web/i18n.js 头部说明)。 -->
+  <script defer src="/i18n-en.js"></script>
+  <script defer src="/i18n.js"></script>
   <script defer src="/highlight.js"></script>
   <!-- 命令层要先于 app.js 就位:app.js 初始化时就会调 MiyuCommands.load -->
   <script defer src="/commands.js"></script>
@@ -41,29 +45,29 @@
 </head>
 <body data-theme="graphite">
   <div class="app-shell" id="appShell">
-    <button class="page-scrim sidebar-scrim" id="sidebarScrim" type="button" aria-label="关闭会话栏" tabindex="-1"></button>
+    <button class="page-scrim sidebar-scrim" id="sidebarScrim" type="button" aria-label="关闭会话栏" data-i18n-aria-label="关闭会话栏" tabindex="-1"></button>
 
-    <aside class="sidebar" id="sidebar" aria-label="会话">
+    <aside class="sidebar" id="sidebar" aria-label="会话" data-i18n-aria-label="会话">
       <header class="brand-row">
         <div class="brand-identity">
           <img src="/assets/miyu-logo.png" alt="Miyu" class="brand-avatar" id="brandAvatar">
           <div>
             <strong id="brandName">Miyu</strong>
-            <span><i class="status-dot is-connecting" id="sidebarStatusDot"></i><span id="sidebarConnectionStatus">连接中</span></span>
+            <span><i class="status-dot is-connecting" id="sidebarStatusDot"></i><span id="sidebarConnectionStatus" data-i18n="连接中">连接中</span></span>
           </div>
         </div>
-        <button class="new-chat-button" id="newChatButton" type="button" title="新对话" aria-label="新对话" disabled>
+        <button class="new-chat-button" id="newChatButton" type="button" title="新对话" data-i18n-title="新对话" aria-label="新对话" data-i18n-aria-label="新对话" disabled>
           <span class="icon-slot" data-icon="square-pen" aria-hidden="true"><span class="icon-fallback">＋</span></span>
         </button>
-        <button class="icon-button sidebar-collapse-button" id="sidebarCollapseButton" type="button" title="收起侧边栏" aria-label="收起侧边栏">
+        <button class="icon-button sidebar-collapse-button" id="sidebarCollapseButton" type="button" title="收起侧边栏" data-i18n-title="收起侧边栏" aria-label="收起侧边栏" data-i18n-aria-label="收起侧边栏">
           <span class="icon-slot" data-icon="panel-left-close" aria-hidden="true"><span class="icon-fallback">◧</span></span>
         </button>
-        <button class="icon-button sidebar-close" id="sidebarClose" type="button" title="关闭会话栏" aria-label="关闭会话栏">
+        <button class="icon-button sidebar-close" id="sidebarClose" type="button" title="关闭会话栏" data-i18n-title="关闭会话栏" aria-label="关闭会话栏" data-i18n-aria-label="关闭会话栏">
           <span class="icon-slot" data-icon="x" aria-hidden="true"><span class="icon-fallback">×</span></span>
         </button>
       </header>
 
-      <nav class="session-list" id="sessionList" aria-label="会话">
+      <nav class="session-list" id="sessionList" aria-label="会话" data-i18n-aria-label="会话">
         <div class="session-items" id="sessionItems"></div>
       </nav>
 
@@ -71,15 +75,15 @@
         <div class="sidebar-actions">
           <button class="sidebar-action" id="consoleButton" type="button">
             <span class="icon-slot" data-icon="layout-grid" aria-hidden="true"><span class="icon-fallback">▦</span></span>
-            <span class="settings-label">控制台</span>
+            <span class="settings-label" data-i18n="控制台">控制台</span>
           </button>
-          <button class="icon-button" id="sharedFilesButton" type="button" title="分享文件" aria-label="分享文件">
+          <button class="icon-button" id="sharedFilesButton" type="button" title="分享文件" data-i18n-title="分享文件" aria-label="分享文件" data-i18n-aria-label="分享文件">
             <span class="icon-slot" data-icon="download" aria-hidden="true"><span class="icon-fallback">⇩</span></span>
           </button>
-          <button class="icon-button" id="sidebarSettingsButton" type="button" title="打开设置" aria-label="打开设置" data-admin-only>
+          <button class="icon-button" id="sidebarSettingsButton" type="button" title="打开设置" data-i18n-title="打开设置" aria-label="打开设置" data-i18n-aria-label="打开设置" data-admin-only>
             <span class="icon-slot" data-icon="sliders-horizontal" aria-hidden="true"><span class="icon-fallback">⚙</span></span>
           </button>
-          <button class="icon-button" id="sidebarThemeButton" type="button" title="切换主题" aria-label="切换主题">
+          <button class="icon-button" id="sidebarThemeButton" type="button" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题">
             <span class="icon-slot" data-icon="sun-moon" aria-hidden="true"><span class="icon-fallback">◐</span></span>
           </button>
         </div>
@@ -91,17 +95,17 @@
            正文左上角的小按钮(侧栏展开时自己藏起来),模型和预览进了输入框那排,
            设置去了侧栏左下角。 -->
       <div class="stage-float" id="stageFloat">
-        <button class="icon-button sidebar-expand-button" id="sidebarExpandButton" type="button" title="展开侧边栏" aria-label="展开侧边栏" hidden>
+        <button class="icon-button sidebar-expand-button" id="sidebarExpandButton" type="button" title="展开侧边栏" data-i18n-title="展开侧边栏" aria-label="展开侧边栏" data-i18n-aria-label="展开侧边栏" hidden>
           <span class="icon-slot" data-icon="panel-left-open" aria-hidden="true"><span class="icon-fallback">▣</span></span>
         </button>
-        <button class="icon-button mobile-menu-button" id="mobileMenuButton" type="button" title="打开会话栏" aria-label="打开会话栏">
+        <button class="icon-button mobile-menu-button" id="mobileMenuButton" type="button" title="打开会话栏" data-i18n-title="打开会话栏" aria-label="打开会话栏" data-i18n-aria-label="打开会话栏">
           <span class="icon-slot" data-icon="panel-left" aria-hidden="true"><span class="icon-fallback">☰</span></span>
         </button>
       </div>
 
       <!-- 常驻任务面板：宽屏时正文两侧本来就空着一大片,把当前待办放在那儿,
            不用翻回工具签去看。窄屏由 CSS 隐藏。 -->
-      <aside class="stage-todos" id="stageTodos" aria-label="任务列表" hidden></aside>
+      <aside class="stage-todos" id="stageTodos" aria-label="任务列表" data-i18n-aria-label="任务列表" hidden></aside>
 
       <section class="conversation-stage" id="conversationStage">
         <div class="inline-error" id="errorRegion" role="alert" hidden></div>
@@ -109,20 +113,20 @@
         <div class="chat-scroll" id="chatScroll">
           <div class="loading-state" id="loadingState" role="status">
             <span class="loading-mark" aria-hidden="true"></span>
-            <span>正在载入对话</span>
+            <span data-i18n="正在载入对话">正在载入对话</span>
           </div>
 
           <section class="blocked-state" id="blockedState" aria-labelledby="blockedTitle" hidden>
             <img src="/assets/miyu-logo.png" alt="" aria-hidden="true">
-            <h1 id="blockedTitle">登录 Miyu</h1>
-            <p id="blockedMessage">输入访问密码以继续。</p>
+            <h1 id="blockedTitle" data-i18n="登录 Miyu">登录 Miyu</h1>
+            <p id="blockedMessage" data-i18n="输入访问密码以继续。">输入访问密码以继续。</p>
             <form class="login-form" id="loginForm" hidden novalidate>
-              <label for="loginUsername">用户名</label>
+              <label for="loginUsername" data-i18n="用户名">用户名</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="user" aria-hidden="true"><span class="icon-fallback">@</span></span>
-                <input id="loginUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" placeholder="用户名">
+                <input id="loginUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" placeholder="用户名" data-i18n-placeholder="用户名">
               </div>
-              <label for="loginPassword">密码</label>
+              <label for="loginPassword" data-i18n="密码">密码</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="lock-keyhole" aria-hidden="true"><span class="icon-fallback">*</span></span>
                 <input id="loginPassword" name="password" type="password" autocomplete="current-password" required spellcheck="false" autocapitalize="none">
@@ -130,27 +134,27 @@
               <p class="login-error" id="loginError" role="alert" hidden></p>
               <button class="login-submit" id="loginSubmit" type="submit">
                 <span class="icon-slot" data-icon="log-in" aria-hidden="true"><span class="icon-fallback">→</span></span>
-                <span id="loginSubmitLabel">登录</span>
+                <span id="loginSubmitLabel" data-i18n="登录">登录</span>
               </button>
-              <p class="login-switch">有邀请码?<button type="button" id="showRegisterButton">注册账号</button></p>
+              <p class="login-switch" data-i18n-text="有邀请码?">有邀请码?<button type="button" id="showRegisterButton" data-i18n="注册账号">注册账号</button></p>
             </form>
             <form class="login-form" id="registerForm" hidden novalidate>
-              <label for="registerInvite">邀请码</label>
+              <label for="registerInvite" data-i18n="邀请码">邀请码</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="ticket" aria-hidden="true"><span class="icon-fallback">#</span></span>
                 <input id="registerInvite" name="invite" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters" required>
               </div>
-              <label for="registerUsername">用户名</label>
+              <label for="registerUsername" data-i18n="用户名">用户名</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="user" aria-hidden="true"><span class="icon-fallback">@</span></span>
-                <input id="registerUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" required placeholder="3–32 位,字母数字 _ - .">
+                <input id="registerUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" required placeholder="3–32 位,字母数字 _ - ." data-i18n-placeholder="3–32 位,字母数字 _ - .">
               </div>
-              <label for="registerDisplayName">显示名(可选)</label>
+              <label for="registerDisplayName" data-i18n="显示名(可选)">显示名(可选)</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="smile" aria-hidden="true"><span class="icon-fallback">☺</span></span>
-                <input id="registerDisplayName" name="display_name" type="text" autocomplete="nickname" spellcheck="false" placeholder="AI 怎么称呼你">
+                <input id="registerDisplayName" name="display_name" type="text" autocomplete="nickname" spellcheck="false" placeholder="AI 怎么称呼你" data-i18n-placeholder="AI 怎么称呼你">
               </div>
-              <label for="registerPassword">密码</label>
+              <label for="registerPassword" data-i18n="密码">密码</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="lock-keyhole" aria-hidden="true"><span class="icon-fallback">*</span></span>
                 <input id="registerPassword" name="password" type="password" autocomplete="new-password" required spellcheck="false">
@@ -158,27 +162,27 @@
               <p class="login-error" id="registerError" role="alert" hidden></p>
               <button class="login-submit" id="registerSubmit" type="submit">
                 <span class="icon-slot" data-icon="user-plus" aria-hidden="true"><span class="icon-fallback">+</span></span>
-                <span id="registerSubmitLabel">注册并登录</span>
+                <span id="registerSubmitLabel" data-i18n="注册并登录">注册并登录</span>
               </button>
-              <p class="login-switch">已有账号?<button type="button" id="showLoginButton">返回登录</button></p>
+              <p class="login-switch" data-i18n-text="已有账号?">已有账号?<button type="button" id="showLoginButton" data-i18n="返回登录">返回登录</button></p>
             </form>
             <form class="login-form" id="setupForm" hidden novalidate>
-              <label for="setupUsername">管理员用户名</label>
+              <label for="setupUsername" data-i18n="管理员用户名">管理员用户名</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="user" aria-hidden="true"><span class="icon-fallback">@</span></span>
-                <input id="setupUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" required placeholder="3–32 位,字母数字 _ - .">
+                <input id="setupUsername" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none" required placeholder="3–32 位,字母数字 _ - ." data-i18n-placeholder="3–32 位,字母数字 _ - .">
               </div>
-              <label for="setupDisplayName">显示名(可选)</label>
+              <label for="setupDisplayName" data-i18n="显示名(可选)">显示名(可选)</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="smile" aria-hidden="true"><span class="icon-fallback">☺</span></span>
-                <input id="setupDisplayName" name="display_name" type="text" autocomplete="nickname" spellcheck="false" placeholder="AI 怎么称呼你">
+                <input id="setupDisplayName" name="display_name" type="text" autocomplete="nickname" spellcheck="false" placeholder="AI 怎么称呼你" data-i18n-placeholder="AI 怎么称呼你">
               </div>
-              <label for="setupPassword">密码</label>
+              <label for="setupPassword" data-i18n="密码">密码</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="lock-keyhole" aria-hidden="true"><span class="icon-fallback">*</span></span>
                 <input id="setupPassword" name="password" type="password" autocomplete="new-password" required spellcheck="false">
               </div>
-              <label for="setupPassword2">再输一次</label>
+              <label for="setupPassword2" data-i18n="再输一次">再输一次</label>
               <div class="login-input">
                 <span class="icon-slot" data-icon="lock-keyhole" aria-hidden="true"><span class="icon-fallback">*</span></span>
                 <input id="setupPassword2" name="password2" type="password" autocomplete="new-password" required spellcheck="false">
@@ -186,12 +190,12 @@
               <p class="login-error" id="setupError" role="alert" hidden></p>
               <button class="login-submit" id="setupSubmit" type="submit">
                 <span class="icon-slot" data-icon="user-plus" aria-hidden="true"><span class="icon-fallback">+</span></span>
-                <span id="setupSubmitLabel">创建管理员并登录</span>
+                <span id="setupSubmitLabel" data-i18n="创建管理员并登录">创建管理员并登录</span>
               </button>
             </form>
             <button class="secondary-button" id="retryBootstrapButton" type="button">
               <span class="icon-slot" data-icon="refresh-cw" aria-hidden="true"><span class="icon-fallback">↻</span></span>
-              <span>重新载入</span>
+              <span data-i18n="重新载入">重新载入</span>
             </button>
           </section>
 
@@ -199,70 +203,70 @@
 
           <section class="empty-state" id="emptyState" aria-labelledby="emptyTitle" hidden>
             <div class="empty-visual" id="emptyVisual">
-              <img id="emptyBoardImage" src="/assets/miyuwallpaper.png" alt="Miyu 看板图片" decoding="async">
+              <img id="emptyBoardImage" src="/assets/miyuwallpaper.png" alt="Miyu 看板图片" data-i18n-alt="Miyu 看板图片" decoding="async">
             </div>
             <div class="empty-copy">
               <span class="empty-kicker"><i class="status-dot"></i><span id="emptyKickerName">Miyu</span></span>
-              <h1 id="emptyTitle">今天想聊些什么？</h1>
-              <p id="emptySubtitle">从一个问题、计划或此刻的想法开始。</p>
+              <h1 id="emptyTitle" data-i18n="今天想聊些什么？">今天想聊些什么？</h1>
+              <p id="emptySubtitle" data-i18n="从一个问题、计划或此刻的想法开始。">从一个问题、计划或此刻的想法开始。</p>
             </div>
             <div class="prompt-grid" id="promptGrid">
-              <button type="button" data-prompt="查询今天的天气">
+              <button type="button" data-prompt="查询今天的天气" data-i18n-prompt="查询今天的天气">
                 <span class="icon-slot" data-icon="cloud-sun" aria-hidden="true"><span class="icon-fallback">☀</span></span>
-                <span>查询今天的天气</span>
+                <span data-i18n="查询今天的天气">查询今天的天气</span>
               </button>
-              <button type="button" data-prompt="分析一个问题">
+              <button type="button" data-prompt="分析一个问题" data-i18n-prompt="分析一个问题">
                 <span class="icon-slot" data-icon="lightbulb" aria-hidden="true"><span class="icon-fallback">?</span></span>
-                <span>分析一个问题</span>
+                <span data-i18n="分析一个问题">分析一个问题</span>
               </button>
-              <button type="button" data-prompt="发表情包打个招呼吧">
+              <button type="button" data-prompt="发表情包打个招呼吧" data-i18n-prompt="发表情包打个招呼吧">
                 <span class="icon-slot" data-icon="smile" aria-hidden="true"><span class="icon-fallback">☺</span></span>
-                <span>发表情包打个招呼吧</span>
+                <span data-i18n="发表情包打个招呼吧">发表情包打个招呼吧</span>
               </button>
-              <button type="button" data-prompt="搜索一张图片">
+              <button type="button" data-prompt="搜索一张图片" data-i18n-prompt="搜索一张图片">
                 <span class="icon-slot" data-icon="image-search" aria-hidden="true"><span class="icon-fallback">⌕</span></span>
-                <span>搜索一张图片</span>
+                <span data-i18n="搜索一张图片">搜索一张图片</span>
               </button>
             </div>
           </section>
         </div>
 
-        <button class="jump-bottom-button" id="jumpBottomButton" type="button" title="回到底部" aria-label="回到底部" hidden>
+        <button class="jump-bottom-button" id="jumpBottomButton" type="button" title="回到底部" data-i18n-title="回到底部" aria-label="回到底部" data-i18n-aria-label="回到底部" hidden>
           <span class="icon-slot" data-icon="arrow-down" aria-hidden="true"><span class="icon-fallback">↓</span></span>
         </button>
 
         <footer class="composer-dock" id="composerDock">
-          <div class="voice-float" id="voiceIndicator" role="status" aria-label="正在听写" hidden>
+          <div class="voice-float" id="voiceIndicator" role="status" aria-label="正在听写" data-i18n-aria-label="正在听写" hidden>
             <span class="icon-slot" data-icon="mic" aria-hidden="true"><span class="icon-fallback">●</span></span>
             <i class="voice-level" aria-hidden="true"><b id="voiceLevel"></b></i>
           </div>
           <!-- 目标状态行：目标是长期存在的东西，不该只在对话流里闪一下。
                贴在输入框上方随状态刷新，操作直接在这儿点。 -->
           <div class="jobs-strip" id="jobsStrip" hidden></div>
-          <div class="goal-bar" id="goalBar" aria-label="当前目标" hidden></div>
-          <div class="question-dock" id="questionDock" aria-label="待回答问题" aria-live="polite" hidden></div>
+          <div class="goal-bar" id="goalBar" aria-label="当前目标" data-i18n-aria-label="当前目标" hidden></div>
+          <div class="question-dock" id="questionDock" aria-label="待回答问题" data-i18n-aria-label="待回答问题" aria-live="polite" hidden></div>
           <form class="composer" id="composerForm">
-            <div class="queue-tray" id="queueTray" aria-label="排队中的消息" hidden></div>
-            <div class="attachment-tray" id="attachmentTray" aria-label="待发送附件" hidden></div>
+            <div class="queue-tray" id="queueTray" aria-label="排队中的消息" data-i18n-aria-label="排队中的消息" hidden></div>
+            <div class="attachment-tray" id="attachmentTray" aria-label="待发送附件" data-i18n-aria-label="待发送附件" hidden></div>
             <!-- 首屏兜底:人格加载完由 applyPersona 换成配置值(或按人格名生成的默认句)。 -->
             <!-- 输入行:框内只留交互按钮(面板/语音/附件/发送);其余信息移到框下的 composer-info。 -->
             <div class="composer-input-row">
-              <textarea id="composerInput" rows="2" placeholder="给 Miyu 发消息" aria-label="消息" disabled></textarea>
+              <textarea id="composerInput" rows="2" placeholder="给 Miyu 发消息" data-i18n-placeholder="给 Miyu 发消息" aria-label="消息" data-i18n-aria-label="消息" disabled></textarea>
               <div class="composer-inbox-bar">
-                <button class="attach-button" id="attachButton" type="button" title="添加附件" aria-label="添加附件" disabled>
+                <button class="attach-button" id="attachButton" type="button" title="添加附件" data-i18n-title="添加附件" aria-label="添加附件" data-i18n-aria-label="添加附件" disabled>
                   <span class="icon-slot" data-icon="paperclip" aria-hidden="true"><span class="icon-fallback">+</span></span>
                 </button>
                 <span class="typing-indicator is-composer" id="composerRunIndicator" aria-hidden="true" hidden><i></i><i></i><i></i></span>
                 <span class="character-count" id="characterCount" hidden>0 / 20,000</span>
                 <span class="composer-inbox-right">
-                  <div class="live-stop-rail" id="liveStopRail" aria-label="正在运行的回复" hidden></div>
-                  <button class="icon-button artifact-toggle-button" id="artifactToggleButton" type="button" title="打开预览" aria-label="打开预览" hidden>
+                  <div class="live-stop-rail" id="liveStopRail" aria-label="正在运行的回复" data-i18n-aria-label="正在运行的回复" hidden></div>
+                  <button class="icon-button artifact-toggle-button" id="artifactToggleButton" type="button" title="打开预览" data-i18n-title="打开预览" aria-label="打开预览" data-i18n-aria-label="打开预览" hidden>
                     <span class="icon-slot" data-icon="panel-right" aria-hidden="true"><span class="icon-fallback">▥</span></span>
                   </button>
-                  <button class="mic-button" id="micButton" type="button" title="语音输入" aria-label="语音输入" aria-pressed="false" hidden>
+                  <button class="mic-button" id="micButton" type="button" title="语音输入" data-i18n-title="语音输入" aria-label="语音输入" data-i18n-aria-label="语音输入" aria-pressed="false" hidden>
                     <span class="icon-slot" data-icon="mic" aria-hidden="true"><span class="icon-fallback">●</span></span>
                   </button>
-                  <button class="send-button" id="sendButton" type="submit" title="发送消息" aria-label="发送消息" disabled>
+                  <button class="send-button" id="sendButton" type="submit" title="发送消息" data-i18n-title="发送消息" aria-label="发送消息" data-i18n-aria-label="发送消息" disabled>
                     <span class="icon-slot" data-icon="arrow-up" aria-hidden="true"><span class="icon-fallback">↑</span></span>
                   </button>
                 </span>
@@ -274,57 +278,57 @@
           <div class="composer-info" id="composerInfo">
             <div class="model-menu-wrap" id="modelMenuWrap">
               <button class="model-button" id="modelButton" type="button" aria-haspopup="menu" aria-expanded="false" disabled>
-                <span class="model-label" id="modelLabel">正在载入</span>
+                <span class="model-label" id="modelLabel" data-i18n="正在载入">正在载入</span>
                 <span class="icon-slot" data-icon="chevron-down" aria-hidden="true"><span class="icon-fallback">⌄</span></span>
               </button>
             </div>
-            <span class="composer-state" id="composerState">正在载入</span>
+            <span class="composer-state" id="composerState" data-i18n="正在载入">正在载入</span>
             <span class="composer-info-spacer"></span>
-            <span class="composer-speed" id="composerSpeed" hidden><span class="k">每秒</span> <b id="composerSpeedValue">--</b> <span class="k">toks</span></span>
-            <span class="composer-cumulative" id="composerCumulative" hidden><span class="k">累计</span> <b id="composerCumulativeValue">--</b></span>
-            <div class="composer-context" id="contextTrack" role="progressbar" aria-label="上下文使用情况" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="上下文使用">
+            <span class="composer-speed" id="composerSpeed" hidden><span class="k" data-i18n="每秒">每秒</span> <b id="composerSpeedValue">--</b> <span class="k">toks</span></span>
+            <span class="composer-cumulative" id="composerCumulative" hidden><span class="k" data-i18n="累计">累计</span> <b id="composerCumulativeValue">--</b></span>
+            <div class="composer-context" id="contextTrack" role="progressbar" aria-label="上下文使用情况" data-i18n-aria-label="上下文使用情况" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="上下文使用" data-i18n-title="上下文使用">
               <svg class="ctx-ring" viewBox="0 0 24 24" aria-hidden="true">
                 <circle class="ctx-ring-bg" cx="12" cy="12" r="9"></circle>
                 <circle class="ctx-ring-fg" cx="12" cy="12" r="9" id="contextRing"></circle>
               </svg>
-              <span class="ctx-nums"><span class="k">上下文</span> <span id="contextNumbers">-- / --</span></span>
+              <span class="ctx-nums"><span class="k" data-i18n="上下文">上下文</span> <span id="contextNumbers">-- / --</span></span>
               <i id="contextBar" hidden></i>
             </div>
           </div>
           <!-- 模型菜单挂在 dock 上而不是 form 里：`.composer` 为了圆角开了
                overflow: hidden，菜单在它里面会被裁成半截。定位由
                positionModelMenu() 按按钮实际位置算。 -->
-          <div class="model-menu" id="modelMenu" role="menu" aria-label="选择模型" hidden></div>
-          <div class="model-level-menu" id="modelLevelMenu" role="radiogroup" aria-label="思考程度" hidden></div>
+          <div class="model-menu" id="modelMenu" role="menu" aria-label="选择模型" data-i18n-aria-label="选择模型" hidden></div>
+          <div class="model-level-menu" id="modelLevelMenu" role="radiogroup" aria-label="思考程度" data-i18n-aria-label="思考程度" hidden></div>
         </footer>
       </section>
 
-      <aside class="artifact-workspace" id="artifactWorkspace" aria-label="预览工作区" aria-hidden="true" hidden>
+      <aside class="artifact-workspace" id="artifactWorkspace" aria-label="预览工作区" data-i18n-aria-label="预览工作区" aria-hidden="true" hidden>
         <div class="artifact-resize-handle" id="artifactResizeHandle" aria-hidden="true"></div>
         <header class="artifact-header">
           <div class="artifact-leading">
-            <div class="artifact-mode-switch" role="group" aria-label="查看方式">
-              <button id="artifactPreviewButton" type="button" title="预览" aria-label="预览" aria-pressed="true">
+            <div class="artifact-mode-switch" role="group" aria-label="查看方式" data-i18n-aria-label="查看方式">
+              <button id="artifactPreviewButton" type="button" title="预览" data-i18n-title="预览" aria-label="预览" data-i18n-aria-label="预览" aria-pressed="true">
                 <span class="icon-slot" data-icon="eye" aria-hidden="true"><span class="icon-fallback">◉</span></span>
               </button>
-              <button id="artifactSourceButton" type="button" title="查看源码" aria-label="查看源码" aria-pressed="false">
+              <button id="artifactSourceButton" type="button" title="查看源码" data-i18n-title="查看源码" aria-label="查看源码" data-i18n-aria-label="查看源码" aria-pressed="false">
                 <span class="icon-slot" data-icon="code-2" aria-hidden="true"><span class="icon-fallback">&lt;/&gt;</span></span>
               </button>
             </div>
-            <div class="artifact-image-actions" id="artifactImageActions" aria-label="图片操作" hidden>
-              <a id="artifactImageExternalButton" title="在新标签页打开原图" aria-label="在新标签页打开原图" target="_blank" rel="noopener noreferrer">
+            <div class="artifact-image-actions" id="artifactImageActions" aria-label="图片操作" data-i18n-aria-label="图片操作" hidden>
+              <a id="artifactImageExternalButton" title="在新标签页打开原图" data-i18n-title="在新标签页打开原图" aria-label="在新标签页打开原图" data-i18n-aria-label="在新标签页打开原图" target="_blank" rel="noopener noreferrer">
                 <span class="icon-slot" data-icon="external-link" aria-hidden="true"><span class="icon-fallback">↗</span></span>
               </a>
-              <button id="artifactImageZoomOutButton" type="button" title="缩小" aria-label="缩小">
+              <button id="artifactImageZoomOutButton" type="button" title="缩小" data-i18n-title="缩小" aria-label="缩小" data-i18n-aria-label="缩小">
                 <span class="icon-slot" data-icon="zoom-out" aria-hidden="true"><span class="icon-fallback">−</span></span>
               </button>
-              <button id="artifactImageZoomInButton" type="button" title="放大" aria-label="放大">
+              <button id="artifactImageZoomInButton" type="button" title="放大" data-i18n-title="放大" aria-label="放大" data-i18n-aria-label="放大">
                 <span class="icon-slot" data-icon="zoom-in" aria-hidden="true"><span class="icon-fallback">＋</span></span>
               </button>
             </div>
             <div class="artifact-resource-wrap">
               <button class="artifact-title-button" id="artifactTitleButton" type="button" aria-haspopup="menu" aria-expanded="false">
-                <strong id="artifactTitle">预览</strong>
+                <strong id="artifactTitle" data-i18n="预览">预览</strong>
                 <small id="artifactTypeLabel"></small>
                 <span class="icon-slot" data-icon="chevron-down" aria-hidden="true"><span class="icon-fallback">⌄</span></span>
               </button>
@@ -332,16 +336,16 @@
             </div>
           </div>
           <div class="artifact-actions">
-            <button class="icon-button" id="artifactCopyButton" type="button" title="复制" aria-label="复制">
+            <button class="icon-button" id="artifactCopyButton" type="button" title="复制" data-i18n-title="复制" aria-label="复制" data-i18n-aria-label="复制">
               <span class="icon-slot" data-icon="copy" aria-hidden="true"><span class="icon-fallback">□</span></span>
             </button>
-            <a class="artifact-download-button" id="artifactDownloadButton" title="下载" aria-label="下载" download>
+            <a class="artifact-download-button" id="artifactDownloadButton" title="下载" data-i18n-title="下载" aria-label="下载" data-i18n-aria-label="下载" download>
               <span class="icon-slot" data-icon="download" aria-hidden="true"><span class="icon-fallback">↓</span></span>
             </a>
-            <button class="icon-button" id="artifactMaximizeButton" type="button" title="全屏显示" aria-label="全屏显示">
+            <button class="icon-button" id="artifactMaximizeButton" type="button" title="全屏显示" data-i18n-title="全屏显示" aria-label="全屏显示" data-i18n-aria-label="全屏显示">
               <span class="icon-slot" data-icon="maximize-2" aria-hidden="true"><span class="icon-fallback">□</span></span>
             </button>
-            <button class="icon-button" id="artifactCloseButton" type="button" title="关闭预览" aria-label="关闭预览">
+            <button class="icon-button" id="artifactCloseButton" type="button" title="关闭预览" data-i18n-title="关闭预览" aria-label="关闭预览" data-i18n-aria-label="关闭预览">
               <span class="icon-slot" data-icon="x" aria-hidden="true"><span class="icon-fallback">×</span></span>
             </button>
           </div>
@@ -350,68 +354,68 @@
       </aside>
     </main>
 
-    <section class="console-view" id="consoleView" aria-label="控制台" aria-hidden="true" hidden>
+    <section class="console-view" id="consoleView" aria-label="控制台" data-i18n-aria-label="控制台" aria-hidden="true" hidden>
       <aside class="con-rail" id="conRail">
         <div class="con-rail-head">
-          <b>控制台</b>
-          <button class="icon-button" id="conRailToggle" type="button" title="收起/展开侧边栏" aria-label="收起/展开侧边栏">
+          <b data-i18n="控制台">控制台</b>
+          <button class="icon-button" id="conRailToggle" type="button" title="收起/展开侧边栏" data-i18n-title="收起/展开侧边栏" aria-label="收起/展开侧边栏" data-i18n-aria-label="收起/展开侧边栏">
             <span class="icon-slot" data-icon="panel-left" aria-hidden="true"><span class="icon-fallback">▤</span></span>
           </button>
         </div>
         <nav class="con-rail-nav">
           <button class="con-rail-item active" type="button" data-console-panel="usage">
             <span class="icon-slot" data-icon="chart-column" aria-hidden="true"><span class="icon-fallback">▮</span></span>
-            <span>数据统计</span>
+            <span data-i18n="数据统计">数据统计</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="account" data-multi-user-only hidden>
             <span class="icon-slot" data-icon="user" aria-hidden="true"><span class="icon-fallback">@</span></span>
-            <span>账号</span>
+            <span data-i18n="账号">账号</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="memory">
             <span class="icon-slot" data-icon="brain" aria-hidden="true"><span class="icon-fallback">◎</span></span>
-            <span>记忆</span>
+            <span data-i18n="记忆">记忆</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="kb">
             <span class="icon-slot" data-icon="book-open" aria-hidden="true"><span class="icon-fallback">▤</span></span>
-            <span>知识库</span>
+            <span data-i18n="知识库">知识库</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="memes">
             <span class="icon-slot" data-icon="smile" aria-hidden="true"><span class="icon-fallback">☺</span></span>
-            <span>表情包</span>
+            <span data-i18n="表情包">表情包</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="qq" data-admin-only>
             <span class="icon-slot" data-icon="messages-square" aria-hidden="true"><span class="icon-fallback">▥</span></span>
-            <span>QQ 消息记录</span>
+            <span data-i18n="QQ 消息记录">QQ 消息记录</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="groups" data-admin-only>
             <span class="icon-slot" data-icon="lock-keyhole" aria-hidden="true"><span class="icon-fallback">⚑</span></span>
-            <span>群管</span>
+            <span data-i18n="群管">群管</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="affection" data-admin-only>
             <span class="icon-slot" data-icon="sparkles" aria-hidden="true"><span class="icon-fallback">♥</span></span>
-            <span>好感·情绪</span>
+            <span data-i18n="好感·情绪">好感·情绪</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="sponsors" data-admin-only>
             <span class="icon-slot" data-icon="dollar-sign" aria-hidden="true"><span class="icon-fallback">¥</span></span>
-            <span>赞助</span>
+            <span data-i18n="赞助">赞助</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="scripts" data-admin-only>
             <span class="icon-slot" data-icon="file-code" aria-hidden="true"><span class="icon-fallback">▶</span></span>
-            <span>脚本</span>
+            <span data-i18n="脚本">脚本</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="ledger">
             <span class="icon-slot" data-icon="wallet" aria-hidden="true"><span class="icon-fallback">¥</span></span>
-            <span>记账</span>
+            <span data-i18n="记账">记账</span>
           </button>
           <button class="con-rail-item" type="button" data-console-panel="settings" data-admin-only>
             <span class="icon-slot" data-icon="sliders-horizontal" aria-hidden="true"><span class="icon-fallback">⚙</span></span>
-            <span>设置</span>
+            <span data-i18n="设置">设置</span>
           </button>
         </nav>
         <footer class="con-rail-foot">
           <button class="con-rail-item" id="consoleBack" type="button">
             <span class="icon-slot" data-icon="chevron-left" aria-hidden="true"><span class="icon-fallback">‹</span></span>
-            <span>返回聊天</span>
+            <span data-i18n="返回聊天">返回聊天</span>
           </button>
         </footer>
       </aside>
@@ -419,40 +423,40 @@
         <div class="con-panel" data-console-panel="usage">
         <div class="con-inner">
           <div class="con-head">
-            <h2>数据统计</h2>
-            <button class="icon-button u-refresh" id="usageRefresh" type="button" title="刷新" aria-label="刷新">
+            <h2 data-i18n="数据统计">数据统计</h2>
+            <button class="icon-button u-refresh" id="usageRefresh" type="button" title="刷新" data-i18n-title="刷新" aria-label="刷新" data-i18n-aria-label="刷新">
               <span class="icon-slot" data-icon="refresh-cw" aria-hidden="true"><span class="icon-fallback">⟳</span></span>
             </button>
-            <button class="icon-button u-clear" id="usageClear" type="button" title="清空数据统计" aria-label="清空数据统计" data-admin-only>
+            <button class="icon-button u-clear" id="usageClear" type="button" title="清空数据统计" data-i18n-title="清空数据统计" aria-label="清空数据统计" data-i18n-aria-label="清空数据统计" data-admin-only>
               <span class="icon-slot" data-icon="trash-2" aria-hidden="true"><span class="icon-fallback">🗑</span></span>
             </button>
-            <small id="usageStamp">正在载入…</small>
+            <small id="usageStamp" data-i18n="正在载入…">正在载入…</small>
             <div class="con-segmented" id="usageRangeSeg">
-              <button class="on" data-range="1d" type="button">近一天</button>
-              <button data-range="7d" type="button">7 天</button>
-              <button data-range="30d" type="button">30 天</button>
-              <button data-range="all" type="button">至今</button>
+              <button class="on" data-range="1d" type="button" data-i18n="近一天">近一天</button>
+              <button data-range="7d" type="button" data-i18n="7 天">7 天</button>
+              <button data-range="30d" type="button" data-i18n="30 天">30 天</button>
+              <button data-range="all" type="button" data-i18n="至今">至今</button>
             </div>
           </div>
           <div class="u-tiles" id="usageTiles"></div>
           <div class="u-card">
-            <div class="u-card-head"><h3>调用热力</h3><span class="u-hint">近一年 · 每格一天</span><div class="u-legend" id="usageHeatTotal"></div></div>
+            <div class="u-card-head"><h3 data-i18n="调用热力">调用热力</h3><span class="u-hint" data-i18n="近一年 · 每格一天">近一年 · 每格一天</span><div class="u-legend" id="usageHeatTotal"></div></div>
             <div class="u-heat-body">
-              <div class="u-heat-days"><span>一</span><span>三</span><span>五</span></div>
+              <div class="u-heat-days"><span data-i18n="一">一</span><span data-i18n="三">三</span><span data-i18n="五">五</span></div>
               <div class="u-heat-wrap">
                 <div class="u-heat-months" id="usageHeatMonths"></div>
                 <div class="u-heatmap" id="usageHeatmap"></div>
               </div>
             </div>
-            <div class="u-heat-scale">少 <i data-l="0"></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i> 多</div>
+            <div class="u-heat-scale" data-i18n-text="少 ">少 <i data-l="0"></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i> 多</div>
           </div>
           <div class="u-card">
             <div class="u-card-head">
-              <h3>每日 token</h3><span class="u-hint" id="usageBarsHint"></span>
+              <h3 data-i18n="每日 token">每日 token</h3><span class="u-hint" id="usageBarsHint"></span>
               <div class="u-legend">
-                <span><i class="u-lg1"></i>新输入</span>
-                <span><i class="u-lg2"></i>输出</span>
-                <span><i class="u-lg3"></i>缓存命中</span>
+                <span data-i18n-text="新输入"><i class="u-lg1"></i>新输入</span>
+                <span data-i18n-text="输出"><i class="u-lg2"></i>输出</span>
+                <span data-i18n-text="缓存命中"><i class="u-lg3"></i>缓存命中</span>
               </div>
             </div>
             <div class="u-chart-wrap">
@@ -465,14 +469,14 @@
           </div>
           <div id="usageSources"></div>
           <div class="u-card">
-            <div class="u-card-head"><h3>最近调用</h3><span class="u-hint">usage-history.jsonl 尾部</span>
+            <div class="u-card-head"><h3 data-i18n="最近调用">最近调用</h3><span class="u-hint" data-i18n="usage-history.jsonl 尾部">usage-history.jsonl 尾部</span>
               <div class="u-rec-filters">
-                <select id="usageSrcFilter" aria-label="按来源筛选"><option value="">全部来源</option></select>
-                <select id="usageModelFilter" aria-label="按模型筛选"><option value="">全部模型</option></select>
+                <select id="usageSrcFilter" aria-label="按来源筛选" data-i18n-aria-label="按来源筛选"><option value="" data-i18n="全部来源">全部来源</option></select>
+                <select id="usageModelFilter" aria-label="按模型筛选" data-i18n-aria-label="按模型筛选"><option value="" data-i18n="全部模型">全部模型</option></select>
               </div>
             </div>
             <div class="u-table-scroll"><table class="u-table u-records-table">
-              <thead><tr><th>时间</th><th>来源</th><th>模型</th><th class="num">输入</th><th class="num">输出</th><th class="num">消费</th><th>缓存命中</th><th>类型</th></tr></thead>
+              <thead><tr><th data-i18n="时间">时间</th><th data-i18n="来源">来源</th><th data-i18n="模型">模型</th><th class="num" data-i18n="输入">输入</th><th class="num" data-i18n="输出">输出</th><th class="num" data-i18n="消费">消费</th><th data-i18n="缓存命中">缓存命中</th><th data-i18n="类型">类型</th></tr></thead>
               <tbody id="usageRecords"></tbody>
             </table></div>
           </div>
@@ -481,58 +485,58 @@
         <div class="con-panel" data-console-panel="account" hidden>
         <div class="con-inner">
           <div class="con-head">
-            <h2>账号</h2>
+            <h2 data-i18n="账号">账号</h2>
             <small id="accountStamp"></small>
           </div>
           <div class="u-card">
-            <div class="u-card-head"><h3>我</h3><span class="u-hint" id="accountSelfHint"></span></div>
+            <div class="u-card-head"><h3 data-i18n="我">我</h3><span class="u-hint" id="accountSelfHint"></span></div>
             <div class="acct-grid">
-              <label>用户名<input id="accountUsername" type="text" disabled></label>
-              <label>显示名<input id="accountDisplayName" type="text" maxlength="64" autocomplete="nickname"></label>
-              <label>当前密码<input id="accountCurrentPassword" type="password" autocomplete="current-password"></label>
-              <label>新密码<input id="accountNewPassword" type="password" autocomplete="new-password" placeholder="不改就留空"></label>
+              <label data-i18n-text="用户名">用户名<input id="accountUsername" type="text" disabled></label>
+              <label data-i18n-text="显示名">显示名<input id="accountDisplayName" type="text" maxlength="64" autocomplete="nickname"></label>
+              <label data-i18n-text="当前密码">当前密码<input id="accountCurrentPassword" type="password" autocomplete="current-password"></label>
+              <label data-i18n-text="新密码">新密码<input id="accountNewPassword" type="password" autocomplete="new-password" placeholder="不改就留空" data-i18n-placeholder="不改就留空"></label>
             </div>
             <label class="acct-profile">
-              <span>希望 AI 如何认知你</span>
-              <textarea id="accountProfile" rows="6" maxlength="20000" placeholder="怎么称呼你、你的习惯与偏好、希望 AI 记住的事"></textarea>
+              <span data-i18n="希望 AI 如何认知你">希望 AI 如何认知你</span>
+              <textarea id="accountProfile" rows="6" maxlength="20000" placeholder="怎么称呼你、你的习惯与偏好、希望 AI 记住的事" data-i18n-placeholder="怎么称呼你、你的习惯与偏好、希望 AI 记住的事"></textarea>
             </label>
             <div class="acct-actions">
-              <button class="login-submit" id="accountSave" type="button">保存</button>
+              <button class="login-submit" id="accountSave" type="button" data-i18n="保存">保存</button>
               <button class="secondary-button" id="accountLogout" type="button">
                 <span class="icon-slot" data-icon="log-out" aria-hidden="true"><span class="icon-fallback">←</span></span>
-                <span>退出登录</span>
+                <span data-i18n="退出登录">退出登录</span>
               </button>
             </div>
             <p class="login-error" id="accountError" role="alert" hidden></p>
           </div>
           <div class="u-card" data-member-only hidden>
             <div class="u-card-head">
-              <h3>我的人格</h3><span class="u-hint">新会话用当前选中的那个</span>
+              <h3 data-i18n="我的人格">我的人格</h3><span class="u-hint" data-i18n="新会话用当前选中的那个">新会话用当前选中的那个</span>
               <button class="secondary-button acct-head-action" id="personaCreate" type="button">
                 <span class="icon-slot" data-icon="user-plus" aria-hidden="true"><span class="icon-fallback">+</span></span>
-                <span>新建人格</span>
+                <span data-i18n="新建人格">新建人格</span>
               </button>
             </div>
             <div class="persona-list" id="personaList"></div>
           </div>
           <div class="u-card" data-admin-only>
             <div class="u-card-head">
-              <h3>邀请码</h3><span class="u-hint">一次性 · 默认 7 天有效 · 明文只显示这一次</span>
+              <h3 data-i18n="邀请码">邀请码</h3><span class="u-hint" data-i18n="一次性 · 默认 7 天有效 · 明文只显示这一次">一次性 · 默认 7 天有效 · 明文只显示这一次</span>
               <button class="secondary-button acct-head-action" id="inviteCreate" type="button">
                 <span class="icon-slot" data-icon="ticket" aria-hidden="true"><span class="icon-fallback">#</span></span>
-                <span>生成邀请码</span>
+                <span data-i18n="生成邀请码">生成邀请码</span>
               </button>
             </div>
             <p class="acct-invite-code" id="inviteFresh" hidden></p>
             <div class="u-table-scroll"><table class="u-table">
-              <thead><tr><th>状态</th><th>创建</th><th>到期</th><th>使用者</th><th></th></tr></thead>
+              <thead><tr><th data-i18n="状态">状态</th><th data-i18n="创建">创建</th><th data-i18n="到期">到期</th><th data-i18n="使用者">使用者</th><th></th></tr></thead>
               <tbody id="inviteRows"></tbody>
             </table></div>
           </div>
           <div class="u-card" data-admin-only>
-            <div class="u-card-head"><h3>成员</h3><span class="u-hint">停用后不能登录 · 会话与用量按人分开 · 重设密码后记得告诉对方</span></div>
+            <div class="u-card-head"><h3 data-i18n="成员">成员</h3><span class="u-hint" data-i18n="停用后不能登录 · 会话与用量按人分开 · 重设密码后记得告诉对方">停用后不能登录 · 会话与用量按人分开 · 重设密码后记得告诉对方</span></div>
             <div class="u-table-scroll"><table class="u-table">
-              <thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>最近登录</th><th class="num">30 天 token</th><th class="num">30 天消费</th><th></th></tr></thead>
+              <thead><tr><th data-i18n="用户名">用户名</th><th data-i18n="显示名">显示名</th><th data-i18n="角色">角色</th><th data-i18n="最近登录">最近登录</th><th class="num" data-i18n="30 天 token">30 天 token</th><th class="num" data-i18n="30 天消费">30 天消费</th><th></th></tr></thead>
               <tbody id="accountRows"></tbody>
             </table></div>
           </div>
@@ -567,69 +571,84 @@
         </div>
         <div class="con-panel" data-console-panel="settings" hidden>
         <div class="settings-layout">
-          <nav class="settings-nav" aria-label="设置分类">
-            <button class="active" type="button" data-settings-view="interface">界面</button>
-            <button type="button" data-settings-view="prompts">人格</button>
-            <button type="button" data-settings-view="providers">供应商</button>
-            <button type="button" data-settings-view="models">模型池</button>
-            <button type="button" data-settings-view="general">全局</button>
+          <nav class="settings-nav" aria-label="设置分类" data-i18n-aria-label="设置分类">
+            <button class="active" type="button" data-settings-view="interface" data-i18n="界面">界面</button>
+            <button type="button" data-settings-view="prompts" data-i18n="人格">人格</button>
+            <button type="button" data-settings-view="providers" data-i18n="供应商">供应商</button>
+            <button type="button" data-settings-view="models" data-i18n="模型池">模型池</button>
+            <button type="button" data-settings-view="general" data-i18n="通用">通用</button>
             <button type="button" data-settings-view="mcp">MCP</button>
-            <button type="button" data-settings-view="plugins">插件</button>
-            <button type="button" data-settings-view="qq">QQ 平台</button>
-            <button type="button" data-settings-view="advanced">高级</button>
+            <button type="button" data-settings-view="plugins" data-i18n="插件">插件</button>
+            <button type="button" data-settings-view="qq" data-i18n="QQ 平台">QQ 平台</button>
+            <button type="button" data-settings-view="advanced" data-i18n="高级">高级</button>
           </nav>
           <div class="settings-content">
             <section class="settings-section settings-panel" data-settings-panel="interface">
-            <h2>配色方案</h2>
+            <h2 data-i18n="配色方案">配色方案</h2>
             <div class="settings-card">
-              <div class="theme-options" role="group" aria-label="配色方案">
-                <button type="button" data-scheme-choice="madobe"><i class="theme-swatch hue-madobe"></i><span>默认</span></button>
-                <button type="button" data-scheme-choice="matugen" hidden><i class="theme-swatch hue-matugen"></i><span>壁纸取色</span></button>
+              <div class="theme-options" role="group" aria-label="配色方案" data-i18n-aria-label="配色方案">
+                <button type="button" data-scheme-choice="madobe"><i class="theme-swatch hue-madobe"></i><span data-i18n="默认">默认</span></button>
+                <button type="button" data-scheme-choice="matugen" hidden><i class="theme-swatch hue-matugen"></i><span data-i18n="壁纸取色">壁纸取色</span></button>
               </div>
             </div>
             </section>
             <section class="settings-section settings-panel" data-settings-panel="interface">
-            <h2>显示 · 仅 WebUI</h2>
+            <!-- 语言是全局设置(命令行/终端/网页/通知都跟它走),不跟「仅 WebUI」那类
+                 本地显示偏好混在一张卡里(用户 09-23 拍板单独一张)。 -->
+            <h2 data-i18n="语言">语言</h2>
             <div class="settings-card">
               <div class="settings-row">
-                <div class="lbl"><strong>对话字号</strong><small>只影响消息正文，保存在浏览器本地，不写入 config</small></div>
-                <div class="segmented" id="chatFontSeg" role="group" aria-label="对话字号">
-                  <button type="button" data-chat-font="14px">小</button>
-                  <button type="button" data-chat-font="15px">标准</button>
-                  <button type="button" data-chat-font="16px">大</button>
+                <div class="lbl"><strong data-i18n="界面语言">界面语言</strong><small data-i18n="整个 Miyu 都用这一种语言（命令行、终端、网页、通知）；自动=跟随浏览器。改完要保存，页面会自己重载。">整个 Miyu 都用这一种语言（命令行、终端、网页、通知）；自动=跟随浏览器。改完要保存，页面会自己重载。</small></div>
+                <div class="segmented" id="languageSeg" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言">
+                  <button type="button" data-language="auto" data-i18n="自动">自动</button>
+                  <button type="button" data-language="en" data-i18n="英语">英语</button>
+                  <button type="button" data-language="zh" data-i18n="简体中文">简体中文</button>
+                </div>
+              </div>
+            </div>
+            </section>
+            <section class="settings-section settings-panel" data-settings-panel="interface">
+            <h2 data-i18n="显示 · 仅 WebUI">显示 · 仅 WebUI</h2>
+            <div class="settings-card">
+              <div class="settings-row">
+                <div class="lbl"><strong data-i18n="对话字号">对话字号</strong><small data-i18n="只影响消息正文，保存在浏览器本地，不写入 config">只影响消息正文，保存在浏览器本地，不写入 config</small></div>
+                <div class="segmented" id="chatFontSeg" role="group" aria-label="对话字号" data-i18n-aria-label="对话字号">
+                  <button type="button" data-chat-font="14px" data-i18n="小">小</button>
+                  <button type="button" data-chat-font="15px" data-i18n="标准">标准</button>
+                  <button type="button" data-chat-font="16px" data-i18n="大">大</button>
                 </div>
               </div>
               <div class="settings-row">
-                <div class="lbl"><strong>展开思考内容</strong><small>默认展开每条回复的思考面板；关闭则收起为小签，点击查看</small></div>
-                <button class="toggle" id="reasoningExpandToggle" type="button" role="switch" aria-checked="false" aria-label="展开思考内容"></button>
+                <div class="lbl"><strong data-i18n="展开思考内容">展开思考内容</strong><small data-i18n="默认展开每条回复的思考面板；关闭则收起为小签，点击查看">默认展开每条回复的思考面板；关闭则收起为小签，点击查看</small></div>
+                <button class="toggle" id="reasoningExpandToggle" type="button" role="switch" aria-checked="false" aria-label="展开思考内容" data-i18n-aria-label="展开思考内容"></button>
               </div>
               <div class="settings-row">
-                <div class="lbl"><strong>展开工具详情</strong><small>默认展开工具签的参数与输出面板</small></div>
-                <button class="toggle" id="toolExpandToggle" type="button" role="switch" aria-checked="false" aria-label="展开工具详情"></button>
+                <div class="lbl"><strong data-i18n="展开工具详情">展开工具详情</strong><small data-i18n="默认展开工具签的参数与输出面板">默认展开工具签的参数与输出面板</small></div>
+                <button class="toggle" id="toolExpandToggle" type="button" role="switch" aria-checked="false" aria-label="展开工具详情" data-i18n-aria-label="展开工具详情"></button>
               </div>
               <div class="settings-row">
-                <div class="lbl"><strong>过程自动收起</strong><small>工具连续调用完成后自动收起过程，点击可展开；关闭则一直摊开</small></div>
-                <button class="toggle" id="procCollapseToggle" type="button" role="switch" aria-checked="true" aria-label="过程自动收起"></button>
+                <div class="lbl"><strong data-i18n="过程自动收起">过程自动收起</strong><small data-i18n="工具连续调用完成后自动收起过程，点击可展开；关闭则一直摊开">工具连续调用完成后自动收起过程，点击可展开；关闭则一直摊开</small></div>
+                <button class="toggle" id="procCollapseToggle" type="button" role="switch" aria-checked="true" aria-label="过程自动收起" data-i18n-aria-label="过程自动收起"></button>
               </div>
             </div>
             </section>
             <section class="settings-section settings-panel" data-settings-panel="interface">
-            <h2>当前模型</h2>
+            <h2 data-i18n="当前模型">当前模型</h2>
             <div class="settings-model" id="settingsModel">
               <span class="model-mark" id="settingsModelMark">--</span>
-              <span><strong id="settingsModelName">正在载入</strong><small id="settingsModelProvider">--</small></span>
+              <span><strong id="settingsModelName" data-i18n="正在载入">正在载入</strong><small id="settingsModelProvider">--</small></span>
             </div>
             </section>
             <section class="settings-section settings-panel" data-settings-panel="interface">
-            <h2>能力</h2>
+            <h2 data-i18n="能力">能力</h2>
             <dl class="capability-list" id="capabilityList">
-              <div><dt>会话</dt><dd>正在载入</dd></div>
-              <div><dt>附件</dt><dd>正在载入</dd></div>
-              <div><dt>消息队列</dt><dd>正在载入</dd></div>
+              <div><dt data-i18n="会话">会话</dt><dd data-i18n="正在载入">正在载入</dd></div>
+              <div><dt data-i18n="附件">附件</dt><dd data-i18n="正在载入">正在载入</dd></div>
+              <div><dt data-i18n="消息队列">消息队列</dt><dd data-i18n="正在载入">正在载入</dd></div>
             </dl>
             </section>
             <section class="settings-section about-section settings-panel" data-settings-panel="interface">
-            <h2>关于</h2>
+            <h2 data-i18n="关于">关于</h2>
             <div class="about-row"><span>Miyu WebUI</span><span id="versionLabel">--</span></div>
             </section>
             <section class="settings-section settings-panel st-page" data-settings-panel="prompts" hidden><div class="st-root" id="settings-prompts"></div></section>
@@ -640,18 +659,18 @@
             <section class="settings-section settings-panel st-page" data-settings-panel="plugins" hidden><div class="st-root" id="settings-plugins"></div></section>
             <section class="settings-section settings-panel st-page" data-settings-panel="qq" hidden><div class="st-root" id="settings-qq"></div></section>
             <section class="settings-section settings-panel" data-settings-panel="advanced" hidden>
-            <h2>完整配置</h2>
-            <p class="settings-description">逃生舱：完整配置 JSON，包含表单未单独展示的所有项。应用到草稿后仍需保存。</p>
-            <textarea class="config-json-editor" id="advancedConfigEditor" spellcheck="false" aria-label="完整配置 JSON"></textarea>
-            <button class="secondary-button" id="applyAdvancedConfigButton" type="button">应用到草稿</button>
+            <h2 data-i18n="完整配置">完整配置</h2>
+            <p class="settings-description" data-i18n="逃生舱：完整配置 JSON，包含表单未单独展示的所有项。应用到草稿后仍需保存。">逃生舱：完整配置 JSON，包含表单未单独展示的所有项。应用到草稿后仍需保存。</p>
+            <textarea class="config-json-editor" id="advancedConfigEditor" spellcheck="false" aria-label="完整配置 JSON" data-i18n-aria-label="完整配置 JSON"></textarea>
+            <button class="secondary-button" id="applyAdvancedConfigButton" type="button" data-i18n="应用到草稿">应用到草稿</button>
             </section>
           </div>
         </div>
         <footer class="settings-footer" id="settingsFooter">
-          <span id="settingsStatus">尚未载入配置</span>
+          <span id="settingsStatus" data-i18n="尚未载入配置">尚未载入配置</span>
           <div>
-            <button class="secondary-button" id="reloadConfigButton" type="button">重新载入</button>
-            <button class="primary-button" id="saveConfigButton" type="button" disabled>保存配置</button>
+            <button class="secondary-button" id="reloadConfigButton" type="button" data-i18n="重新载入">重新载入</button>
+            <button class="primary-button" id="saveConfigButton" type="button" disabled data-i18n="保存配置">保存配置</button>
           </div>
         </footer>
         </div>
@@ -660,77 +679,78 @@
 
     <div class="toast-region" id="toastRegion" role="status" aria-live="polite" aria-atomic="true"></div>
 
-    <section class="oobe" id="oobe" aria-label="欢迎引导" hidden>
+    <section class="oobe" id="oobe" aria-label="欢迎引导" data-i18n-aria-label="欢迎引导" hidden>
       <div class="oobe-bg" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="oobe-card">
         <header class="oobe-head">
           <ol class="oobe-steps" id="oobeSteps">
-            <li class="on" data-step="1"><span>1</span>人格</li>
-            <li data-step="2"><span>2</span>功能</li>
-            <li data-step="3"><span>3</span>认知</li>
+            <li class="on" data-step="1" data-i18n-text="人格"><span>1</span>人格</li>
+            <li data-step="2" data-i18n-text="功能"><span>2</span>功能</li>
+            <li data-step="3" data-i18n-text="认知"><span>3</span>认知</li>
           </ol>
-          <button class="oobe-skip" id="oobeSkip" type="button">先跳过</button>
+          <button class="oobe-skip" id="oobeSkip" type="button" data-i18n="先跳过">先跳过</button>
         </header>
         <div class="oobe-panes" id="oobePanes">
           <section class="oobe-pane is-active" data-oobe-step="1">
-            <h1>创建 AI 人格</h1>
-            <p>使用预置人格,或创建专属于自己的 AI 人格。</p>
+            <h1 data-i18n="创建 AI 人格">创建 AI 人格</h1>
+            <p data-i18n="使用预置人格,或创建专属于自己的 AI 人格。">使用预置人格,或创建专属于自己的 AI 人格。</p>
             <div class="oobe-choice" role="radiogroup">
               <button type="button" class="oobe-option" data-persona-mode="shared" role="radio" aria-checked="false">
-                <b id="oobeSharedName">Miyu</b><span id="oobeSharedHint">预置人格,不可修改</span>
+                <b id="oobeSharedName">Miyu</b><span id="oobeSharedHint" data-i18n="预置人格,不可修改">预置人格,不可修改</span>
               </button>
               <button type="button" class="oobe-option is-on" data-persona-mode="private" role="radio" aria-checked="true">
-                <b>创建我的人格</b><span>自己起名、写设定、传头像;记忆和资料只属于你</span>
+                <b data-i18n="创建我的人格">创建我的人格</b><span data-i18n="自己起名、写设定、传头像;记忆和资料只属于你">自己起名、写设定、传头像;记忆和资料只属于你</span>
               </button>
             </div>
             <div class="oobe-persona" id="oobePersonaForm">
               <div class="oobe-row">
-                <label class="oobe-avatar" title="点击选头像">
+                <label class="oobe-avatar" title="点击选头像" data-i18n-title="点击选头像">
                   <input type="file" id="oobeAvatarInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
                   <img id="oobeAvatarPreview" alt="" hidden>
-                  <span id="oobeAvatarHint">头像</span>
+                  <span id="oobeAvatarHint" data-i18n="头像">头像</span>
                 </label>
                 <div class="oobe-fields">
-                  <label>名字<input id="oobeName" type="text" maxlength="40" placeholder="比如:小满" autocomplete="off"></label>
-                  <label>一句话简介<input id="oobeDesc" type="text" maxlength="120" placeholder="可留空" autocomplete="off"></label>
+                  <label data-i18n-text="名字">名字<input id="oobeName" type="text" maxlength="40" placeholder="比如:小满" data-i18n-placeholder="比如:小满" autocomplete="off"></label>
+                  <label data-i18n-text="一句话简介">一句话简介<input id="oobeDesc" type="text" maxlength="120" placeholder="可留空" data-i18n-placeholder="可留空" autocomplete="off"></label>
                 </div>
               </div>
-              <label class="oobe-prompt">设定(可留空)
-                <textarea id="oobePrompt" rows="7" placeholder="用第二人称写:你是……"></textarea>
+              <label class="oobe-prompt" data-i18n-text="设定(可留空)
+                ">设定(可留空)
+                <textarea id="oobePrompt" rows="7" placeholder="用第二人称写:你是……" data-i18n-placeholder="用第二人称写:你是……"></textarea>
               </label>
             </div>
           </section>
           <section class="oobe-pane" data-oobe-step="2">
-            <h1>能做什么</h1>
-            <p>勾上要用的功能。</p>
-            <p class="oobe-always"><b>记忆、知识库、技能、MCP 常开</b><span>记住聊过的事、查自己的资料库、用装好的技能和外接工具</span></p>
+            <h1 data-i18n="能做什么">能做什么</h1>
+            <p data-i18n="勾上要用的功能。">勾上要用的功能。</p>
+            <p class="oobe-always"><b data-i18n="记忆、知识库、技能、MCP 常开">记忆、知识库、技能、MCP 常开</b><span data-i18n="记住聊过的事、查自己的资料库、用装好的技能和外接工具">记住聊过的事、查自己的资料库、用装好的技能和外接工具</span></p>
             <div class="oobe-plugins" id="oobePlugins"></div>
             <div class="oobe-scripts" id="oobeScriptsWrap" hidden>
-              <h2 class="oobe-subhead">脚本工具</h2>
+              <h2 class="oobe-subhead" data-i18n="脚本工具">脚本工具</h2>
               <div class="oobe-plugins" id="oobeScripts"></div>
             </div>
             <div class="oobe-scripts" id="oobeSkillsWrap" hidden>
-              <h2 class="oobe-subhead">技能</h2>
+              <h2 class="oobe-subhead" data-i18n="技能">技能</h2>
               <div class="oobe-plugins" id="oobeSkills"></div>
             </div>
           </section>
           <section class="oobe-pane" data-oobe-step="3">
-            <h1>希望 AI 怎么认识你</h1>
-            <p>叫你什么、你的习惯与偏好、希望 AI 记住的事。</p>
-            <textarea id="oobeProfile" rows="8" placeholder="比如:叫我阿满。我在东京做前端,喜欢直接的建议,不要客套。"></textarea>
+            <h1 data-i18n="希望 AI 怎么认识你">希望 AI 怎么认识你</h1>
+            <p data-i18n="叫你什么、你的习惯与偏好、希望 AI 记住的事。">叫你什么、你的习惯与偏好、希望 AI 记住的事。</p>
+            <textarea id="oobeProfile" rows="8" placeholder="比如:叫我阿满。我在东京做前端,喜欢直接的建议,不要客套。" data-i18n-placeholder="比如:叫我阿满。我在东京做前端,喜欢直接的建议,不要客套。"></textarea>
           </section>
           <section class="oobe-pane" data-oobe-step="4">
             <div class="oobe-done">
               <img id="oobeDoneAvatar" alt="" hidden>
-              <h1 id="oobeDoneTitle">准备好了</h1>
+              <h1 id="oobeDoneTitle" data-i18n="准备好了">准备好了</h1>
               <p id="oobeDoneText"></p>
             </div>
           </section>
         </div>
         <footer class="oobe-foot">
           <p class="login-error" id="oobeError" role="alert" hidden></p>
-          <button class="secondary-button" id="oobeBack" type="button">上一步</button>
-          <button class="login-submit" id="oobeNext" type="button"><span id="oobeNextLabel">下一步</span></button>
+          <button class="secondary-button" id="oobeBack" type="button" data-i18n="上一步">上一步</button>
+          <button class="login-submit" id="oobeNext" type="button"><span id="oobeNextLabel" data-i18n="下一步">下一步</span></button>
         </footer>
       </div>
     </section>
@@ -741,13 +761,13 @@
             <span class="icon-slot" data-icon="triangle-alert"><span class="icon-fallback">!</span></span>
           </span>
           <div>
-            <h2 id="resetDialogTitle">清空当前会话？</h2>
-            <p id="resetDialogDescription">该会话的对话记录将被永久清除，此操作无法撤销。</p>
+            <h2 id="resetDialogTitle" data-i18n="清空当前会话？">清空当前会话？</h2>
+            <p id="resetDialogDescription" data-i18n="该会话的对话记录将被永久清除，此操作无法撤销。">该会话的对话记录将被永久清除，此操作无法撤销。</p>
           </div>
         </header>
         <footer>
-          <button class="secondary-button" id="resetCancelButton" type="submit" value="cancel">取消</button>
-          <button class="danger-button" id="resetConfirmButton" type="button">清空记录</button>
+          <button class="secondary-button" id="resetCancelButton" type="submit" value="cancel" data-i18n="取消">取消</button>
+          <button class="danger-button" id="resetConfirmButton" type="button" data-i18n="清空记录">清空记录</button>
         </footer>
       </form>
     </dialog>
@@ -756,22 +776,22 @@
       <form method="dialog">
         <header>
           <div>
-            <h2 id="popDialogTitle">弹出旧轮次</h2>
-            <p>勾选要移出当前上下文的轮次；对话记录仍会保留，只是不再喂给模型。注意：弹出会使剩余上下文的提示词缓存失效一次，下一轮按全价重读；挑靠后的轮次弹，失效范围更小。</p>
+            <h2 id="popDialogTitle" data-i18n="弹出旧轮次">弹出旧轮次</h2>
+            <p data-i18n="勾选要移出当前上下文的轮次；对话记录仍会保留，只是不再喂给模型。注意：弹出会使剩余上下文的提示词缓存失效一次，下一轮按全价重读；挑靠后的轮次弹，失效范围更小。">勾选要移出当前上下文的轮次；对话记录仍会保留，只是不再喂给模型。注意：弹出会使剩余上下文的提示词缓存失效一次，下一轮按全价重读；挑靠后的轮次弹，失效范围更小。</p>
           </div>
         </header>
         <div class="pop-dialog-list" id="popDialogList"></div>
         <footer>
-          <label class="pop-dialog-all"><input type="checkbox" id="popDialogAll"> 全选</label>
-          <button class="secondary-button" type="submit" value="cancel">取消</button>
-          <button class="primary-button" id="popConfirmButton" type="button" disabled>弹出所选</button>
+          <label class="pop-dialog-all" data-i18n-text="全选"><input type="checkbox" id="popDialogAll"> 全选</label>
+          <button class="secondary-button" type="submit" value="cancel" data-i18n="取消">取消</button>
+          <button class="primary-button" id="popConfirmButton" type="button" disabled data-i18n="弹出所选">弹出所选</button>
         </footer>
       </form>
     </dialog>
   </div>
 
   <noscript>
-    <div class="noscript-state">Miyu WebUI 需要启用 JavaScript。</div>
+    <div class="noscript-state" data-i18n="Miyu WebUI 需要启用 JavaScript。">Miyu WebUI 需要启用 JavaScript。</div>
   </noscript>
 </body>
 </html>

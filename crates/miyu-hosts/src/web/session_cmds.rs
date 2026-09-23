@@ -219,7 +219,7 @@ pub(in crate::web) async fn handle_session_command(
                     miyu_core::state::ASK_SESSION_KIND
                 }
                 Some(_) => {
-                    return Err(t("unsupported session kind", "不支持的会话类型").to_string())
+                    return Err(t("unsupported session kind", "不支持的会话类型").to_string());
                 }
             };
             // No explicit name: leave it empty; the session is auto-named

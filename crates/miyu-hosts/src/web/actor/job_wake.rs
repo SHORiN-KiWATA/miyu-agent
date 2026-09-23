@@ -178,8 +178,15 @@ pub(in crate::web) async fn stream_job_wake_to_origin_tty(
         tracing::info!(job_id = %completion.job_id, reason, "job wake writeback fell back to a notification");
         if config.notifications.enabled {
             miyu_base::notify::notify(
-                &format!("Miyu 后台任务跟进 · {}", completion.title),
-                "任务已完成,跟进回复在会话里(终端不在提示符,没有直接写入)。",
+                &format!(
+                    "{} · {}",
+                    t("Miyu background task follow-up", "Miyu 后台任务跟进"),
+                    completion.title
+                ),
+                t(
+                    "The task is done; the follow-up reply is in the session (the terminal was not at a prompt, so nothing was written there).",
+                    "任务已完成,跟进回复在会话里(终端不在提示符,没有直接写入)。",
+                ),
             );
         }
     };
@@ -467,12 +474,15 @@ pub(in crate::web) fn wake_local_session_for_job(
         completion.runtime_seconds,
         completion.log_path.display(),
     );
+    // 前缀 `[后台任务完成]` 是前端解析合成轮的判据(见 app.js 的
+    // isSyntheticTurnContent),逐字保留;前缀之后是给人看的,跟界面语言走
+    // (2026-09-23 WebUI 双语)。
     let display_content = format!(
-        "[后台任务完成] {}完成 {} · {}",
+        "[后台任务完成] {} {} · {}",
         if completion.is_subagent {
-            "子代理"
+            t("Subagent finished", "子代理完成")
         } else {
-            "命令"
+            t("Command finished", "命令完成")
         },
         completion.job_id,
         completion.title
@@ -546,11 +556,11 @@ pub(in crate::web) fn wake_local_session_for_job(
                 turn_origin: miyu_base::workspace::TurnOrigin::JobWake,
                 first_event_id: None,
                 job_wake_label: Some(format!(
-                    "{}完成 {} · {}",
+                    "{} {} · {}",
                     if completion.is_subagent {
-                        "子代理"
+                        t("Subagent finished", "子代理完成")
                     } else {
-                        "命令"
+                        t("Command finished", "命令完成")
                     },
                     completion.job_id,
                     completion.title

@@ -145,7 +145,7 @@ pub(super) fn build(app: &App, cx: &Cx) -> View {
                 vec![
                     Span::styled("自选功能", Style::new().add_modifier(Modifier::BOLD)),
                     Span::raw("   "),
-                    Span::styled("Tab 或空格开关", theme.fg(GOLD)),
+                    Span::styled("Tab 或空格开关 · Ctrl+A 全开/全关", theme.fg(GOLD)),
                 ],
                 body_w().saturating_sub(26),
                 vec![
@@ -224,6 +224,7 @@ pub(super) fn build(app: &App, cx: &Cx) -> View {
             }
             keys.push(("↑↓←→ jk", "移动"));
             keys.push(("Tab / 空格", "开关"));
+            keys.push(("Ctrl+A", "全开/全关"));
             keys.push(("⏎", "下一步"));
             keys.push(("Esc", "上一步"));
         }
@@ -368,7 +369,14 @@ pub(super) fn build(app: &App, cx: &Cx) -> View {
                             "使用公共密钥的免费额度",
                             if cur { theme.fg(BLUE) } else { Style::new() },
                         ),
-                        Span::styled(if cur { "   Tab / 空格 开关" } else { "" }, theme.fg(GOLD)),
+                        Span::styled(
+                            if cur {
+                                "   Tab / 空格 开关 · Ctrl+A 全开/全关"
+                            } else {
+                                ""
+                            },
+                            theme.fg(GOLD),
+                        ),
                     ]);
                     if cur {
                         cursor_row = body.len();

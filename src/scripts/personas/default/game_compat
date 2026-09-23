@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Id: game_compat
-# Display name: Game compatibility
-# 显示名称: 游戏兼容性
+# Display name: Game compatibility check
+# 显示名称: 游戏兼容性调查
 # Description: Check a game's Linux compatibility. Three sources: ProtonDB ratings and player reports, AreWeAntiCheatYet anti-cheat status, and the caniplayonlinux snapshot. Takes a Steam App ID or a game name. Parsed live from third-party sites, so a missing source is not a negative verdict.
 # 描述：查一款游戏在 Linux 下的兼容性与反作弊状态（ProtonDB、AreWeAntiCheatYet、caniplayonlinux 三个来源）。
 # Timeout: 60

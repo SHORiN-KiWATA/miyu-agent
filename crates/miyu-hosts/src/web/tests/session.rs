@@ -283,6 +283,18 @@ fn persona_file_mutations_include_avatar_sidecar() {
     assert_eq!(metadata["avatar_path"], "avatars/alice.png");
 }
 
+/// 看板/输入框默认文案现在跟着界面语言走(`dto.rs` 的 `t(...)`),而界面语言是
+/// 进程级(测试里没有请求作用域)——CI 的 LANG 一换,原来只认中文的断言就红。
+/// 中文那份照旧逐字钉;英文那份只要求命中同一句的英文版,精确措辞由
+/// `tests/http.rs::server_text_follows_request_locale_scope` 与
+/// `testkit/webui-i18n` 走查钉住(2026-09-23)。
+fn assert_placeholder(actual: &str, zh: &str, en: &str) {
+    assert!(
+        actual == zh || actual == en,
+        "输入框默认文案应为 {zh:?} 或 {en:?},实际 {actual:?}"
+    );
+}
+
 #[test]
 fn persona_identity_uses_default_and_custom_values() {
     let mut config = AppConfig::default();
@@ -290,7 +302,11 @@ fn persona_identity_uses_default_and_custom_values() {
     let default = persona_identity(&config, &prompts);
     assert_eq!(default.name, "Miyu");
     assert_eq!(default.avatar_url.as_deref(), Some("/assets/miyu-logo.png"));
-    assert_eq!(default.composer_placeholder, "给 Miyu 发消息");
+    assert_placeholder(
+        &default.composer_placeholder,
+        "给 Miyu 发消息",
+        "Message Miyu",
+    );
 
     config.prompt.active_persona = "Alice.md".to_string();
     let prompts = PromptDocuments {
@@ -312,7 +328,11 @@ fn persona_identity_uses_default_and_custom_values() {
     assert_eq!(custom.avatar_url.as_deref(), Some("/api/persona/avatar"));
     // 没配就跟着人格名走——此前这句写死在 index.html 里,改了人格名输入框
     // 还留着 "给 Miyu 发消息"。
-    assert_eq!(custom.composer_placeholder, "给 Alice 发消息");
+    assert_placeholder(
+        &custom.composer_placeholder,
+        "给 Alice 发消息",
+        "Message Alice",
+    );
 
     // 配了就用配的;空白串不算配置(与看板文案同一把尺)。
     let with_placeholder = |value: Option<&str>| {
@@ -333,8 +353,12 @@ fn persona_identity_uses_default_and_custom_values() {
         persona_identity(&config, &prompts).composer_placeholder
     };
     assert_eq!(with_placeholder(Some("说点什么…")), "说点什么…");
-    assert_eq!(with_placeholder(Some("   ")), "给 Alice 发消息");
-    assert_eq!(with_placeholder(None), "给 Alice 发消息");
+    assert_placeholder(
+        &with_placeholder(Some("   ")),
+        "给 Alice 发消息",
+        "Message Alice",
+    );
+    assert_placeholder(&with_placeholder(None), "给 Alice 发消息", "Message Alice");
 }
 
 #[test]

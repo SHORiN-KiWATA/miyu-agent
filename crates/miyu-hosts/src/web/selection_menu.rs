@@ -50,12 +50,19 @@ pub(in crate::web) async fn selection_assist_http(
     require_local_web_session(&state, &headers, &request.session_id)?;
     let text = request.text.trim().to_string();
     if text.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "没有选中文字"));
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            t("Nothing is selected", "没有选中文字"),
+        ));
     }
     if text.chars().count() > MAX_SELECTION_CHARS {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
-            format!("选中的文字超过 {MAX_SELECTION_CHARS} 字"),
+            t(
+                "The selection is over {max} characters",
+                "选中的文字超过 {max} 字",
+            )
+            .replace("{max}", &MAX_SELECTION_CHARS.to_string()),
         ));
     }
     let (system, translate) = match request.action.as_str() {
@@ -64,8 +71,12 @@ pub(in crate::web) async fn selection_assist_http(
         other => {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
-                format!("未知的划词动作:{other}"),
-            ))
+                t(
+                    "Unknown selection action: {action}",
+                    "未知的划词动作:{action}",
+                )
+                .replace("{action}", other),
+            ));
         }
     };
 
@@ -100,10 +111,11 @@ pub(in crate::web) async fn selection_assist_http(
     .map_err(|error| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
-            format!(
-                "设置 → 模型池 → 旁路请求 → 划词解释 没有可用模型:{}",
-                safe_error_message(&error)
-            ),
+            t(
+                "No model available for selection explain (Settings → Model pool → Side request → Selection explain): {error}",
+                "设置 → 模型池 → 旁路请求 → 划词解释 没有可用模型:{error}",
+            )
+            .replace("{error}", &safe_error_message(&error)),
         )
     })?
     .with_request_scope("selection-assist");
@@ -148,7 +160,10 @@ pub(in crate::web) async fn selection_web_search_http(
     if !config.enabled {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
-            "网页搜索插件没开(plugins.web.enabled)",
+            t(
+                "The web search plugin is off (plugins.web.enabled)",
+                "网页搜索插件没开(plugins.web.enabled)",
+            ),
         ));
     }
     let search_text = text.clone();

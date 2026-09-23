@@ -126,13 +126,13 @@ pub(in crate::config_tui) fn edit_features(
             &cx,
             if items[selected].settings {
                 t(
-                    "[Space]toggle [⏎]settings [↑↓ jk]move [Esc]back",
-                    "[空格]开关 [⏎]设置 [↑↓ jk]移动 [Esc]返回",
+                    "[Space]toggle [Ctrl+A]all [⏎]settings [↑↓ jk]move [Esc]back",
+                    "[空格]开关 [Ctrl+A]全开/全关 [⏎]设置 [↑↓ jk]移动 [Esc]返回",
                 )
             } else {
                 t(
-                    "[Space]toggle [⏎]details [↑↓ jk]move [Esc]back",
-                    "[空格]开关 [⏎]详情 [↑↓ jk]移动 [Esc]返回",
+                    "[Space]toggle [Ctrl+A]all [⏎]details [↑↓ jk]move [Esc]back",
+                    "[空格]开关 [Ctrl+A]全开/全关 [⏎]详情 [↑↓ jk]移动 [Esc]返回",
                 )
             },
         );
@@ -148,17 +148,26 @@ pub(in crate::config_tui) fn edit_features(
             },
         )?;
 
-        match read_key(ui)? {
-            KeyCode::Esc | KeyCode::Char('q') => break,
-            KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => {
+        match read_key_with_mods(ui)? {
+            // Ctrl+A:全开 / 全关来回切。有没开的就全开上,已经全开了才是全关
+            // ——半开状态下按一次的意图是「都要」(与 OOBE 同一语义,用户 09-23)。
+            (KeyCode::Char('a' | 'A'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                let target = items.iter().any(|item| !item.on);
+                for item in items.iter_mut() {
+                    item.on = target;
+                }
+                dirty = true;
+            }
+            (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => break,
+            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => selected = selected.saturating_sub(1),
+            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
                 selected = (selected + 1).min(items.len() - 1);
             }
-            KeyCode::Char(' ') | KeyCode::Tab => {
+            (KeyCode::Char(' '), _) | (KeyCode::Tab, _) => {
                 items[selected].on = !items[selected].on;
                 dirty = true;
             }
-            KeyCode::Enter => {
+            (KeyCode::Enter, _) => {
                 let item = &items[selected];
                 if !item.settings {
                     show_details(ui, item)?;

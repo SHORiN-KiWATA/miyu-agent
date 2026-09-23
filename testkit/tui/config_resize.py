@@ -109,7 +109,8 @@ def main():
         send(b"x", "message-dismissed", ["CONFIG"])
         # 2026-09-20：插件配置与自定义提示词并成了「人格」，主菜单少一项。
         send(b"j" * 5 + b"\r", "settings", ["GLOBAL SETTINGS", "Maximum tool rounds"])
-        send(b"j\r\x1b[H" + b"\x1b[3~" * 20 + b"resizecheck\x1b[D\x1b[D",
+        # 09-23:界面语言提到全局设置第一行,数字字段从第 2 行变第 3 行
+        send(b"jj\r\x1b[H" + b"\x1b[3~" * 20 + b"resizecheck\x1b[D\x1b[D",
              "editing", ["resizecheck"])
         resize(110, 36, "editing-resized", ["GLOBAL SETTINGS", "resizecheck"])
         send(b"Z", "editing-cursor-retained", ["resizecheZck"])

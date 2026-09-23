@@ -80,11 +80,33 @@ impl Locale {
 
 static UI_LOCALE: OnceLock<Locale> = OnceLock::new();
 
+// WebUI 请求级语言(2026-09-23 用户拍板):一个 daemon 会被多台设备的浏览器
+// 访问,语言各不同,进程级 `UI_LOCALE` 只够 CLI/TUI 用。web 中间件在请求入口
+// scope 一次,请求内所有 `text`/`is_zh` 跟随它;没有 scope 的调用(CLI、平台
+// 后台任务)回退全局值。
+tokio::task_local! {
+    static REQUEST_LOCALE: Locale;
+}
+
+/// 在 `locale` 作用域内执行 future,离开即恢复。请求级语言的唯一入口。
+pub async fn scoped<F: std::future::Future>(locale: Locale, future: F) -> F::Output {
+    REQUEST_LOCALE.scope(locale, future).await
+}
+
+/// 当前是否在请求级语言作用域内(不在则返回 None)。
+pub fn request_locale() -> Option<Locale> {
+    REQUEST_LOCALE.try_with(|locale| *locale).ok()
+}
+
 pub fn init(configured: &str) -> Locale {
     *UI_LOCALE.get_or_init(|| Locale::resolve_with(configured, |key| std::env::var(key).ok()))
 }
 
 pub fn locale() -> Locale {
+    request_locale().unwrap_or_else(global_locale)
+}
+
+fn global_locale() -> Locale {
     UI_LOCALE
         .get()
         .copied()
@@ -187,5 +209,30 @@ mod tests {
             _ => None,
         };
         assert_eq!(Locale::system_with(&mut env), Locale::Zh);
+    }
+
+    #[tokio::test]
+    async fn scoped_locale_overrides_global_and_unwinds() {
+        // 全局值随测试机的 env 变,不能假设,只能相对断言。
+        let global = locale();
+        let other = if global == Locale::Zh {
+            Locale::En
+        } else {
+            Locale::Zh
+        };
+        assert_eq!(request_locale(), None);
+        scoped(other, async {
+            assert_eq!(request_locale(), Some(other));
+            assert_eq!(text("english", "中文"), text_for(other, "english", "中文"));
+            // 嵌套:内层盖外层,出来逐层恢复
+            scoped(global, async {
+                assert_eq!(locale(), global);
+            })
+            .await;
+            assert_eq!(locale(), other);
+        })
+        .await;
+        assert_eq!(locale(), global);
+        assert_eq!(request_locale(), None);
     }
 }

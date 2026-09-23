@@ -17,10 +17,10 @@
  */
 window.MiyuSelectionMenu = (() => {
   const ACTIONS = [
-    { key: "explain", label: "解释", needsModel: true },
-    { key: "translate", label: "翻译", needsModel: true },
-    { key: "quote", label: "引用" },
-    { key: "search", label: "搜索" },
+    { key: "explain", label: t("解释"), needsModel: true },
+    { key: "translate", label: t("翻译"), needsModel: true },
+    { key: "quote", label: t("引用") },
+    { key: "search", label: t("搜索") },
   ];
   const MAX_CHARS = 2000;
   const BODY_SELECTOR = ".markdown-body, .user-bubble";
@@ -96,11 +96,11 @@ window.MiyuSelectionMenu = (() => {
       const item = menuItem(action.label, () => runAction(action.key));
       if (action.needsModel && tooLong) {
         item.disabled = true;
-        item.title = `选中的文字超过 ${MAX_CHARS} 字`;
+        item.title = t("选中的文字超过 {max} 字", { max: MAX_CHARS });
       }
       menu.appendChild(item);
     }
-    menu.append(el("div", "sel-menu-sep"), menuItem("复制", copySelection), el("div", "sel-menu-hint", "Shift + 右键:浏览器菜单"));
+    menu.append(el("div", "sel-menu-sep"), menuItem(t("复制"), copySelection), el("div", "sel-menu-hint", t("Shift + 右键:浏览器菜单")));
     // 按下按钮会让部分浏览器收起选区;选区文字已经记在 current 里,这里只防闪。
     menu.addEventListener("pointerdown", (event) => event.preventDefault());
     document.body.appendChild(menu);
@@ -178,12 +178,12 @@ window.MiyuSelectionMenu = (() => {
     window.getSelection()?.removeAllRanges();
   }
 
-  async function copyText(text, message = "已复制") {
+  async function copyText(text, message = t("已复制")) {
     try {
       await navigator.clipboard.writeText(text);
       ctx.toast?.(message);
     } catch (_) {
-      ctx.toast?.("复制失败:浏览器没给剪贴板权限", "error");
+      ctx.toast?.(t("复制失败:浏览器没给剪贴板权限"), "error");
     }
   }
 
@@ -209,7 +209,7 @@ window.MiyuSelectionMenu = (() => {
     // 动作区:解释/翻译往里插复制与重试,始终排在钉住与关闭左边。
     pop.actions = el("span", "sel-pop-actions");
     // 钉住没有按钮(用户 09-14 要去掉图标):出结果之前自动不关,拖动过就留着。
-    pop.closeButton = iconButton("x", "关闭", () => closePopover(pop), "关闭");
+    pop.closeButton = iconButton("x", t("关闭"), () => closePopover(pop), t("关闭"));
     pop.actions.append(pop.closeButton);
     head.append(el("strong", null, title), quoteNode, pop.actions);
     pop.body = el("div", "sel-pop-body");
@@ -335,20 +335,20 @@ window.MiyuSelectionMenu = (() => {
   }
 
   function openAssist(kind, picked, targetLang) {
-    const title = kind === "explain" ? "解释" : "翻译";
+    const title = kind === "explain" ? t("解释") : t("翻译");
     const pop = createPopover(title, picked);
     const lang = kind === "translate" ? targetLang || autoTarget(picked.text) : null;
     if (kind === "translate") {
       const other = lang === "en" ? "zh" : "en";
       pop.head.insertBefore(
-        button("sel-chip", other === "en" ? "改译英文" : "改译中文", () => {
+        button("sel-chip", other === "en" ? t("改译英文") : t("改译中文"), () => {
           closePopover(pop);
           openAssist("translate", picked, other);
         }),
         pop.head.children[2]
       );
     }
-    if (!picked.turnId) pop.body.appendChild(el("div", "sel-note", "这条消息还没落库,这次不带对话上下文。"));
+    if (!picked.turnId) pop.body.appendChild(el("div", "sel-note", t("这条消息还没落库,这次不带对话上下文。")));
     // 等模型的那几秒:主页同款盲文转圈,不再写「正在解释…」。
     const status = el("div", "sel-status");
     status.appendChild(spinner());
@@ -356,11 +356,11 @@ window.MiyuSelectionMenu = (() => {
     pop.body.append(status, output);
 
     // 复制 / 重试收进右上角,排在钉住左边;「转成追问」去掉(右键菜单里已有「引用」)。
-    const copy = iconButton("copy", "复制", () => copyText(text), "复制结果");
-    const retry = iconButton("refresh-cw", "重试", () => {
+    const copy = iconButton("copy", t("复制"), () => copyText(text), t("复制结果"));
+    const retry = iconButton("refresh-cw", t("重试"), () => {
       closePopover(pop);
       openAssist(kind, picked, lang);
-    }, "重新生成");
+    }, t("重新生成"));
     copy.disabled = true;
     pop.actions.insertBefore(copy, pop.closeButton);
     pop.actions.insertBefore(retry, pop.closeButton);
@@ -379,7 +379,7 @@ window.MiyuSelectionMenu = (() => {
     const blocks = el("div", "assistant-blocks sel-blocks");
     const thinking = () => {
       if (think) return think;
-      think = ctx.createReasoningBlock?.("", "正在思考", true) || null;
+      think = ctx.createReasoningBlock?.("", t("正在思考"), true) || null;
       if (!think) return null;
       think.element.classList.add("sel-think", "is-streaming");
       think.element.open = true;
@@ -392,7 +392,7 @@ window.MiyuSelectionMenu = (() => {
       // is-live 是流光(图标呼吸 + 标题扫光)的开关,不摘掉的话想完了还在闪;
       // 它同时压着图标底色那条 is-live 规则,所以底色也会跟着不对。
       think.element.classList.remove("is-streaming", "is-live");
-      if (think.title) think.title.textContent = "已思考";
+      if (think.title) think.title.textContent = t("已思考");
       think.liveStatus?.remove();
       think.progress?.remove();
       think.element.open = false;
@@ -444,7 +444,7 @@ window.MiyuSelectionMenu = (() => {
           status.remove();
           if (frame) window.cancelAnimationFrame(frame);
           paint();
-          if (!text) output.textContent = "模型没有返回内容";
+          if (!text) output.textContent = t("模型没有返回内容");
           copy.disabled = !text;
         },
         error(message) {
@@ -467,12 +467,12 @@ window.MiyuSelectionMenu = (() => {
         signal,
       });
     } catch (error) {
-      if (!signal.aborted) handlers.error(error?.message || "请求失败");
+      if (!signal.aborted) handlers.error(error?.message || t("请求失败"));
       return;
     }
     const reader = response.body?.getReader();
     if (!reader) {
-      handlers.error("浏览器不支持流式读取");
+      handlers.error(t("浏览器不支持流式读取"));
       return;
     }
     const decoder = new TextDecoder();
@@ -501,15 +501,15 @@ window.MiyuSelectionMenu = (() => {
             handlers.done(event);
           } else if (event.type === "error") {
             finished = true;
-            handlers.error(String(event.message || "请求失败"));
+            handlers.error(String(event.message || t("请求失败")));
           }
         }
       }
     } catch (error) {
-      if (!signal.aborted) handlers.error(error?.message || "连接中断");
+      if (!signal.aborted) handlers.error(error?.message || t("连接中断"));
       return;
     }
-    if (!finished && !signal.aborted) handlers.error("连接提前结束,没有收到结果");
+    if (!finished && !signal.aborted) handlers.error(t("连接提前结束,没有收到结果"));
     // 被 abort 的那条路两个 handler 都不触发,临时保持会一直挂着,看着就像
     // 默认钉住了。任何收场都必须把它放掉。
     handlers.settled?.();
@@ -518,10 +518,10 @@ window.MiyuSelectionMenu = (() => {
   // ---------------- 搜索 ----------------
 
   function openSearch(picked) {
-    const pop = createPopover("搜索", picked);
+    const pop = createPopover(t("搜索"), picked);
     const query = picked.text.replace(/\s+/g, " ").slice(0, 200);
-    const kb = searchSection(pop.body, "知识库");
-    const web = searchSection(pop.body, "网页");
+    const kb = searchSection(pop.body, t("知识库"));
+    const web = searchSection(pop.body, t("网页"));
     pop.controller = new AbortController();
     const { signal } = pop.controller;
     ctx.apiRequest(`/api/dash/kb/search?q=${encodeURIComponent(query)}&limit=5`, { signal })
@@ -537,8 +537,8 @@ window.MiyuSelectionMenu = (() => {
         if (!signal.aborted) sectionError(web, error);
       });
     pop.foot.append(
-      button("sel-btn", "复制关键词", () => copyText(query)),
-      button("sel-btn", "引用", () => {
+      button("sel-btn", t("复制关键词"), () => copyText(query)),
+      button("sel-btn", t("引用"), () => {
         quote(picked.text);
         closePopover(pop);
       })
@@ -548,21 +548,21 @@ window.MiyuSelectionMenu = (() => {
   function searchSection(parent, label) {
     const section = el("section", "sel-section");
     const body = el("div", "sel-section-body");
-    body.appendChild(statusLine("正在搜索…"));
+    body.appendChild(statusLine(t("正在搜索…")));
     section.append(el("div", "sel-section-head", label), body);
     parent.appendChild(section);
     return body;
   }
 
   function sectionError(body, error) {
-    body.replaceChildren(el("div", "sel-note is-error", error?.message || "搜索失败"));
+    body.replaceChildren(el("div", "sel-note is-error", error?.message || t("搜索失败")));
   }
 
   function renderKb(body, data) {
     body.replaceChildren();
     const results = Array.isArray(data?.results) ? data.results : [];
     if (!results.length) {
-      body.appendChild(el("div", "sel-empty", "知识库里没有匹配"));
+      body.appendChild(el("div", "sel-empty", t("知识库里没有匹配")));
       return;
     }
     for (const item of results.slice(0, 5)) {
@@ -571,8 +571,8 @@ window.MiyuSelectionMenu = (() => {
         .replace(/\s+/g, " ")
         .slice(0, 140);
       // 侧栏临时视图(file-links 步 2)建好之前,点一下先复制路径。
-      const row = button("sel-result", null, () => copyText(path, "已复制文件路径"), "复制路径");
-      row.appendChild(el("span", "sel-result-title", path || "(无路径)"));
+      const row = button("sel-result", null, () => copyText(path, t("已复制文件路径")), t("复制路径"));
+      row.appendChild(el("span", "sel-result-title", path || t("(无路径)")));
       if (snippet) row.appendChild(el("span", "sel-result-snippet", snippet));
       body.appendChild(row);
     }
@@ -582,7 +582,7 @@ window.MiyuSelectionMenu = (() => {
     body.replaceChildren();
     const output = String(data?.output || "").trim();
     if (!output) {
-      body.appendChild(el("div", "sel-empty", "网页搜索没有结果"));
+      body.appendChild(el("div", "sel-empty", t("网页搜索没有结果")));
       return;
     }
     let parsed = null;
@@ -600,7 +600,7 @@ window.MiyuSelectionMenu = (() => {
     }
     for (const item of results.slice(0, 6)) {
       const url = String(item.url || item.link || "");
-      const title = String(item.title || url || "(无标题)");
+      const title = String(item.title || url || t("(无标题)"));
       const snippet = String(item.snippet || item.content || item.description || "").replace(/\s+/g, " ").slice(0, 140);
       // 只放行 http(s) 链接:结果来自外部搜索服务,是不可信数据。
       const safe = /^https?:\/\//i.test(url);
@@ -637,7 +637,7 @@ window.MiyuSelectionMenu = (() => {
       toolbar = el("div", "sel-toolbar");
       toolbar.setAttribute("role", "toolbar");
       for (const action of ACTIONS) toolbar.appendChild(button("sel-toolbar-item", action.label, () => runAction(action.key)));
-      toolbar.appendChild(button("sel-toolbar-item", "复制", () => {
+      toolbar.appendChild(button("sel-toolbar-item", t("复制"), () => {
         copySelection();
         hideToolbar();
       }));
