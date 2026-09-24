@@ -799,55 +799,6 @@ impl ConversationDb {
             .optional()?)
     }
 
-    /// Deletes subagent audit sessions older than the retention window;
-    /// their turns/images/queues cascade away.
-    pub fn delete_subagent_sessions_older_than(&self, days: i64) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // 与 delete_ask_sessions_older_than 同理:queued_prompts.session_id
-        // 经 ALTER 而来没有级联外键,必须先手动清,否则留孤儿行。
-        tx.execute(
-            "DELETE FROM queued_prompts WHERE session_id IN (
-                 SELECT session_id FROM sessions
-                 WHERE kind = 'subagent'
-                   AND datetime(updated_at) < datetime('now', '-' || ?1 || ' days'))",
-            params![days],
-        )?;
-        let deleted = tx.execute(
-            "DELETE FROM sessions
-             WHERE kind = 'subagent'
-               AND datetime(updated_at) < datetime('now', '-' || ?1 || ' days')",
-            params![days],
-        )?;
-        tx.commit()?;
-        Ok(deleted)
-    }
-
-    /// Deletes abandoned one-shot sessions older than the retention window. A
-    /// `miyu ask` turn deletes its own session; anything still here was
-    /// orphaned by a client that died mid-turn (Ctrl+C, SIGKILL).
-    pub fn delete_ask_sessions_older_than(&self, hours: i64) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // queued_prompts.session_id arrived via ALTER and has no cascading FK,
-        // so its rows have to go first (same reason as `delete_session`).
-        tx.execute(
-            "DELETE FROM queued_prompts WHERE session_id IN (
-                 SELECT session_id FROM sessions
-                 WHERE kind = ?1
-                   AND datetime(updated_at) < datetime('now', '-' || ?2 || ' hours'))",
-            params![crate::state::ASK_SESSION_KIND, hours],
-        )?;
-        let deleted = tx.execute(
-            "DELETE FROM sessions
-             WHERE kind = ?1
-               AND datetime(updated_at) < datetime('now', '-' || ?2 || ' hours')",
-            params![crate::state::ASK_SESSION_KIND, hours],
-        )?;
-        tx.commit()?;
-        Ok(deleted)
-    }
-
     pub(crate) fn update_session_field(
         &self,
         session_id: &str,

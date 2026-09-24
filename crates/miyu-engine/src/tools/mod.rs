@@ -40,6 +40,7 @@ mod registry;
 mod relay_tests;
 mod scripts;
 mod session_scope;
+mod session_store;
 pub use session_scope::{apply_session_kind_scope, apply_turn_restrictions};
 mod skills;
 pub mod subagent;

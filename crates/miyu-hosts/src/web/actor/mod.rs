@@ -553,8 +553,8 @@ pub(in crate::web) fn reset_actor_conversation(
         let store = state_store.pinned(session_id);
         store.clear_session_content()?;
         store.reset_conversation_usage()?;
-        // 待办存在库外面，`clear_session_content` 够不到它。
-        tools::clear_session_todos(paths, session_id)?;
+        // 待办不在 `clear_session_content` 清的那几张表里，得单独清。
+        tools::clear_session_todos(&store, session_id)?;
         // 目标也一起清：重置就是从头来过。留着的话，armed 的旧目标会在重置后
         // 第一个回合结束时把驱动器重新拉起来，对着空历史推进一个被清掉的话题。
         if let Ok(Some(goal)) = store.goal(session_id) {
@@ -638,9 +638,9 @@ pub(in crate::web) fn clear_actor_session_content(
     store
         .clear_session_content()
         .map_err(|error| AdminFailure::Internal(safe_error_message(error)))?;
-    // 与 `reset_actor_conversation` 同理：待办在库外面，得单独清。
+    // 与 `reset_actor_conversation` 同理：待办得单独清。
     miyu_core::llm::forget_relay_sessions(session_id);
-    tools::clear_session_todos(paths, session_id)
+    tools::clear_session_todos(&store, session_id)
         .map_err(|error| AdminFailure::Internal(safe_error_message(&error)))?;
 
     // Platform sessions normally never become the daemon's current local

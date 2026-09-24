@@ -702,10 +702,11 @@ fn a_flood_of_new_peers_cannot_reset_an_active_block() {
 
 /// 重置对话要连待办一起清。
 ///
-/// 待办按会话存在库外面（`todos/{session}.json`），而重置那条路上一串清理
-/// 动作全走 `StateStore`——加清理项时天然会漏掉它，于是「对话重来了，上一轮
-/// 的待办还挂在侧边面板上，模型下一次读 todo 也还是旧的」。
-/// 清空会话内容（平台会话与 WebUI 的「清空」）同理，两条都钉住。
+/// 待办不在 `clear_session_content` 清的那几张表里，加清理项时天然会漏掉它，
+/// 于是「对话重来了，上一轮的待办还挂在侧边面板上，模型下一次读 todo 也还是
+/// 旧的」。清空会话内容（平台会话与 WebUI 的「清空」）同理，两条都钉住。
+/// 清单从老文件（`todos/{session}.json`，09-24 入库前的存法）导进来，顺带钉住
+/// 老文件的导入与清除。
 #[test]
 fn resetting_a_conversation_also_clears_its_todo_list() {
     for clear_only in [false, true] {
@@ -723,7 +724,7 @@ fn resetting_a_conversation_also_clears_its_todo_list() {
         )
         .unwrap();
         assert!(
-            !miyu_engine::tools::session_todos(&paths, &session_id).is_empty(),
+            !miyu_engine::tools::session_todos(&state.state_store, &session_id).is_empty(),
             "前置条件不成立：清单没写进去"
         );
 
@@ -751,7 +752,7 @@ fn resetting_a_conversation_also_clears_its_todo_list() {
         result.unwrap();
 
         assert!(
-            miyu_engine::tools::session_todos(&paths, &session_id).is_empty(),
+            miyu_engine::tools::session_todos(&state.state_store, &session_id).is_empty(),
             "{}后待办还在——面板和模型看到的都是上一轮的清单",
             if clear_only {
                 "清空会话"

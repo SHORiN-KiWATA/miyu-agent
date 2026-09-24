@@ -614,7 +614,10 @@ pub(in crate::cli) fn footer_thinking_summary(
     session_id: &str,
 ) -> Result<Option<String>> {
     let mut client = OpenAiCompatibleClient::from_config(session_config, paths)?;
-    client.apply_session_thinking_variants(paths, session_id);
+    // 终端的会话都在管理员库里;钉子存在会话库,库开不了就只显示全局档位。
+    if let Ok(store) = StateStore::new(paths) {
+        client.apply_session_thinking_variants(&store, session_id);
+    }
     Ok(client.thinking_variant_summary())
 }
 

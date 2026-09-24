@@ -13,7 +13,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     tools::jobs::init(&paths);
     // 子代理断点续传落盘目录(09-12):检查点写盘,daemon 重启后 resume_id 仍有效。
     tools::subagent_runner::init_checkpoint_dir(&paths);
-    let state_store = StateStore::new(&paths)?;
+    let state_store = StateStore::open_maintained(&paths)?;
     state_store.init_files()?;
     // 子代理会话化(09-18):上个进程里没跑完的子代理任务标 interrupted,不自动续——
     // 用户到任务条里点进去回复即续。成员库在第一次打开时各标各的(StoreRegistry)。

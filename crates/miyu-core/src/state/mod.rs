@@ -12,6 +12,8 @@ mod service_restart;
 pub use service_restart::*;
 mod migrations;
 mod queue;
+mod session_state;
+pub use session_state::{safe_path_segment, REPL_HISTORY_KEEP};
 mod sessions;
 mod turns;
 mod usage_ops;
@@ -26,6 +28,7 @@ pub fn latest_schema_version() -> i64 {
 
 use crate::llm::{TurnTokens, Usage};
 use anyhow::{bail, Context, Result};
+use conversation_db::OpenRole;
 use miyu_base::memory_types::EvictedTurn;
 use miyu_base::paths::MiyuPaths;
 use serde::{Deserialize, Serialize};
@@ -43,13 +46,14 @@ pub use conversation_db::{
     NewSponsorRecord, PlatformAccessActor, PlatformAccessGrant, PlatformAccessGrantKey,
     PlatformMemeRefRecord, PlatformPluginScopeKey, PlatformSessionBinding,
     PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,
-    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, RestartOrphan, SessionOverview,
-    SessionRecord, SponsorOrder, SponsorRecord, SponsorSummary, SponsorTotal, ToolFlowCall,
-    ToolFlowRound, ToolFootprint, Turn, TurnFollowup, TurnInlineMedia, TurnJournalEvent,
-    TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment, UserAttachmentData,
-    DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE, INLINE_MEDIA_KIND_IMAGE,
-    INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT, INLINE_MEDIA_KIND_VIDEO,
-    USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE, USER_ATTACHMENT_KIND_TEXT,
+    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, ReplayPage, RestartOrphan,
+    SessionOverview, SessionRecord, SessionValueKind, SponsorOrder, SponsorRecord, SponsorSummary,
+    SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnFollowup, TurnInlineMedia,
+    TurnJournalEvent, TurnPage, TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment,
+    UserAttachmentData, DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE,
+    INLINE_MEDIA_KIND_IMAGE, INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT,
+    INLINE_MEDIA_KIND_VIDEO, USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE,
+    USER_ATTACHMENT_KIND_TEXT,
 };
 pub use usage::{
     UsageMeta, UsageRange, UsageSnapshot, UsageStats, USAGE_KIND_AFFECTION, USAGE_KIND_GROUP_JOIN,
@@ -203,6 +207,9 @@ pub struct StateStore {
     /// 用量账本的账号列(阶段 5):`pinned_for_turn` 按会话归属填;空串 =
     /// 管理员/遗留。整理器、判官等自己起的 store 都记在空串名下。
     usage_account: Arc<str>,
+    /// 这个账号的老式会话文件放在哪:管理员是 state 目录,成员是他自己家里
+    /// (思考档位钉按账号分家,见 `session_state`)。
+    legacy_home: PathBuf,
 }
 
 impl StateStore {
@@ -211,29 +218,68 @@ impl StateStore {
         &self.usage_account
     }
 
+    /// 客户端开库(终端、一次性命令、守护进程里临时开库的工具):同一进程共用
+    /// 一个连接,库是当前版本就不做维护。守护进程开主库用 `open_maintained`。
     pub fn new(paths: &MiyuPaths) -> Result<Self> {
-        Self::new_at(paths, &paths.conversation_db_dir(), paths.artifacts_dir())
+        Self::new_at(
+            paths,
+            &paths.conversation_db_dir(),
+            paths.artifacts_dir(),
+            OpenRole::Client,
+            None,
+        )
+    }
+
+    /// 守护进程开主库:它是库的看门人,体检、回收空闲页只在这里做。
+    pub fn open_maintained(paths: &MiyuPaths) -> Result<Self> {
+        Self::new_at(
+            paths,
+            &paths.conversation_db_dir(),
+            paths.artifacts_dir(),
+            OpenRole::Maintain,
+            None,
+        )
     }
 
     /// 成员自己的会话库:`home/<用户>/conversation.db`,artifact 也落他家里;
-    /// 附件本体、用量账本仍在 state(机器级)。
+    /// 附件本体、用量账本仍在 state(机器级)。只有守护进程的 StoreRegistry
+    /// 开成员库,所以按看门人开。
     pub fn open_member(paths: &MiyuPaths, username: &str) -> Result<Self> {
         let home = paths.user_home_dir(username);
         miyu_base::paths::ensure_private_dir(&paths.homes_dir())?;
         miyu_base::paths::ensure_private_dir(&home)?;
-        Self::new_at(paths, &home, home.join("artifacts"))
+        Self::new_at(
+            paths,
+            &home,
+            home.join("artifacts"),
+            OpenRole::Maintain,
+            Some(&home),
+        )
     }
 
     /// 已知成员家目录时直接开他的会话库(工具侧只有 `config.member_home_dir()`
     /// 拿到的路径、没有用户名时用)。库/artifact 落点与 `open_member` 同口径。
     pub fn open_at_home(paths: &MiyuPaths, home: &Path) -> Result<Self> {
         miyu_base::paths::ensure_private_dir(home)?;
-        Self::new_at(paths, home, home.join("artifacts"))
+        Self::new_at(
+            paths,
+            home,
+            home.join("artifacts"),
+            OpenRole::Client,
+            Some(home),
+        )
     }
 
-    fn new_at(paths: &MiyuPaths, db_dir: &Path, artifacts_dir: PathBuf) -> Result<Self> {
+    fn new_at(
+        paths: &MiyuPaths,
+        db_dir: &Path,
+        artifacts_dir: PathBuf,
+        role: OpenRole,
+        member_home: Option<&Path>,
+    ) -> Result<Self> {
         let state_dir = paths.state_dir.clone();
-        let conv_db = Arc::new(ConversationDb::open_at(db_dir, &state_dir)?);
+        let legacy_home = member_home.map_or_else(|| state_dir.clone(), Path::to_path_buf);
+        let conv_db = ConversationDb::shared(db_dir, &state_dir, role)?;
         let platform_access = shared_platform_access_index(&state_dir, &conv_db)?;
         let session_id = Arc::new(std::sync::RwLock::new(Arc::<str>::from(
             conv_db.resolve_current_session()?,
@@ -260,6 +306,7 @@ impl StateStore {
             queue_session_id,
             queue_owner_pid,
             usage_account: Arc::from(""),
+            legacy_home,
         })
     }
 
@@ -304,13 +351,6 @@ impl StateStore {
 
     fn profile_file(&self) -> PathBuf {
         self.state_dir.join("profile.md")
-    }
-
-    fn prompt_fingerprint_file(&self) -> PathBuf {
-        let key = blake3::hash(self.session().as_bytes()).to_hex();
-        self.state_dir
-            .join("prompt-fingerprints")
-            .join(format!("{key}.sha256"))
     }
 }
 

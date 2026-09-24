@@ -181,7 +181,8 @@ pub(in crate::web) async fn session_todos_http(
 ) -> std::result::Result<Json<Value>, ApiError> {
     require_auth(&headers, &state)?;
     require_local_web_session(&state, &headers, &session_id)?;
-    let todos = tools::session_todos(&state.paths, &session_id);
+    let store = state.stores.for_session(&session_id);
+    let todos = tools::session_todos(&store, &session_id);
     Ok(Json(json!({ "todos": todos })))
 }
 

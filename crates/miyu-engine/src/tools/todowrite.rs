@@ -1,9 +1,10 @@
 use super::{ToolRegistry, ToolSpec};
 use anyhow::Result;
+use miyu_base::config::AppConfig;
 use miyu_base::paths::MiyuPaths;
+use miyu_core::state::{SessionValueKind, StateStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -15,44 +16,37 @@ pub struct Todo {
 
 pub type TodoList = Arc<Mutex<Vec<Todo>>>;
 
-// 存储绑定(任务#13):按会话落盘 state_dir/todos/<session>.json。
-// 旧实现是注册时的单例 Arc<Mutex<Vec>>,daemon 按 config 缓存复用
-// registry 后所有会话共享同一份(串味实锤);现在每次调用按当前回合的
-// 会话加载/回存,纯函数 todo_write/todo_update 与其测试原样保留。
-
-fn todos_path(paths: &MiyuPaths, session: &str) -> PathBuf {
-    paths
-        .state_dir
-        .join("todos")
-        .join(format!("{session}.json"))
-}
+// 存储绑定(任务#13):按会话存。旧实现是注册时的单例 Arc<Mutex<Vec>>,daemon
+// 按 config 缓存复用 registry 后所有会话共享同一份(串味实锤);现在每次调用
+// 按当前回合的会话加载/回存,纯函数 todo_write/todo_update 与其测试原样保留。
+// 09-24 起住在会话库里(`session_values`,kind=todos),删会话时级联带走;以前是
+// `state_dir/todos/<会话>.json`,删会话没人清(实测 11/11 是孤儿)。
 
 /// 某个会话当前的待办清单。
 ///
 /// WebUI 的常驻面板要在刷新之后还能显示当前状态，而工具事件只在工具跑的
-/// 那一刻发生一次。读取收口在这里，调用方不自己拼 `todos/{session}.json`
-/// ——路径和损坏容错的规则只该有一份。
-pub fn session_todos(paths: &MiyuPaths, session: &str) -> Vec<Todo> {
-    load_todos(paths, session)
+/// 那一刻发生一次。读取收口在这里，损坏容错的规则只该有一份。
+pub fn session_todos(store: &StateStore, session: &str) -> Vec<Todo> {
+    load_todos(store, session)
 }
 
 /// 清掉某个会话的待办。
 ///
-/// 待办按会话存在库外面（`todos/{session}.json`），所以「重置对话」那条路上
-/// 一串清理动作全走 `StateStore`，唯独漏了它——对话重来了，上一轮的待办还挂
-/// 在侧边面板上，模型下一次读 todo 也还是旧的。
-pub fn clear_session_todos(paths: &MiyuPaths, session: &str) -> Result<()> {
-    match std::fs::remove_file(todos_path(paths, session)) {
-        Ok(()) => Ok(()),
-        // 没建过清单是常态，不是错误。
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
+/// 「重置对话」那条路上一串清理动作都走 `clear_session_content`，唯独待办
+/// 不在它清的那几张表里——对话重来了，上一轮的待办还挂在侧边面板上，模型
+/// 下一次读 todo 也还是旧的。
+pub fn clear_session_todos(store: &StateStore, session: &str) -> Result<()> {
+    store.clear_session_value(session, SessionValueKind::Todos)
 }
 
-fn load_todos(paths: &MiyuPaths, session: &str) -> Vec<Todo> {
-    let Ok(raw) = std::fs::read_to_string(todos_path(paths, session)) else {
-        return Vec::new();
+fn load_todos(store: &StateStore, session: &str) -> Vec<Todo> {
+    let raw = match store.session_value(session, SessionValueKind::Todos) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(session, error = %error, "todo list could not be read; starting with an empty list");
+            return Vec::new();
+        }
     };
     match serde_json::from_str(&raw) {
         Ok(todos) => todos,
@@ -62,24 +56,19 @@ fn load_todos(paths: &MiyuPaths, session: &str) -> Vec<Todo> {
             tracing::warn!(
                 session,
                 error = %error,
-                "todo list file is corrupt; starting with an empty list"
+                "todo list is corrupt; starting with an empty list"
             );
             Vec::new()
         }
     }
 }
 
-fn save_todos(paths: &MiyuPaths, session: &str, todos: &[Todo]) -> Result<()> {
-    let path = todos_path(paths, session);
-    let Some(parent) = path.parent() else {
-        anyhow::bail!("todo path has no parent directory");
-    };
-    std::fs::create_dir_all(parent)?;
-    // 原子写:崩溃在写回中途不能把清单留成截断的半个 JSON。
-    let temp = tempfile::NamedTempFile::new_in(parent)?;
-    std::fs::write(temp.path(), serde_json::to_string_pretty(todos)?)?;
-    temp.persist(&path)?;
-    Ok(())
+fn save_todos(store: &StateStore, session: &str, todos: &[Todo]) -> Result<()> {
+    store.set_session_value(
+        session,
+        SessionValueKind::Todos,
+        &serde_json::to_string_pretty(todos)?,
+    )
 }
 
 fn session_for_call() -> Result<String> {
@@ -89,21 +78,23 @@ fn session_for_call() -> Result<String> {
 }
 
 fn run_scoped(
+    config: &AppConfig,
     paths: &MiyuPaths,
     args: Value,
     apply: fn(Value, TodoList) -> Result<String>,
 ) -> Result<(String, Vec<Todo>)> {
     let session = session_for_call()?;
-    let todos: TodoList = Arc::new(Mutex::new(load_todos(paths, &session)));
+    let store = super::session_store::store_for(config, paths)?;
+    let todos: TodoList = Arc::new(Mutex::new(load_todos(&store, &session)));
     let output = apply(args, Arc::clone(&todos))?;
     let list = todos.lock().expect("todo state lock").clone();
-    save_todos(paths, &session, &list)?;
+    save_todos(&store, &session, &list)?;
     Ok((output, list))
 }
 
 /// todowrite + todoupdate 合并(08-17):同一份清单的整表替换与增量修改。
 /// 给了 updates 就走增量,给了 todos 就整表替换。
-pub fn register(registry: &mut ToolRegistry, paths: MiyuPaths) {
+pub fn register(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths) {
     registry.register(ToolSpec::new_with_progress(
         "todowrite",
         "Maintain the structured task list for the current session. Pass todos to create or replace the whole list; pass updates to apply small atomic changes (add, update, remove, clear) without resending everything. Exactly one of the two.",
@@ -171,13 +162,14 @@ pub fn register(registry: &mut ToolRegistry, paths: MiyuPaths) {
         }),
         move |args, progress| {
             let paths = paths.clone();
+            let config = config.clone();
             async move {
                 let apply = if args.get("updates").is_some() {
                     todo_update
                 } else {
                     todo_write
                 };
-                let (output, list) = run_scoped(&paths, args, apply)?;
+                let (output, list) = run_scoped(&config, &paths, args, apply)?;
                 // 表格数据走 progress 侧信道给 REPL/WebUI 画,不再进模型字节
                 // (08-21 token-diet:整表回显是 65% 结构开销的纯浪费)。
                 progress.report(format!("__todo_table__{}", todo_table_payload(&list)));

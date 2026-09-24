@@ -411,15 +411,20 @@ fn recalled_history_keeps_the_paste_placeholder_alive() {
     assert_eq!(again.content, "alpha\nbeta\ngamma", "载荷跟着占位符回来了");
 }
 
-/// 历史文件:带载荷的条目落成结构体行,老的裸字符串行照旧读得懂;对话
-/// 记录里的展开全文和文件里的占位符条目认作同一条,带载荷的胜出。
+/// 上键历史:带载荷的条目落成结构体行,老的裸字符串行照旧读得懂;对话
+/// 记录里的展开全文和历史里的占位符条目认作同一条,带载荷的胜出。09-24 起
+/// 历史入库,老的会话文件(`repl-history/<会话>.jsonl`)第一次读写时导进来。
 #[test]
 fn history_file_round_trips_placeholder_payloads_and_reads_old_lines() {
     let temp = tempfile::tempdir().unwrap();
     let paths = state_only_paths(temp.path());
+    let session = StateStore::new(&paths).unwrap().session_id().to_string();
     std::fs::create_dir_all(paths.state_dir.join("repl-history")).unwrap();
     std::fs::write(
-        paths.state_dir.join("repl-history").join("sess_a.jsonl"),
+        paths
+            .state_dir
+            .join("repl-history")
+            .join(format!("{session}.jsonl")),
         "\"老格式的一行\"\n",
     )
     .unwrap();
@@ -428,17 +433,17 @@ fn history_file_round_trips_placeholder_payloads_and_reads_old_lines() {
         pasted_texts: vec![Some("alpha\nbeta\ngamma".to_string())],
         images: Vec::new(),
     };
-    persist_repl_history_entry(&paths, "sess_a", &entry);
+    persist_repl_history_entry(&paths, &session, &entry);
 
     let mut history = vec![ReplHistoryEntry::plain("看看这个 alpha\nbeta\ngamma 对吗")];
-    assert!(refresh_repl_input_history(&mut history, &paths, "sess_a"));
+    assert!(refresh_repl_input_history(&mut history, &paths, &session));
     assert_eq!(
         history,
         vec![entry.clone(), ReplHistoryEntry::plain("老格式的一行")],
         "展开全文那条被文件里带载荷的同一条顶替,位置不变"
     );
     assert_eq!(history[0].expanded(), "看看这个 alpha\nbeta\ngamma 对吗");
-    assert!(!refresh_repl_input_history(&mut history, &paths, "sess_a"));
+    assert!(!refresh_repl_input_history(&mut history, &paths, &session));
 }
 
 #[test]
@@ -955,6 +960,8 @@ fn history_displays(history: &[ReplHistoryEntry]) -> Vec<String> {
 fn a_second_repl_sees_what_the_first_one_just_typed() {
     let temp = tempfile::tempdir().unwrap();
     let paths = state_only_paths(temp.path());
+    // 历史存在会话库里（09-24），得是库里真有的会话。
+    let sess_a = StateStore::new(&paths).unwrap().session_id().to_string();
 
     // REPL#2 先开：拿到一份当时的快照。
     let mut second_repl_history = vec![ReplHistoryEntry::plain("老条目")];
@@ -962,12 +969,12 @@ fn a_second_repl_sees_what_the_first_one_just_typed() {
     // REPL#1 后敲了两条（提交前就落盘，与生产路径一致）。
     persist_repl_history_entry(
         &paths,
-        "sess_a",
+        &sess_a,
         &ReplHistoryEntry::plain("cargo test --all"),
     );
     persist_repl_history_entry(
         &paths,
-        "sess_a",
+        &sess_a,
         &ReplHistoryEntry::plain("看一下 tokio 的文档"),
     );
 
@@ -975,7 +982,7 @@ fn a_second_repl_sees_what_the_first_one_just_typed() {
     assert!(refresh_repl_input_history(
         &mut second_repl_history,
         &paths,
-        "sess_a"
+        &sess_a
     ));
     assert_eq!(
         history_displays(&second_repl_history),
@@ -991,26 +998,35 @@ fn a_second_repl_sees_what_the_first_one_just_typed() {
     assert!(!refresh_repl_input_history(
         &mut second_repl_history,
         &paths,
-        "sess_a"
+        &sess_a
     ));
     assert_eq!(second_repl_history.len(), 3);
 }
 
-/// 历史按会话隔离：别的会话敲的东西不该出现在这个会话的上键里。
+/// 历史按会话隔离：别的会话敲的东西不该出现在这个会话的上键里。历史存在会话库
+/// 里（09-24），得是库里真有的会话。
 #[test]
 fn repl_history_does_not_leak_across_sessions() {
     let temp = tempfile::tempdir().unwrap();
     let paths = state_only_paths(temp.path());
+    let store = StateStore::new(&paths).unwrap();
+    let session = |name: &str| {
+        store
+            .create_session("miyu", name, "user", None)
+            .unwrap()
+            .session_id
+    };
+    let (sess_a, sess_b) = (session("a"), session("b"));
 
-    persist_repl_history_entry(&paths, "sess_a", &ReplHistoryEntry::plain("只属于 A"));
-    persist_repl_history_entry(&paths, "sess_b", &ReplHistoryEntry::plain("只属于 B"));
+    persist_repl_history_entry(&paths, &sess_a, &ReplHistoryEntry::plain("只属于 A"));
+    persist_repl_history_entry(&paths, &sess_b, &ReplHistoryEntry::plain("只属于 B"));
 
     let mut a = Vec::new();
-    refresh_repl_input_history(&mut a, &paths, "sess_a");
+    refresh_repl_input_history(&mut a, &paths, &sess_a);
     assert_eq!(history_displays(&a), vec!["只属于 A".to_string()]);
 
     let mut b = Vec::new();
-    refresh_repl_input_history(&mut b, &paths, "sess_b");
+    refresh_repl_input_history(&mut b, &paths, &sess_b);
     assert_eq!(history_displays(&b), vec!["只属于 B".to_string()]);
 }
 

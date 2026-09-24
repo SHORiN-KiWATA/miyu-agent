@@ -710,14 +710,18 @@ pub(in crate::cli) fn execute_variant(
         VariantScope::Session(session_id) => {
             // 会话那份只记钉住的：选「跟随全局」（值为空）就是拔掉钉子，选「默认」钉的是
             // 模型默认档（`MODEL_DEFAULT_PIN`）。
-            let scope = miyu_core::llm::ThinkingVariantScope::Session(session_id);
+            let store = StateStore::new(paths)?;
+            let scope = miyu_core::llm::ThinkingVariantScope::Session {
+                store: &store,
+                session_id,
+            };
             let mut pinned = miyu_core::llm::ThinkingVariantPreferences::load_scoped(paths, scope);
             for (provider_id, model, variant) in &selections {
                 pinned.set(provider_id, model, variant.clone());
             }
             pinned.save_scoped(paths, scope)?;
             client.reload_thinking_variants(paths);
-            client.apply_session_thinking_variants(paths, session_id);
+            client.apply_session_thinking_variants(&store, session_id);
         }
     }
     Ok(VariantOutcome::Updated)
@@ -734,10 +738,8 @@ fn variant_menu_for(
     let VariantScope::Session(session_id) = scope else {
         return VariantMenu::new(options);
     };
-    let pinned = miyu_core::llm::ThinkingVariantPreferences::load_scoped(
-        paths,
-        miyu_core::llm::ThinkingVariantScope::Session(session_id),
-    );
+    let store = StateStore::new(paths).ok()?;
+    let pinned = miyu_core::llm::ThinkingVariantPreferences::load_session(&store, session_id);
     let items = options
         .iter()
         .map(|option| {

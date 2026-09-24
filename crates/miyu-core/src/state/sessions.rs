@@ -419,6 +419,7 @@ impl StateStore {
 
     pub fn delete_session(&self, session_id: &str) -> Result<()> {
         self.conv_db.delete_session(session_id)?;
+        self.remove_session_files(session_id);
         self.remove_artifact_session_dir(session_id)
     }
 
@@ -550,11 +551,23 @@ impl StateStore {
     }
 
     pub fn delete_subagent_sessions_older_than(&self, days: i64) -> Result<usize> {
-        self.conv_db.delete_subagent_sessions_older_than(days)
+        let deleted = self.conv_db.delete_subagent_sessions_older_than(days)?;
+        self.remove_deleted_session_files(&deleted);
+        Ok(deleted.len())
     }
 
     pub fn delete_ask_sessions_older_than(&self, hours: i64) -> Result<usize> {
-        self.conv_db.delete_ask_sessions_older_than(hours)
+        let deleted = self.conv_db.delete_ask_sessions_older_than(hours)?;
+        self.remove_deleted_session_files(&deleted);
+        Ok(deleted.len())
+    }
+
+    /// 批量清掉的会话：散在库外的文件跟 `delete_session` 一样一起删。
+    fn remove_deleted_session_files(&self, session_ids: &[String]) {
+        for session_id in session_ids {
+            self.remove_session_files(session_id);
+            let _ = self.remove_artifact_session_dir(session_id);
+        }
     }
 }
 
