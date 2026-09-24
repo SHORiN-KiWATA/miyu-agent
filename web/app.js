@@ -11101,7 +11101,13 @@
     setRegisterSubmitting(false);
     setConnectionStatus(unauthorized ? "blocked" : "offline");
     updateControlState();
-    if (unauthorized) window.requestAnimationFrame(() => elements.loginPassword.focus());
+    // 用户名空着就先给用户名（登出后回到这里就是空的），和建管理员那张表单一个规矩；
+    // 以前一律给密码框，登出后直接打字会打进密码框（09-24）。
+    if (unauthorized) {
+      window.requestAnimationFrame(() =>
+        (elements.loginUsername.value ? elements.loginPassword : elements.loginUsername).focus(),
+      );
+    }
   }
 
   /// 还没建管理员账号:登录页直说「输入内置口令」;之后就是普通的用户名+密码。

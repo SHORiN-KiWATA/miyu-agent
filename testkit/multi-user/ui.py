@@ -155,6 +155,11 @@ def main():
             page.click("#accountLogout")
             page.wait_for_selector("#loginForm:not([hidden])", timeout=10000)
             check("退出登录回到登录页", True)
+            # 登出回到登录页时用户名是空的，焦点该在用户名框。09-24 以前一律给密码框，
+            # 人登出后直接打字会打进密码框（和建管理员那张表单「用户名空就先给用户名」不一致）。
+            page.wait_for_timeout(300)
+            focused = page.evaluate("() => document.activeElement?.id || ''")
+            check("登出后焦点在用户名框", focused == "loginUsername", focused)
 
             # 管理员:账号页有邀请码与成员表。登录走共用的 ui_login：登出后焦点会被挪到
             # 密码框，直接 fill 偶尔把用户名打进密码框（09-24），它填完会核对。
