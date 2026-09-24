@@ -8,7 +8,6 @@ Run: python3 testkit/tui/effort_menu.py --binary /absolute/path/to/miyu [--comma
 """
 
 import argparse
-import codecs
 import fcntl
 import struct
 import termios
@@ -20,6 +19,7 @@ from pathlib import Path
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sandbox_dir  # noqa: E402
+from sync_view import SyncFeed  # noqa: E402
 
 
 def free_port():
@@ -56,9 +56,9 @@ def main():
         stub, daemon, tui, master, sink = q.start({"STUB_REPLY": "\n".join(f"BODY-{i:02d}" for i in range(1, 41))})
         processes = [tui, daemon, stub]
         screen = pyte.Screen(h.COLS, h.ROWS)
-        stream = pyte.Stream(screen)
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        stream.feed(decoder.decode(bytes(sink)))
+        # 按帧喂：PTY 一次读会切在一帧中间，逐块喂看到的是画了一半的屏（sync_view）。
+        feed = SyncFeed(pyte.Stream(screen))
+        feed.feed(bytes(sink))
         screen.write_process_input = lambda data: (
             os.write(master, data.encode()) if data.endswith("R") else None
         )
@@ -75,7 +75,7 @@ def main():
                     if not chunk:
                         break
                     sink.extend(chunk)
-                    stream.feed(decoder.decode(chunk))
+                    feed.feed(chunk)
                 actual = lines()
                 if predicate(actual):
                     (h.OUT / f"{name}.txt").write_text("\n".join(actual))

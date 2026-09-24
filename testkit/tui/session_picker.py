@@ -6,7 +6,6 @@ Run: python3 testkit/tui/session_picker.py --binary /absolute/path/to/miyu
 """
 
 import argparse
-import codecs
 import fcntl
 import struct
 import termios
@@ -18,6 +17,7 @@ from pathlib import Path
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sandbox_dir  # noqa: E402
+from sync_view import SyncFeed  # noqa: E402
 
 
 def free_port():
@@ -54,9 +54,9 @@ def main():
         stub, daemon, tui, master, sink = q.start({"STUB_REPLY": "\n".join(f"SESSION-BODY-{i:02d}" for i in range(1, 61))})
         processes = [tui, daemon, stub]
         screen = pyte.Screen(h.COLS, h.ROWS)
-        stream = pyte.Stream(screen)
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        stream.feed(decoder.decode(bytes(sink)))
+        # 按帧喂：PTY 一次读会切在一帧中间，逐块喂看到的是画了一半的屏（sync_view）。
+        feed = SyncFeed(pyte.Stream(screen))
+        feed.feed(bytes(sink))
         # Do not reply to startup probes while replaying old output. Cursor
         # reports must describe the live terminal position at the query.
         screen.write_process_input = lambda data: (
@@ -75,7 +75,7 @@ def main():
                     if not chunk:
                         break
                     sink.extend(chunk)
-                    stream.feed(decoder.decode(chunk))
+                    feed.feed(chunk)
                 actual = lines()
                 if predicate(actual):
                     (h.OUT / f"{name}.txt").write_text("\n".join(actual))
@@ -213,6 +213,9 @@ def main():
         # back to the prior conversation through its searchable user snippet.
         os.write(master, b"\x15/new PickerDelete\r")
         wait_for("new-session", lambda actual: footer(actual) and any("██" in line for line in actual))
+        # 同 lobby-cancel：命令收尾那几毫秒终端还是 cooked 的，紧跟着敲的回车会变成
+        # 换行，`/session` 就成了草稿。按帧喂之后大厅一画完就看得见，等一拍再打字。
+        settle("new-session-settled")
         os.write(master, b"\x15/session\r")
         wait_for("delete-active-picker", lambda actual: picker(actual) and any("PickerDelete" in line for line in actual))
         # One Ctrl+D, gone -- no y/N (user 09-20: "should just delete").
@@ -232,6 +235,7 @@ def main():
         assert not any(
             "终端集成会话" in line for line in lines()
         ), f"Deleting the active session landed on the terminal session. See {h.OUT}"
+        settle("delete-active-settled")
         # 面板已经收掉了（删的是当前会话，09-20 起会当场离开）：重新打开，
         # 再按摘要搜回原来那条会话。
         os.write(master, b"\x15/session\r")

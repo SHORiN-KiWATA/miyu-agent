@@ -10,7 +10,6 @@ Run: python3 testkit/tui/lobby_anim.py --binary /absolute/path/to/miyu
 """
 
 import argparse
-import codecs
 import os
 import select
 import socket
@@ -19,6 +18,7 @@ from pathlib import Path
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sandbox_dir  # noqa: E402
+from sync_view import SyncFeed  # noqa: E402
 
 
 def free_port():
@@ -53,9 +53,9 @@ def main():
         stub, daemon, tui, master, sink = q.start({"STUB_REPLY": "BODY"})
         processes = [tui, daemon, stub]
         screen = pyte.Screen(h.COLS, h.ROWS)
-        stream = pyte.Stream(screen)
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        stream.feed(decoder.decode(bytes(sink)))
+        # 按帧喂：PTY 一次读会切在一帧中间，逐块喂看到的是画了一半的屏（sync_view）。
+        feed = SyncFeed(pyte.Stream(screen))
+        feed.feed(bytes(sink))
         screen.write_process_input = lambda data: (
             os.write(master, data.encode()) if data.endswith("R") else None
         )
@@ -72,7 +72,7 @@ def main():
                     if not chunk:
                         break
                     sink.extend(chunk)
-                    stream.feed(decoder.decode(chunk))
+                    feed.feed(chunk)
 
         def stars():
             return "\n".join(lines()[0:7])
@@ -178,8 +178,14 @@ def main():
         measure_while_typing("holding-letter", b"a", 4)
         # 用**退格**清干净：`Ctrl+U` 在这个编辑器里不是清行，留着的字会把
         # 后面的 `/session` 变成普通文本，菜单就开不出来（09-20 实测）。
-        os.write(master, b"\x7f" * 80)
-        pump(0.4)
+        # 按住字母那一步敲进去多少个字看测具跑多快（3 秒里每轮写一个字），一次
+        # 80 个退格不一定删得完（按帧喂之后循环变快，敲进去九十几个）：删到输入框
+        # 里没有字母为止。
+        for _ in range(20):
+            os.write(master, b"\x7f" * 80)
+            pump(0.4)
+            if not any("┃ a" in line for line in lines()):
+                break
         def measure_while_navigating(name, at_least):
             # 按住 j/k 在面板里换行:按键比 40ms 一拍还密,节拍要按时刻算才推得出帧
             # (以前按「等满 40ms 没按键」算,扫光一顿一顿——用户实测)。
