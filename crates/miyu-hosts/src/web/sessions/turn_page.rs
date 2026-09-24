@@ -70,7 +70,7 @@ pub(in crate::web) fn safe_turn_page(
             None,
         ),
     };
-    let turns = turns
+    let mut turns: Vec<SafeTurn> = turns
         .into_iter()
         .map(|turn| {
             let assets = assets_by_turn.remove(&turn.turn_id).unwrap_or_default();
@@ -83,6 +83,13 @@ pub(in crate::web) fn safe_turn_page(
             safe
         })
         .collect();
+    // 子代理会话的第一轮是主会话派的任务（会话项目第 4 段）。只有翻到会话开头的那一页
+    // 才带着它。
+    if older.is_none() {
+        if let Some(first) = turns.first_mut() {
+            first.from_parent = store.turn_from_parent(&first.id).unwrap_or(false);
+        }
+    }
     Ok(SafeTurnPage {
         turns,
         older,

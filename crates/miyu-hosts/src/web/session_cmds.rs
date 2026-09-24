@@ -114,36 +114,7 @@ pub(in crate::web) async fn handle_session_command(
                 VISITABLE_KINDS,
                 None,
             )?;
-            let children = state
-                .stores
-                .for_session(&parent.session_id)
-                .child_sessions(&parent.session_id)
-                .map_err(|error| safe_error_message(&error))?;
-            let manager = state.manager.lock().unwrap();
-            let sessions: Vec<Value> = children
-                .iter()
-                .map(|overview| {
-                    let record = &overview.record;
-                    json!({
-                        "session_id": record.session_id,
-                        "name": record.name,
-                        "depth": record.depth,
-                        "task_state": record.task_state,
-                        "background": record.background,
-                        "dev": record.persona == miyu_core::state::DEV_PERSONA,
-                        "spawned_by_turn": record.spawned_by_turn,
-                        "turn_count": overview.turn_count,
-                        "context_tokens": overview.context_tokens,
-                        "active_run_id": manager.run_in_session(&record.session_id),
-                        "job_id": miyu_engine::tools::subagent::background_job_of(
-                            &record.session_id,
-                        ),
-                        "created_at": record.created_at,
-                        "updated_at": record.updated_at,
-                    })
-                })
-                .collect();
-            Ok(json!({ "session_id": parent.session_id, "sessions": sessions }))
+            subagent_sessions_json(state, &parent.session_id)
         }
         IpcCommand::ListSessions { mode } => {
             // dev 列表以 dev REPL 指针为"当前":全局指针指向普通会话,
@@ -844,6 +815,83 @@ fn session_is_running_local_webui(state: &DaemonState, session_id: &str) -> bool
         .filter(|info| &*info.session_id == session_id);
     runs.next()
         .is_some_and(|first| local(first) && runs.all(local))
+}
+
+/// 某条会话名下的直系子代理会话（09-18 会话化）：终端的任务条、`/subagent`，网页的子代理
+/// 卡片都读它，IPC 和 HTTP 共用这一份形状。
+pub(in crate::web) fn subagent_sessions_json(
+    state: &DaemonState,
+    parent_session_id: &str,
+) -> Result<Value, String> {
+    let children = state
+        .stores
+        .for_session(parent_session_id)
+        .child_sessions(parent_session_id)
+        .map_err(|error| safe_error_message(&error))?;
+    let manager = state.manager.lock().unwrap();
+    let sessions: Vec<Value> = children
+        .iter()
+        .map(|overview| {
+            let record = &overview.record;
+            json!({
+                "session_id": record.session_id,
+                "name": record.name,
+                "depth": record.depth,
+                "task_state": record.task_state,
+                "background": record.background,
+                "dev": record.persona == miyu_core::state::DEV_PERSONA,
+                "spawned_by_turn": record.spawned_by_turn,
+                "turn_count": overview.turn_count,
+                "context_tokens": overview.context_tokens,
+                "active_run_id": manager.run_in_session(&record.session_id),
+                "job_id": miyu_engine::tools::subagent::background_job_of(&record.session_id),
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+            })
+        })
+        .collect();
+    Ok(json!({ "session_id": parent_session_id, "sessions": sessions }))
+}
+
+/// 网页能「看」的会话：侧栏里那些，外加它们名下的子代理会话（会话项目第 4 段）。子会话按
+/// 它的根会话核：根会话是你能看的，它名下的子会话你就能看；归属、人格、平台那几条闸都落在
+/// 根会话上（子会话建的时候归属就是跟着父会话走的）。
+pub(in crate::web) fn require_viewable_web_session(
+    state: &DaemonState,
+    headers: &HeaderMap,
+    session_id: &str,
+) -> std::result::Result<miyu_core::state::SessionRecord, ApiError> {
+    let identity = require_identity(headers, state)?;
+    let store = state
+        .stores
+        .for_identity(&identity)
+        .map_err(ApiError::internal)?;
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "session not found");
+    let record = store
+        .session_record(session_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(not_found)?;
+    if record.kind != miyu_core::state::SUBAGENT_SESSION_KIND {
+        return require_local_web_session(state, headers, session_id);
+    }
+    // 往上找根会话。树最多三层（主会话、子代理、孙代理），多走几步兜住坏数据。
+    let mut parent = record.parent_session_id.clone();
+    for _ in 0..8 {
+        let Some(parent_id) = parent.take() else {
+            break;
+        };
+        let above = store
+            .session_record(&parent_id)
+            .map_err(ApiError::internal)?
+            .ok_or_else(not_found)?;
+        if above.kind == miyu_core::state::SUBAGENT_SESSION_KIND {
+            parent = above.parent_session_id;
+            continue;
+        }
+        require_local_web_session(state, headers, &above.session_id)?;
+        return Ok(record);
+    }
+    Err(not_found())
 }
 
 pub(in crate::web) fn session_api_error(message: String) -> ApiError {

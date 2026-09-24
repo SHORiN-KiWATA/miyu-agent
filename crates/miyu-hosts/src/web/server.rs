@@ -426,6 +426,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
         .route("/crosssession.js", get(crosssession_js_asset))
+        .route("/subagents.js", get(subagents_js_asset))
         .route("/sessionselect.js", get(sessionselect_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))
         .route("/highlight.js", get(highlight_js_asset))
@@ -716,6 +717,10 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         )
         .route("/api/sessions/{session_id}/turns", get(session_turns_http))
         .route("/api/sessions/{session_id}/todos", get(session_todos_http))
+        .route(
+            "/api/sessions/{session_id}/subagents",
+            get(session_subagents_http),
+        )
         .route("/api/sessions/{session_id}/goal", get(session_goal_http))
         .route(
             "/api/sessions/{session_id}/context",

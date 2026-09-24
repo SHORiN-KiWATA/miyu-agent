@@ -2982,6 +2982,8 @@
     // refreshSessionContext 取回。
     if (state.viewSessionId !== sessionId) resetSessionCumulative();
     state.viewSessionId = sessionId;
+    // 子代理的会话:输入框上方挂「↑ 主会话」(会话项目第 4 段)。
+    window.MiyuSubagents?.viewed(payload);
     // 记住浏览位置，刷新后回到这里而不是跳去终端车道（见 preferredBootSession）。
     if (!isTerminalSession(sessionId)) safeStorageSet(VIEW_SESSION_KEY, sessionId);
     if (state.sessionModelOverrideFor !== sessionId) {
@@ -5258,6 +5260,16 @@
       notice.appendChild(label);
       return notice;
     }
+    // 子代理会话的第一轮是主会话派的任务(会话项目第 4 段):和终端一样画成「来自主会话
+    // 的任务」那一块,露几行、点开看全文,不是用户气泡。
+    if (attributes.fromParent && window.MiyuCrossSession) {
+      return window.MiyuCrossSession.createReceived({ body: rawContent }, {
+        headline: t("来自主会话的任务"),
+        icon: "arrow-down",
+        timestamp,
+        turnId: attributes.turnId
+      });
+    }
     // 另一个会话里的 AI 发来的那条(09-23):铃铛 + 「从 xxx 收到消息」,底下露正文。
     // 实时插进来的、唤醒起的一轮、刷新回看都走这里。
     const crossSession = window.MiyuCrossSession?.parse(rawContent);
@@ -7331,7 +7343,8 @@
       turnId,
       inputId: turnId,
       revisionTarget: candidate && String(candidate.input_id) === turnId ? candidate : null,
-      attachments: turn?.attachments
+      attachments: turn?.attachments,
+      fromParent: turn?.from_parent === true
     });
 
     /*
@@ -8670,6 +8683,7 @@
       title.insertBefore(seconds, summary);
     }
     head.addEventListener("click", () => {
+      if (window.MiyuSubagents?.openFromCard(card)) return;
       const collapsed = card.classList.toggle("collapsed");
       head.setAttribute("aria-expanded", String(!collapsed));
       railSnapFit(card);
@@ -8730,6 +8744,12 @@
     fold.className = "tool-fold";
     fold.appendChild(body);
     card.append(head, fold);
+    if (isSubagentTool(name)) {
+      window.MiyuSubagents?.link(
+        card,
+        call?.child_session_id || window.MiyuSubagents.sessionOfOutput(output)
+      );
+    }
     // 命令那几行排在抬头和展开区之间——和实时那条同一个次序。
     if (commandRows) {
       card.insertBefore(commandRows.preview, fold);
@@ -9121,6 +9141,8 @@
       collapseTimer: null
     };
     head.addEventListener("click", () => {
+      // 子代理是一条会话:认得它的会话就打开它,不再原地展开(会话项目第 4 段)。
+      if (window.MiyuSubagents?.openFromCard(card)) return;
       const collapsed = card.classList.toggle("collapsed");
       head.setAttribute("aria-expanded", String(!collapsed));
       // 收起子代理状态行时,把里面已展开的思考/工具也一并收起,下次展开是干净的
@@ -9338,6 +9360,8 @@
       }
       updateToolSummary(tool);
     } else if (name === "tool.progress" && tool.isTask) {
+      // 子会话一建好就报的那条标记:卡片从此点下去打开它的会话(会话项目第 4 段)。
+      if (window.MiyuSubagents?.takeMarker(tool.card, String(data?.message || ""))) return;
       // 子代理:标题行单行窥视 + 展开后的子过程时间线,不再用带底色的方块。
       // (实时 token 汇进「累计」的逻辑统一在 renderSubagentProgress 的 stats 分支里,
       // 前台工具卡与后台任务条同源,见 #131。)
@@ -9413,6 +9437,7 @@
         if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       }
       const output = String(data?.output || "");
+      if (tool.isTask) window.MiyuSubagents?.link(tool.card, window.MiyuSubagents.sessionOfOutput(output));
       // 跨会话发话:抬头右边补上对方报的会话名(侧栏里不一定认得它)。
       if (window.MiyuCrossSession?.isSendTool(tool.name)) {
         const target = window.MiyuCrossSession.targetName(output);
@@ -13947,6 +13972,7 @@
       previewLines: () => state.display?.cross_session_preview_lines ?? 10
     });
     window.MiyuCrossSession?.startPresence(() => (state.blocked ? null : state.viewSessionId));
+    window.MiyuSubagents?.init({ open: (sessionId) => openSessionView(sessionId) });
     window.MiyuSessionSelect?.init({
       render: renderSessionList,
       listedIds: () => state.sessions

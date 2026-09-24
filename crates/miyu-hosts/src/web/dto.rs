@@ -135,6 +135,9 @@ pub(in crate::web) struct SafeToolCall {
     /// 子代理子过程标记流,刷新/回看回放用(#9)。只有 subagent 调用有。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::web) sub_trace: Option<Vec<String>>,
+    /// 子代理的会话(09-18 起子代理是会话):卡片点下去就打开它(会话项目第 4 段)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::web) child_session_id: Option<String>,
 }
 
 /// 从落库的输出反推成败。
@@ -182,6 +185,7 @@ impl From<miyu_core::state::ToolFlowRound> for SafeToolRound {
                     started_ms: call.started_ms,
                     finished_ms: call.finished_ms,
                     sub_trace: call.sub_trace,
+                    child_session_id: call.child_session_id,
                 })
                 .collect(),
         }
@@ -221,6 +225,10 @@ pub(in crate::web) struct SafeTurn {
     pub(in crate::web) artifacts: Vec<SafeArtifactAsset>,
     pub(in crate::web) attachments: Vec<SafeUserAttachment>,
     pub(in crate::web) revision: i64,
+    /// 主会话派给子代理的任务（子代理会话的第一轮）：网页和终端一样画成「来自主会话的
+    /// 任务」那一块，不是用户气泡（会话项目第 4 段）。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(in crate::web) from_parent: bool,
 }
 
 #[derive(Serialize)]
@@ -396,6 +404,7 @@ impl SafeTurn {
                 .map(SafeUserAttachment::from)
                 .collect(),
             revision: turn.revision,
+            from_parent: false,
         }
     }
 }

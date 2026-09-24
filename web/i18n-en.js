@@ -2539,4 +2539,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "（空消息）": "(empty message)",
   "，": ", ",
   "；只锁写，读不设限（~/.ssh 与 API key 也读得到）": "; writes are locked, reads are not (~/.ssh and API keys stay readable)",
+  "打开子代理的会话": "Open the subagent's session",
+  "主会话": "Main session",
+  "来自主会话的任务": "Task from the main session",
 });
