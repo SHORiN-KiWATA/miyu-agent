@@ -43,15 +43,13 @@ where
     let begin = lines
         .iter()
         .position(|line| line.trim() == "*** Begin Patch")
-        .ok_or_else(|| {
-            anyhow::anyhow!("apply_patch verification failed: missing *** Begin Patch")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("patch verification failed: missing *** Begin Patch"))?;
     let end = lines
         .iter()
         .rposition(|line| line.trim() == "*** End Patch")
-        .ok_or_else(|| anyhow::anyhow!("apply_patch verification failed: missing *** End Patch"))?;
+        .ok_or_else(|| anyhow::anyhow!("patch verification failed: missing *** End Patch"))?;
     if begin >= end {
-        bail!("apply_patch verification failed: missing *** Begin Patch")
+        bail!("patch verification failed: missing *** Begin Patch")
     }
 
     let mut operations = Vec::new();
@@ -67,7 +65,7 @@ where
             let mut content = Vec::new();
             while index < end && !is_patch_header(lines[index]) {
                 let Some(rest) = lines[index].strip_prefix('+') else {
-                    bail!("apply_patch verification failed: Add File lines must start with +")
+                    bail!("patch verification failed: Add File lines must start with +")
                 };
                 content.push(rest.to_string());
                 index += 1;
@@ -102,7 +100,7 @@ where
                     let stray = lines[index];
                     if stray.starts_with(' ') || stray.starts_with('-') || stray.starts_with('+') {
                         bail!(
-                            "apply_patch verification failed: hunk line outside a @@ hunk (missing @@ header?): {stray}"
+                            "patch verification failed: hunk line outside a @@ hunk (missing @@ header?): {stray}"
                         )
                     }
                     index += 1;
@@ -137,12 +135,12 @@ where
                         index += 1;
                         break;
                     } else {
-                        bail!("apply_patch verification failed: invalid hunk line: {line}")
+                        bail!("patch verification failed: invalid hunk line: {line}")
                     }
                     index += 1;
                 }
                 if hunk_lines.is_empty() {
-                    bail!("apply_patch verification failed: empty hunk")
+                    bail!("patch verification failed: empty hunk")
                 }
                 hunks.push(Hunk {
                     context,
@@ -151,7 +149,7 @@ where
                 });
             }
             if hunks.is_empty() {
-                bail!("apply_patch verification failed: Update File requires at least one hunk")
+                bail!("patch verification failed: Update File requires at least one hunk")
             }
             operations.push(Operation::Update {
                 path: resolve_path(path)?,
@@ -159,7 +157,7 @@ where
                 hunks,
             });
         } else {
-            bail!("apply_patch verification failed: unknown patch header: {line}")
+            bail!("patch verification failed: unknown patch header: {line}")
         }
     }
     Ok(operations)

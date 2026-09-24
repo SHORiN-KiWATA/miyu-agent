@@ -113,6 +113,8 @@ fn apply_artifact_patch(
 
 mod hunks;
 mod parse;
+#[cfg(any(test, feature = "testkit"))]
+mod test_support;
 
 use self::hunks::*;
 use self::parse::*;
@@ -252,26 +254,51 @@ where
     }
 
     let mut files = Vec::new();
+    let mut written: Vec<String> = Vec::new();
     for change in changes {
-        match change.kind {
-            ChangeKind::Delete => {
-                std::fs::remove_file(&change.path)?;
-                report_delete_preview(&progress, &change.path, &change.before)?;
-            }
-            ChangeKind::Add | ChangeKind::Update => {
-                write_with_patch_preview(
-                    &change.path,
-                    &change.before,
-                    &change.after,
-                    &progress,
-                    Map::new(),
-                )?;
-                if managed_artifact {
-                    std::fs::set_permissions(&change.path, std::fs::Permissions::from_mode(0o600))?;
-                    progress.report_artifact(change.path.clone(), String::new());
+        let applied = (|| -> Result<()> {
+            match change.kind {
+                ChangeKind::Delete => {
+                    if managed_artifact {
+                        std::fs::remove_file(&change.path)?;
+                    } else {
+                        // 文件系统里的删除进回收站（09-24 B11）：rm 拦截和 trash_path
+                        // 的前提都是「删除必须能挽回」，补丁里一个 Delete File 却是永久删除。
+                        move_to_trash(&change.path)?;
+                    }
+                    report_delete_preview(&progress, &change.path, &change.before)?;
+                }
+                ChangeKind::Add | ChangeKind::Update => {
+                    write_with_patch_preview(
+                        &change.path,
+                        &change.before,
+                        &change.after,
+                        &progress,
+                        Map::new(),
+                    )?;
+                    if managed_artifact {
+                        std::fs::set_permissions(
+                            &change.path,
+                            std::fs::Permissions::from_mode(0o600),
+                        )?;
+                        progress.report_artifact(change.path.clone(), String::new());
+                    }
                 }
             }
+            Ok(())
+        })();
+        // 多文件补丁写到一半失败时，说清哪些已经写进去了（09-24 B10）：不说的话，
+        // 模型会把整份补丁重打一遍，已经改过的那几处就对不上了。
+        if let Err(error) = applied {
+            if written.is_empty() {
+                return Err(error);
+            }
+            bail!(
+                "{error:#}. Already applied before this failure: {}",
+                written.join(", ")
+            );
         }
+        written.push(display_path_for_progress(&change.path));
         let reported_path = if managed_artifact {
             change
                 .path
@@ -294,6 +321,15 @@ where
         "files_changed": files.len(),
         "files": files,
     }))?)
+}
+
+/// 挪进系统回收站。测试构建里不碰真回收站：记下路径、直接删掉（`test_support`）。
+fn move_to_trash(path: &Path) -> Result<()> {
+    #[cfg(any(test, feature = "testkit"))]
+    return test_support::fake_trash(path);
+    #[cfg(not(any(test, feature = "testkit")))]
+    trash::delete(path)
+        .map_err(|err| anyhow::anyhow!("failed to move {} to the Trash: {err}", path.display()))
 }
 
 fn report_delete_preview(progress: &ToolProgress, path: &Path, before: &str) -> Result<()> {
