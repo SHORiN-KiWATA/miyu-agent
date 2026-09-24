@@ -4,7 +4,7 @@ use crate::agent::compact_analysis::{
 use crate::agent::compact_extras::{
     build_compact_extras, CompactExtras, CompactExtrasPolicy, FoldFootprints,
 };
-use crate::agent::tool_report::replay_rounds;
+use crate::agent::tool_report::{fold_repeated_rounds, live_rounds};
 use anyhow::{bail, Result};
 use miyu_base::prompts::COMPACT_SYSTEM_PROMPT;
 use miyu_core::llm::{
@@ -144,25 +144,29 @@ impl Compactor {
     /// 压后重建材料的产出策略。预算在这里按窗口缩放:窗口是唯一只有
     /// Compactor 知道的量,而在 168k 窗口合适的 24k 回灌,搬到 32k 小窗上
     /// 就等于压完立刻再超。
-    /// 给保留下来的那几轮做工具输出瘦身，返回改动了几轮。
+    /// 给保留下来的那几轮重写 tool_flow，返回改动了几轮：连续复读的工具轮折成
+    /// 一轮(`fold_repeated_rounds`)，再给大块工具输出瘦身。两件事都只在压缩这
+    /// 一刻做——平时回放必须和活体逐字节一致，折一轮、剪一截都会让下一轮的前缀
+    /// 在那里断掉。
     ///
     /// 只碰保留区：被折叠的轮已经变成摘要，它们的 `tool_flow` 不再进上下文。
     /// 内容没变就不写库——省掉无谓的写，也让「改了几轮」这个数是真的。
-    fn prune_kept_tool_flows(&self, kept: &[&Turn]) -> Result<usize> {
-        let Some((threshold, head, tail)) = self.tool_result_prune else {
-            return Ok(0);
-        };
+    fn rewrite_kept_tool_flows(&self, kept: &[&Turn]) -> Result<usize> {
         let mut changed = 0usize;
         for turn in kept {
-            let mut flow = turn.tool_flow.clone();
-            let mut touched = false;
-            for round in flow.iter_mut() {
-                for call in round.calls.iter_mut() {
-                    let pruned =
-                        crate::agent::prune_tool_output(&call.output, threshold, head, tail);
-                    if pruned != call.output {
-                        call.output = pruned;
-                        touched = true;
+            let (mut flow, mut touched) = match fold_repeated_rounds(&turn.tool_flow) {
+                Some(folded) => (folded, true),
+                None => (turn.tool_flow.clone(), false),
+            };
+            if let Some((threshold, head, tail)) = self.tool_result_prune {
+                for round in flow.iter_mut() {
+                    for call in round.calls.iter_mut() {
+                        let pruned =
+                            crate::agent::prune_tool_output(&call.output, threshold, head, tail);
+                        if pruned != call.output {
+                            call.output = pruned;
+                            touched = true;
+                        }
                     }
                 }
             }
@@ -580,17 +584,17 @@ impl Compactor {
             footprint_json.as_deref(),
             extras_json.as_deref(),
         )?;
-        // 保留区的工具输出瘦身就在这一刻做：上面那句已经把历史重写了、前缀
-        // 本来就断了这一次，顺手剪掉大块工具输出不多花一分钱。见
+        // 保留区的复读轮折叠与工具输出瘦身就在这一刻做：上面那句已经把历史
+        // 重写了、前缀本来就断了这一次，顺手做掉不多花一分钱。见
         // `tool_result_prune` 字段上的说明。
-        let pruned_turns = self.prune_kept_tool_flows(&head[cut..])?;
+        let rewritten_turns = self.rewrite_kept_tool_flows(&head[cut..])?;
         // target 必须是 `miyu::qq`：daemon 默认只有这一条 target 记 INFO。
         // 没有它的时候，压缩跑没跑过完全看不出来——09-22 排查缓存时据此
         // 误判「三天 0 次压缩」，实际是日志压根没写出来（真判据是库里的
         // 摘要轮 `is_summary=1`）。
         tracing::info!(
             target: "miyu::qq",
-            pruned_turns,
+            rewritten_turns,
             folded_turns = fold.len(),
             kept_turns = head.len() - cut,
             summary_chars = summary.len(),
@@ -959,7 +963,7 @@ fn turn_to_text(turn: &Turn) -> String {
     }
     // v20+ 工具密集回合的主体在 tool_flow 里(reports 多为空):漏计它,
     // 压缩预算会把"40 轮"当成保尾额度塞进 16K,压后必然仍超。
-    for round in replay_rounds(&turn.tool_flow) {
+    for round in live_rounds(&turn.tool_flow) {
         output.push_str(&round.assistant_content);
         if let Some(reasoning) = &round.assistant_reasoning {
             output.push_str(reasoning);

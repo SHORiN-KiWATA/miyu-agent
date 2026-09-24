@@ -227,25 +227,29 @@ impl Agent {
             && !turn.journal_events.is_empty()
         {
             messages.extend(interrupted_turn_replay_messages(self, turn));
-        } else {
-            // 问答只回放一种形态:有结构化 tool_flow 的回合,ask_question
-            // 已作为原生 tool_calls+tool 输出在 flow 里逐字节回放;再补
-            // 纯文本问答对=同一轮发两遍且字节不同于活体,前缀在此掰断
-            // (缓存调研 08-16,deepseek 报告 P0-2③实证)。纯文本对只给
-            // 无 flow 的老回合兜底。
-            let has_native_flow = turn.tool_flow.iter().any(|round| !round.remote);
-            if !has_native_flow {
-                for exchange in &turn.question_exchanges {
-                    messages.push(ChatMessage::plain(
-                        "assistant",
-                        miyu_base::question::assistant_exchange_text(exchange),
-                    ));
-                    messages.push(ChatMessage::plain(
-                        "user",
-                        miyu_base::question::user_exchange_text(exchange),
-                    ));
-                }
+            return;
+        }
+        // 问答只回放一种形态:有结构化 tool_flow 的回合,ask_question
+        // 已作为原生 tool_calls+tool 输出在 flow 里逐字节回放;再补
+        // 纯文本问答对=同一轮发两遍且字节不同于活体,前缀在此掰断
+        // (缓存调研 08-16,deepseek 报告 P0-2③实证)。纯文本对只给
+        // 无 flow 的老回合兜底。
+        let has_native_flow = turn.tool_flow.iter().any(|round| !round.remote);
+        if !has_native_flow {
+            for exchange in &turn.question_exchanges {
+                messages.push(ChatMessage::plain(
+                    "assistant",
+                    miyu_base::question::assistant_exchange_text(exchange),
+                ));
+                messages.push(ChatMessage::plain(
+                    "user",
+                    miyu_base::question::user_exchange_text(exchange),
+                ));
             }
+        }
+        // 09-24 起的 flow 按活体位置记下了轮中插话(连同它的尾巴与插话前的
+        // 正文),在下面随工具轮原样放回。老记录只能照旧拼在所有工具轮前面。
+        if !flow_is_interleaved(&turn.tool_flow) {
             for followup in &turn.followups {
                 push_assistant_context_messages(
                     messages,
@@ -261,57 +265,90 @@ impl Agent {
                 // 化石回放,否则化石在这里比活体短一截,前缀与续传链都掰断。
                 messages.extend(followup.context_messages().iter().map(replay_fossil));
             }
-            // dsh 形态回放:每轮 assistant 带原生 tool_calls(参数原样字节),
-            // 随后各 call 的 role:"tool" 输出;最终回复照旧收尾。老回合
-            // (无结构化流)退回 private_tool_memory 压扁兜底。
-            let inline_media = self.turn_inline_media_by_call(turn);
-            let tool_form = self.core.config.active_pool_tool_result_media();
-            for round in replay_rounds(&turn.tool_flow) {
-                push_assistant_message_with_reasoning(
-                    messages,
-                    round.assistant_content.clone(),
-                    round.assistant_reasoning.as_deref(),
-                    None,
-                    Some(
-                        round
-                            .calls
-                            .iter()
-                            .map(|call| ToolCall {
-                                id: call.id.clone(),
-                                kind: "function".to_string(),
-                                function: ToolCallFunction {
-                                    name: call.name.clone(),
-                                    arguments: call.arguments.clone(),
-                                },
-                            })
-                            .collect(),
-                    ),
-                    false,
-                );
-                for call in &round.calls {
-                    // 工具的媒体块(vision_analyze inline / 剪贴板图片 / 旁路
-                    // 描述)与活体同形态同位置回放。
-                    push_tool_result_with_media(
-                        messages,
-                        ChatMessage::tool(call.id.clone(), call.output.clone()),
-                        inline_media
-                            .get(call.id.as_str())
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]),
-                        tool_form,
-                    );
-                }
-            }
-            push_assistant_context_messages(
+        }
+        self.push_tool_flow(messages, turn);
+        push_assistant_context_messages(
+            messages,
+            &turn.assistant_content,
+            turn.assistant_reasoning.as_deref(),
+            true,
+        );
+        if turn.tool_flow.is_empty() && !turn.tool_reports.is_empty() {
+            messages.push(ChatMessage::turn_context(private_tool_memory(
+                &turn.tool_reports,
+            )));
+        }
+    }
+
+    /// 按活体顺序回放一轮的 tool_flow:每轮 assistant 带原生 tool_calls(参数原样
+    /// 字节)与各 call 的 tool 输出(媒体块同形态同位置重建),轮间消息放回原位。
+    /// 完成轮与被打断轮共用,字节一致才续得上上游的前缀缓存。老回合(无结构化
+    /// 流)的 flow 是空的,由调用方退回 private_tool_memory 压扁兜底。
+    pub(in crate::agent) fn push_tool_flow(
+        &self,
+        messages: &mut Vec<ChatMessage>,
+        turn: &miyu_core::state::Turn,
+    ) {
+        let inline_media = self.turn_inline_media_by_call(turn);
+        let tool_form = self.core.config.active_pool_tool_result_media();
+        for round in live_rounds(&turn.tool_flow) {
+            self.push_flow_messages(messages, &round.before, turn);
+            push_assistant_message_with_reasoning(
                 messages,
-                &turn.assistant_content,
-                turn.assistant_reasoning.as_deref(),
-                true,
+                round.assistant_content.clone(),
+                round.assistant_reasoning.as_deref(),
+                None,
+                Some(
+                    round
+                        .calls
+                        .iter()
+                        .map(|call| ToolCall {
+                            id: call.id.clone(),
+                            kind: "function".to_string(),
+                            function: ToolCallFunction {
+                                name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                            },
+                        })
+                        .collect(),
+                ),
+                false,
             );
-            if turn.tool_flow.is_empty() && !turn.tool_reports.is_empty() {
-                messages.push(ChatMessage::turn_context(private_tool_memory(
-                    &turn.tool_reports,
-                )));
+            for call in &round.calls {
+                push_tool_result_with_media(
+                    messages,
+                    ChatMessage::tool(call.id.clone(), call.output.clone()),
+                    inline_media
+                        .get(call.id.as_str())
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    tool_form,
+                );
+            }
+            self.push_flow_messages(messages, &round.after, turn);
+        }
+    }
+
+    /// 轮间消息原样放回;带图的插话只记了是哪条排队消息,按它重建(与这一轮
+    /// 开头那条用户消息同一个做法,见 `FlowMessage`)。
+    fn push_flow_messages(
+        &self,
+        messages: &mut Vec<ChatMessage>,
+        entries: &[miyu_core::state::FlowMessage],
+        turn: &miyu_core::state::Turn,
+    ) {
+        for entry in entries {
+            match entry {
+                miyu_core::state::FlowMessage::Message(message) => messages.push(message.clone()),
+                miyu_core::state::FlowMessage::Followup { followup } => {
+                    if let Some(followup) = turn
+                        .followups
+                        .iter()
+                        .find(|candidate| &candidate.prompt_id == followup)
+                    {
+                        messages.push(self.followup_user_message(followup));
+                    }
+                }
             }
         }
     }

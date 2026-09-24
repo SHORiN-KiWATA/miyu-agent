@@ -304,7 +304,7 @@ impl OpenAiCompatibleClient {
                         &crate::llm::cache_log::RecordContext {
                             session: self.log_identity.session(),
                             turn: turn.as_deref(),
-                            prefix: Some(prefix),
+                            prefix: Some(&prefix),
                         },
                     );
                     tracing::debug!(

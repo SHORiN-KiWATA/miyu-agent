@@ -31,6 +31,10 @@ use std::sync::{Mutex, OnceLock};
 pub(crate) struct PrefixChain {
     chain: Vec<u64>,
     tools: u64,
+    /// 每件工具定义各自的哈希:工具表变了时说得出变的是哪几件。
+    tool_hashes: Vec<(String, u64)>,
+    /// 系统提示词(首条 system 消息)的哈希。
+    system: u64,
     roles: Vec<&'static str>,
 }
 
@@ -65,12 +69,29 @@ impl PrefixChain {
             chain.push(hash64(running.finalize().as_bytes()));
             roles.push(role_tag(&message.role));
         }
+        let tool_hashes = tools
+            .iter()
+            .map(|tool| {
+                let hash = serde_json::to_vec(tool)
+                    .map(|encoded| hash64(&encoded))
+                    .unwrap_or(0);
+                (tool.function.name.clone(), hash)
+            })
+            .collect();
+        let system = messages
+            .first()
+            .filter(|message| message.role == "system")
+            .and_then(|message| serde_json::to_vec(message).ok())
+            .map(|encoded| hash64(&encoded))
+            .unwrap_or(0);
         let tools = serde_json::to_vec(tools)
             .map(|encoded| hash64(&encoded))
             .unwrap_or(0);
         Self {
             chain,
             tools,
+            tool_hashes,
+            system,
             roles,
         }
     }
@@ -81,7 +102,7 @@ impl PrefixChain {
 }
 
 /// 与同一 (scope, session) 上一次请求比出来的差异。
-#[derive(Clone, Copy)]
+#[derive(Clone, Default)]
 pub(crate) struct PrefixDiff {
     /// 本次请求的消息条数。
     pub(crate) messages: usize,
@@ -94,6 +115,13 @@ pub(crate) struct PrefixDiff {
     pub(crate) rewritten_at: Option<(usize, &'static str)>,
     /// 工具表变了没有：工具面逐轮换脸同样会把整段前缀掰掉。
     pub(crate) tools_changed: bool,
+    /// 变的是哪几件：`+新增`、`-移除`、`~改了`，逗号分隔；只是顺序变了记 `order`。
+    /// 09-24 之前只有上面那个布尔，一次丢了 74.5 万 token 却查不出是哪件工具。
+    pub(crate) tools_diff: Option<String>,
+    /// 系统提示词与工具表的指纹。`previous` 活在进程里、跨不过重启，这两个跨得过：
+    /// 日志里前后两行一比，就知道重启后那次整段未命中是不是换了提示词或工具面。
+    pub(crate) system: u64,
+    pub(crate) tools: u64,
 }
 
 impl PrefixDiff {
@@ -114,6 +142,44 @@ impl PrefixDiff {
 struct LastChain {
     chain: Vec<u64>,
     tools: u64,
+    tool_hashes: Vec<(String, u64)>,
+}
+
+/// 一次最多列这么多件,再多就只报个数——整张工具面换脸时几十件全变。
+const TOOLS_DIFF_LIMIT: usize = 12;
+
+fn describe_tool_change(before: &[(String, u64)], after: &[(String, u64)]) -> String {
+    let old = before
+        .iter()
+        .map(|(name, hash)| (name.as_str(), *hash))
+        .collect::<HashMap<_, _>>();
+    let new = after
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut changes = Vec::new();
+    for (name, hash) in after {
+        match old.get(name.as_str()) {
+            None => changes.push(format!("+{name}")),
+            Some(previous) if previous != hash => changes.push(format!("~{name}")),
+            Some(_) => {}
+        }
+    }
+    for (name, _) in before {
+        if !new.contains(name.as_str()) {
+            changes.push(format!("-{name}"));
+        }
+    }
+    if changes.is_empty() {
+        return "order".to_string();
+    }
+    let total = changes.len();
+    changes.truncate(TOOLS_DIFF_LIMIT);
+    let mut text = changes.join(",");
+    if total > TOOLS_DIFF_LIMIT {
+        text.push_str(&format!(",…{} more", total - TOOLS_DIFF_LIMIT));
+    }
+    text
 }
 
 static LAST: OnceLock<Mutex<HashMap<String, LastChain>>> = OnceLock::new();
@@ -129,14 +195,14 @@ pub(crate) fn compare_and_store(
 ) -> PrefixDiff {
     let key = format!("{scope}|{}", session.unwrap_or("-"));
     let mutex = LAST.get_or_init(|| Mutex::new(HashMap::new()));
+    let fingerprint = PrefixDiff {
+        messages: chain.len(),
+        system: chain.system,
+        tools: chain.tools,
+        ..PrefixDiff::default()
+    };
     let Ok(mut last) = mutex.lock() else {
-        return PrefixDiff {
-            messages: chain.len(),
-            previous: None,
-            same: 0,
-            rewritten_at: None,
-            tools_changed: false,
-        };
+        return fingerprint;
     };
     let diff = match last.get(&key) {
         Some(previous) => {
@@ -149,27 +215,25 @@ pub(crate) fn compare_and_store(
             // 落在上一次范围内才叫「改写」；等于上一次条数是纯追加。
             let rewritten_at = (same < previous.chain.len())
                 .then(|| (same, chain.roles.get(same).copied().unwrap_or("none")));
+            let tools_changed = previous.tools != chain.tools;
             PrefixDiff {
-                messages: chain.len(),
                 previous: Some(previous.chain.len()),
                 same,
                 rewritten_at,
-                tools_changed: previous.tools != chain.tools,
+                tools_changed,
+                tools_diff: tools_changed
+                    .then(|| describe_tool_change(&previous.tool_hashes, &chain.tool_hashes)),
+                ..fingerprint
             }
         }
-        None => PrefixDiff {
-            messages: chain.len(),
-            previous: None,
-            same: 0,
-            rewritten_at: None,
-            tools_changed: false,
-        },
+        None => fingerprint,
     };
     last.insert(
         key,
         LastChain {
             chain: chain.chain.clone(),
             tools: chain.tools,
+            tool_hashes: chain.tool_hashes.clone(),
         },
     );
     diff
@@ -247,6 +311,23 @@ mod tests {
         assert_eq!(diff.same, 1);
         assert!(diff.tools_changed);
         assert!(!diff.append_only());
+        assert_eq!(diff.tools_diff.as_deref(), Some("+read"));
+    }
+
+    #[test]
+    fn a_tool_change_names_what_was_added_removed_and_edited() {
+        let first = vec![message("system", "s")];
+        let scope = "t-tools-diff";
+        let before = vec![tool("read"), tool("edit"), tool("bash")];
+        compare_and_store(scope, Some("s1"), &PrefixChain::of(&first, &before));
+        let mut edited = tool("edit");
+        edited.function.description = "changed".to_string();
+        let after = vec![tool("read"), edited, tool("load_skill")];
+        let diff = compare_and_store(scope, Some("s1"), &PrefixChain::of(&first, &after));
+        assert_eq!(diff.tools_diff.as_deref(), Some("~edit,+load_skill,-bash"));
+        // 同一份工具表的指纹稳定,跨进程日志据此比对。
+        assert_eq!(diff.system, PrefixChain::of(&first, &after).system);
+        assert_ne!(diff.tools, 0);
     }
 
     #[test]

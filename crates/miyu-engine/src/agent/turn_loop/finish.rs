@@ -148,6 +148,7 @@ impl Agent {
                         on_event,
                     )
                     .await?;
+                    self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
                     control.mark_supersede_seen(generation);
                     return Ok(None);
                 }
@@ -180,6 +181,8 @@ impl Agent {
                     on_event,
                 )
                 .await?;
+                // 插话前那段正文与插话本身按活体位置记进 flow(见 `after_tool_round`)。
+                self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
                 return Ok(None);
             }
         }

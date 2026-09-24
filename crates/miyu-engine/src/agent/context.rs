@@ -283,6 +283,21 @@ pub(in crate::agent) fn push_assistant_message_with_reasoning(
     }
 }
 
+/// 估算用的轮间消息:带图插话按正文计(同老路子对插话的估法)。
+fn estimated_flow_messages<'a>(
+    entries: &'a [miyu_core::state::FlowMessage],
+    turn: &'a miyu_core::state::Turn,
+) -> impl Iterator<Item = ChatMessage> + 'a {
+    entries.iter().filter_map(move |entry| match entry {
+        miyu_core::state::FlowMessage::Message(message) => Some(message.clone()),
+        miyu_core::state::FlowMessage::Followup { followup } => turn
+            .followups
+            .iter()
+            .find(|candidate| &candidate.prompt_id == followup)
+            .map(|followup| ChatMessage::plain("user", &followup.content)),
+    })
+}
+
 pub(in crate::agent) fn turn_context_tokens(turn: &miyu_core::state::Turn) -> usize {
     let mut messages = vec![ChatMessage::plain("user", &turn.user_content)];
     // Fossilized transient tail is replayed with the turn, so count it.
@@ -305,22 +320,26 @@ pub(in crate::agent) fn turn_context_tokens(turn: &miyu_core::state::Turn) -> us
             miyu_base::question::user_exchange_text(exchange),
         ));
     }
-    for followup in &turn.followups {
-        push_assistant_context_messages(
-            &mut messages,
-            followup
-                .preceding_assistant_content
-                .as_deref()
-                .unwrap_or_default(),
-            followup.preceding_assistant_reasoning.as_deref(),
-            false,
-        );
-        messages.push(ChatMessage::plain("user", &followup.content));
-        messages.extend(followup.context_messages());
+    // 新记录的插话在 flow 的轮间消息里,由下面的循环计入(与 push_history_turn 同步)。
+    if !flow_is_interleaved(&turn.tool_flow) {
+        for followup in &turn.followups {
+            push_assistant_context_messages(
+                &mut messages,
+                followup
+                    .preceding_assistant_content
+                    .as_deref()
+                    .unwrap_or_default(),
+                followup.preceding_assistant_reasoning.as_deref(),
+                false,
+            );
+            messages.push(ChatMessage::plain("user", &followup.content));
+            messages.extend(followup.context_messages());
+        }
     }
     // 与 push_history_turn 同步:工具轮以原生 tool_calls + tool 输出回放,
     // 漏计 tool_flow 会让 trim/压缩预算对工具密集回合失真数十倍。
-    for round in replay_rounds(&turn.tool_flow) {
+    for round in live_rounds(&turn.tool_flow) {
+        messages.extend(estimated_flow_messages(&round.before, turn));
         push_assistant_message_with_reasoning(
             &mut messages,
             round.assistant_content.clone(),
@@ -345,6 +364,7 @@ pub(in crate::agent) fn turn_context_tokens(turn: &miyu_core::state::Turn) -> us
         for call in &round.calls {
             messages.push(ChatMessage::tool(call.id.clone(), call.output.clone()));
         }
+        messages.extend(estimated_flow_messages(&round.after, turn));
     }
     push_assistant_context_messages(
         &mut messages,
@@ -374,270 +394,6 @@ pub(in crate::agent) fn followup_assistant_replay_content(
                 .as_deref()
                 .filter(|reasoning| !reasoning.trim().is_empty())
         })
-}
-
-pub(in crate::agent) fn interrupted_turn_replay_messages(
-    agent: &Agent,
-    turn: &miyu_core::state::Turn,
-) -> Vec<ChatMessage> {
-    let mut messages = Vec::new();
-    messages.push(ChatMessage::turn_context(
-        "<interrupted-turn-recovery>The previous reply was interrupted. Below is the model output and tool progress that had already been persisted before the interruption; do not re-run tools that already completed — continue handling the current user request from this content.</interrupted-turn-recovery>",
-    ));
-
-    // A redo revision only journals the new branch. Preserve the already
-    // committed clarification/follow-up prefix from the turn row before
-    // replaying the new branch's events.
-    let replayed_prompt_ids = turn
-        .journal_events
-        .iter()
-        .filter(|event| event.kind == "queued_prompts_consumed")
-        .flat_map(|event| {
-            event
-                .text_payload
-                .as_deref()
-                .and_then(|payload| serde_json::from_str::<Vec<String>>(payload).ok())
-                .unwrap_or_default()
-        })
-        .collect::<HashSet<_>>();
-    if turn.revision > 0 {
-        let prefix_question_count = turn
-            .journal_events
-            .iter()
-            .find(|event| event.kind == "redo_prefix_question_count")
-            .and_then(|event| event.text_payload.as_deref())
-            .and_then(|count| count.parse::<usize>().ok())
-            .unwrap_or_else(|| {
-                let branch_answers = turn
-                    .journal_events
-                    .iter()
-                    .filter(|event| {
-                        event.kind == "tool_result"
-                            && event.name.as_deref() == Some("ask_question")
-                            && event
-                                .text_payload
-                                .as_deref()
-                                .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
-                                .and_then(|payload| {
-                                    payload
-                                        .get("status")
-                                        .and_then(Value::as_str)
-                                        .map(|status| status == "answered")
-                                })
-                                .unwrap_or(false)
-                    })
-                    .count();
-                turn.question_exchanges.len().saturating_sub(branch_answers)
-            });
-        for exchange in turn.question_exchanges.iter().take(prefix_question_count) {
-            messages.push(ChatMessage::plain(
-                "assistant",
-                miyu_base::question::assistant_exchange_text(exchange),
-            ));
-            messages.push(ChatMessage::plain(
-                "user",
-                miyu_base::question::user_exchange_text(exchange),
-            ));
-        }
-        for followup in &turn.followups {
-            if replayed_prompt_ids.contains(&followup.prompt_id) {
-                continue;
-            }
-            push_assistant_context_messages(
-                &mut messages,
-                followup
-                    .preceding_assistant_content
-                    .as_deref()
-                    .unwrap_or_default(),
-                followup.preceding_assistant_reasoning.as_deref(),
-                false,
-            );
-            messages.push(agent.followup_user_message(followup));
-            messages.extend(followup.context_messages().iter().map(replay_fossil));
-        }
-    }
-
-    let mut assistant_text = String::new();
-    let mut assistant_reasoning = String::new();
-    let mut pending_calls = Vec::<ToolCall>::new();
-    let mut open_calls = Vec::<ToolCall>::new();
-    let mut progress = HashMap::<String, String>::new();
-    let mut command_tail = HashMap::<String, Vec<u8>>::new();
-
-    for event in &turn.journal_events {
-        match event.kind.as_str() {
-            "assistant_content" => {
-                if let Some(text) = &event.text_payload {
-                    assistant_text.push_str(text);
-                }
-            }
-            "assistant_reasoning" => {
-                if let Some(text) = &event.text_payload {
-                    assistant_reasoning.push_str(text);
-                }
-            }
-            "reasoning_reset" => assistant_reasoning.clear(),
-            "tool_call" => {
-                let Some(call_id) = event.call_id.clone() else {
-                    continue;
-                };
-                let Some(name) = event.name.as_deref() else {
-                    continue;
-                };
-                pending_calls.push(ToolCall {
-                    id: call_id,
-                    kind: "function".to_string(),
-                    function: ToolCallFunction {
-                        name: replay_tool_function_name(name),
-                        arguments: event.text_payload.clone().unwrap_or_default(),
-                    },
-                });
-            }
-            "tool_result" => {
-                open_calls.extend(flush_interrupted_assistant(
-                    &mut messages,
-                    &mut assistant_reasoning,
-                    &mut assistant_text,
-                    &mut pending_calls,
-                ));
-                if let Some(call_id) = &event.call_id {
-                    // 空的 tool 结果同样不可回放:多数上游把它当协议错误。
-                    let output = event
-                        .text_payload
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or("(no output)");
-                    messages.push(ChatMessage::tool(call_id, truncate_chars(output, 48_000)));
-                    open_calls.retain(|call| call.id != *call_id);
-                    progress.remove(call_id);
-                    command_tail.remove(call_id);
-                }
-            }
-            "tool_progress" => {
-                if let Some(call_id) = &event.call_id {
-                    progress.insert(
-                        call_id.clone(),
-                        truncate_chars(event.text_payload.as_deref().unwrap_or_default(), 4_000),
-                    );
-                }
-            }
-            "command_stdout" | "command_stderr" => {
-                if let Some(call_id) = &event.call_id {
-                    let tail = command_tail.entry(call_id.clone()).or_default();
-                    if let Some(bytes) = &event.blob_payload {
-                        tail.extend_from_slice(bytes);
-                        const MAX_COMMAND_TAIL: usize = 8 * 1024;
-                        if tail.len() > MAX_COMMAND_TAIL {
-                            let start = tail.len() - MAX_COMMAND_TAIL;
-                            tail.drain(..start);
-                        }
-                    }
-                }
-            }
-            "queued_prompts_consumed" => {
-                open_calls.extend(flush_interrupted_assistant(
-                    &mut messages,
-                    &mut assistant_reasoning,
-                    &mut assistant_text,
-                    &mut pending_calls,
-                ));
-                append_interrupted_tool_results(
-                    &mut messages,
-                    &mut open_calls,
-                    &mut progress,
-                    &mut command_tail,
-                );
-                let prompt_ids = event
-                    .text_payload
-                    .as_deref()
-                    .and_then(|payload| serde_json::from_str::<Vec<String>>(payload).ok())
-                    .unwrap_or_default();
-                for prompt_id in prompt_ids {
-                    if let Some(followup) = turn
-                        .followups
-                        .iter()
-                        .find(|followup| followup.prompt_id == prompt_id)
-                    {
-                        messages.push(agent.followup_user_message(followup));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    open_calls.extend(flush_interrupted_assistant(
-        &mut messages,
-        &mut assistant_reasoning,
-        &mut assistant_text,
-        &mut pending_calls,
-    ));
-    append_interrupted_tool_results(
-        &mut messages,
-        &mut open_calls,
-        &mut progress,
-        &mut command_tail,
-    );
-    messages
-}
-
-pub(in crate::agent) fn flush_interrupted_assistant(
-    messages: &mut Vec<ChatMessage>,
-    assistant_reasoning: &mut String,
-    assistant_text: &mut String,
-    pending_calls: &mut Vec<ToolCall>,
-) -> Vec<ToolCall> {
-    if assistant_reasoning.trim().is_empty()
-        && assistant_text.trim().is_empty()
-        && pending_calls.is_empty()
-    {
-        return Vec::new();
-    }
-    if !assistant_reasoning.trim().is_empty() {
-        if let Some(reasoning) = private_reasoning_memory(assistant_reasoning) {
-            messages.push(ChatMessage::turn_context(reasoning));
-        }
-    }
-    assistant_reasoning.clear();
-    let text = std::mem::take(assistant_text);
-    let calls = std::mem::take(pending_calls);
-    let replay_calls = (!calls.is_empty()).then(|| calls.clone());
-    messages.push(ChatMessage::assistant(text, replay_calls));
-    calls
-}
-
-pub(in crate::agent) fn append_interrupted_tool_results(
-    messages: &mut Vec<ChatMessage>,
-    open_calls: &mut Vec<ToolCall>,
-    progress: &mut HashMap<String, String>,
-    command_tail: &mut HashMap<String, Vec<u8>>,
-) {
-    for call in std::mem::take(open_calls) {
-        let mut output =
-            "tool execution was interrupted before a final result was persisted".to_string();
-        if let Some(message) = progress.remove(&call.id) {
-            output.push_str("\nlast progress: ");
-            output.push_str(&message);
-        }
-        if let Some(bytes) = command_tail.remove(&call.id) {
-            let tail = String::from_utf8_lossy(&bytes);
-            if !tail.trim().is_empty() {
-                output.push_str("\nlast command output:\n");
-                output.push_str(&truncate_chars(&tail, 8_000));
-            }
-        }
-        messages.push(ChatMessage::tool(call.id, output));
-    }
-}
-
-pub(in crate::agent) fn replay_tool_function_name(name: &str) -> String {
-    match name.split_once(':').map(|(prefix, _)| prefix) {
-        Some("load_skill") | Some("load_tools") | Some("subagent") | Some("task") => {
-            name.split(':').next().unwrap_or(name).to_string()
-        }
-        _ => name.to_string(),
-    }
 }
 
 pub(in crate::agent) fn redo_checkpoint_payload(

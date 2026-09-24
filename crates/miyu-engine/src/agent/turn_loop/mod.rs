@@ -243,6 +243,7 @@ impl Agent {
             assistant_content: String::new(),
             assistant_reasoning: None,
             calls,
+            ..Default::default()
         });
     }
 }
@@ -253,7 +254,7 @@ impl Agent {
 ///
 /// 返回值是这次调用该记进 `turns.tool_footprint` 的增量:只在 Finished 且
 /// 成功时给(与本地工具"成功才记"同一口径),用 Started 时存下的名字与参数算。
-/// 中转轮永远进不了本地那条 `tool_call_footprint` 分支,`replay_rounds` 又按
+/// 中转轮永远进不了本地那条 `tool_call_footprint` 分支,`live_rounds` 又按
 /// 契约过滤 remote 轮——不在这里记,`<modified-files>` 与压后回灌在三条中转线
 /// 上就永远是空的(09-10 活库取证 0/42)。
 pub(in crate::agent) fn record_remote_tool_chunk(

@@ -450,7 +450,7 @@ impl OpenAiCompatibleClient {
 
     /// 记账日志的会话归属(Agent 构造时随 `with_zen_session` 一起置位)。
     pub fn with_log_session(mut self, session_id: &str) -> Self {
-        self.log_identity.session = Some(session_id.into());
+        self.log_identity = self.log_identity.for_session(session_id);
         self
     }
 

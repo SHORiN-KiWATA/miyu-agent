@@ -441,22 +441,40 @@ pub(in crate::agent) fn prune_tool_output(
     pruned
 }
 
-/// 回放视图:连续同签名(整轮的 名字+参数 序列相同)的轮只保留第一轮。
-/// 复读轮是端点故障窗口的毒料,原样回放会教模型继续复读——08-24 取证:
-/// 一个群会话积累 122 个历史工具调用、111 个纯重复(60×同一 web_search),
-/// in-context 模式锁死后温度 0.6 也会产出逐字节相同的补全。确定性折叠
-/// =字节稳定;上线是一次计划内冷启动,此后该会话前缀反而大幅变短。
-pub(in crate::agent) fn replay_rounds(
+/// 回放用的轮:中转侧的远端轮除外,其余原样、一轮不少。
+///
+/// 连续同签名的复读轮不在这里折(09-24 起)。活体两轮都发过,回放少一轮,下一轮的
+/// 前缀就在第二轮那里断——每出现一次复读断一次,不是注释里曾经说的「一次性冷启动」。
+/// 折叠挪到了压缩那一刻(`fold_repeated_rounds`),那时前缀本来就要断一次。
+pub(in crate::agent) fn live_rounds(
+    flow: &[miyu_core::state::ToolFlowRound],
+) -> Vec<&miyu_core::state::ToolFlowRound> {
+    flow.iter().filter(|round| !round.remote).collect()
+}
+
+/// 这份 flow 是不是按活体顺序记下了轮间消息(见 `ToolFlowRound::after`)。
+/// 是的话,轮中插话、goal 通知都已经在 flow 里,回放不再另拼。
+pub(in crate::agent) fn flow_is_interleaved(flow: &[miyu_core::state::ToolFlowRound]) -> bool {
+    flow.iter().any(|round| !round.remote && round.interleaved)
+}
+
+fn round_signature(round: &miyu_core::state::ToolFlowRound) -> Vec<(&str, &str)> {
+    round
+        .calls
+        .iter()
+        .map(|call| (call.name.as_str(), call.arguments.as_str()))
+        .collect()
+}
+
+/// 去重视图:连续同签名(整轮的 名字+参数 序列相同)的轮只保留第一轮。压后重建
+/// 材料(改过哪些文件、转录)用它,不参与回放。
+pub(in crate::agent) fn distinct_rounds(
     flow: &[miyu_core::state::ToolFlowRound],
 ) -> Vec<&miyu_core::state::ToolFlowRound> {
     let mut kept: Vec<&miyu_core::state::ToolFlowRound> = Vec::new();
     let mut previous: Option<Vec<(&str, &str)>> = None;
     for round in flow.iter().filter(|round| !round.remote) {
-        let signature: Vec<(&str, &str)> = round
-            .calls
-            .iter()
-            .map(|call| (call.name.as_str(), call.arguments.as_str()))
-            .collect();
+        let signature = round_signature(round);
         if !signature.is_empty() && previous.as_ref() == Some(&signature) {
             continue;
         }
@@ -464,6 +482,56 @@ pub(in crate::agent) fn replay_rounds(
         kept.push(round);
     }
     kept
+}
+
+/// 压缩那一刻把保留区里的复读轮折掉:连续同签名的轮只留第一轮。复读轮是端点
+/// 故障窗口的毒料,原样回放会教模型继续复读——08-24 取证,一个群会话积累 122 个
+/// 历史工具调用、111 个纯重复(60×同一 web_search)。
+///
+/// 被折掉那一轮后面跟着的轮间消息(插话、通知)不能跟着丢,并到留下的那一轮后面。
+/// 返回 `None` 表示没有可折的,不必写库。
+pub(in crate::agent) fn fold_repeated_rounds(
+    flow: &[miyu_core::state::ToolFlowRound],
+) -> Option<Vec<miyu_core::state::ToolFlowRound>> {
+    let mut folded: Vec<miyu_core::state::ToolFlowRound> = Vec::with_capacity(flow.len());
+    let mut changed = false;
+    for round in flow {
+        let repeat = !round.remote
+            && !round.calls.is_empty()
+            && folded
+                .iter()
+                .rev()
+                .find(|kept| !kept.remote)
+                .is_some_and(|kept| round_signature(kept) == round_signature(round));
+        if repeat {
+            let kept = folded
+                .iter_mut()
+                .rev()
+                .find(|kept| !kept.remote)
+                .expect("a repeat always follows a kept round");
+            kept.after.extend(round.after.iter().cloned());
+            changed = true;
+            continue;
+        }
+        folded.push(round.clone());
+    }
+    changed.then_some(folded)
+}
+
+/// 轮间消息怎么记:纯文本原样存字节;带图的插话只记是哪条排队消息,回放时
+/// 按它重建(`FlowMessage` 上有理由)。
+fn flow_message(message: &ChatMessage) -> miyu_core::state::FlowMessage {
+    let carries_media = matches!(
+        message.content.as_ref(),
+        Some(ChatContent::Parts(parts))
+            if parts.iter().any(|part| !matches!(part, ChatContentPart::Text { .. }))
+    );
+    match &message.followup_prompt {
+        Some(prompt_id) if carries_media => miyu_core::state::FlowMessage::Followup {
+            followup: prompt_id.clone(),
+        },
+        _ => miyu_core::state::FlowMessage::Message(message.clone()),
+    }
 }
 
 /// `drain_sub_trace`:回合最终落库时传 `true`,把子代理暂存的子过程标记流取走
@@ -475,6 +543,8 @@ pub(in crate::agent) fn derive_tool_flow(
     drain_sub_trace: bool,
 ) -> Vec<miyu_core::state::ToolFlowRound> {
     let mut rounds: Vec<miyu_core::state::ToolFlowRound> = Vec::new();
+    // 第一轮之前就进了对话的消息(模型还没调工具就并进来的插话)。
+    let mut leading: Vec<miyu_core::state::FlowMessage> = Vec::new();
     for message in &messages[live_start.min(messages.len())..] {
         if message.role == "assistant" {
             if let Some(calls) = message
@@ -484,6 +554,7 @@ pub(in crate::agent) fn derive_tool_flow(
             {
                 rounds.push(miyu_core::state::ToolFlowRound {
                     remote: false,
+                    interleaved: true,
                     assistant_content: chat_message_text(message).unwrap_or_default(),
                     assistant_reasoning: message
                         .reasoning_content
@@ -526,7 +597,9 @@ pub(in crate::agent) fn derive_tool_flow(
                             }
                         })
                         .collect(),
+                    ..Default::default()
                 });
+                continue;
             }
         } else if message.role == "tool" {
             if let (Some(call_id), Some(round)) = (message.tool_call_id.as_ref(), rounds.last_mut())
@@ -543,7 +616,21 @@ pub(in crate::agent) fn derive_tool_flow(
                     }
                 }
             }
+            continue;
         }
+        // 工具轮以外的活体消息(插话与它的尾巴、插话前的正文、goal 通知)原样记下,
+        // 回放按原位置放回。媒体伴随消息由回放按库里的媒体重建,不抄。
+        if message.media_companion {
+            continue;
+        }
+        let entry = flow_message(message);
+        match rounds.last_mut() {
+            Some(round) => round.after.push(entry),
+            None => leading.push(entry),
+        }
+    }
+    if let Some(first) = rounds.first_mut() {
+        first.before = leading;
     }
     for round in &mut rounds {
         for call in &mut round.calls {

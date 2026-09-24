@@ -57,6 +57,8 @@ impl Agent {
             on_event,
         )
         .await?;
+        // 插话按活体位置记进 flow(见 `after_tool_round` 末尾的检查点)。
+        self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
         if let Some(index) = continuation_context_index {
             st.continuation_context = Some((
                 index,
@@ -101,6 +103,9 @@ impl Agent {
         // 「调过哪些工具、拿到什么结果」,丢了它模型下一轮只看到半截文字,会把
         // 已经跑过的命令、读过的文件原样再来一遍。
         self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
+        // 下面插进对话的 goal 通知与插话也要按活体位置记进 flow(被打断时回放
+        // 原样放回、续上上游的前缀缓存),插了就在末尾再落一次。
+        let inserted_from = messages.len();
         // goal 侧挂起的步间指令在这里取走注入:自主轮报了完成/受阻之后的
         // 收尾指令(不注入的话,工具返回了 JSON,模型没有理由再说什么,
         // 一个跑了十几轮的目标就无声停住);以及人在续轮中途 `/goal edit`
@@ -182,6 +187,9 @@ impl Agent {
                     control.mark_supersede_seen(generation);
                 }
             }
+        }
+        if messages.len() > inserted_from {
+            self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
         }
         Ok(())
     }

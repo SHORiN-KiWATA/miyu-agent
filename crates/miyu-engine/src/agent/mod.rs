@@ -5,6 +5,7 @@ mod control;
 mod history;
 mod images;
 mod input;
+mod interrupted_replay;
 mod platform_port;
 pub use platform_port::PlatformTurn;
 mod journal;
@@ -33,6 +34,7 @@ pub use control::{
 // 平台侧的 PDF 工具要问同一个能力判定,不能自己另写一份"池吃不吃 PDF"。
 pub use images::active_text_pool_supports_pdf;
 use images::*;
+use interrupted_replay::*;
 use journal::*;
 use prompt::*;
 use reasoning::*;

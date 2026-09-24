@@ -151,6 +151,40 @@ impl LogIdentity {
     pub(crate) fn turn(&self) -> Option<Arc<str>> {
         self.turn.lock().ok().and_then(|slot| slot.clone())
     }
+
+    /// 认领一个会话,连同一个只属于它的回合槽。daemon 每轮从同一个共享客户端
+    /// 克隆,若沿用克隆来的槽,并发的几个会话会共用它,日志里的 turn 就串到别的
+    /// 会话头上(09-24 取证:两个会话的请求交替顶着对方的回合号)。
+    pub(crate) fn for_session(self, session_id: &str) -> Self {
+        Self {
+            session: Some(session_id.into()),
+            turn: Arc::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod log_identity_tests {
+    use super::LogIdentity;
+
+    fn set_turn(identity: &LogIdentity, turn: &str) {
+        *identity.turn.lock().unwrap() = Some(turn.into());
+    }
+
+    #[test]
+    fn sessions_cloned_from_one_client_keep_their_own_turn() {
+        let shared = LogIdentity::default();
+        let a = shared.clone().for_session("a");
+        let b = shared.clone().for_session("b");
+        set_turn(&a, "turn_a");
+        set_turn(&b, "turn_b");
+        assert_eq!(a.turn().as_deref(), Some("turn_a"));
+        assert_eq!(b.turn().as_deref(), Some("turn_b"));
+        // 同一会话派生出去的辅助客户端(压缩、判官)照旧跟着主客户端的回合走。
+        let helper = a.clone();
+        set_turn(&a, "turn_a2");
+        assert_eq!(helper.turn().as_deref(), Some("turn_a2"));
+    }
 }
 
 #[derive(Clone, Copy)]

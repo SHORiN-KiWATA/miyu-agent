@@ -12,6 +12,7 @@ mod prompt;
 mod queue_journal;
 mod reasoning;
 mod remote_tools;
+mod replay_prefix;
 mod request_shape;
 mod restart;
 mod session_usage;

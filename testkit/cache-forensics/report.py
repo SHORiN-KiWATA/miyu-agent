@@ -13,6 +13,10 @@
   拖下水（09-22 实测：87.3% 的 opencodego 和不报数的 agy 一起算，Σ 只剩
   42.6%）。所以单列。
 - **冷启动**：会话第一条请求，没有上一次可比 —— 必然 miss，不算问题。
+- **换进程**：进程内的 `prev` 跨不过重启，但 `sys`/`tools_hash` 两个指纹
+  跨得过（09-24 起）。拿同会话日志里的上一行比：两个都没变是「换进程·开头
+  没变」（这时再没命中就是上游）；变了是「换进程·提示词或工具面变了」——
+  装了新构建、换了模式或功能表。
 - **纯追加却全断**：`same >= prev`（上一次的每条都还在、一字未改）却
   `cache_read=0` —— 我们没动前缀，锅在上游（逐出 / 过期 / 打到冷节点）。
 - **前缀被改写**：`same < prev`，`at`/`role` 指出第几条被重写了 —— 我们的锅。
@@ -79,7 +83,15 @@ def classify(rows):
             or previous.get("model") != row.get("model")
         )
         if row.get("prev") is None:
-            verdicts.append(("冷启动（无上一次）", row))
+            if previous is None or "sys" not in row or "sys" not in previous:
+                verdicts.append(("冷启动（无上一次）", row))
+            elif (row["sys"], row.get("tools_hash")) != (
+                previous["sys"],
+                previous.get("tools_hash"),
+            ):
+                verdicts.append(("换进程·提示词或工具面变了", row))
+            else:
+                verdicts.append(("换进程·开头没变", row))
         elif domain_changed:
             verdicts.append(("换了缓存域（模型/供应商变了）", row))
         elif row.get("tools_changed"):
@@ -192,11 +204,31 @@ def main():
     blame = [
         (verdict, row)
         for verdict, row in verdicts
-        if verdict in ("前缀被改写", "工具表变了", "换了缓存域", "纯追加却全断（上游）")
+        if verdict
+        in (
+            "前缀被改写",
+            "工具表变了",
+            "换了缓存域",
+            "纯追加却全断（上游）",
+            "换进程·提示词或工具面变了",
+        )
     ]
     table(
         f"异常逐条（最近 {args.limit} 条，共 {len(blame)} 条）",
-        ["时间", "定性", "会话", "模型", "prompt", "read", "msgs", "prev", "same", "at", "role"],
+        [
+            "时间",
+            "定性",
+            "会话",
+            "模型",
+            "prompt",
+            "read",
+            "msgs",
+            "prev",
+            "same",
+            "at",
+            "role",
+            "工具变动",
+        ],
         [
             (
                 row.get("ts", "")[11:19],
@@ -210,6 +242,7 @@ def main():
                 row.get("same", "-"),
                 row.get("at", "-"),
                 row.get("role", "-"),
+                (row.get("tools_diff") or "-")[:40],
             )
             for verdict, row in blame[-args.limit :]
         ],

@@ -272,8 +272,11 @@ impl Agent {
             model: preceding_assistant.3.map(str::to_string),
         })?;
 
-        for ((_, input), tail) in prepared.into_iter().zip(tails) {
-            messages.push(input.message);
+        for ((prompt, input), tail) in prepared.into_iter().zip(tails) {
+            let mut message = input.message;
+            // 带图的插话在 tool_flow 里只记这条排队消息的 id(见 `FlowMessage`)。
+            message.followup_prompt = Some(prompt.prompt_id);
+            messages.push(message);
             messages.extend(tail);
         }
         Ok(())

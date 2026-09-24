@@ -6,17 +6,8 @@ use crate::tools::{empty_parameters, ToolSpec};
 use miyu_base::config::AppConfig;
 use tokio::net::TcpListener;
 
-/// 复读毒料免疫(08-24):历史 tool_flow 里连续同参轮只回放第一轮——
-/// 122 轮 111 重复的会话曾把模型锁进 in-context 复读。不同参轮照常全放。
-/// 退回 replay_rounds 折叠前,第一段断言(2 个调用轮)会报红为 4。
-#[test]
-fn consecutive_identical_history_rounds_collapse_on_replay() {
-    let temp = tempfile::tempdir().unwrap();
-    let paths = test_paths(temp.path());
-    let config = AppConfig::default();
-    let state = StateStore::new(&paths).unwrap();
-    state.start_turn("old", "查一下", 999_999).unwrap();
-    let round = |args: &str, output: &str| miyu_core::state::ToolFlowRound {
+fn search_round(args: &str, output: &str) -> miyu_core::state::ToolFlowRound {
+    miyu_core::state::ToolFlowRound {
         remote: false,
         assistant_content: String::new(),
         assistant_reasoning: None,
@@ -30,15 +21,27 @@ fn consecutive_identical_history_rounds_collapse_on_replay() {
             sub_trace: None,
             child_session_id: None,
         }],
-    };
+        ..Default::default()
+    }
+}
+
+/// 复读轮平时原样回放(09-24):活体每一轮都发过,回放少一轮下一轮的前缀就在那里
+/// 断。折叠只在压缩那一刻做(`fold_repeated_rounds`,见下一条)。
+#[test]
+fn consecutive_identical_history_rounds_replay_verbatim() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let config = AppConfig::default();
+    let state = StateStore::new(&paths).unwrap();
+    state.start_turn("old", "查一下", 999_999).unwrap();
     state
         .set_turn_tool_flow(
             "old",
             &[
-                round("{\"q\":\"a\"}", "r1"),
-                round("{\"q\":\"a\"}", "r2"),
-                round("{\"q\":\"a\"}", "r3"),
-                round("{\"q\":\"b\"}", "r4"),
+                search_round("{\"q\":\"a\"}", "r1"),
+                search_round("{\"q\":\"a\"}", "r2"),
+                search_round("{\"q\":\"a\"}", "r3"),
+                search_round("{\"q\":\"b\"}", "r4"),
             ],
         )
         .unwrap();
@@ -60,11 +63,65 @@ fn consecutive_identical_history_rounds_collapse_on_replay() {
         .iter()
         .filter(|m| m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
         .count();
-    assert_eq!(tool_call_rounds, 2, "连续同参轮应折叠成 1+1");
-    // 保留的是首轮的真实结果字节;重复轮的 r2/r3 不再出现。
-    let text = format!("{messages:?}");
-    assert!(text.contains("r1") && text.contains("r4"));
-    assert!(!text.contains("r2") && !text.contains("r3"));
+    assert_eq!(tool_call_rounds, 4, "回放必须与活体逐轮一致");
+    // 只看 tool 消息的正文:整串 Debug 里有系统提示词带的随机临时目录(.tmpXXXXXX),
+    // 拿它做子串匹配会被路径撞上(09-24 门禁因此随机红过一次)。
+    let outputs = messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter_map(|message| match message.content.as_ref() {
+            Some(ChatContent::Text(text)) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(outputs, ["r1", "r2", "r3", "r4"]);
+}
+
+/// 复读毒料免疫(08-24):122 轮 111 重复的会话曾把模型锁进 in-context 复读。
+/// 压缩那一刻把保留区的连续同参轮折成一轮,折掉那轮后面的轮间消息(插话、通知)
+/// 并到留下的那轮后面,一条不丢;不同参轮与中转侧远端轮原样保留。
+#[test]
+fn compaction_folds_repeated_rounds_and_keeps_their_trailing_messages() {
+    let mut first = search_round("{\"q\":\"a\"}", "r1");
+    first.after = vec![miyu_core::state::FlowMessage::Message(ChatMessage::plain(
+        "user",
+        "first followup",
+    ))];
+    let mut second = search_round("{\"q\":\"a\"}", "r2");
+    second.after = vec![miyu_core::state::FlowMessage::Message(
+        ChatMessage::turn_context("<goal-note>wrap up</goal-note>"),
+    )];
+    let remote = miyu_core::state::ToolFlowRound {
+        remote: true,
+        ..search_round("{\"q\":\"a\"}", "remote")
+    };
+    let flow = vec![
+        first,
+        second,
+        search_round("{\"q\":\"a\"}", "r3"),
+        search_round("{\"q\":\"b\"}", "r4"),
+        remote,
+    ];
+
+    let folded = fold_repeated_rounds(&flow).expect("repeats get folded");
+    let outputs = folded
+        .iter()
+        .map(|round| round.calls[0].output.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(outputs, ["r1", "r4", "remote"]);
+    let kept_after = folded[0]
+        .after
+        .iter()
+        .map(|entry| format!("{entry:?}"))
+        .collect::<Vec<_>>();
+    assert_eq!(kept_after.len(), 2, "{kept_after:?}");
+    assert!(kept_after[0].contains("first followup"));
+    assert!(kept_after[1].contains("wrap up"));
+
+    assert!(
+        fold_repeated_rounds(&folded).is_none(),
+        "nothing left to fold means no write"
+    );
 }
 
 /// vision_analyze 让当前模型直接看的图,下一回合必须原位原字节回放。
@@ -101,6 +158,7 @@ fn seed_inline_media_turn(state: &StateStore) {
                         child_session_id: None,
                     },
                 ],
+                ..Default::default()
             }],
         )
         .unwrap();
@@ -1314,6 +1372,7 @@ async fn compaction_restores_recent_files_behind_the_checkpoint() {
                     sub_trace: None,
                     child_session_id: None,
                 }],
+                ..Default::default()
             }],
         )
         .unwrap();

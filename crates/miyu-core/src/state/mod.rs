@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 #[allow(unused_imports)]
 pub use conversation_db::{
     interrupted_text, pending_placeholder, ArtifactAsset, ArtifactAssetData, ContextAnchor,
-    ConversationDb, GoalDenied, GoalPhase, GoalRecord, ImageAsset, ImageAssetData,
+    ConversationDb, FlowMessage, GoalDenied, GoalPhase, GoalRecord, ImageAsset, ImageAssetData,
     NewSponsorRecord, PlatformAccessActor, PlatformAccessGrant, PlatformAccessGrantKey,
     PlatformMemeRefRecord, PlatformPluginScopeKey, PlatformSessionBinding,
     PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,

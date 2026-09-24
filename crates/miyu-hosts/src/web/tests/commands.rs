@@ -204,6 +204,7 @@ fn turn_payload_carries_the_tools_that_ran() {
                     sub_trace: None,
                     child_session_id: None,
                 }],
+                ..Default::default()
             }],
         )
         .unwrap();

@@ -50,6 +50,15 @@ pub struct ChatMessage {
     /// 回看时才有「Worked for 5.4 s」可算;不然刷新一下耗时就没了。
     #[serde(default, skip_serializing, skip_deserializing)]
     pub tool_span_ms: Option<(u64, u64)>,
+    /// 紧跟在工具结果后面、带着它的媒体块的那条 user 消息(供应商不认 tool 消息
+    /// 里的图时的退路)。回放时按 call 从库里的媒体重新生成,所以
+    /// `derive_tool_flow` 收轮间消息时要认出它、别再原样抄一份。只在回合内活着。
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub media_companion: bool,
+    /// 回合中途并进来的排队消息(插话)是哪一条。带图的插话在 tool_flow 里只记
+    /// 这个 id,回放按排队消息重建,不把 base64 再抄一份。只在回合内活着。
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub followup_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +162,8 @@ impl ChatMessage {
             thinking_signature: None,
             transient_context: false,
             tool_span_ms: None,
+            media_companion: false,
+            followup_prompt: None,
         }
     }
 

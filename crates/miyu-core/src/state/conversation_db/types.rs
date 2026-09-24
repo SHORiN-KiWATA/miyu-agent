@@ -152,6 +152,30 @@ pub struct ToolFlowRound {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant_reasoning: Option<String>,
     pub calls: Vec<ToolFlowCall>,
+    /// 这一轮的工具结果之后、下一轮之前,活体压进对话的其余消息:轮中插话连同
+    /// 它的瞬态尾巴、插话前已经落进对话的那段正文、goal 收尾通知。回放按原位置
+    /// 放回——只记工具轮的话,这些消息只能拼到别处去,下一轮的前缀缓存在这一轮
+    /// 的起点就整段断掉(09-24)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<FlowMessage>,
+    /// 同上,第一轮之前的那一段(模型还没调工具就并进来的插话)。只在第一轮上有。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before: Vec<FlowMessage>,
+    /// 这份 flow 按活体顺序记下了轮间消息。老记录为 false,回放走老路子。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interleaved: bool,
+}
+
+/// tool_flow 里记下的一条轮间消息。
+///
+/// 纯文本的原样存字节。带图的插话只记它是哪条排队消息:图的 base64 已经在
+/// 排队消息里存着一份,再抄进 flow 就是库里两份、每次检查点整段重写、网页每次
+/// 取历史都背着它——回放时按那条排队消息重建,与这一轮开头那条用户消息同一个做法。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FlowMessage {
+    Followup { followup: String },
+    Message(crate::llm::ChatMessage),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

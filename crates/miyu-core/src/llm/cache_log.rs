@@ -82,7 +82,7 @@ pub(crate) fn record(
 pub(crate) struct RecordContext<'a> {
     pub(crate) session: Option<&'a str>,
     pub(crate) turn: Option<&'a str>,
-    pub(crate) prefix: Option<PrefixDiff>,
+    pub(crate) prefix: Option<&'a PrefixDiff>,
 }
 
 pub(crate) fn record_with_context(
@@ -205,8 +205,18 @@ fn format_line(
         if prefix.tools_changed {
             object.insert("tools_changed".into(), true.into());
         }
+        if let Some(diff) = &prefix.tools_diff {
+            object.insert("tools_diff".into(), diff.as_str().into());
+        }
+        // 跨进程可比的两个短指纹:重启后 `prev` 没了,拿日志前后两行比这两个。
+        object.insert("sys".into(), short_hash(prefix.system).into());
+        object.insert("tools_hash".into(), short_hash(prefix.tools).into());
     }
     line.to_string()
+}
+
+fn short_hash(value: u64) -> String {
+    format!("{:012x}", value >> 16)
 }
 
 /// Deletes cache-usage files whose date suffix is more than `retention_days`
@@ -324,12 +334,15 @@ mod tests {
             &RecordContext {
                 session: Some("default"),
                 turn: Some("turn_1"),
-                prefix: Some(PrefixDiff {
+                prefix: Some(&PrefixDiff {
                     messages: 42,
                     previous: Some(40),
                     same: 37,
                     rewritten_at: Some((37, "tool")),
                     tools_changed: true,
+                    tools_diff: Some("+read".to_string()),
+                    system: 0xabcdef0123456789,
+                    tools: 7,
                 }),
             },
         );
@@ -342,6 +355,9 @@ mod tests {
         assert_eq!(value["at"], 37);
         assert_eq!(value["role"], "tool");
         assert_eq!(value["tools_changed"], true);
+        assert_eq!(value["tools_diff"], "+read");
+        assert_eq!(value["sys"], "abcdef012345");
+        assert_eq!(value["tools_hash"], "000000000000");
     }
 
     #[test]

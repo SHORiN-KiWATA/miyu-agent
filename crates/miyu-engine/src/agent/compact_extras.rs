@@ -11,7 +11,7 @@
 //! 转录文件与 spill 一样只写不清：删会话不删它，备份不含它。磁盘而已。
 
 use crate::agent::overflow::estimate_tokens;
-use crate::agent::tool_report::{replay_rounds, tool_call_paths, PathAccess};
+use crate::agent::tool_report::{distinct_rounds, tool_call_paths, PathAccess};
 use anyhow::Result;
 use miyu_core::state::Turn;
 use serde::{Deserialize, Serialize};
@@ -211,7 +211,7 @@ pub(in crate::agent) fn touched_files(
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut ordered: Vec<PathBuf> = Vec::new();
     for turn in turns.iter().rev() {
-        let rounds = replay_rounds(&turn.tool_flow);
+        let rounds = distinct_rounds(&turn.tool_flow);
         for round in rounds.iter().rev() {
             for call in round.calls.iter().rev() {
                 for (access, raw) in tool_call_paths(&call.name, &call.arguments) {
@@ -410,7 +410,7 @@ fn render_transcript(session_id: &str, fold: &[&Turn], previous_summary: Option<
         {
             out.push_str(&format!("\n### Reasoning\n{}\n", truncate_item(reasoning)));
         }
-        let rounds = replay_rounds(&turn.tool_flow);
+        let rounds = distinct_rounds(&turn.tool_flow);
         if !rounds.is_empty() {
             out.push_str("\n### Tool calls\n");
             for round in rounds {
@@ -461,7 +461,7 @@ fn export_transcript(
 
 /// 折叠区与尾巴各自落库的 footprint(`turns.tool_footprint` 合并值)。
 ///
-/// 回放视图 `replay_rounds` 按契约过滤 remote 轮,中转线(claude-code /
+/// 去重视图 `distinct_rounds` 按契约过滤 remote 轮,中转线(claude-code /
 /// codex / agy)碰过的文件只在 footprint 里有记录;直连线的路径两边都有,
 /// 按解析后路径去重。
 #[derive(Default)]

@@ -234,7 +234,9 @@ pub(in crate::agent) fn push_tool_result_with_media(
         return;
     }
     messages.push(tool_message);
-    if let Some(message) = inline_media_message(items) {
+    if let Some(mut message) = inline_media_message(items) {
+        // 回放由本函数按库里的媒体重新生成,`derive_tool_flow` 据此不再抄它。
+        message.media_companion = true;
         messages.push(message);
     }
 }

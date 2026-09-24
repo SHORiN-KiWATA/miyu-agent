@@ -40,6 +40,7 @@ fn turn(seq: i64, user: &str, calls: Vec<ToolFlowCall>) -> Turn {
                 assistant_content: String::new(),
                 assistant_reasoning: None,
                 calls,
+                ..Default::default()
             }]
         },
         question_exchanges: Vec::new(),
