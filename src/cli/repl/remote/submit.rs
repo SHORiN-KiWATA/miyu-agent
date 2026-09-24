@@ -42,14 +42,9 @@ impl RemoteRepl {
                 );
                 // Refresh the job strip right away — a background command
                 // spawned this turn must show up without waiting a poll.
-                if let Ok((mut jobs, _, wake_runs, peer_runs)) =
-                    fetch_jobs_overview(&self.paths).await
+                if let Ok((jobs, _, wake_runs, peer_runs)) = fetch_jobs_overview(&self.paths).await
                 {
-                    retain_session_jobs(
-                        &mut jobs,
-                        self.jobs_shared.repl_session.lock().unwrap().as_deref(),
-                    );
-                    *self.jobs_shared.jobs.lock().unwrap() = jobs.clone();
+                    let jobs = self.jobs_shared.publish_jobs(jobs);
                     *self.jobs_shared.wake_runs.lock().unwrap() = wake_runs;
                     *self.jobs_shared.peer_runs.lock().unwrap() = peer_runs;
                     self.live_repl.set_jobs(jobs);

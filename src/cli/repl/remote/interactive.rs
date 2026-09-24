@@ -64,7 +64,7 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
     live_repl.set_readonly(daemon_state.sandbox_readonly);
     // 空会话:挂 banner,Tab 可换车道;有过回合的会话直接是输入框。
     live_repl.set_session_empty(&config, paths, session_is_empty(paths, &active_session_id));
-    let jobs_shared = spawn_jobs_poll_thread(paths.clone());
+    let jobs_shared = spawn_jobs_poll_thread(paths.clone(), &active_session_id);
     let jobs_feed = JobsFeed::Shared(jobs_shared.clone());
     // 在 herdr 的 pane 里跑的话，侧栏这就多一行 `miyu`（不在就是 no-op）。
     // 带上会话 id：`herdr agent list` 会显示它，将来做「重启后恢复」也靠它指回来。
@@ -189,7 +189,7 @@ impl RemoteRepl {
     pub(super) async fn run(&mut self) -> Result<()> {
         loop {
             // Keep the poll thread's session filter in step with /new & /session.
-            *self.jobs_shared.repl_session.lock().unwrap() = Some(self.active_session_id.clone());
+            self.jobs_shared.set_repl_session(&self.active_session_id);
             // Σ：空闲时轮询只改界面上那份（上次显式刷新之后才开读的，见
             // `footer_generation`），这儿不收回来就被下面的整份覆盖盖回旧值，下一次
             // 轮询才又改回来——屏上先回到老数再加上去（用户 09-23）。放在追 footer

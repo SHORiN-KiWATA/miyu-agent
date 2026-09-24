@@ -415,6 +415,13 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     }
     let store = StateStore::new(paths)?.pinned(&state.session_id);
     active_session_id.clone_from(&state.session_id);
+    // 状态行上的后台任务当场跟着换，新会话的画面里就不带上一个会话的任务。原来
+    // 要等主循环转回顶上、再等下一轮轮询（最多一秒），`/new` 之后大厅里旧任务还挂着
+    //（todolist 09-24）。直连模式没有轮询线程，这里是空操作。
+    if let Some(feed) = crate::cli::repl::jobs::feed() {
+        feed.set_repl_session(&state.session_id);
+        live_repl.set_jobs(feed.jobs.lock().unwrap().clone());
+    }
     // 换了会话，显示就是这条会话自己的车道：大厅里按 Tab 换的那一下作废。
     live_repl.lobby_lane_pending = false;
     *history = load_repl_input_history(&store, paths)?;

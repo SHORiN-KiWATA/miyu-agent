@@ -186,12 +186,32 @@ pub(in crate::cli) async fn run_live_agent_turn(
         let mut input_tick = tokio::time::interval(Duration::from_millis(16));
         input_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         input_tick.tick().await;
+        // 本进程的任务表，按这条会话过滤。状态行与浮层上的 x 都用它。
+        let jobs_feed = JobsFeed::Local(Some(state.session_id().to_string()));
+        let mut strip_tick = 0u32;
         loop {
             tokio::select! {
                 biased;
                 _ = input_tick.tick() => {
                     if terminal_hangup() {
                         crate::cli::exit_after_terminal_gone(0);
+                    }
+                    // 状态行跟着任务走，约 130ms 一次（远端回合在转轮 tick 里做同一件事）。
+                    // 原来直连回合里一次都不刷：这一轮里新开的后台任务要等说完才上状态行，
+                    // 回合中点不开、也停不了它。
+                    strip_tick = strip_tick.wrapping_add(1);
+                    if strip_tick % 8 == 0 {
+                        let mut live = live_cell.borrow_mut();
+                        live.expire_hover()?;
+                        if !live.external_output_active {
+                            if live.set_jobs(jobs_feed.current()) {
+                                synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                                    live.redraw()
+                                })?;
+                            } else {
+                                live.tick_job_strip()?;
+                            }
+                        }
                     }
                     if !event::poll(Duration::ZERO)? {
                         continue;
@@ -247,6 +267,13 @@ pub(in crate::cli) async fn run_live_agent_turn(
                         let _ = synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
                             live.redraw()
                         });
+                        continue;
+                    }
+                    // 浮层开着时按键先给它（Esc 关、翻页、x 停任务），它不要的才进输入框。
+                    // 原来直连回合里按键直接进输入框：浮层上按 x 没反应，连按两下 Esc 想关
+                    // 浮层反倒把这一轮打断了（远端那条路在 `remote/one_shot.rs` 早就是先给浮层）。
+                    if live.handle_screen_event(&event)? {
+                        stop_pending_job(paths, &jobs_feed, &mut live).await?;
                         continue;
                     }
                     let mode_before = live.mode();

@@ -262,6 +262,37 @@ pub(in crate::cli) fn retain_session_jobs(
     }
 }
 
+impl SharedJobsFeed {
+    /// 换成这个 REPL 现在看着的会话。已经拉回来的任务表里不属于它的当场摘掉：等下一轮
+    /// 轮询（约 1 秒）才换的话，这一秒里状态行上还是上一个会话的后台任务。
+    pub(in crate::cli) fn set_repl_session(&self, session: &str) {
+        let mut current = self.repl_session.lock().unwrap();
+        if current.as_deref() == Some(session) {
+            return;
+        }
+        *current = Some(session.to_string());
+        retain_session_jobs(&mut self.jobs.lock().unwrap(), Some(session));
+    }
+
+    /// 刚拉回来的任务表按这个 REPL 的会话过滤后放上去，返回过滤后的那份。
+    ///
+    /// 过滤和写入都在会话锁里做：拉取途中 REPL 换了会话，按旧会话过滤的那份就不会
+    /// 盖上来。还不知道自己是哪条会话时一条都不认——原来这时「全都显示」，新开的终端
+    /// 于是先闪一下别的会话的后台任务（todolist 09-24）。
+    pub(in crate::cli) fn publish_jobs(
+        &self,
+        mut jobs: Vec<miyu_engine::tools::jobs::JobOverview>,
+    ) -> Vec<miyu_engine::tools::jobs::JobOverview> {
+        let session = self.repl_session.lock().unwrap();
+        match session.as_deref() {
+            Some(session) => retain_session_jobs(&mut jobs, Some(session)),
+            None => jobs.clear(),
+        }
+        *self.jobs.lock().unwrap() = jobs.clone();
+        jobs
+    }
+}
+
 /// Source of background-command snapshots for the idle status strip.
 pub(in crate::cli) enum JobsFeed {
     /// Remote REPL: snapshots pushed by the IPC poll thread.
@@ -409,8 +440,14 @@ impl JobsFeed {
 /// Poll the daemon for background commands while the remote REPL idles:
 /// 1s when commands are live, 3s when quiet — a unix-socket roundtrip
 /// costs microseconds either way.
-pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc<SharedJobsFeed> {
+/// `session` 是这个 REPL 起步时的会话：轮询线程第一次拉任务表就按它过滤。原来要等
+/// 主循环转到第一圈才写进来，在那之前拉到的一份没有过滤。
+pub(in crate::cli) fn spawn_jobs_poll_thread(
+    paths: MiyuPaths,
+    session: &str,
+) -> std::sync::Arc<SharedJobsFeed> {
     let shared = std::sync::Arc::new(SharedJobsFeed::default());
+    shared.set_repl_session(session);
     let _ = FEED.set(shared.clone());
     let feed = shared.clone();
     std::thread::spawn(move || {
@@ -459,10 +496,8 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(paths: MiyuPaths) -> std::sync::Arc
                     .unwrap_or_else(|_| Ok((Vec::new(), None, Vec::new(), Vec::new())))
                 })
                 .unwrap_or_default();
-            let mut jobs = jobs;
+            feed.publish_jobs(jobs);
             let repl_session = { feed.repl_session.lock().unwrap().clone() };
-            retain_session_jobs(&mut jobs, repl_session.as_deref());
-            *feed.jobs.lock().unwrap() = jobs;
             *feed.wake_runs.lock().unwrap() = wake_runs;
             *feed.peer_runs.lock().unwrap() = peer_runs;
             // 目标按**这个 REPL 的会话**单独问一次：任务总览回的那份

@@ -119,7 +119,7 @@ impl RemoteRepl {
         };
         self.live_repl.lobby_lane_pending = false;
         self.active_session_id = state.session_id.clone();
-        *self.jobs_shared.repl_session.lock().unwrap() = Some(self.active_session_id.clone());
+        self.jobs_shared.set_repl_session(&self.active_session_id);
         self.live_repl.set_readonly(state.sandbox_readonly);
         self.lane_context.set(self.mode, state.context_tokens);
         // footer 按这条会话自己的作用域重算：它可能钉了模型（和换会话同一套）。

@@ -181,7 +181,7 @@ impl RemoteRepl {
         self.mode = lane;
         // 任务条/目标提示都按**这个 REPL 的会话**过滤，换了会话要跟着换，
         // 否则状态行上还挂着上一条会话的东西。
-        *self.jobs_shared.repl_session.lock().unwrap() = Some(self.active_session_id.clone());
+        self.jobs_shared.set_repl_session(&self.active_session_id);
         self.follow_active_run_here().await?;
         Ok(())
     }

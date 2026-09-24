@@ -11,6 +11,7 @@ mod golden_panel;
 mod hangup;
 mod herdr_notify;
 mod input_editing;
+mod jobs_feed;
 mod lobby_anim;
 mod lobby_layout;
 mod pop_menu;
