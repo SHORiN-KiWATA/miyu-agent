@@ -394,6 +394,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
         .route("/crosssession.js", get(crosssession_js_asset))
+        .route("/sessionselect.js", get(sessionselect_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))
         .route("/highlight.js", get(highlight_js_asset))
         // artifact 的沙箱 iframe 也来这里取库,而它是不透明源——浏览器会为此强制

@@ -824,6 +824,81 @@ body[data-theme="graphite"] .session-unread-dot {
   background: var(--danger-soft);
 }
 
+/* 批量删除的选择模式(09-24,web/sessionselect.js):行首指示格换成勾选框,
+   列表顶上挂一条操作栏。按钮沿用会话菜单那套小字按钮,删除沿用危险色。 */
+.session-select-box {
+  display: grid;
+  width: 11px;
+  height: 11px;
+  place-items: center;
+  border: 1px solid var(--text-soft);
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.session-item.is-selected .session-select-box {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--md-sys-color-on-primary, #fff);
+}
+
+.session-item.is-selected {
+  background: var(--accent-soft);
+}
+
+.session-bulk-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 4px 6px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  box-shadow: var(--float-shadow);
+}
+
+.session-bulk-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-bulk-button {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.session-bulk-button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.session-bulk-button.is-danger {
+  color: var(--danger);
+}
+
+.session-bulk-button.is-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.session-bulk-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 
 .sidebar-footer {
   padding: 11px 12px max(12px, env(safe-area-inset-bottom));

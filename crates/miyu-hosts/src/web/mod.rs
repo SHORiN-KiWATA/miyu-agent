@@ -168,6 +168,8 @@ const LINKCARDS_JS: &str = include_str!("../../../../web/linkcards.js");
 const TODOS_JS: &str = include_str!("../../../../web/todos.js");
 // 跨会话消息(09-23):在线登记心跳与消息外壳的显示。
 const CROSS_SESSION_JS: &str = include_str!("../../../../web/crosssession.js");
+// 侧栏会话批量删除(09-24):选择模式与操作栏。
+const SESSION_SELECT_JS: &str = include_str!("../../../../web/sessionselect.js");
 // 聊天正文选中文字的右键菜单(2026-09-14)。
 const SELECTION_MENU_JS: &str = include_str!("../../../../web/selectionmenu.js");
 // 代码块语法高亮:只用 Prism 的分词器,上色的 DOM 由这个文件亲手搭。

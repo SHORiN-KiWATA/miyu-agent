@@ -2420,6 +2420,10 @@
     // 清空对本来只给默认会话（它不能改名/删除，拿这个顶位），可普通会话一样
     // 需要「留着会话、只丢历史」——删掉重建会连模型/工作目录覆盖一起丢。
     actions.push({ label: t("清空对话"), handler: requestClearConversation });
+    // 多选(09-24):从这一条开始勾,之后在列表顶上的操作栏里批量删除。
+    if (!isDefault && window.MiyuSessionSelect) {
+      actions.push({ label: t("多选…"), handler: () => window.MiyuSessionSelect.enter(id) });
+    }
     if (!isDefault) actions.push({ label: t("删除"), danger: true, handler: () => deleteSession(id) });
     for (const action of actions) {
       const button = document.createElement("button");
@@ -2454,14 +2458,19 @@
     item.dataset.sessionId = id;
 
     const renaming = state.sessionRenaming === id;
-    // 侧栏拖拽排序(组内):HTML5 DnD,drop 时全量提交新顺序。
-    if (!renaming) attachSessionDrag(item, session, id);
+    const selecting = Boolean(window.MiyuSessionSelect?.active()) && !isDefault;
+    // 侧栏拖拽排序(组内):HTML5 DnD,drop 时全量提交新顺序。选择模式下不拖。
+    if (!renaming && !selecting) attachSessionDrag(item, session, id);
     const main = document.createElement(renaming ? "div" : "button");
     main.className = `session-item-main${renaming ? " is-renaming" : ""}`;
     if (!renaming) {
       main.type = "button";
       main.title = isView ? sessionDisplayName(session) : t("查看「{name}」", {name: sessionDisplayName(session)});
-      main.addEventListener("click", () => openSessionView(id));
+      // 选择模式下点一行是勾选,不是打开(09-24 批量删除)。
+      main.addEventListener("click", () => {
+        if (window.MiyuSessionSelect?.active()) window.MiyuSessionSelect.toggle(id);
+        else openSessionView(id);
+      });
     }
     // 行首那一格只放状态指示器。模式图标搬去了分组标题——同一组里每行都
     // 画一遍相同的图标，重复十几次也说不出新东西，还占着状态该用的位置。
@@ -2481,6 +2490,7 @@
       lead.appendChild(dot);
     }
     main.appendChild(lead);
+    if (selecting) window.MiyuSessionSelect.decorateItem(item, main, lead, id);
 
     const copy = document.createElement("span");
     copy.className = "session-copy";
@@ -2558,6 +2568,7 @@
       event.stopPropagation();
       toggleSessionMenu(id);
     });
+    menuButton.hidden = selecting;
     trailing.appendChild(menuButton);
     item.appendChild(trailing);
 
@@ -2616,6 +2627,9 @@
     const dev = state.sessions.filter(
       (session) => !isTerminalSession(session?.session_id) && session?.mode === "dev"
     );
+    if (window.MiyuSessionSelect?.active()) {
+      elements.sessionItems.appendChild(window.MiyuSessionSelect.buildBar());
+    }
     if (normal.length) {
       elements.sessionItems.appendChild(buildSessionGroupHeader(t("普通模式"), "message-circle"));
       for (const session of normal) elements.sessionItems.appendChild(buildSessionItem(session));
@@ -3146,14 +3160,8 @@
     if (state.sessionBusy) return;
     setSessionBusy(true);
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+      await deleteSessionRequest(sessionId);
       showToast(t("会话已删除"));
-      state.sessions = state.sessions.filter((item) => String(item?.session_id) !== String(sessionId));
-      // 删的是最后一个会话时，服务端已经建好顶替的那个并随回执带回；事件
-      // 到达有先后，这里直接收进列表，兜底就不会再去新建。
-      const replacement = (await response.json().catch(() => null))?.fallback;
-      const replacementId = String(replacement?.session_id || "");
-      if (replacementId && !findSession(replacementId)) state.sessions.unshift(replacement);
       renderSessionList();
       if (sessionId === state.viewSessionId) await openFallbackSessionView(sessionId);
     } catch (error) {
@@ -3161,6 +3169,44 @@
     } finally {
       setSessionBusy(false);
     }
+  }
+
+  /// 删一条并把它从列表里拿掉。删的是最后一个会话时，服务端已经建好顶替的那个并随
+  /// 回执带回；事件到达有先后，这里直接收进列表，兜底就不会再去新建。
+  async function deleteSessionRequest(sessionId) {
+    const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    state.sessions = state.sessions.filter((item) => String(item?.session_id) !== String(sessionId));
+    const replacement = (await response.json().catch(() => null))?.fallback;
+    const replacementId = String(replacement?.session_id || "");
+    if (replacementId && !findSession(replacementId)) state.sessions.unshift(replacement);
+  }
+
+  /// 批量删除(sessionselect.js 调,09-24):逐个走单删接口、一个等一个——服务端删会话
+  /// 要占全局的管理锁,并发发出去除了第一个都会 409。正在看的那条被删了,最后切到剩下
+  /// 的某一条(和单删同一个兜底)。
+  async function deleteSessions(ids) {
+    if (state.sessionBusy || !ids.length) return;
+    setSessionBusy(true);
+    const viewed = String(state.viewSessionId || "");
+    let deleted = 0;
+    let failed = 0;
+    try {
+      for (const [index, id] of ids.entries()) {
+        if (ids.length > 3) showToast(t("正在删除 {done}/{total}", {done: index + 1, total: ids.length}));
+        try {
+          await deleteSessionRequest(id);
+          deleted += 1;
+        } catch (_) {
+          failed += 1;
+        }
+      }
+      renderSessionList();
+      if (ids.includes(viewed) && !findSession(viewed)) await openFallbackSessionView(viewed);
+    } finally {
+      setSessionBusy(false);
+    }
+    if (failed) showToast(t("删除了 {deleted} 个会话，{failed} 个没删成", {deleted, failed}), "error");
+    else showToast(t("已删除 {count} 个会话", {count: deleted}));
   }
 
   function handleSessionEvent(name, data) {
@@ -13693,6 +13739,13 @@
       previewLines: () => state.display?.cross_session_preview_lines ?? 10
     });
     window.MiyuCrossSession?.startPresence(() => (state.blocked ? null : state.viewSessionId));
+    window.MiyuSessionSelect?.init({
+      render: renderSessionList,
+      listedIds: () => state.sessions
+        .map((session) => String(session?.session_id || ""))
+        .filter((id) => id && !isTerminalSession(id)),
+      deleteSessions
+    });
     startBrailleTicker();
     // G2:页面不可见时给 body 挂 miyu-paused,CSS 据此暂停全部装饰动画。
     // 实测(Xvfb+Chrome)不挂这个时隐藏窗口的合成负载与可见时完全一样。

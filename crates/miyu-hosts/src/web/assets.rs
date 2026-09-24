@@ -198,6 +198,10 @@ pub(in crate::web) async fn index_asset(
                 &format!("src=\"/crosssession.js?v={}\"", miyu_base::build_id()),
             )
             .replace(
+                "src=\"/sessionselect.js\"",
+                &format!("src=\"/sessionselect.js?v={}\"", miyu_base::build_id()),
+            )
+            .replace(
                 "src=\"/selectionmenu.js\"",
                 &format!("src=\"/selectionmenu.js?v={}\"", miyu_base::build_id()),
             )
@@ -419,6 +423,14 @@ pub(in crate::web) async fn crosssession_js_asset(headers: HeaderMap) -> Respons
     embedded_asset(
         &headers,
         CROSS_SESSION_JS.as_bytes(),
+        "application/javascript; charset=utf-8",
+    )
+}
+
+pub(in crate::web) async fn sessionselect_js_asset(headers: HeaderMap) -> Response {
+    embedded_asset(
+        &headers,
+        SESSION_SELECT_JS.as_bytes(),
         "application/javascript; charset=utf-8",
     )
 }
