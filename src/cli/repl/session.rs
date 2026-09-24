@@ -993,6 +993,35 @@ pub(in crate::cli) async fn repl_fallback_session_state(
     .map(|(state, _)| state))
 }
 
+/// `/session` 面板里列哪些会话。列不出来（IPC 出错已经说过了）、或者一条都没有（说一声）
+/// 就是 `None`。空闲时的面板和回合里开的面板（B4）共用。
+pub(in crate::cli) async fn session_picker_entries(
+    paths: &MiyuPaths,
+    live: &mut LiveReplTail,
+    mode: PersonaLane,
+) -> Result<Option<Vec<SessionListEntry>>> {
+    let Some((_, data)) = repl_ipc_admin(
+        paths,
+        live,
+        IpcCommand::ListSessions {
+            mode: repl_list_mode(mode),
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let entries = repl_visible_entries(&data, mode);
+    if entries.is_empty() {
+        repl_note(
+            live,
+            &format!("\x1b[2m{}\x1b[0m\n", t("no sessions", "没有会话")),
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(entries))
+}
+
 /// Runs the interactive session picker inside the REPL, servicing Ctrl+D
 /// deletions in place. Returns the session state to switch to — a fallback
 /// session when the REPL's own session was one of the ones deleted, so backing
@@ -1008,25 +1037,9 @@ pub(in crate::cli) async fn repl_pick_session(
     // 分支），所以循环里不再有「我的会话已经没了但还在挑」这个状态——原来
     // 那个 `lost_active` 标记随之消失。
     loop {
-        let Some((_, data)) = repl_ipc_admin(
-            paths,
-            live,
-            IpcCommand::ListSessions {
-                mode: repl_list_mode(mode),
-            },
-        )
-        .await?
-        else {
+        let Some(entries) = session_picker_entries(paths, live, mode).await? else {
             return Ok(None);
         };
-        let entries = repl_visible_entries(&data, mode);
-        if entries.is_empty() {
-            repl_note(
-                live,
-                &format!("\x1b[2m{}\x1b[0m\n", t("no sessions", "没有会话")),
-            )?;
-            return Ok(None);
-        }
         let picked = if live.screen.is_some() {
             super::session_picker::pick(live, &entries, active_session_id, cursor)
         } else {

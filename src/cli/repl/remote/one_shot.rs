@@ -301,6 +301,32 @@ async fn run_remote_chat_inner(
                     let Some(live_tail) = live.as_deref_mut() else {
                         continue;
                     };
+                    // 回合里开着的面板（B4）：按键归它，正文照流。面板里挑了别的会话
+                    // 就借暂离那条路把它带回 `RemoteRepl` 去切。
+                    if live_tail.turn_panel_takes(&event) {
+                        use crate::cli::repl::midturn_panel::{turn_panel_event, HostedPanel};
+                        let mut scope = crate::cli::repl::midturn_panel::TurnScope {
+                            session_id: &turn_session_id,
+                            run_id: &run_id,
+                            renderer: &mut renderer,
+                            herdr: Some(&herdr_turn),
+                        };
+                        if let Some(HostedPanel::SwitchSession(state)) =
+                            turn_panel_event(paths, live_tail, &event, &mut scope).await?
+                        {
+                            renderer.finish()?;
+                            live_tail.stop_footer_spinner()?;
+                            live_tail.apply_renderer_frame(&mut renderer)?;
+                            handoff_raw!();
+                            return Err(anyhow::Error::new(RemoteTurnSuspended {
+                                action: SuspendedAction::SwitchSession(state),
+                                run_id: run_id.clone(),
+                                last_event_id,
+                                session_id: turn_session_id.clone(),
+                            }));
+                        }
+                        continue;
+                    }
                     // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
                     // 任务条上回车是点那一行，不是发消息。
                     if matches!(
@@ -406,36 +432,14 @@ async fn run_remote_chat_inner(
                                     // 把结果带回 `RemoteRepl`。
                                     DuringTurn::Panel if live_tail.screen.is_some() => {
                                         live_tail.editor.clear();
-                                        use crate::cli::repl::midturn_panel::{
-                                            host_panel, HostedPanel,
-                                        };
-                                        match host_panel(
+                                        crate::cli::repl::midturn_panel::open_turn_panel(
                                             paths,
                                             live_tail,
-                                            &mut renderer,
                                             command,
                                             &turn_session_id,
                                         )
-                                        .await?
-                                        {
-                                            HostedPanel::Stayed => continue,
-                                            HostedPanel::SwitchSession(state) => {
-                                                renderer.finish()?;
-                                                live_tail.stop_footer_spinner()?;
-                                                live_tail.apply_renderer_frame(&mut renderer)?;
-                                                handoff_raw!();
-                                                return Err(anyhow::Error::new(
-                                                    RemoteTurnSuspended {
-                                                        action: SuspendedAction::SwitchSession(
-                                                            state,
-                                                        ),
-                                                        run_id: run_id.clone(),
-                                                        last_event_id,
-                                                        session_id: turn_session_id.clone(),
-                                                    },
-                                                ));
-                                            }
-                                        }
+                                        .await?;
+                                        continue;
                                     }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
@@ -986,8 +990,36 @@ async fn run_remote_chat_inner(
                     )?;
                 }
             }
-            "run.completed" => break data,
+            // 别处先答了 / 关了这一轮正开着的那道题（另一个终端、网页）。
+            "question.answered" | "question.closed" => {
+                if let Some(live) = live.as_deref_mut() {
+                    crate::cli::repl::question_flow::settle_question_layer(
+                        live,
+                        &mut renderer,
+                        &kind,
+                        &data,
+                        Some(&herdr_turn),
+                    )?;
+                }
+            }
+            "run.completed" => {
+                if let Some(live) = live.as_deref_mut() {
+                    crate::cli::repl::question_flow::abandon_question_layer(
+                        live,
+                        &mut renderer,
+                        Some(&herdr_turn),
+                    )?;
+                }
+                break data;
+            }
             "run.failed" => {
+                if let Some(live) = live.as_deref_mut() {
+                    crate::cli::repl::question_flow::abandon_question_layer(
+                        live,
+                        &mut renderer,
+                        Some(&herdr_turn),
+                    )?;
+                }
                 renderer.finish()?;
                 if let Some(live) = live.as_deref_mut() {
                     // 和下面取消那支同一个理由:提前 return 的路都得自己熄波浪。
@@ -1000,6 +1032,13 @@ async fn run_remote_chat_inner(
                 bail!("{}", ipc_text(&data, "message"));
             }
             "run.cancelled" => {
+                if let Some(live) = live.as_deref_mut() {
+                    crate::cli::repl::question_flow::abandon_question_layer(
+                        live,
+                        &mut renderer,
+                        Some(&herdr_turn),
+                    )?;
+                }
                 renderer.finish()?;
                 if let Some(live) = live.as_deref_mut() {
                     // 提前 return 的取消路径也要熄波浪:漏掉它,输入框贴着

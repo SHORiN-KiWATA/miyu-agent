@@ -188,7 +188,7 @@ impl LiveReplTail {
         })
     }
 
-    fn leave_strip(&mut self) {
+    pub(in crate::cli::repl::tail) fn leave_strip(&mut self) {
         self.strip_focus = None;
         self.strip_scroll = 0;
     }

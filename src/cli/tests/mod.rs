@@ -32,5 +32,6 @@ mod tui_perf;
 mod tui_reflow;
 mod tui_scroll;
 mod tui_undo;
+mod turn_panel;
 mod variant_menu;
 mod wait_spinner_cursor;

@@ -14,6 +14,7 @@ mod job_strip;
 mod navigate;
 mod queue;
 pub(in crate::cli) mod screen;
+mod turn_panel;
 mod update;
 
 pub(in crate::cli) use navigate::Navigated;
@@ -208,6 +209,9 @@ pub(in crate::cli) struct LiveReplTail {
     pub(in crate::cli) strip_scroll: usize,
     /// 命令候选里方向键挑中的那一条，连同挑的时候输入框里是什么：输入一变就作废。
     pub(in crate::cli) command_pick: Option<(usize, String)>,
+    /// 回合里开着的 `/models` / `/session` 面板（B4）。开着时活动区画的是它，见
+    /// `turn_panel`。
+    pub(in crate::cli) turn_panel: Option<crate::cli::repl::midturn_panel::TurnPanel>,
     /// 最后一次鼠标移动落在哪、什么时候。
     ///
     /// 指针移出窗口时终端**什么都不发**——09-22 实测（`testkit/tui/
@@ -660,6 +664,7 @@ impl LiveReplTail {
             strip_focus: None,
             strip_scroll: 0,
             command_pick: None,
+            turn_panel: None,
             last_mouse_move: None,
             pending_stop_job: None,
             input_cursor: (0, 0),

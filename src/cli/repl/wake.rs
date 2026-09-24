@@ -193,6 +193,35 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                     let event = event::read()?;
                     crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
+                    // 回合里开着的面板（B4）：按键归它，正文照流。面板里挑了别的会话
+                    // 就借暂离那条路把它带回 `RemoteRepl` 去切。
+                    if live.turn_panel_takes(&event) {
+                        use crate::cli::repl::midturn_panel::{turn_panel_event, HostedPanel};
+                        let mut scope = crate::cli::repl::midturn_panel::TurnScope {
+                            session_id,
+                            run_id,
+                            renderer: &mut renderer,
+                            herdr: Some(&herdr_follow),
+                        };
+                        if let Some(HostedPanel::SwitchSession(state)) =
+                            turn_panel_event(paths, live, &event, &mut scope).await?
+                        {
+                            renderer.finish()?;
+                            live.stop_footer_spinner()?;
+                            live.apply_renderer_frame(&mut renderer)?;
+                            return Err(anyhow::Error::new(
+                                crate::cli::repl::session::RemoteTurnSuspended {
+                                    action: crate::cli::repl::session::SuspendedAction::SwitchSession(
+                                        state,
+                                    ),
+                                    run_id: run_id.to_string(),
+                                    last_event_id,
+                                    session_id: session_id.to_string(),
+                                },
+                            ));
+                        }
+                        continue;
+                    }
                     // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
                     // 任务条上回车是点那一行，不是发消息。
                     if matches!(
@@ -320,33 +349,11 @@ pub(in crate::cli) async fn follow_wake_run(
                                     // `one_shot.rs` 那条泵同一份处理。
                                     DuringTurn::Panel if live.screen.is_some() => {
                                         live.editor.clear();
-                                        use crate::cli::repl::midturn_panel::{
-                                            host_panel, HostedPanel,
-                                        };
-                                        match host_panel(
-                                            paths,
-                                            live,
-                                            &mut renderer,
-                                            command,
-                                            session_id,
+                                        crate::cli::repl::midturn_panel::open_turn_panel(
+                                            paths, live, command, session_id,
                                         )
-                                        .await?
-                                        {
-                                            HostedPanel::Stayed => continue,
-                                            HostedPanel::SwitchSession(state) => {
-                                                renderer.finish()?;
-                                                live.stop_footer_spinner()?;
-                                                live.apply_renderer_frame(&mut renderer)?;
-                                                return Err(anyhow::Error::new(
-                                                    crate::cli::repl::session::RemoteTurnSuspended {
-                                                        action: crate::cli::repl::session::SuspendedAction::SwitchSession(state),
-                                                        run_id: run_id.to_string(),
-                                                        last_event_id,
-                                                        session_id: session_id.to_string(),
-                                                    },
-                                                ));
-                                            }
-                                        }
+                                        .await?;
+                                        continue;
                                     }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
@@ -778,7 +785,22 @@ pub(in crate::cli) async fn follow_wake_run(
                 )
                 .await?;
             }
+            // 别处先答了 / 关了这一轮正开着的那道题（另一个终端、网页）。
+            "question.answered" | "question.closed" => {
+                crate::cli::repl::question_flow::settle_question_layer(
+                    live,
+                    &mut renderer,
+                    &kind,
+                    &data,
+                    Some(&herdr_follow),
+                )?;
+            }
             "run.completed" | "run.failed" | "run.cancelled" => {
+                crate::cli::repl::question_flow::abandon_question_layer(
+                    live,
+                    &mut renderer,
+                    Some(&herdr_follow),
+                )?;
                 break;
             }
             _ => {}

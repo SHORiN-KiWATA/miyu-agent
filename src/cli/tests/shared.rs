@@ -28,6 +28,7 @@ pub(super) fn detached_tail() -> LiveReplTail {
         strip_focus: None,
         strip_scroll: 0,
         command_pick: None,
+        turn_panel: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),

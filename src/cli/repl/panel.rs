@@ -176,8 +176,9 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
     }
 }
 
-/// 把面板那几行写到屏上:每行先用空格铺满面板宽再写内容(竖条 + 行)。
-fn paint_panel(panel: &Panel, bar: &str, lines: &[String]) -> Result<()> {
+/// 把面板那几行写到屏上:每行先用空格铺满面板宽再写内容(竖条 + 行)。回合里开在活动区
+/// 位置上的面板(`tail::turn_panel`)也用它。
+pub(in crate::cli) fn paint_panel(panel: &Panel, bar: &str, lines: &[String]) -> Result<()> {
     let mut stdout = crate::cli::repl::tail::term_out();
     for (row, line) in lines.iter().enumerate() {
         let y = panel.top.saturating_add(row as u16);

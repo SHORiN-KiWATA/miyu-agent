@@ -376,6 +376,10 @@ impl StreamRenderer {
         self.preparing_question_started_at = None;
         self.tool_preparing = None;
         self.tool_preparing_since = None;
+        // 面板开着时她在等人回答，没什么在跑：转轮停下，答完 `start_waiting` 再起。原来
+        // 面板一开回合循环就停了，转轮自然不动；面板改成活动区上的层之后循环照转
+        // （会话项目第 3 段，B4），不停的话「准备问题」会一直挂在面板上头。
+        self.stop_waiting()?;
         self.show_cursor()?;
         Ok(())
     }

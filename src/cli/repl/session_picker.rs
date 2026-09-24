@@ -15,12 +15,13 @@ pub(super) fn pick(
     active: &str,
     cursor: Option<usize>,
 ) -> Result<SessionPick> {
-    let mut picker = SessionPicker::new(entries, active, cursor);
+    let mut picker = SessionPicker::new(entries.to_vec(), active, cursor);
     panel::pick(live, &mut picker)
 }
 
-struct SessionPicker<'a> {
-    entries: &'a [SessionListEntry],
+/// 会话选择面板。自己带着那份列表：回合里开的 `/session` 面板要活过这一次调用（B4）。
+pub(in crate::cli) struct SessionPicker {
+    entries: Vec<SessionListEntry>,
     lines: Vec<String>,
     search: Vec<String>,
     matcher: SkimMatcherV2,
@@ -29,10 +30,13 @@ struct SessionPicker<'a> {
     scroll: usize,
 }
 
-impl<'a> SessionPicker<'a> {
-    fn new(entries: &'a [SessionListEntry], active: &str, cursor: Option<usize>) -> Self {
+impl SessionPicker {
+    pub(in crate::cli) fn new(
+        entries: Vec<SessionListEntry>,
+        active: &str,
+        cursor: Option<usize>,
+    ) -> Self {
         Self {
-            entries,
             lines: entries
                 .iter()
                 .map(|entry| session_select_line(entry, Some(active)))
@@ -40,8 +44,9 @@ impl<'a> SessionPicker<'a> {
             search: entries.iter().map(session_select_search).collect(),
             matcher: SkimMatcherV2::default(),
             query: String::new(),
-            selected: cursor.unwrap_or_else(|| session_initial_selection(entries, Some(active))),
+            selected: cursor.unwrap_or_else(|| session_initial_selection(&entries, Some(active))),
             scroll: 0,
+            entries,
         }
     }
 
@@ -50,7 +55,7 @@ impl<'a> SessionPicker<'a> {
     }
 }
 
-impl PanelModel for SessionPicker<'_> {
+impl PanelModel for SessionPicker {
     type Output = SessionPick;
 
     fn desired_rows(&self) -> u16 {

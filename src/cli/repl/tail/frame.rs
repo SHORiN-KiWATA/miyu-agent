@@ -213,6 +213,13 @@ impl LiveReplTail {
                 return Ok(());
             }
         }
+        // 回合里开着的面板（B4）：活动区这会儿就是它，正文照常往上面画。
+        if self.turn_panel.is_some() && self.screen.is_some() {
+            if let Some(screen) = &mut self.screen {
+                screen.resize(cols, terminal_rows);
+            }
+            return self.paint_turn_panel(cols, terminal_rows, output_col);
+        }
         // 候选面板得在**这一帧**就画出来。
         //
         // 原来是 `paint` 之后才算的，于是它永远慢一帧：打一个 `/` 什么都不出，

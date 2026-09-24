@@ -425,9 +425,10 @@ impl SessionModelMenu {
         })
     }
 
-    /// 给选择器的 Tab 规矩。
-    pub(in crate::cli) fn toggle_rule(&self) -> impl Fn(&mut [bool], usize) + '_ {
-        move |active, index| toggle_model_row(active, &self.derived, index)
+    /// 给选择器的 Tab 规矩。自己带一份派生标记：回合里开的面板要活过这一次调用（B4）。
+    pub(in crate::cli) fn toggle_rule(&self) -> impl Fn(&mut [bool], usize) + 'static {
+        let derived = self.derived.clone();
+        move |active, index| toggle_model_row(active, &derived, index)
     }
 
     /// 把菜单结果落成会话覆盖。返回（真的改了没, 给用户的一句话）。

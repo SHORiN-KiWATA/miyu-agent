@@ -167,9 +167,12 @@ impl RemoteRepl {
         loop {
             // Keep the poll thread's session filter in step with /new & /session.
             self.jobs_shared.set_repl_session(&self.active_session_id);
+            // 回合在面板开着时跑完了（B4）：面板接着开，这会儿没有正文在流，照空闲时那套挑。
+            self.finish_turn_panel().await?;
             // 跟着看的中途又换了会话（切进子会话、回去），换过去那条的轮接着挂。
             while std::mem::take(&mut self.follow_pending) {
                 self.follow_active_run_here().await?;
+                self.finish_turn_panel().await?;
             }
             // Σ：空闲时轮询只改界面上那份（上次显式刷新之后才开读的，见
             // `footer_generation`），这儿不收回来就被下面的整份覆盖盖回旧值，下一次
@@ -423,8 +426,41 @@ impl RemoteRepl {
                 self.switch_to_session(&state).await?;
                 Ok(LoopStep::Continue)
             }
-            SuspendedAction::Strip(action) => self.perform_strip_action(action).await,
+            // 面板开着时点了子代理那一行：面板是给原来那条会话开的，跟着换过去就落到别的
+            // 会话头上了。丢掉；没答的提问，挂回那一轮时会随补放再弹出来。
+            SuspendedAction::Strip(action) => {
+                self.live_repl.turn_panel = None;
+                self.perform_strip_action(action).await
+            }
         }
+    }
+
+    /// 回合在面板开着时跑完了，面板还在活动区上：接着挑完，结果照回合里那样落地。提问面板
+    /// 回合收尾时已经收掉了（没人再等那个答案），这里碰不到。
+    async fn finish_turn_panel(&mut self) -> Result<()> {
+        let Some(mut panel) = self.live_repl.turn_panel.take() else {
+            return Ok(());
+        };
+        if matches!(
+            panel,
+            crate::cli::repl::midturn_panel::TurnPanel::Question(_)
+        ) {
+            return Ok(());
+        }
+        let done = crate::cli::repl::panel::pick(&mut self.live_repl, &mut panel)?;
+        let session_id = self.active_session_id.clone();
+        let outcome = crate::cli::repl::midturn_panel::finish_turn_panel(
+            &self.paths,
+            &mut self.live_repl,
+            panel,
+            done,
+            &session_id,
+        )
+        .await?;
+        if let crate::cli::repl::midturn_panel::HostedPanel::SwitchSession(state) = outcome {
+            self.switch_to_session(&state).await?;
+        }
+        Ok(())
     }
 
     /// 回合中寄宿的 `/models` 面板改了会话模型（09-20）：活动区那份 footer 已经

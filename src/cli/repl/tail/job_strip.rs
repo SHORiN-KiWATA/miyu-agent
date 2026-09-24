@@ -119,6 +119,10 @@ impl LiveReplTail {
         if !self.rendered || (self.jobs.is_empty() && self.strip_sessions.is_empty()) {
             return Ok(());
         }
+        // 回合里开着面板时活动区归面板（B4），任务条不在屏上。
+        if self.turn_panel.is_some() {
+            return Ok(());
+        }
         // 详情面板开着时整屏归它。这时候还往活动区那几行写，两个画笔会在同一
         // 块地方来回抢，屏幕上就是输入框疯狂抖动。
         if self
