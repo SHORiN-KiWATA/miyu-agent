@@ -8,8 +8,10 @@
 
 mod delivery;
 mod job_wake;
+mod restart_resume;
 pub(in crate::web) use delivery::*;
 pub(in crate::web) use job_wake::*;
+pub(in crate::web) use restart_resume::*;
 
 use crate::web::*;
 

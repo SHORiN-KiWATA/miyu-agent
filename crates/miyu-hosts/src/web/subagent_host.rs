@@ -18,7 +18,7 @@
 use crate::web::*;
 use miyu_base::host_ports::{
     ChildOutcome, ChildTaskResult, ContinueChildRequest, SpawnChildRequest, SubagentHostPort,
-    SubagentProgressSink,
+    SubagentProgressSink, WatchChildRequest,
 };
 use miyu_core::state::{SubagentTaskState, SUBAGENT_SESSION_KIND};
 use std::collections::{HashMap, HashSet};
@@ -76,6 +76,14 @@ impl SubagentHostPort for SubagentHost {
     ) -> futures_util::future::BoxFuture<'static, Result<ChildOutcome>> {
         let state = self.state.clone();
         Box::pin(async move { continue_child(state, request).await })
+    }
+
+    fn watch_child(
+        &self,
+        request: WatchChildRequest,
+    ) -> futures_util::future::BoxFuture<'static, Result<ChildOutcome>> {
+        let state = self.state.clone();
+        Box::pin(async move { watch_child(state, request).await })
     }
 }
 
@@ -173,20 +181,24 @@ async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<C
     .await
 }
 
+/// 只认这个父会话自己的子级:别的会话的子代理、主会话本身都不能拿来续或等。
+fn own_child(
+    store: &StateStore,
+    parent: &str,
+    child: &str,
+) -> Result<miyu_core::state::SessionRecord> {
+    let record = store
+        .session_record(child)?
+        .with_context(|| format!("subagent session not found: {child}"))?;
+    if record.kind != SUBAGENT_SESSION_KIND || record.parent_session_id.as_deref() != Some(parent) {
+        bail!("session {child} is not a subagent of this conversation");
+    }
+    Ok(record)
+}
+
 async fn continue_child(state: DaemonState, request: ContinueChildRequest) -> Result<ChildOutcome> {
     let store = state.stores.for_session(&request.child_session);
-    let child = store
-        .session_record(&request.child_session)?
-        .with_context(|| format!("subagent session not found: {}", request.child_session))?;
-    // 只认自己的子级:别的会话的子代理、主会话本身都不能拿来「续」。
-    if child.kind != SUBAGENT_SESSION_KIND
-        || child.parent_session_id.as_deref() != Some(request.parent_session.as_str())
-    {
-        bail!(
-            "session {} is not a subagent of this conversation",
-            request.child_session
-        );
-    }
+    let child = own_child(&store, &request.parent_session, &request.child_session)?;
     (request.progress)(format!(
         "{}{}",
         miyu_engine::tools::SUBAGENT_SESSION_MARKER,
@@ -207,6 +219,47 @@ async fn continue_child(state: DaemonState, request: ContinueChildRequest) -> Re
         request.progress,
     )
     .await
+}
+
+/// 只等不跑(09-24 断点续跑):子会话自己的回合已经结束,在等被另外接回的孙代理;孙代理
+/// 跑完叫醒它、它收尾之后,监督器判出终态交到这里。
+async fn watch_child(state: DaemonState, request: WatchChildRequest) -> Result<ChildOutcome> {
+    let store = state.stores.for_session(&request.child_session);
+    let child = own_child(&store, &request.parent_session, &request.child_session)?.session_id;
+    (request.progress)(format!(
+        "{}{}",
+        miyu_engine::tools::SUBAGENT_SESSION_MARKER,
+        child
+    ));
+    store.set_session_task_state(&child, SubagentTaskState::Waiting)?;
+    let (sender, receiver) = oneshot::channel();
+    waiters().lock().unwrap().insert(child.clone(), sender);
+    let mut guard = ChildRunGuard {
+        state: state.clone(),
+        child: child.clone(),
+        armed: true,
+    };
+    let events_after = state.events.latest_id();
+    // 名下已经没有要等的(孙代理没接回来):当场收成中断,别让父会话干等一个不会来的结果。
+    let busy = state.manager.lock().unwrap().session_has_runs(&child);
+    let pending_jobs = tools::jobs::running_job_count_for_session(&child);
+    let pending_children = store.pending_child_sessions(&child).unwrap_or(0);
+    if !busy && pending_jobs == 0 && pending_children == 0 {
+        let _ = store.set_session_task_state(&child, SubagentTaskState::Interrupted);
+        resolve_waiter(&child, SubagentTaskState::Interrupted);
+    }
+    let relay = tokio::spawn(relay_child_events(
+        state.clone(),
+        child.clone(),
+        events_after,
+        request.progress,
+    ));
+    let task_state = receiver.await.unwrap_or(SubagentTaskState::Interrupted);
+    guard.disarm();
+    relay.abort();
+    Ok(ChildOutcome::Finished(child_result(
+        &state, &child, task_state,
+    )))
 }
 
 /// 子会话有活动回合时把话排成 follow-up。回合刚起、`queue_target` 还没就位就等一小会;

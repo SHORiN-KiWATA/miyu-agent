@@ -716,6 +716,9 @@ impl ConversationDb {
     ) -> Result<Vec<(i64, String, String, String)>> {
         let conn = self.conn.lock().unwrap();
         let cross_session = crate::state::CROSS_SESSION_MESSAGE_TAG;
+        // 重启续跑的轮（09-24）同样是 daemon 替会话起的：终端没来得及挂上去就跑完了
+        // 的话（daemon 刚起来、客户端还没连上），也从这里补印。
+        let restart = crate::state::SERVICE_RESTART_TAG;
         let mut stmt = conn.prepare(&format!(
             "SELECT seq, turn_id, display_content,
                     CASE WHEN status = 'completed' THEN assistant_content
@@ -725,9 +728,11 @@ impl ConversationDb {
              FROM turns
              WHERE session_id = ?1 AND seq > ?2 AND status IN ('completed', 'failed', 'interrupted')
                AND (user_content LIKE '<background-job-report>%'
-                    OR substr(user_content, 1, {}) = '{cross_session}')
+                    OR substr(user_content, 1, {}) = '{cross_session}'
+                    OR substr(user_content, 1, {}) = '{restart}')
              ORDER BY seq ASC LIMIT 8",
-            cross_session.chars().count()
+            cross_session.chars().count(),
+            restart.chars().count()
         ))?;
         let rows = stmt
             .query_map(params![session_id, after_seq], |row| {

@@ -177,6 +177,9 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     // 监督器盯着子会话每轮结束判「任务完没完」。
     install_subagent_host(&state);
     spawn_subagent_supervisor(state.clone());
+    // 上一个 daemon 死掉或关停时没跑完的回合：投递、平台、子代理宿主都装好之后接着跑
+    // （09-24 断点续跑）。
+    spawn_restart_resumes(&state);
     // 脚本查宿主信息的一次性令牌只由 daemon 签发。
     crate::runtime::enable_host_grants();
     voice_bridge::spawn_if_enabled(&state);
@@ -238,6 +241,9 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
             _ = shutdown_rx.recv() => Ok(()),
         }
     };
+    // 先立关停标记再叫 actor 停：正在跑的回合据它只记用量、留着「执行中」，下一个
+    // daemon 起来接着跑（09-24 断点续跑）。
+    miyu_base::process::begin_daemon_shutdown();
     let _ = actor_tx.send(ActorCommand::Shutdown);
     tools::jobs::shutdown_all();
     voice_bridge::shutdown();

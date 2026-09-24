@@ -14,12 +14,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod audit;
+mod background;
 mod log;
 /// 过程协议（标签清单、行解析、标记解析）。格式由**写的这一侧**定，读的那一侧
 /// （后台面板）对着同一份。
 pub mod protocol;
 
 use self::audit::*;
+use self::background::run_mirrored_child;
+pub use self::background::{reattach_background_child, ReattachChild};
 use self::log::*;
 
 const SUBAGENT_SYSTEM_PROMPT: &str = include_str!("../../../../../src/prompts/subagent-general.md");
@@ -467,83 +470,28 @@ async fn run_via_host(
             &description,
             dev,
             &progress,
-            move |job_id, log_path| async move {
-                write_subagent_prompt_header(&log_path, &prompt);
-                let bridge = spawn_subagent_log_bridge(job_id.clone(), log_path.clone());
-                // 子会话 id 一报上来就登记到镜像任务名下:模型追话时拿的是 job_id。
-                let sink: SubagentProgressSink = {
-                    let job_id = job_id.clone();
-                    Arc::new(move |message: String| {
-                        if let Some(session) = message.strip_prefix(SUBAGENT_SESSION_MARKER) {
-                            background_children()
-                                .lock()
-                                .unwrap()
-                                .insert(job_id.clone(), session.to_string());
-                        }
-                        bridge.report(message);
-                    })
-                };
-                let outcome = match child {
-                    Some(child) => {
-                        port.continue_child(ContinueChildRequest {
-                            parent_session: parent,
-                            child_session: child,
-                            message: params.prompt,
-                            workdir,
-                            progress: sink,
-                        })
-                        .await
-                    }
-                    None => {
-                        port.spawn(SpawnChildRequest {
-                            parent_session: parent,
-                            description: params.description,
-                            prompt: params.prompt,
-                            dev,
-                            tier: params.tier,
-                            background: true,
-                            max_steps: params.max_steps,
-                            spawned_by_turn: None,
-                            workdir,
-                            progress: sink,
-                        })
-                        .await
-                    }
-                };
-                let (state_label, tail) = match &outcome {
-                    Ok(ChildOutcome::Finished(result)) => (
-                        result.state.as_str(),
-                        format!(
-                            "\n{}\nsession: {}\n{}\n",
-                            crate::tools::jobs::SUBAGENT_RESULT_MARKER,
-                            result.session_id,
-                            result.final_text
-                        ),
-                    ),
-                    Ok(ChildOutcome::Queued { session_id }) => (
-                        "done",
-                        format!(
-                            "\n{}\nsession: {session_id}\n(follow-up queued)\n",
-                            crate::tools::jobs::SUBAGENT_RESULT_MARKER
-                        ),
-                    ),
-                    Err(error) => (
-                        "error",
-                        format!("\n{}\n{error}\n", crate::tools::jobs::SUBAGENT_ERROR_MARKER),
-                    ),
-                };
-                let _ = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&log_path)
-                    .and_then(|mut file| {
-                        use std::io::Write as _;
-                        file.write_all(tail.as_bytes())
-                    });
-                tracing::debug!(job_id = %job_id, state = %state_label, "background subagent session finished");
-                match state_label {
-                    "done" => crate::tools::jobs::JobState::Exited { code: Some(0) },
-                    _ => crate::tools::jobs::JobState::Exited { code: None },
-                }
+            move |job_id, log_path| {
+                run_mirrored_child(job_id, log_path, prompt, move |sink| match child {
+                    Some(child) => port.continue_child(ContinueChildRequest {
+                        parent_session: parent,
+                        child_session: child,
+                        message: params.prompt,
+                        workdir,
+                        progress: sink,
+                    }),
+                    None => port.spawn(SpawnChildRequest {
+                        parent_session: parent,
+                        description: params.description,
+                        prompt: params.prompt,
+                        dev,
+                        tier: params.tier,
+                        background: true,
+                        max_steps: params.max_steps,
+                        spawned_by_turn: None,
+                        workdir,
+                        progress: sink,
+                    }),
+                })
             },
         )
         .await;

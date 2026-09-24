@@ -12,6 +12,7 @@ mod interrupted_replay;
 mod platform;
 mod queue;
 mod redo;
+mod restart;
 mod sessions;
 mod shared;
 mod sponsors;

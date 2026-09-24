@@ -592,6 +592,34 @@ pub async fn spawn_background_subagent<F>(
 where
     F: std::future::Future<Output = JobState> + Send + 'static,
 {
+    let (job_id, log_path) = register_background_subagent(title, description, dev, build)?;
+    // Subagent detach note rides its own progress channel so it lands as the
+    // block's ↳ subject line; CommandOutput is dropped for non-run_command.
+    progress.report(format!(
+        "__subagent_detach__{} {job_id}",
+        miyu_base::i18n::text("Running in background:", "已后台运行")
+    ));
+    Ok(serde_json::to_string_pretty(&json!({
+        "ok": true,
+        "kind": "background_subagent",
+        "job_id": job_id,
+        "log": log_path.display().to_string(),
+        "note": "Subagent detached to the background. Query with job(action=status) (the log holds its progress); never assume its result before it finishes — you will be woken automatically when it completes."
+    }))?)
+}
+
+/// 只登记、不出工具回执的那一半，返回 (job_id, 日志路径)。daemon 重启后把子代理挂回
+/// 父会话名下（09-24 断点续跑）走这里：那时没有正在跑的工具调用可以回话。任务归属
+/// 的会话、工作目录取调用处的 task-local，调用方要先套好。
+pub fn register_background_subagent<F>(
+    title: Option<&str>,
+    description: &str,
+    dev: bool,
+    build: impl FnOnce(String, PathBuf) -> F,
+) -> Result<(String, PathBuf)>
+where
+    F: std::future::Future<Output = JobState> + Send + 'static,
+{
     let host = require_host()?;
     let job_id = next_job_id();
     let dir = logs_dir(&host.paths);
@@ -644,19 +672,7 @@ where
     if let Some(hook) = started_hook().lock().unwrap().clone() {
         hook(started);
     }
-    // Subagent detach note rides its own progress channel so it lands as the
-    // block's ↳ subject line; CommandOutput is dropped for non-run_command.
-    progress.report(format!(
-        "__subagent_detach__{} {job_id}",
-        miyu_base::i18n::text("Running in background:", "已后台运行")
-    ));
-    Ok(serde_json::to_string_pretty(&json!({
-        "ok": true,
-        "kind": "background_subagent",
-        "job_id": job_id,
-        "log": log_path.display().to_string(),
-        "note": "Subagent detached to the background. Query with job(action=status) (the log holds its progress); never assume its result before it finishes — you will be woken automatically when it completes."
-    }))?)
+    Ok((job_id, log_path))
 }
 
 fn finalize_job(job_id: &str, state: JobState, wake_requested: bool) {

@@ -1,5 +1,22 @@
 //! 进程级的小工具(09-16 从 runtime 下沉:配置目录缓存这种底层模块也要用,不能反向认识 runtime)。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static DAEMON_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// daemon 开始有序关停（重启、换二进制、systemd stop）。只有 daemon 的主流程调。
+///
+/// 关停要让正在跑的回合停下，但不能按「用户取消」收尾：那样库里它就是一条普通的
+/// 「已中断」，下一个 daemon 分不出是人停的还是重启打断的，也就没法接着跑（09-24
+/// 断点续跑）。回合的收尾守卫看到这个标记，只记用量、保留「执行中」。
+pub fn begin_daemon_shutdown() {
+    DAEMON_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+}
+
+pub fn daemon_shutting_down() -> bool {
+    DAEMON_SHUTTING_DOWN.load(Ordering::SeqCst)
+}
+
 /// 把 glibc arena 里已释放的整段内存还给操作系统。大块临时解析（models.dev
 /// 目录、整回合请求体）释放后 glibc 默认把页留在 arena 里，RSS 不降。
 /// 非 glibc 分配器下是无害空转。

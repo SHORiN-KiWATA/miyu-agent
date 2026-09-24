@@ -9,7 +9,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 #[derive(Default)]
 struct SessionState {
-    /// 「是否自动续跑」。驻内存、绝不落库：daemon 重启后必须由人重新授权。
+    /// 「是否自动续跑」。驻内存、绝不落库：daemon 重启后必须由人重新授权。唯一的例外是
+    /// 被重启打断在半路的那一轮续轮：接着跑它时重新武装（`web::actor::restart_resume`，
+    /// 用户 09-24「接着跑，自动续轮也恢复」）。
     armed: bool,
     /// 上一轮一个工具都没调（原地说话）——在人开口之前不再驱动。
     awaiting_human: bool,

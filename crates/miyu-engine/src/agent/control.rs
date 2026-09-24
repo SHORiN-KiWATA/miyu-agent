@@ -94,10 +94,12 @@ impl PendingTurnGuard {
 impl Drop for PendingTurnGuard {
     fn drop(&mut self) {
         if !self.completed {
-            if let Err(error) = self
-                .state
-                .interrupt_turn_with_usage(&self.turn_id, self.usage.get())
-            {
+            if let Err(error) = settle_unfinished_turn(
+                &self.state,
+                &self.turn_id,
+                self.usage.get(),
+                miyu_base::process::daemon_shutting_down(),
+            ) {
                 tracing::error!(
                     turn_id = %self.turn_id,
                     error = %error,
@@ -105,6 +107,22 @@ impl Drop for PendingTurnGuard {
                 );
             }
         }
+    }
+}
+
+/// 没跑完就被丢下的回合怎么落库。人按停止（或回合出错）：收成「已中断」。daemon
+/// 有序关停（重启、换二进制）：只记用量、留着「执行中」——下一个 daemon 才认得出
+/// 这一轮是被重启打断的，接着跑（09-24 断点续跑）。两种都记账。
+pub(in crate::agent) fn settle_unfinished_turn(
+    state: &StateStore,
+    turn_id: &str,
+    usage: TurnTokens,
+    daemon_shutting_down: bool,
+) -> Result<()> {
+    if daemon_shutting_down {
+        state.suspend_turn_with_usage(turn_id, usage)
+    } else {
+        state.interrupt_turn_with_usage(turn_id, usage)
     }
 }
 

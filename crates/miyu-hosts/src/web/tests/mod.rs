@@ -5,6 +5,7 @@ mod cross_session;
 mod events_questions;
 mod http;
 mod ipc_bridge;
+mod restart_resume;
 mod session;
 mod shared;
 mod turn;

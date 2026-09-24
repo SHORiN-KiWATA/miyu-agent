@@ -111,6 +111,25 @@ impl StateStore {
         self.recover_journal_assets(&session_id, turn_id)
     }
 
+    /// daemon 有序关停时的收尾：只记用量、不改状态，见
+    /// `ConversationDb::suspend_turn_with_usage`（09-24 断点续跑）。
+    pub fn suspend_turn_with_usage(&self, turn_id: &str, tokens: TurnTokens) -> Result<()> {
+        self.conv_db.suspend_turn_with_usage(turn_id, tokens)
+    }
+
+    /// 还没结案的孤儿回合（这个库里所有会话的），见 `conversation_db::restart`。
+    pub fn pending_restart_orphans(&self) -> Result<Vec<RestartOrphan>> {
+        self.conv_db.pending_restart_orphans()
+    }
+
+    pub fn close_restart_orphan(&self, turn_id: &str, outcome: &str, detail: &str) -> Result<()> {
+        self.conv_db.close_restart_orphan(turn_id, outcome, detail)
+    }
+
+    pub fn has_turn_after(&self, session_id: &str, seq: i64) -> Result<bool> {
+        self.conv_db.has_turn_after(session_id, seq)
+    }
+
     pub fn interrupt_turn_revision(&self, turn_id: &str, revision: i64) -> Result<()> {
         self.interrupt_turn_revision_with_usage(turn_id, revision, TurnTokens::default())
     }

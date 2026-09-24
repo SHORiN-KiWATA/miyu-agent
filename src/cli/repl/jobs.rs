@@ -106,6 +106,7 @@ pub(in crate::cli) fn is_job_wake_headline(headline: &str) -> bool {
 pub(in crate::cli) fn is_daemon_notice(display: &str) -> bool {
     is_job_wake_headline(display)
         || miyu_core::state::parse_cross_session_message(display).is_some()
+        || miyu_core::state::service_restart_attempt(display).is_some()
 }
 
 pub(in crate::cli) fn job_wake_headline(headline: &str) -> String {

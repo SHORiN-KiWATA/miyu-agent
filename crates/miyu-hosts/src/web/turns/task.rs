@@ -657,6 +657,16 @@ async fn run_turn_task_inner(
         }
     };
 
+    // daemon 有序关停打断的回合：不按「用户取消」收尾（不删排队消息、不发 run.cancelled、
+    // 不重投），只让出运行登记。库里它仍是「执行中」，下一个 daemon 当孤儿收尾、接着跑
+    // （09-24 断点续跑）。正好跑完的那一轮照常走完成。
+    if !matches!(chat_outcome, TurnOutcome::Finished(Ok(_)))
+        && miyu_base::process::daemon_shutting_down()
+    {
+        questions.cancel_run(run_id);
+        finish_run(manager, run_id, None);
+        return;
+    }
     let result = match chat_outcome {
         TurnOutcome::Cancelled => {
             drop_cancelled_queue(&store, events, run_id, &session_id);
@@ -829,6 +839,11 @@ pub(in crate::web) fn finish_turn_task(
             spawn_session_title_refinement(config, paths, store, events, fallback, title_seed);
         }
         let _ = store.touch_session(&store.session_id());
+    }
+    // daemon 正在关停：排队消息留在库里，交给下一个 daemon（孤儿收尾会把它们并进
+    // 被打断的那一轮，续跑时一起回），这会儿重投只会撞上已经关了的 actor（09-24）。
+    if miyu_base::process::daemon_shutting_down() {
+        return;
     }
     // 队列里剩下的合成消息（后台汇报、跨会话消息）另起一轮去回，不并进刚结束的这一轮
     // （09-23）。被停止的那一轮走不到这里：取消路径先把队列删了，停了就不再自己跑起来。

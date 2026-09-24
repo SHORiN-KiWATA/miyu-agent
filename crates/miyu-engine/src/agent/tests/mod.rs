@@ -13,6 +13,7 @@ mod queue_journal;
 mod reasoning;
 mod remote_tools;
 mod request_shape;
+mod restart;
 mod session_usage;
 mod shared;
 mod stream;

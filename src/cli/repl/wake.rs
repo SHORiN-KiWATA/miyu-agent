@@ -433,6 +433,9 @@ pub(in crate::cli) async fn follow_wake_run(
                             &message,
                             config.display.cross_session_preview_lines,
                         )?;
+                    } else if let Some(attempt) = miyu_core::state::service_restart_attempt(&said) {
+                        // daemon 重启后接着跑的这一轮（09-24）：一行提示，不是谁说的话。
+                        live.show_restart_notice(attempt)?;
                     } else if !said.trim().is_empty() {
                         let cols = crate::cli::terminal_cols();
                         let mut echo = submitted_echo_lines(live.mode(), &said, cols).join("\r\n");

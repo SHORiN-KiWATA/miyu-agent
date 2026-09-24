@@ -161,6 +161,8 @@ pub enum TurnOrigin {
     /// 另一个会话里的 AI 用 send_to_other_running_session 发来消息、替本会话
     /// 起的一轮(09-23)。带发件会话 id。
     CrossSession { from_session: String },
+    /// daemon 重启打断了上一轮，新 daemon 替会话起的续跑轮(09-24)。带这是第几次续跑。
+    ServiceRestart { attempt: u32 },
 }
 
 tokio::task_local! {

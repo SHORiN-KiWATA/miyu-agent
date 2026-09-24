@@ -26,6 +26,18 @@ pub(in crate::platforms::onebot) fn wake_sender_user_id(
         .unwrap_or(self_id)
 }
 
+/// 后台任务完成唤醒时那一轮的系统说明（模型可见，英文短句）。
+const JOB_WAKE_NOTE: &str =
+    "This turn was triggered automatically by the system: a background job just finished, \
+and its report and results are in this turn's message. This is not a message from any \
+group member or user; deliver the results into the conversation naturally, in your own voice.";
+
+/// 重启续跑那一轮的系统说明（09-24 断点续跑）。平台回合整轮攒着最后才发，被打断的那一轮
+/// 多半一个字都没发出去；开了中途发言的话前半截可能已经发了，所以只叫它别重复。
+const RESTART_WAKE_NOTE: &str = "This turn was triggered automatically by the system, not by any group member or user. \
+The Miyu service restarted while you were answering in this conversation, so your reply was cut off. \
+Continue from where it stopped in your own voice, and do not repeat anything you already sent.";
+
 /// Background-job completion wake: a self-initiated model turn in a bound
 /// QQ conversation. There is no inbound event — reply targeting, affection
 /// and trigger judging all no-op — the sender display name stays "System",
@@ -38,6 +50,62 @@ pub(crate) async fn wake_conversation_for_job(
     conversation_id: &str,
     initiator: Option<&str>,
     content: String,
+) -> Result<()> {
+    wake_conversation(
+        state,
+        account_id,
+        conversation_kind,
+        conversation_id,
+        initiator,
+        content,
+        JOB_WAKE_NOTE,
+    )
+    .await
+}
+
+/// daemon 重启打断了这个对话里的一轮：新 daemon 替它接着跑（09-24 断点续跑）。
+/// 同样没有入站事件，发起者身份按 `wake_sender_user_id` 还原（不知道就降级）。
+pub(crate) async fn wake_conversation_for_restart(
+    state: &DaemonState,
+    account_id: &str,
+    conversation_kind: &str,
+    conversation_id: &str,
+    initiator: Option<&str>,
+    content: String,
+) -> Result<()> {
+    wake_conversation(
+        state,
+        account_id,
+        conversation_kind,
+        conversation_id,
+        initiator,
+        content,
+        RESTART_WAKE_NOTE,
+    )
+    .await
+}
+
+/// 这个 QQ 账号此刻连没连上。续跑在 daemon 刚起来时就要投，得先等连接就绪。
+pub(crate) fn account_connected(state: &DaemonState, account_id: &str) -> bool {
+    account_id.parse::<i64>().ok().is_some_and(|self_id| {
+        state
+            .platforms
+            .onebot
+            .lock()
+            .unwrap()
+            .handle(self_id)
+            .is_some()
+    })
+}
+
+async fn wake_conversation(
+    state: &DaemonState,
+    account_id: &str,
+    conversation_kind: &str,
+    conversation_id: &str,
+    initiator: Option<&str>,
+    content: String,
+    system_note: &str,
 ) -> Result<()> {
     let self_id: i64 = account_id
         .parse()
@@ -81,12 +149,7 @@ pub(crate) async fn wake_conversation_for_job(
     // context blocks — the wake turn should see the conversation exactly
     // like an inbound turn would.
     let prepared = context.prepare_turn(content).await;
-    let mut turn_system_context = vec![
-        "This turn was triggered automatically by the system: a background job just finished, \
-         and its report and results are in this turn's message. This is not a message from any \
-         group member or user; deliver the results into the conversation naturally, in your own voice."
-            .to_string(),
-    ];
+    let mut turn_system_context = vec![system_note.to_string()];
     turn_system_context.extend(prepared.turn_system_context);
     let profile = crate::platforms::TurnProfile {
         active_persona: Some(context.config.prompt.active_persona.clone()),

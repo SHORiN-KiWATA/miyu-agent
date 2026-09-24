@@ -203,8 +203,9 @@ pub(in crate::web) fn redeliver_leftovers(
     });
 }
 
-/// 重投时按原文认回它是哪一种：跨会话消息记发件会话，其余当后台汇报。
+/// 重投时按原文认回它是哪一种：跨会话消息记发件会话，重启续跑记第几次，其余当后台汇报。
 fn leftover_delivery(prompt: miyu_core::state::QueuedSyntheticPrompt) -> Delivery {
+    let restart_attempt = miyu_core::state::service_restart_attempt(&prompt.content);
     let (wake_label, turn_origin) =
         match miyu_core::state::parse_cross_session_message(&prompt.content) {
             Some(message) => (
@@ -213,6 +214,13 @@ fn leftover_delivery(prompt: miyu_core::state::QueuedSyntheticPrompt) -> Deliver
                     from_session: message.from_session,
                 },
             ),
+            None if restart_attempt.is_some() => {
+                let attempt = restart_attempt.unwrap_or(1);
+                (
+                    miyu_core::state::service_restart_headline(attempt),
+                    TurnOrigin::ServiceRestart { attempt },
+                )
+            }
             // 显示文本去掉给前端认的前缀（`[后台任务完成] `）就是那一行标题。
             None => (
                 prompt

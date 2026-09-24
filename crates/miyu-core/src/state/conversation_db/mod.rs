@@ -17,6 +17,8 @@ pub use shared_files::SharedFile;
 mod sponsors;
 pub use sponsors::*;
 mod accounts;
+mod restart;
+pub use restart::RestartOrphan;
 mod turns;
 pub use accounts::*;
 mod types;

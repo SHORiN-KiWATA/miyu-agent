@@ -8,6 +8,8 @@ pub use conversation_db::SharedFile;
 mod conversation_db;
 mod cross_session;
 pub use cross_session::*;
+mod service_restart;
+pub use service_restart::*;
 mod migrations;
 mod queue;
 mod sessions;
@@ -41,9 +43,9 @@ pub use conversation_db::{
     NewSponsorRecord, PlatformAccessActor, PlatformAccessGrant, PlatformAccessGrantKey,
     PlatformMemeRefRecord, PlatformPluginScopeKey, PlatformSessionBinding,
     PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,
-    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, SessionOverview, SessionRecord,
-    SponsorOrder, SponsorRecord, SponsorSummary, SponsorTotal, ToolFlowCall, ToolFlowRound,
-    ToolFootprint, Turn, TurnFollowup, TurnInlineMedia, TurnJournalEvent,
+    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, RestartOrphan, SessionOverview,
+    SessionRecord, SponsorOrder, SponsorRecord, SponsorSummary, SponsorTotal, ToolFlowCall,
+    ToolFlowRound, ToolFootprint, Turn, TurnFollowup, TurnInlineMedia, TurnJournalEvent,
     TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment, UserAttachmentData,
     DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE, INLINE_MEDIA_KIND_IMAGE,
     INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT, INLINE_MEDIA_KIND_VIDEO,
@@ -459,13 +461,15 @@ pub const GOAL_ROUND_TAG: &str = "<goal_round>";
 
 /// daemon 合成的「用户消息」开头标签，一处登记：识别函数与回放等 SQL 都从这张表生成，
 /// 再加一种不会漏掉某一处（09-23 加跨会话消息时收拢；原来 SQL 里各抄一份）。
-pub const SYNTHETIC_USER_CONTENT_TAGS: [&str; 3] = [
+pub const SYNTHETIC_USER_CONTENT_TAGS: [&str; 4] = [
     BACKGROUND_JOB_REPORT_TAG,
     GOAL_ROUND_TAG,
     CROSS_SESSION_MESSAGE_TAG,
+    SERVICE_RESTART_TAG,
 ];
 
-/// 这条「用户消息」是不是 daemon 合成的（后台任务唤醒 / 目标续轮 / 跨会话消息），不是谁敲的。
+/// 这条「用户消息」是不是 daemon 合成的（后台任务唤醒 / 目标续轮 / 跨会话消息 / 重启续跑），
+/// 不是谁敲的。
 pub fn is_synthetic_user_content(content: &str) -> bool {
     let content = content.trim_start();
     SYNTHETIC_USER_CONTENT_TAGS

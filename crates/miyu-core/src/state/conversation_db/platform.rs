@@ -42,6 +42,39 @@ impl ConversationDb {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// 这个会话绑在哪个平台对话上（不分人格）。QQ 对话可以按对话单独换人格，按当前
+    /// 人格去查会漏；续跑只知道会话 id（09-24）。
+    pub fn platform_binding_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<PlatformSessionBinding>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT platform, account_id, conversation_kind, conversation_id,
+                        participant_id, persona, session_id
+                   FROM platform_session_bindings
+                  WHERE session_id = ?1
+                  LIMIT 1",
+                params![session_id],
+                |row| {
+                    let participant_id: String = row.get(4)?;
+                    Ok(PlatformSessionBinding {
+                        key: PlatformSessionBindingKey {
+                            platform: row.get(0)?,
+                            account_id: row.get(1)?,
+                            conversation_kind: row.get(2)?,
+                            conversation_id: row.get(3)?,
+                            participant_id: (!participant_id.is_empty()).then_some(participant_id),
+                            persona: row.get(5)?,
+                        },
+                        session_id: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
     pub fn find_platform_session_binding(
         &self,
         key: &PlatformSessionBindingKey,

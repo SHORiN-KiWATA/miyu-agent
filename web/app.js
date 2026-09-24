@@ -4880,7 +4880,14 @@
       || text.startsWith("[目标续轮]") // i18n-allow: 后端写进消息体的合成轮前缀,按原文比对,不是界面文案
       || text.startsWith("<background-job-report>")
       || text.startsWith("<goal_round>")
-      || text.startsWith("<cross-session-message");
+      || text.startsWith("<cross-session-message")
+      || text.startsWith("<service-restart");
+  }
+
+  /// daemon 重启后接着跑的那一轮（09-24）：第几次续跑；不是续跑消息给 0。
+  function serviceRestartAttempt(raw) {
+    const match = /^<service-restart attempt="(\d+)"[^>]*>/.exec(String(raw || "").trimStart());
+    return match ? Number(match[1]) : 0;
   }
 
   /// `createUserMessage` 对目标续轮返回 null（那一轮在时间线里不画）。
@@ -5031,6 +5038,21 @@
         turnId: attributes.turnId,
         followupId: attributes.followupId
       });
+    }
+    // daemon 重启后接着跑的那一轮(09-24):一行提示,不画成用户气泡。
+    const restartAttempt = serviceRestartAttempt(rawContent);
+    if (restartAttempt) {
+      const notice = document.createElement("div");
+      notice.className = "system-event is-restart-resume";
+      if (attributes.turnId) notice.dataset.turnId = attributes.turnId;
+      const label = document.createElement("span");
+      const headline = restartAttempt > 1
+        ? t("Miyu 又重启了，接着上一轮继续（第 {n} 次）", {n: restartAttempt})
+        : t("Miyu 重启了，接着上一轮继续");
+      label.textContent = `↻ ${headline}`;
+      label.title = formatDateTime(timestamp);
+      notice.appendChild(label);
+      return notice;
     }
     if (isSyntheticTurnContent(rawContent)) {
       const notice = document.createElement("div");

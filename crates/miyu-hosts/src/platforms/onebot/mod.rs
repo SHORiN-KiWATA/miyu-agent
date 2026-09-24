@@ -45,8 +45,10 @@ use inbound::*;
 use notices::*;
 use outbound::*;
 pub(crate) use proactive::send_direct_text;
-pub(crate) use turn::wake_conversation_for_job;
 use turn::*;
+pub(crate) use turn::{
+    account_connected, wake_conversation_for_job, wake_conversation_for_restart,
+};
 
 use super::access_control::{has_dynamic_access, AccessPermission};
 use super::{

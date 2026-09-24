@@ -160,10 +160,22 @@ impl LiveReplTail {
                     block
                 }
             }
-            None => format!(
-                "\x1b[2m{glyph} {}\x1b[0m\r\n\r\n",
-                job_wake_headline(&report.headline)
-            ),
+            // daemon 重启后接着跑的那一轮（09-24）：一行转圈箭头的提示，再接回话。
+            None => match miyu_core::state::service_restart_attempt(&report.headline) {
+                Some(attempt) => format!(
+                    "\x1b[2m{} {}\x1b[0m\r\n\r\n",
+                    if fullscreen {
+                        render::timeline::glyph_restart()
+                    } else {
+                        "↻"
+                    },
+                    miyu_core::state::service_restart_headline(attempt)
+                ),
+                None => format!(
+                    "\x1b[2m{glyph} {}\x1b[0m\r\n\r\n",
+                    job_wake_headline(&report.headline)
+                ),
+            },
         };
         for line in report.reply.lines() {
             text.push_str(&render::render_markdown_line(line));
@@ -192,12 +204,27 @@ impl LiveReplTail {
     /// 然后空一行接着说（用户 09-21 看过实际效果后定的版式）。和 REPL 空闲时
     /// 那条报告（`show_background_report`）长相一致，只是不带正文。
     pub(in crate::cli) fn show_job_wake_notice(&mut self, headline: &str) -> Result<()> {
-        let fullscreen = render::blocks::enabled();
-        let glyph = if fullscreen {
+        let glyph = if render::blocks::enabled() {
             render::timeline::glyph_notice()
         } else {
             "⚙"
         };
+        self.show_notice_line(glyph, headline)
+    }
+
+    /// daemon 重启打断了上一轮、新 daemon 替这个会话接着跑（09-24）：一行暗色提示，
+    /// 和后台任务完成那行同一个样式，只是图标换成转圈的箭头。
+    pub(in crate::cli) fn show_restart_notice(&mut self, attempt: u32) -> Result<()> {
+        let glyph = if render::blocks::enabled() {
+            render::timeline::glyph_restart()
+        } else {
+            "↻"
+        };
+        self.show_notice_line(glyph, &miyu_core::state::service_restart_headline(attempt))
+    }
+
+    fn show_notice_line(&mut self, glyph: &str, headline: &str) -> Result<()> {
+        let fullscreen = render::blocks::enabled();
         let text = format!("\x1b[2m{glyph} {headline}\x1b[0m\r\n\r\n");
         if fullscreen {
             let text = render::timeline::indent_body(&text);
@@ -253,6 +280,10 @@ impl LiveReplTail {
                 notices.push(QueuedNotice::CrossSession(message));
                 return false;
             }
+            if let Some(attempt) = miyu_core::state::service_restart_attempt(display) {
+                notices.push(QueuedNotice::Restart(attempt));
+                return false;
+            }
             if is_job_wake_headline(display) {
                 notices.push(QueuedNotice::JobReport(job_wake_headline(display)));
                 return false;
@@ -273,6 +304,7 @@ impl LiveReplTail {
             QueuedNotice::CrossSession(message) => {
                 self.show_cross_session_message(message, preview_lines)
             }
+            QueuedNotice::Restart(attempt) => self.show_restart_notice(*attempt),
         }
     }
 
@@ -355,4 +387,6 @@ pub(in crate::cli) enum QueuedNotice {
     JobReport(String),
     /// 另一个会话里的 AI 发来的跨会话消息（09-23）。
     CrossSession(miyu_core::state::CrossSessionMessage),
+    /// daemon 重启后的续跑消息（09-24），带第几次。
+    Restart(u32),
 }

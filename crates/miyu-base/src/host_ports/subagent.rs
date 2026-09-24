@@ -42,6 +42,14 @@ pub struct ContinueChildRequest {
     pub progress: SubagentProgressSink,
 }
 
+/// 只等、不起新一轮(09-24 断点续跑):daemon 重启后,一个自己的回合已经结束、在等
+/// 孙代理的子代理挂回父会话名下,等它的孙代理被另外接回、跑完叫醒它、它收尾。
+pub struct WatchChildRequest {
+    pub parent_session: String,
+    pub child_session: String,
+    pub progress: SubagentProgressSink,
+}
+
 pub struct ChildTaskResult {
     pub session_id: String,
     /// done / failed / cancelled / interrupted。
@@ -73,6 +81,8 @@ pub trait SubagentHostPort: Send + Sync {
         &self,
         request: ContinueChildRequest,
     ) -> BoxFuture<'static, Result<ChildOutcome>>;
+    /// 等一个已有子会话走到任务终态,不给它起新一轮。名下已经没有未完成的事就当场返回。
+    fn watch_child(&self, request: WatchChildRequest) -> BoxFuture<'static, Result<ChildOutcome>>;
 }
 
 static SUBAGENT: RwLock<Option<Arc<dyn SubagentHostPort>>> = RwLock::new(None);

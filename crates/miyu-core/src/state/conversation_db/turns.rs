@@ -642,6 +642,8 @@ impl ConversationDb {
                 });
                 continue;
             }
+            // 断点续跑的认领要带「死之前最后一次动静」，得在下面收尾写流水之前取。
+            let last_activity = restart::last_turn_activity_locked(&tx, turn_id, *revision)?;
             consume_stale_queued_prompts_locked(
                 &tx,
                 turn_id,
@@ -667,6 +669,14 @@ impl ConversationDb {
                      SET status = 'interrupted', finished_at = ?1
                      WHERE turn_id = ?2 AND revision = ?3 AND status = 'running'",
                     params![now, turn_id, revision],
+                )?;
+                // 进程死了才走到这儿（人按停止走的是回合守卫那条路）：记一笔认领，
+                // 下一个 daemon 据此决定接不接着跑（09-24 断点续跑，见 restart.rs）。
+                restart::mark_restart_orphan_locked(
+                    &tx,
+                    turn_id,
+                    *revision,
+                    last_activity.as_deref(),
                 )?;
                 recoveries.push(StaleTurnRecovery {
                     turn_id: turn_id.clone(),

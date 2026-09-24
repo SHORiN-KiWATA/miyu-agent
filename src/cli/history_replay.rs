@@ -131,6 +131,25 @@ pub(super) fn session_replay_frame(
                 &message.body,
                 config.display.cross_session_preview_lines,
             )?;
+        } else if let Some(attempt) =
+            miyu_core::state::service_restart_attempt(&replay.display_content)
+        {
+            // daemon 重启后接着跑的那一轮（09-24）：和实时渲染同一行提示。
+            let notice = format!(
+                "\n\x1b[2m{} {}\x1b[0m\n\n",
+                if render::blocks::enabled() {
+                    render::timeline::glyph_restart()
+                } else {
+                    "↻"
+                },
+                miyu_core::state::service_restart_headline(attempt)
+            );
+            let notice = if render::blocks::enabled() {
+                render::timeline::indent_body(&notice)
+            } else {
+                notice
+            };
+            frame.extend_from_slice(notice.as_bytes());
         } else if replay.is_synthetic {
             // daemon 自己合成的轮：实时渲染画的是一条暗色 `⚙` 提示，回放要
             // 对齐，不能变成用户气泡。

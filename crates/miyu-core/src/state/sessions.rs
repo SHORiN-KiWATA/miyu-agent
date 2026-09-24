@@ -269,6 +269,13 @@ impl StateStore {
         self.conv_db.persona_reset_session_ids(persona, platform)
     }
 
+    pub fn platform_binding_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<PlatformSessionBinding>> {
+        self.conv_db.platform_binding_for_session(session_id)
+    }
+
     pub fn platform_session_bindings(
         &self,
         persona: &str,
