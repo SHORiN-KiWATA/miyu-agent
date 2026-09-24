@@ -29,7 +29,7 @@ pub(crate) use defaults::*;
 pub use display::*;
 pub use memory::*;
 pub use paths::*;
-pub use persona_manifest::PersonaManifest;
+pub use persona_manifest::{PersonaManifest, SKILLS_PLUGIN};
 pub use platform::*;
 pub use platform_plugins::*;
 pub use pool_ref::*;

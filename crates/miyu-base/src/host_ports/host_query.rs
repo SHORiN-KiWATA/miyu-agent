@@ -145,11 +145,14 @@ pub fn answer_host_query(
         "subsystems.enabled" => {
             require(granted, "subsystems.read")?;
             let scope = config.active_persona_scope();
-            let enabled = PersonaManifest::load(config, paths, &scope).enabled_subsystems(config);
+            let manifest = PersonaManifest::load(config, paths, &scope);
+            let enabled = manifest.enabled_subsystems(config);
             Ok(json!({
                 "persona": scope,
                 "memory": enabled.memory,
-                "skills": enabled.skills,
+                // 技能 09-24 从子系统转成插件:键留着(老消费方),值按插件闸算,
+                // 与迁移前 `subsystems.skills × skills.enabled` 逐字等价。
+                "skills": manifest.skills_enabled(config),
                 "persona_reminder": enabled.persona_reminder,
                 "voice": enabled.voice,
                 "emotion": enabled.emotion,

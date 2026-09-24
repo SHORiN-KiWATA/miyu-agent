@@ -268,6 +268,23 @@ pub const BUILTIN_PLUGINS: &[BuiltinPluginDescriptor] = &[
         settings: false,
         host_supported: any_host,
     },
+    // 技能 09-24 从子系统并进来,与脚本、MCP 同级(Provider):插件闸之上还能按
+    // 名字逐件勾(`plugins.skills`)。机器位是 `skills.enabled`,在注册处补判——
+    // 跟当年子系统「人格意愿 × 机器配置」同一道乘法。注册仍在 compose_providers,
+    // 位置不动,所以工具面、子代理快照都逐字节不变。
+    BuiltinPluginDescriptor {
+        id: "skills",
+        kind: PluginKind::Provider,
+        name_zh: "技能",
+        hint_zh: "技能目录与 load_skill",
+        name_en: "Skills",
+        hint_en: "Loadable skill packs",
+        toggleable: false,
+        installed: always,
+        switch: None,
+        settings: false,
+        host_supported: any_host,
+    },
     BuiltinPluginDescriptor {
         id: "scripts",
         kind: PluginKind::Provider,
@@ -424,6 +441,7 @@ mod tests {
                 "image_generation",
                 "knowledge_base",
                 "ledger",
+                "skills",
                 "scripts",
                 "mcp",
             ]

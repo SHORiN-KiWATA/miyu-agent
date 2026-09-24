@@ -110,18 +110,6 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         available: |_| true,
         settings: true,
     },
-    SubsystemDescriptor {
-        id: "skills",
-        name_zh: "技能",
-        hint_zh: "技能目录与 load_skill",
-        name_en: "Skills",
-        hint_en: "Loadable skill packs",
-        in_onboarding: false,
-        get: |subsystems| subsystems.skills,
-        set: |subsystems, on| subsystems.skills = on,
-        available: |_| true,
-        settings: false,
-    },
 ];
 
 /// 功能表上不摆的几项(用户 09-23 拍板):读写文件、外发是「能用」的底线,
@@ -579,7 +567,7 @@ mod tests {
             .any(|item| item.kind == FeatureKind::Plugin && item.id == "archlinux"));
     }
 
-    /// 设置界面那档比引导多摆什么：机器级能力、记忆与技能、常开的内置插件。
+    /// 设置界面那档比引导多摆什么：机器级能力、记忆、常开的内置插件（含技能）。
     #[test]
     fn the_settings_scope_shows_what_onboarding_hides() {
         let manifest = PersonaManifest::all();
@@ -602,15 +590,22 @@ mod tests {
         // 引导里一件机器级能力都不摆。
         assert!(ids(&guided, FeatureKind::Machine).is_empty());
         assert_eq!(ids(&full, FeatureKind::Machine), ["web", "vision"]);
-        // 记忆与技能只在设置界面。
+        // 记忆只在设置界面。
         let guided_subs = ids(&guided, FeatureKind::Subsystem);
-        assert!(!guided_subs
-            .iter()
-            .any(|id| id == "memory" || id == "skills"));
+        assert!(!guided_subs.iter().any(|id| id == "memory"));
         assert!(ids(&full, FeatureKind::Subsystem).contains(&"memory".to_string()));
-        // 常开的内置插件（用量查询）也只在设置界面。
-        assert!(!ids(&guided, FeatureKind::Plugin).contains(&"usage_query".to_string()));
-        assert!(ids(&full, FeatureKind::Plugin).contains(&"usage_query".to_string()));
+        // 常开的内置插件（用量查询、技能）也只在设置界面。技能 09-24 从子系统
+        // 并进插件，那一行从子系统节挪到插件节，开关跟着 `plugin_enabled`。
+        let guided_plugins = ids(&guided, FeatureKind::Plugin);
+        let full_plugins = ids(&full, FeatureKind::Plugin);
+        for id in ["usage_query", "skills"] {
+            assert!(!guided_plugins.contains(&id.to_string()), "{id} 不该进引导");
+            assert!(full_plugins.contains(&id.to_string()), "{id} 该在设置界面");
+        }
+        assert!(!ids(&full, FeatureKind::Subsystem).contains(&"skills".to_string()));
+        assert!(full
+            .iter()
+            .any(|item| item.kind == FeatureKind::Plugin && item.id == "skills" && item.on));
         // 09-23 起这四件两个 scope 都不摆(UNLISTED_FEATURES):开关照旧生效,
         // 只是不在表上占位置。
         for id in ["files", "platform_outreach", "persona_reminder", "emotion"] {

@@ -8,7 +8,7 @@
 | 词 | 指什么 | 代码落点 |
 |---|---|---|
 | core | 自己就能当 agent 用的那部分:回合引擎、核心工具、模型客户端、状态库、daemon 运行时 | `src/agent` `src/tools`(核心件)`src/llm` `src/state` `src/runtime` |
-| 子系统 | 挂进回合流水线多个点的内置扩展:记忆、人格提醒、情绪、语音、技能扫描 | `PersonaManifest.subsystems` |
+| 子系统 | 挂进回合流水线多个点的内置扩展:记忆、人格提醒、情绪、语音(技能 09-24 起是插件) | `PersonaManifest.subsystems` |
 | 工具插件 | 只往工具面加东西:内置 Rust 工具、scripts、MCP 服务器、skills | `PersonaManifest.plugins`、`tools::compose_registry` |
 | 平台生命周期插件 | 挂在场所流水线(入站/触发/投递)上的 `PlatformPlugin` | `src/platforms/plugins` |
 | 场所 | 入口:CLI、WebUI、QQ、shellhook、语音。只声明信任位与能否弹问题 | `tools::Surface` |

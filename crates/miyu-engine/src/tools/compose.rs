@@ -35,14 +35,7 @@ pub fn compose_registry(
     builtin_plugins::register_enabled(&mut registry, config, paths, manifest, true);
     // 跨会话消息(09-23)同理:子代理的回话对象是父回合,不给它往别的会话发话。
     cross_session::register(&mut registry);
-    compose_providers::register(
-        &mut registry,
-        config,
-        paths,
-        manifest,
-        &subsystems,
-        external,
-    );
+    compose_providers::register(&mut registry, config, paths, manifest, external);
     if surface.interactive_questions {
         ask_question::register(&mut registry);
     }

@@ -1,6 +1,6 @@
 //! 子系统挂接表(09-16,core/normal 接口治理 Phase 3)。
 //!
-//! 五个 normal 子系统——记忆、技能、人格提醒、语音、情绪——各自从哪儿进回合
+//! 四个 normal 子系统——记忆、人格提醒、语音、情绪——各自从哪儿进回合
 //! 流水线、由谁决定开关,以前散在六七处(`tools::compose_core`、
 //! `tools::compose_providers`、`agent/setup.rs` 两处、`turn_loop/parallel.rs`、
 //! real_context 插件),每处自己读一遍 persona.toml、自己拼一遍「人格意愿 ×
@@ -50,10 +50,6 @@ fn memory_enabled(manifest: &PersonaManifest, config: &AppConfig) -> bool {
     manifest.memory_enabled(config)
 }
 
-fn skills_enabled(manifest: &PersonaManifest, config: &AppConfig) -> bool {
-    manifest.subsystems.skills && config.skills.enabled
-}
-
 /// 提醒还受「dev 无人格」与 `prompt.persona_reminder_interval` 两条规则约束——
 /// 那是「怎么提醒」,不是「要不要这个子系统」。
 fn persona_reminder_enabled(manifest: &PersonaManifest, config: &AppConfig) -> bool {
@@ -84,11 +80,6 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
         enabled: memory_enabled,
     },
     SubsystemDescriptor {
-        id: "skills",
-        phases: &[SubsystemPhase::ToolRegistration],
-        enabled: skills_enabled,
-    },
-    SubsystemDescriptor {
         id: "persona_reminder",
         phases: &[SubsystemPhase::BeforeModel],
         enabled: persona_reminder_enabled,
@@ -112,7 +103,6 @@ pub const SUBSYSTEMS: &[SubsystemDescriptor] = &[
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EnabledSubsystems {
     pub memory: bool,
-    pub skills: bool,
     pub persona_reminder: bool,
     pub voice: bool,
     pub emotion: bool,
@@ -128,7 +118,6 @@ impl EnabledSubsystems {
         };
         Self {
             memory: on("memory"),
-            skills: on("skills"),
             persona_reminder: on("persona_reminder"),
             voice: on("voice"),
             emotion: on("emotion"),
@@ -151,10 +140,7 @@ mod tests {
     #[test]
     fn table_lists_every_manifest_switch_exactly_once() {
         let ids: Vec<&str> = SUBSYSTEMS.iter().map(|descriptor| descriptor.id).collect();
-        assert_eq!(
-            ids,
-            ["memory", "skills", "persona_reminder", "voice", "emotion"]
-        );
+        assert_eq!(ids, ["memory", "persona_reminder", "voice", "emotion"]);
         let fields =
             serde_json::to_value(super::super::persona_manifest::Subsystems::default()).unwrap();
         let mut fields: Vec<&str> = fields
@@ -185,12 +171,11 @@ mod tests {
         let mut config = AppConfig::default();
         config.voice.enabled = true;
         config.prompt.persona_reminder = true;
-        config.skills.enabled = true;
         assert!(config.memory_config().enabled);
         let all = PersonaManifest::all().enabled_subsystems(&config);
         assert_eq!(
             all.ids(),
-            ["memory", "skills", "persona_reminder", "voice", "emotion"]
+            ["memory", "persona_reminder", "voice", "emotion"]
         );
         let dev = PersonaManifest::core_only().enabled_subsystems(&config);
         assert!(dev.is_empty(), "{dev:?}");
@@ -202,7 +187,6 @@ mod tests {
     fn persona_cannot_enable_what_the_machine_lacks() {
         let mut config = AppConfig::default();
         config.memory.enabled = false;
-        config.skills.enabled = false;
         config.voice.enabled = false;
         config.voice.tts.enabled = false;
         config.prompt.persona_reminder = false;
@@ -211,7 +195,6 @@ mod tests {
             resolved,
             EnabledSubsystems {
                 memory: false,
-                skills: false,
                 persona_reminder: false,
                 voice: false,
                 emotion: true,
@@ -230,7 +213,7 @@ mod tests {
         )
         .unwrap();
         let resolved = manifest.enabled_subsystems(&config);
-        assert_eq!(resolved.ids(), ["skills", "voice"]);
+        assert_eq!(resolved.ids(), ["voice"]);
         assert!(!resolved.is_empty());
     }
 }

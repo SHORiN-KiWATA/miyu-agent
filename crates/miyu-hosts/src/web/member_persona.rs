@@ -251,13 +251,17 @@ pub(crate) fn manifest_for_member(
     let allowed = config.accounts.allowed_member_plugins();
     let mut manifest = PersonaManifest::all();
     manifest.subsystems.memory = true;
-    manifest.subsystems.skills = true;
     manifest.subsystems.voice = false;
     manifest.subsystems.emotion = false;
     let mut enabled: Vec<String> = member_core_plugins()
         .map(str::to_string)
         .filter(|id| allowed.iter().any(|item| item == id))
         .collect();
+    // 技能 09-24 从子系统转成插件:对成员仍一律常开(老 `subsystems.skills = true`),
+    // 不随 `member_plugins` 白名单被漏掉。
+    if !enabled.iter().any(|id| id == "skills") {
+        enabled.push("skills".to_string());
+    }
     for id in plugins {
         if allowed.iter().any(|item| item == id)
             && !MEMBER_NEVER_PLUGINS.contains(&id.as_str())

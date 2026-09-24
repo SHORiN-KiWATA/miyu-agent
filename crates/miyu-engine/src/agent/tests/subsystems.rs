@@ -44,7 +44,7 @@ fn persona_with_memory_off_never_gets_the_memory_preamble() {
         !system_prompt_of(&agent).contains("<associative-memory>"),
         "prepare_for_turn 重组后前言不该回来"
     );
-    assert!(!agent.core.subsystems.memory && agent.core.subsystems.skills);
+    assert!(!agent.core.subsystems.memory);
 }
 
 /// dev 走 core_only 清单 + `dev_scoped` 配置:快照一件都不构造。

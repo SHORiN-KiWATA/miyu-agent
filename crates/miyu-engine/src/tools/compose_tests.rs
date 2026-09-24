@@ -19,11 +19,13 @@ fn persona_switches_drop_whole_subsystems_from_the_tool_face() {
     for expected in ["end_voice_chat", "load_skill", "recall_memories"] {
         assert!(all.contains(&expected.to_string()), "全开面少了 {expected}");
     }
+    // 老格式的 `subsystems.skills = false` 故意留着(09-24 技能并入插件):读入时
+    // 折成「技能插件不在名单里」,工具面上技能那几件照样不出现。
     let off =
         PersonaManifest::parse("[subsystems]\nvoice = false\nskills = false\nmemory = false\n")
             .unwrap();
     let snapshot = off.enabled_subsystems(&config);
-    assert!(!snapshot.voice && !snapshot.skills && !snapshot.memory);
+    assert!(!snapshot.voice && !snapshot.memory && !off.skills_enabled(&config));
     let trimmed = names(&off, &config, &paths);
     for gone in [
         "end_voice_chat",

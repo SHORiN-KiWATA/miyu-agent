@@ -5,7 +5,7 @@ use super::*;
 impl EnabledSubsystems {
     /// 一件都不构造(dev 的 core_only 清单必须落在这里)。
     pub fn is_empty(&self) -> bool {
-        !(self.memory || self.skills || self.persona_reminder || self.voice || self.emotion)
+        !(self.memory || self.persona_reminder || self.voice || self.emotion)
     }
 
     /// 开着的子系统 id,按表顺序。
@@ -20,7 +20,6 @@ impl EnabledSubsystems {
     pub fn get(&self, id: &str) -> bool {
         match id {
             "memory" => self.memory,
-            "skills" => self.skills,
             "persona_reminder" => self.persona_reminder,
             "voice" => self.voice,
             "emotion" => self.emotion,

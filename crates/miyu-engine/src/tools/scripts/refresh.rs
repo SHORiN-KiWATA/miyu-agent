@@ -71,8 +71,8 @@ pub(crate) fn retain_persona_visible(
     let default_persona = miyu_core::skills::is_default_persona(config);
     let full_manifest =
         miyu_base::config::PersonaManifest::load(config, paths, &config.active_persona_scope());
-    // 技能子系统整个关掉时,技能一件不挂,带路脚本也跟着不可用。
-    let skills_on = full_manifest.enabled_subsystems(config).skills;
+    // 技能整个关掉时(插件位或机器位),技能一件不挂,带路脚本也跟着不可用。
+    let skills_on = full_manifest.skills_enabled(config);
     let manifest = full_manifest.plugins;
     let allow = &manifest.scripts;
     // 人格自己那一层(`<scripts>/personas/<人格>/`)永远算数:那是它自己写的、
@@ -168,17 +168,23 @@ mod persona_gate_tests {
         (config, paths, temp)
     }
 
-    /// 技能子系统整个关掉(`subsystems.skills = false`)时,技能一件都不挂,
-    /// 它们带路的脚本也不能再经工具桥调到——哪怕白名单是「全开」。
+    /// 技能插件整个关掉(启用名单里没有 `skills`)时,技能一件都不挂,
+    /// 它们带路的脚本也不能再经工具桥调到——哪怕脚本白名单是「全开」。
     #[test]
-    fn skill_carried_scripts_go_with_the_skills_subsystem() {
+    fn skill_carried_scripts_go_with_the_skills_plugin() {
         let (config, paths, _temp) = setup("", None);
         let scope = config.active_persona_scope();
         let manifest_path =
             miyu_base::config::PersonaManifest::manifest_path(&config, &paths, &scope);
         std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
         let mut manifest = miyu_base::config::PersonaManifest::all();
-        manifest.subsystems.skills = false;
+        manifest.plugins.enabled = Some(
+            miyu_base::config::PLUGIN_IDS
+                .iter()
+                .filter(|id| **id != miyu_base::config::SKILLS_PLUGIN)
+                .map(|id| id.to_string())
+                .collect(),
+        );
         std::fs::write(&manifest_path, manifest.to_toml()).unwrap();
         let carried = paths
             .system_personas_dir()
