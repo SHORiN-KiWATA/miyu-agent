@@ -217,8 +217,8 @@
         },
         {
           path: "display.fold_timeline",
-          label: t("过程收起成 Worked for"),
-          hint: t("关：每一步就地留着，不收成 `Worked for`；两种情况下步骤都点得开"),
+          label: t("过程收起成一行摘要"),
+          hint: t("开：做完的步骤收成一行，如 Ran 3 commands · 2 edits · 12s；关：每一步就地留着。两种情况下步骤都点得开"),
           kind: "toggle",
           default: true,
         },

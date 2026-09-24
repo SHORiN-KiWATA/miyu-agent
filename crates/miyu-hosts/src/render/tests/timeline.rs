@@ -23,50 +23,102 @@ fn seconds_change_precision_with_magnitude() {
     assert_eq!(format_seconds(Duration::from_secs(75)), "1m 15s");
 }
 
+fn counts(commands: usize, edits: usize, tools: usize, thoughts: usize, errors: usize) -> Counts {
+    Counts {
+        commands,
+        edits,
+        tools,
+        thoughts,
+        errors,
+    }
+}
+
+/// 09-24 用户拍板的收缩行写法:跑过命令就 `Ran` 打头、耗时挂末尾;没跑命令用
+/// `Worked for` 打头;动作在前、思考在后、报错垫底;为零的项不写。
 #[test]
-fn summary_omits_zero_counts() {
+fn summary_leads_with_commands_then_edits_tools_thoughts() {
+    let twelve = Duration::from_millis(12_300);
     assert_eq!(
-        summary_line(
-            Duration::from_millis(12_300),
-            Counts {
-                tools: 3,
-                thoughts: 2,
-                errors: 1,
-            }
-        ),
-        "Worked for 12s · 3 tools · 2 thoughts · 1 err"
+        summary_line(twelve, counts(3, 2, 2, 2, 1)),
+        "Ran 3 commands · 2 edits · 2 tools · 2 thoughts · 1 err · 12s"
     );
-    // 只有思考时不写 `0 tools`
     assert_eq!(
-        summary_line(
-            Duration::from_millis(400),
-            Counts {
-                tools: 0,
-                thoughts: 1,
-                errors: 0,
-            }
-        ),
-        "Worked for 400ms · 1 thought"
+        summary_line(Duration::from_millis(2_500), counts(1, 0, 0, 0, 0)),
+        "Ran 1 command · 2.5s"
+    );
+    // 没跑命令:Worked for 打头,edits 与 tools 分开数。
+    assert_eq!(
+        summary_line(twelve, counts(0, 2, 1, 0, 0)),
+        "Worked for 12s · 2 edits · 1 tool"
+    );
+    assert_eq!(
+        summary_line(twelve, counts(0, 0, 3, 1, 0)),
+        "Worked for 12s · 3 tools · 1 thought"
+    );
+    // 只想了想:不写 `0 tools`,也不写思考次数。
+    assert_eq!(
+        summary_line(Duration::from_millis(400), counts(0, 0, 0, 2, 0)),
+        "Thought for 400ms"
     );
 }
 
 /// 回放历史时没有计时。报 `Worked for 0.0s` 会让人以为"这一轮瞬间就完了"，
-/// 不如干脆不报时间。
+/// 不如干脆不报时间;`Ran` 打头的那种也就不挂末尾的秒数。
 #[test]
 fn summary_without_timing_drops_the_duration() {
     assert_eq!(
-        summary_line(
-            Duration::ZERO,
-            Counts {
-                tools: 2,
-                thoughts: 1,
-                errors: 0,
-            }
-        ),
+        summary_line(Duration::ZERO, counts(3, 2, 0, 1, 0)),
+        "Ran 3 commands · 2 edits · 1 thought"
+    );
+    assert_eq!(
+        summary_line(Duration::ZERO, counts(0, 0, 2, 1, 0)),
         "2 tools · 1 thought"
+    );
+    assert_eq!(
+        summary_line(Duration::ZERO, counts(0, 0, 0, 2, 0)),
+        "2 thoughts"
     );
     // 什么都没有时也得说句人话，不能给个空串
     assert!(!summary_line(Duration::ZERO, Counts::default()).is_empty());
+}
+
+#[test]
+fn a_run_without_timing_reports_what_it_did_not_zero_seconds() {
+    // 回放没有计时；那条路上时间线还是会现场掐一次表，量出来是几十微秒。
+    // 打印成 `Worked for 0.0s` 看着像"这一轮瞬间就完了"，不如不报。
+    assert_eq!(
+        summary_line(Duration::from_micros(40), counts(0, 0, 1, 2, 0)),
+        "1 tool · 2 thoughts"
+    );
+    assert_eq!(
+        summary_line(Duration::from_millis(2_500), counts(0, 0, 1, 2, 0)),
+        "Worked for 2.5s · 1 tool · 2 thoughts"
+    );
+}
+
+/// 分类按工具名:命令只认 run_command / 中转线的 Bash;edits 只数改磁盘文件的
+/// (含中转线三家的写法);知识库、artifact、删文件和其余一切算 tools。
+#[test]
+fn tools_are_counted_by_kind() {
+    let mut tally = Counts::default();
+    for (name, failed) in [
+        ("run_command", false),
+        ("Bash", true),
+        ("edit", false),
+        ("Edit", false),
+        ("write_to_file", false),
+        ("kb", false),
+        ("artifact", false),
+        ("trash_path", false),
+        ("read", false),
+        ("subagent:查资料", false),
+    ] {
+        tally.record_tool(name, failed);
+    }
+    assert_eq!(
+        (tally.commands, tally.edits, tally.tools, tally.errors),
+        (2, 3, 5, 1)
+    );
 }
 
 #[test]
@@ -103,25 +155,6 @@ fn expanded_detail_drops_the_inline_decorations() {
     // 行首的颜色留着，只摘那一个记号
     let colored = undecorate(vec!["\x1b[2m  ↳ 带色的\x1b[0m".to_string()]);
     assert_eq!(colored, vec!["\x1b[2m  带色的\x1b[0m".to_string()]);
-}
-
-#[test]
-fn a_run_without_timing_reports_what_it_did_not_zero_seconds() {
-    // 回放没有计时；那条路上时间线还是会现场掐一次表，量出来是几十微秒。
-    // 打印成 `Worked for 0.0s` 看着像"这一轮瞬间就完了"，不如不报。
-    let counts = Counts {
-        tools: 1,
-        thoughts: 2,
-        errors: 0,
-    };
-    assert_eq!(
-        summary_line(Duration::from_micros(40), counts),
-        "1 tool · 2 thoughts"
-    );
-    assert_eq!(
-        summary_line(Duration::from_millis(2_500), counts),
-        "Worked for 2.5s · 1 tool · 2 thoughts"
-    );
 }
 
 /// 测试之间共用同一个进程级开关，串行跑免得互相掀桌子。
@@ -478,8 +511,9 @@ fn a_replayed_segment_still_says_how_long_it_took() {
             .unwrap();
         renderer.finish().unwrap();
         let frame = String::from_utf8_lossy(&renderer.take_output_frame()).to_string();
+        // 想了 2.4s + 跑了 1.2s 的命令:09-24 起跑过命令就 `Ran` 打头、耗时挂末尾。
         assert!(
-            frame.contains("Worked for 3.6s"),
+            frame.contains("Ran 1 command · 1 thought · 3.6s"),
             "回放没把耗时算回来: {frame}"
         );
     });
@@ -668,12 +702,12 @@ fn a_subagent_panel_folds_its_steps_once_it_starts_talking() {
             .iter()
             .map(|line| crate::render::strip_ansi_text(line))
             .collect::<Vec<_>>();
-        // 收缩行长这样：`› Worked for … · 3 tools · 3 thoughts`。测试里这一段
-        // 只花了几十微秒，`summary_line` 按设计不报耗时（回放也是这个规矩），
-        // 所以认计数不认 `Worked for`。
+        // 收缩行长这样：`› Ran 3 commands · 3 thoughts`（09-24 起命令单独数）。
+        // 测试里这一段只花了几十微秒，`summary_line` 按设计不报耗时（回放也是
+        // 这个规矩），所以只认计数。
         assert!(
             text.iter()
-                .any(|line| line.contains('›') && line.contains("3 tools")),
+                .any(|line| line.contains('›') && line.contains("Ran 3 commands · 3 thoughts")),
             "没收成一行: {text:?}"
         );
         assert!(
@@ -1029,7 +1063,7 @@ fn the_fold_opens_into_a_timeline_not_an_indented_body() {
         let panel = crate::render::blocks::get(id).unwrap_or_default();
         let fold = panel
             .iter()
-            .find(|line| crate::render::strip_ansi_text(line).contains("1 tool"))
+            .find(|line| crate::render::strip_ansi_text(line).contains("Ran 1 command"))
             .unwrap_or_else(|| panic!("没收成一行: {panel:?}"));
         let fold_id = block_id_in(fold).expect("收缩行没挂块");
         // 合着是 `›`，点开（块内容第一行）翻成 `⌄`——和主线那条一样。

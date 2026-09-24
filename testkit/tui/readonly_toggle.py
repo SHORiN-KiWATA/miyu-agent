@@ -87,7 +87,7 @@ def messages_text(role=None):
 
 
 def turn_done(screen):
-    return any("Worked for" in line or "好的,收到" in line for line in screen)
+    return any(h.is_fold_summary(line) or "好的,收到" in line for line in screen)
 
 
 def footer_readonly(screen):

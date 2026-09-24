@@ -244,7 +244,7 @@ def find_rows(screen, predicate):
 def hover_phase(reader, master, pid):
     screen = h.render(reader.snapshot())
     def is_block(line):
-        return any(mark in line for mark in ("已思考", "Worked for", "thought", "运行命令"))
+        return any(mark in line for mark in ("已思考", "thought", "运行命令")) or h.is_fold_summary(line)
 
     block_rows = find_rows(screen[: h.ROWS - 8], is_block)
     text_rows = find_rows(

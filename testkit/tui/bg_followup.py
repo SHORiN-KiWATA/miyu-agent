@@ -182,7 +182,7 @@ def main():
             (
                 i
                 for i, line in enumerate(final)
-                if "Worked for" in line and (notice_at is None or i < notice_at)
+                if h.is_fold_summary(line) and (notice_at is None or i < notice_at)
             ),
             None,
         )

@@ -780,7 +780,7 @@ fn job_panel_folds_its_steps_once_the_subagent_talks() {
         assert!(screen.open_log_overlay(path.clone(), "走查".into(), None, String::new()));
         let rows = screen.overlay_rows();
         assert!(
-            rows.iter().any(|row| row.contains("2 tools")),
+            rows.iter().any(|row| row.contains("Ran 2 commands")),
             "没收成一行: {rows:?}"
         );
         assert!(
@@ -799,7 +799,7 @@ fn job_panel_folds_its_steps_once_the_subagent_talks() {
         // 收起来的那几步点开还在。
         let head = rows
             .iter()
-            .position(|row| row.contains("2 tools"))
+            .position(|row| row.contains("Ran 2 commands"))
             .expect("没有收缩行");
         assert!(screen.overlay_toggle(head), "收缩行点不开");
         let opened = screen.overlay_rows();
@@ -872,7 +872,7 @@ fn job_panel_does_not_hang_tool_output_on_speech_or_the_fold() {
         let rows = screen.overlay_rows();
         let fold = rows
             .iter()
-            .find(|row| row.contains("2 tools"))
+            .find(|row| row.contains("Ran 2 commands"))
             .unwrap_or_else(|| panic!("没收成一行: {rows:?}"));
         assert!(!fold.contains("ok"), "收缩行被盖了个 ok: {fold:?}");
         // 裸输出不能平铺在面板里——它属于 grep 那一步，点开才看。
@@ -924,7 +924,7 @@ fn a_log_fold_opens_into_a_timeline_and_the_running_step_spins() {
         );
         let fold = rows
             .iter()
-            .position(|row| row.contains("2 tools"))
+            .position(|row| row.contains("Ran 2 commands"))
             .unwrap_or_else(|| panic!("没收成一行: {rows:?}"));
         // 合着是 `›`，点开翻成 `⌄`——和主线那条一样。
         assert!(
@@ -1137,7 +1137,7 @@ fn the_overlay_highlights_the_row_under_the_mouse() {
     });
 }
 
-/// 后台任务面板也跟着「过程收起成 Worked for」走。
+/// 后台任务面板也跟着「过程收起成一行摘要」走。
 ///
 /// 浮层原来是无条件收段的，那个开关在浮层里等于不存在（用户 09-17：「子代理浮层
 /// 也不受 `过程收起成 worked for` 这个开关的影响」）。
@@ -1168,7 +1168,7 @@ fn the_job_panel_follows_the_fold_switch() {
             folded
                 .overlay_rows()
                 .iter()
-                .any(|row| row.contains("Worked for")),
+                .any(|row| row.contains("Ran 1 command")),
             "开着收段却没收: {:?}",
             folded.overlay_rows()
         );
@@ -1178,7 +1178,7 @@ fn the_job_panel_follows_the_fold_switch() {
         assert!(open.open_log_overlay(path.clone(), "走查".into(), None, String::new()));
         let rows = open.overlay_rows();
         assert!(
-            !rows.iter().any(|row| row.contains("Worked for")),
+            !rows.iter().any(|row| row.contains("Ran 1 command")),
             "关了收段还是收了: {rows:?}"
         );
         assert!(

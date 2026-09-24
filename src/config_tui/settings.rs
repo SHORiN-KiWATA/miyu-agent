@@ -108,8 +108,8 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
         ),
         Field::boolean(
             t(
-                "Fold finished steps into Worked for",
-                "过程收起成 Worked for",
+                "Fold finished steps into a one-line summary",
+                "过程收起成一行摘要",
             ),
             config.display.fold_timeline,
         ),

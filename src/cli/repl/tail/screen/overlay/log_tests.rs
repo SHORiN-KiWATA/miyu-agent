@@ -203,8 +203,9 @@ fn collapsing_a_segment_drops_the_preparing_rows() {
         "收缩行里卷进了「准备执行」: {:#?}",
         fold.inner
     );
+    // 09-24 起命令单独数:一次 run_command 是 `Ran 1 command`,被准备行撑虚就是 14。
     assert!(
-        fold.head.contains("1 tool") && !fold.head.contains("14 tool"),
+        fold.head.contains("Ran 1 command") && !fold.head.contains("14 command"),
         "工具数被准备行撑虚了: {:?}",
         fold.head
     );

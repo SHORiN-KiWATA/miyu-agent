@@ -23,6 +23,9 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+# 收缩行认法统一走 testkit/fold_summary.py(09-24 摘要改成按工具类别写)。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fold_summary import is_fold_summary  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -170,7 +173,7 @@ def main():
             screen = capture()
             blob = "\n".join(screen)
             elapsed = int((time.time() - started) * 1000)
-            if timeline_ms is None and ("Worked for" in blob or "干了" in blob):
+            if timeline_ms is None and (is_fold_summary(blob) or "干了" in blob):
                 timeline_ms = elapsed
             if table_ms is None and "[✔]" in blob:
                 table_ms = elapsed
@@ -182,7 +185,7 @@ def main():
             # 点开第一条 `Worked for`:展开会把块区换成整条时间线,后面的内容
             # 要跟着挪。表是写在块**外面**的裸文本——它挪得对不对就在这一下。
             screen = capture()
-            row = next((i for i, line in enumerate(screen) if "Worked for" in line), None)
+            row = next((i for i, line in enumerate(screen) if is_fold_summary(line)), None)
             if row is not None:
                 col = screen[row].index("›") + 2
                 for final_byte in ("M", "m"):
@@ -196,7 +199,7 @@ def main():
                     # 再点一次收起。用户原话是「被 `Worked for` **缩起**截断」——
                     # 收起时块区要从整条时间线缩回一行,下面那张裸表得跟着上移。
                     screen2 = capture()
-                    row2 = next((i for i, line in enumerate(screen2) if "Worked for" in line), row)
+                    row2 = next((i for i, line in enumerate(screen2) if is_fold_summary(line)), row)
                     col2 = screen2[row2].index("⌄") + 2 if "⌄" in screen2[row2] else col
                     for final_byte in ("M", "m"):
                         seq = f"\x1b[<0;{col2 + 1};{row2 + 1}{final_byte}"

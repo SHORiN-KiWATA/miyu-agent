@@ -144,7 +144,7 @@ def main():
         os.write(master, b"\r")
         screen = r.wait_screen(
             master, sink,
-            lambda s: any(h.PROC_HEAD in line or "收到" in line for line in s), 20,
+            lambda s: any(h.is_fold_summary(line) or "收到" in line for line in s), 20,
         )
         report["reply_arrived"] = screen is not None
         screen = screen or r.LAST["screen"] or []
@@ -204,7 +204,7 @@ def main():
         os.write(master, b"\r")
         screen = r.wait_screen(
             master, sink,
-            lambda s: any(h.PROC_HEAD in line or "收到" in line for line in s), 20,
+            lambda s: any(h.is_fold_summary(line) or "收到" in line for line in s), 20,
         )
         report["second_reply_arrived"] = screen is not None
         screen = screen or r.LAST["screen"] or []

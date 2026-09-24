@@ -43,9 +43,14 @@ def move(master, sink, column, row, quiet=0.25):
 
 
 def row_is_dim(raw, marker):
-    """最后一次重画 `marker` 那一行时，它是暗的吗。"""
+    """最后一次重画 `marker` 那一行时，它是暗的吗。`marker` 可以是正则(收缩行按类写,
+    09-24 起不一定以 `Worked for` 打头)。"""
     text = raw.decode("utf-8", "replace")
-    index = text.rfind(marker)
+    if hasattr(marker, "finditer"):
+        found = [match.start() for match in marker.finditer(text)]
+        index = found[-1] if found else -1
+    else:
+        index = text.rfind(marker)
     if index < 0:
         return None
     head = text[max(0, index - 40):index]
@@ -70,13 +75,13 @@ def main():
         os.write(master, b"\r")
         # 等这一轮收完：屏幕上留下可点开的那几步。
         screen = r.wait_screen(
-            master, sink, lambda s: any("Worked for" in l for l in s), 90.0
+            master, sink, lambda s: any(h.is_fold_summary(l) for l in s), 90.0
         )
         report["hv01_turn_finished"] = screen is not None
         screen = screen or r.LAST["screen"] or []
         (h.OUT / "hover-idle.txt").write_text("\n".join(screen) + "\n", encoding="utf-8")
         target = next(
-            (i for i, l in enumerate(screen) if "Worked for" in l), None
+            (i for i, l in enumerate(screen) if h.is_fold_summary(l)), None
         )
         report["hv02_found_an_expandable_row"] = target is not None
         if target is None:
@@ -85,13 +90,13 @@ def main():
         # 1. 悬上去：那一行该提亮（不 dim）。
         sink.clear()
         move(master, sink, 8, target)
-        report["hv03_hover_lights_the_row"] = row_is_dim(bytes(sink), "Worked for") is False
+        report["hv03_hover_lights_the_row"] = row_is_dim(bytes(sink), h.FOLD_SUMMARY_RE) is False
 
         # 2. 停在正文当中不动：提亮要留着（悬着看）。
         sink.clear()
         time.sleep(1.5)
         h.drain(master, 0.5, sink)
-        still = row_is_dim(bytes(sink), "Worked for")
+        still = row_is_dim(bytes(sink), h.FOLD_SUMMARY_RE)
         report["hv04_holding_still_keeps_the_light"] = still is not False or still is None
 
         # 3. 移到最左列（模拟从左边移出窗口），再静默：该灭。
@@ -103,7 +108,7 @@ def main():
         h.drain(master, 0.1, sink)
         left = h.render(bytes(sink))
         (h.OUT / "hover-left.txt").write_text("\n".join(left) + "\n", encoding="utf-8")
-        report["hv05_edge_then_silence_clears"] = row_is_dim(bytes(sink), "Worked for") is True
+        report["hv05_edge_then_silence_clears"] = row_is_dim(bytes(sink), h.FOLD_SUMMARY_RE) is True
     finally:
         r.stop(tui, daemon, stub)
     return summary(report)

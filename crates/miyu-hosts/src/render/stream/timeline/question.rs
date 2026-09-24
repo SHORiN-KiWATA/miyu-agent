@@ -50,10 +50,7 @@ impl StreamRenderer {
                 lines
             })
             .collect::<Vec<_>>();
-        self.timeline.tools += 1;
-        if !answered {
-            self.timeline.errors += 1;
-        }
+        self.timeline.counts.record_tool("ask_question", !answered);
         let glyph = tool_glyph("ask_question");
         // 静态版：面板退场时不留它自己那块「已回答」（那块带自己的竖条，落在
         // 抬头**上面**，和时间线是两套东西——用户实测截图）。一问一答改成这一步

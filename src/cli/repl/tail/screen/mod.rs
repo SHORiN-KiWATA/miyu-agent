@@ -167,7 +167,7 @@ pub(in crate::cli) struct Screen {
     /// 永远收着（用户 09-17：「子代理浮层中的流式输出不受我们之前做的三个开关
     /// 影响」）。由 REPL 每轮把当前配置交进来。
     display_expand: (bool, bool),
-    /// `过程收起成 Worked for`。同 `display_expand`。
+    /// `过程收起成一行摘要`。同 `display_expand`。
     display_fold: bool,
     /// `命令显示行数`：命令那一步抬头底下露几行命令。同 `display_expand`。
     display_command_lines: usize,

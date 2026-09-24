@@ -41,7 +41,7 @@ fn flush_subagent_thought(log: &mut SubagentLog, expand: bool) {
         .into_iter()
         .map(|line| format!("{THOUGHT_BODY_STYLE}{line}\x1b[0m"))
         .collect::<Vec<_>>();
-    log.segment.thoughts += 1;
+    log.segment.counts.thoughts += 1;
     log.segment.note_start_since(elapsed);
     let mut step = Step::new(
         step_line_in(
@@ -141,11 +141,7 @@ fn collapse_subagent_segment(log: &mut SubagentLog) {
         log.segment = Timeline::default();
         return;
     }
-    let counts = Counts {
-        tools: log.segment.tools,
-        thoughts: log.segment.thoughts,
-        errors: log.segment.errors,
-    };
+    let counts = log.segment.counts;
     let summary = summary_line(log.segment.elapsed(), counts);
     let collapsed: Vec<Step> = log.steps.drain(from..).collect();
     // 收起来的每一步**还是块**：点开收缩行看到的是时间线，时间线里每一步再点开
@@ -427,10 +423,7 @@ impl StreamRenderer {
             label.push_str(PEEK_SEP);
             label.push_str(&peek);
         }
-        log.segment.tools += 1;
-        if failed {
-            log.segment.errors += 1;
-        }
+        log.segment.counts.record_tool(tool, failed);
         log.segment.note_start_since(elapsed_of_step);
         let mut step = Step::new(
             if failed {
@@ -564,7 +557,7 @@ impl StreamRenderer {
             return;
         }
         let expand_thought = self.reasoning_mode == ReasoningDisplayMode::Full;
-        // 收不收段跟着「过程收起成 Worked for」走——浮层原来是无条件收的，于是
+        // 收不收段跟着「过程收起成一行摘要」走——浮层原来是无条件收的，于是
         // 那个开关在浮层里等于不存在（用户 09-17：「子代理浮层也不受这个开关的
         // 影响」）。
         let fold = self.fold_timeline;

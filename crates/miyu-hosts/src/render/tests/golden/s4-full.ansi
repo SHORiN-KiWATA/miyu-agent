@@ -60,13 +60,13 @@
 [2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
 [2m[36m[2m  │[0m[0m
 [2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · <DUR>[0m]1337;miyu-block-end[0m
-[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 4 tools[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Ran 1 command · 1 edit · 2 tools · <DUR>[0m
 
 ]1337;miyu-block-end  跑完了，结果如上。
 
 ]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 故意跑砸[0m
 [2m[36m[2m  │[0m [2mexit 3[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[31m   运行命令 · <DUR> · 故意跑砸[0m[0m
 [2m[36m[2m  │[0m [31mexit 3[0m]1337;miyu-block-end[0m
-[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Worked for <DUR> · 1 tool · 1 err[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Ran 1 command · 1 err · <DUR>[0m
 
 ]1337;miyu-block-end

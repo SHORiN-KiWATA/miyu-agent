@@ -172,36 +172,31 @@ fn collapse_log_segment(steps: &mut Vec<LogStep>) {
         // 进收缩行的肚子里了。
         .filter(|step| !step.preparing)
         .collect();
-    let tools = collapsed
-        .iter()
-        // `[统计]` 不算——同文件上面那条注释自己就写着「它不是工具调用：没有结果
-        // 行」，而收缩行却把它数进 `N tools` 里。那一行的内容还正好是「工具调用
-        // 3 次」，于是报出来的数比真跑过的多一个（报告 §6.3 第 2 项，前台一直
-        // 不算）。要改回去就把 `StepKind::Stats` 加回来。
-        .filter(|step| step.kind == StepKind::Tool)
-        .count();
-    let thoughts = collapsed
-        .iter()
-        .filter(|step| step.kind == StepKind::Thought)
-        .count();
-    let errors = collapsed
-        .iter()
-        .filter(|step| step.status == Some("err"))
-        .count();
+    let mut counts = miyu_hosts::render::timeline::Counts::default();
+    for step in &collapsed {
+        match step.kind {
+            // `[统计]` 不算——同文件上面那条注释自己就写着「它不是工具调用：没有结果
+            // 行」，而收缩行却把它数进 `N tools` 里。那一行的内容还正好是「工具调用
+            // 3 次」，于是报出来的数比真跑过的多一个（报告 §6.3 第 2 项，前台一直
+            // 不算）。要改回去就把 `StepKind::Stats` 加回来。
+            //
+            // 按工具名分类(09-24:`Ran 3 commands · 2 edits`)。标记流和日志行
+            // (`[结果] run_command\t…`)都带工具名;没带名字的老日志只能算进 tools。
+            StepKind::Tool => counts.record_tool(
+                step.tool.as_deref().unwrap_or_default(),
+                step.status == Some("err"),
+            ),
+            StepKind::Thought => counts.thoughts += 1,
+            _ => {}
+        }
+    }
     // 这一段花了多久：每一步自己的耗时加起来（流水账里没有时间戳，只有 `[结果]`
     // 行上带的那个数）。思考没记时，所以这是下限——总比"什么都不报"强。
     let elapsed = collapsed
         .iter()
         .filter_map(|step| step.elapsed)
         .fold(std::time::Duration::ZERO, |sum, step| sum + step);
-    let summary = miyu_hosts::render::timeline::summary_line(
-        elapsed,
-        miyu_hosts::render::timeline::Counts {
-            tools,
-            thoughts,
-            errors,
-        },
-    );
+    let summary = miyu_hosts::render::timeline::summary_line(elapsed, counts);
     // 收起来的每一步原样留着（`inner`），渲染时各自登记成块——点开收缩行是
     // 时间线，时间线里每一步再点开才是它的正文。原来只把抬头串成一段文字，
     // 工具输出和思考全文在收缩那一刻就没了（用户实测：会丢失内容）。
@@ -244,7 +239,7 @@ pub(super) fn log_steps(text: &str, fold: bool) -> Vec<LogStep> {
 /// 它们等价），所以攒步这一段只写一份。
 pub(super) fn steps_from_events<'a>(
     events: impl Iterator<Item = LogEvent<'a>>,
-    // 「过程收起成 Worked for」。关掉就每一步就地留着——面板原来是无条件收的，
+    // 「过程收起成一行摘要」。关掉就每一步就地留着——面板原来是无条件收的，
     // 于是那个开关在浮层里等于不存在（用户 09-17）。
     fold: bool,
 ) -> Vec<LogStep> {

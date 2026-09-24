@@ -42,7 +42,7 @@ def rows_now(sink):
 
 def find_row(rows, needle):
     for index, line in enumerate(rows):
-        if needle in line:
+        if (needle(line) if callable(needle) else needle in line):
             return index
     return None
 
@@ -136,7 +136,7 @@ def main():
         while time.time() < deadline:
             h.drain(master, 0.2, sink)
             rows = rows_now(sink)
-            if find_row(rows, "已思考") is not None or find_row(rows, "Worked for") is not None:
+            if find_row(rows, "已思考") is not None or find_row(rows, h.is_fold_summary) is not None:
                 break
         rows = rows_now(sink)
         (OUT / "02-thought-done.txt").write_text("\n".join(rows), encoding="utf-8")
@@ -149,12 +149,12 @@ def main():
         while time.time() < deadline:
             h.drain(master, 0.6, sink)
             rows = rows_now(sink)
-            if find_row(rows, "Worked for") is not None:
+            if find_row(rows, h.is_fold_summary) is not None:
                 break
         h.drain(master, 2.0, sink)
         rows = rows_now(sink)
         (OUT / "03-after-fold.txt").write_text("\n".join(rows), encoding="utf-8")
-        fold = find_row(rows, "Worked for")
+        fold = find_row(rows, h.is_fold_summary)
         report["出现了收缩行"] = fold is not None
         if fold is not None:
             line = rows[fold]

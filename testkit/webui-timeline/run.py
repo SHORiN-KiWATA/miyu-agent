@@ -287,7 +287,7 @@ def main():
             report["prep_row"] = bool(prep_seen) and prep_seen["inSteps"] and prep_seen["bg"] in ("rgba(0, 0, 0, 0)", "transparent") and prep_seen["railHeight"] > 20
             ls = (live_snapshot or {}).get("lines") or []
             report["live_head_hidden"] = head_hidden_seen and not head_shown_live
-            report["live_collapsed"] = bool(ls) and (not ls[0]["open"]) and (not ls[0]["headHidden"]) and ls[0]["summary"].startswith("Worked for") and "2 tools" in ls[0]["summary"] and "1 thought" in ls[0]["summary"]
+            report["live_collapsed"] = bool(ls) and (not ls[0]["open"]) and (not ls[0]["headHidden"]) and ls[0]["summary"].startswith("Ran 2 commands") and "1 thought" in ls[0]["summary"]
             dl = (done or {}).get("lines") or []
             report["live_groups"] = len(dl) == 2 and dl[0]["tools"] == 2 and dl[0]["thoughts"] == 1 and dl[1]["tools"] == 2 and dl[1]["thoughts"] == 1
             report["err_marked"] = len(dl) == 2 and dl[1]["failures"] == 1 and "1 err" in dl[1]["summary"]
@@ -331,8 +331,9 @@ def main():
             again = page.evaluate(GROUPS_JS)
             report["reloaded"] = again
             al = (again or {}).get("lines") or []
-            # 回看的总结行也要有耗时(落库的 started_ms/finished_ms),形如「Worked for 1.2 s · 2 tools · 1 thought」
-            report["persisted_groups"] = len(al) == 2 and [(l["tools"], l["thoughts"]) for l in al] == [(2, 1), (2, 1)] and all(l["static"] and not l["headHidden"] and not l["open"] for l in al) and all(l["summary"].startswith("Worked for") and "2 tools" in l["summary"] for l in al)
+            # 回看的总结行也要有耗时(落库的 started_ms/finished_ms)。09-24 起按类写:第一组两条命令
+            # 「Ran 2 commands · 1 thought · 1.2 s」,第二组读文件失败 + 一条命令「Ran 1 command · 1 tool · 1 thought · 1 err · …」
+            report["persisted_groups"] = len(al) == 2 and [(l["tools"], l["thoughts"]) for l in al] == [(2, 1), (2, 1)] and all(l["static"] and not l["headHidden"] and not l["open"] for l in al) and al[0]["summary"].startswith("Ran 2 commands") and al[1]["summary"].startswith("Ran 1 command · 1 tool")
             report["persisted_err"] = len(al) == 2 and al[1]["failures"] == 1 and "1 err" in al[1]["summary"]
             # 亮色主题也看一眼(用户日常用亮色)
             page.click("#sidebarThemeButton")

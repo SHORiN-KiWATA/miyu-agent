@@ -5,7 +5,7 @@
 
 - `展开思考内容` / `展开工具内容`：开着的话那一步**出来就是展开的**，不用点；
   再点一次收回去。关着就只有抬头。
-- `过程收起成 Worked for`：只管收不收段。关掉的话每一步就地留着，**照样点得开**。
+- `过程收起成一行摘要`：只管收不收段。关掉的话每一步就地留着，**照样点得开**。
 
 单元测试钉的是字节（`miyu-block-open=` 那个标记）和视图映射；这份钉的是**人眼
 看到的那一屏**——标记对了但 `paint` 没去开、或者开了又被下一帧顶回去，字节那层
@@ -33,7 +33,6 @@ import round26 as r  # noqa: E402
 # 它只在**展开之后**才看得到——抬头上只有「已思考 · N 词元 · 1.2s」。
 THINK_BODY = "先想一句"
 THOUGHT_HEAD = "已思考"
-FOLD_HEAD = "Worked for"
 # 「正在想」那一段正文里的记号：命令之后那一段思考，逐块流出来的那份。
 THINK_LIVE = "折叠时看不到"
 
@@ -51,7 +50,7 @@ def display(**flags):
 
 def row_of(screen, needle):
     for index, line in enumerate(screen):
-        if needle in line:
+        if (needle(line) if callable(needle) else needle in line):
             return index
     return None
 
@@ -135,7 +134,7 @@ def scenario_expanded_survives_the_fold(report):
     )
     try:
         screen = ask(master, sink)
-        fold = row_of(screen, FOLD_HEAD)
+        fold = row_of(screen, h.is_fold_summary)
         report["folded_even_with_expand_on"] = fold is not None
         if fold is None:
             return
@@ -167,7 +166,7 @@ def scenario_collapsed(report):
             THINK_BODY in line for line in screen
         )
         # 收成 `Worked for …` 了，得先点开它才看得到那几步。
-        fold = row_of(screen, "Worked for")
+        fold = row_of(screen, h.is_fold_summary)
         report["default_folds_the_segment"] = fold is not None
         if fold is None:
             return
@@ -188,7 +187,7 @@ def scenario_collapsed(report):
 
 
 def scenario_no_fold(report):
-    """关掉「过程收起成 Worked for」：不收段，但每一步**照样点得开**。
+    """关掉「过程收起成一行摘要」：不收段，但每一步**照样点得开**。
 
     09-17 之前这一档顺手把那些步变成点不开、正文铺一地——用户原话：「即使不自动
     收起过程为 true，也不应该以 tag 行下预览的形式出现 tag 行的内容」。
@@ -200,7 +199,7 @@ def scenario_no_fold(report):
     try:
         screen = ask(master, sink)
         r.save("expand-nofold", screen)
-        report["no_fold_line"] = not any("Worked for" in line for line in screen)
+        report["no_fold_line"] = not any(h.is_fold_summary(line) for line in screen)
         report["no_fold_body_not_spilled"] = not any(
             THINK_BODY in line for line in screen
         )

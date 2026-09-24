@@ -67,11 +67,11 @@ def main():
         h.drain_until(master, sink, h.PROMPT, 5.0)
         os.write(master, b"\r")
         screen = r.wait_screen(
-            master, sink, lambda s: any("Worked for" in l for l in s), 90.0
+            master, sink, lambda s: any(h.is_fold_summary(l) for l in s), 90.0
         )
         report["cpu01_turn_finished"] = screen is not None
         screen = screen or r.LAST["screen"] or []
-        target = next((i for i, l in enumerate(screen) if "Worked for" in l), None)
+        target = next((i for i, l in enumerate(screen) if h.is_fold_summary(l)), None)
         report["cpu02_found_a_row"] = target is not None
         if target is None:
             return summary(report, numbers)

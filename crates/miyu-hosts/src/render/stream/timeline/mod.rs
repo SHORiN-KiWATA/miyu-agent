@@ -382,9 +382,7 @@ pub(crate) struct Timeline {
     /// 静态时间线：前多少步已经落进 scrollback 了。live 区只画这之后的。
     /// 全屏下一直是 0——那儿整段都留在 live 区里，收缩时一起写。
     committed: usize,
-    tools: usize,
-    thoughts: usize,
-    errors: usize,
+    counts: Counts,
 }
 
 impl Timeline {
@@ -715,10 +713,7 @@ impl StreamRenderer {
                 label.push_str(PEEK_SEP);
                 label.push_str(&peek);
             }
-            if failed {
-                self.timeline.errors += 1;
-            }
-            self.timeline.tools += 1;
+            self.timeline.counts.record_tool(&name, failed);
             let line = if failed {
                 step_line_failed(glyph, &label)
             } else {
@@ -894,7 +889,7 @@ impl StreamRenderer {
         // **出来就是展开态**（再点一次收回去）；点不开的面上是就地印在抬头
         // 底下。它曾经是往抬头底下挂一截预览——那一行明明还能点，点开看到的
         // 又是几乎同一份内容（用户 09-17 拍掉了这种形态）。
-        self.timeline.thoughts += 1;
+        self.timeline.counts.thoughts += 1;
         let mut step = Step::new(step_line(glyph_think(), &label), detail, None);
         step.kind = StepKind::Thought;
         // 用户在 live 区亲手点开过这一步,想完就不该把它收回去——「亲手点开」
@@ -1019,7 +1014,7 @@ impl StreamRenderer {
     ) -> anyhow::Result<()> {
         use std::io::Write as _;
         let rest = style_thought_rows(self.thought_rows_range(stream.flushed_rows, usize::MAX));
-        self.timeline.thoughts += 1;
+        self.timeline.counts.thoughts += 1;
         if !stream.heading_flushed {
             let mut step = Step::new(step_line(glyph_think(), label), rest, None);
             step.kind = StepKind::Thought;
@@ -1139,14 +1134,7 @@ impl StreamRenderer {
             return self.flush_after_timeline();
         }
         let timeline = std::mem::take(&mut self.timeline);
-        let summary = summary_line(
-            timeline.elapsed(),
-            Counts {
-                tools: timeline.tools,
-                thoughts: timeline.thoughts,
-                errors: timeline.errors,
-            },
-        );
+        let summary = summary_line(timeline.elapsed(), timeline.counts);
         // 展开内容：头行 + 用连线串起来的每一步（各自包成块）。
         let mut steps = Vec::with_capacity(timeline.steps.len());
         for step in &timeline.steps {
@@ -1193,12 +1181,35 @@ impl StreamRenderer {
     }
 }
 
-/// 这一段里各做了多少件事。
+/// 这一段里各做了多少件事。工具按类分开数(09-24:摘要写成
+/// `Ran 3 commands · 2 edits · 4 tools`),分类的真相源是
+/// `miyu_base::tool_names::tool_kind`。
 #[derive(Clone, Copy, Default)]
 pub struct Counts {
+    pub commands: usize,
+    pub edits: usize,
+    /// 既不是命令也不是改文件的工具。
     pub tools: usize,
     pub thoughts: usize,
     pub errors: usize,
+}
+
+impl Counts {
+    pub fn record_tool(&mut self, name: &str, failed: bool) {
+        use miyu_base::tool_names::{tool_kind, ToolKind};
+        match tool_kind(name) {
+            ToolKind::Command => self.commands += 1,
+            ToolKind::FileEdit => self.edits += 1,
+            ToolKind::Other => self.tools += 1,
+        }
+        if failed {
+            self.errors += 1;
+        }
+    }
+
+    pub fn acted(&self) -> bool {
+        self.commands + self.edits + self.tools > 0
+    }
 }
 
 #[cfg(test)]

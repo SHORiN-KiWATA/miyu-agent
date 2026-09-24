@@ -36,6 +36,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+# 收缩行认法统一走 testkit/fold_summary.py(09-24 摘要改成按工具类别写)。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fold_summary import is_fold_summary  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -203,7 +206,7 @@ def check_normal(raw, screen, snapshots):
     text = "\n".join(screen)
     report = {}
     report["no_inline_card"] = "×1" not in text and "↳" not in text
-    report["no_worked_for"] = "Worked for" not in text
+    report["no_worked_for"] = not is_fold_summary(text)
     report["reply_seen"] = "走查的回复" in text
     report["thought_line"] = any("已思考 ·" in line for line in screen)
     command_rows = [i for i, line in enumerate(screen)

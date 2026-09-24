@@ -109,7 +109,7 @@ pub(in crate::cli) struct Overlay {
     /// `Screen::set_display_expand`）。面板自己是从日志/标记流攒步的，手上没有
     /// 配置入口。
     display_expand: (bool, bool),
-    /// `过程收起成 Worked for`。见 `display_expand` 那段——同一条路交进来。
+    /// `过程收起成一行摘要`。见 `display_expand` 那段——同一条路交进来。
     display_fold: bool,
     /// `命令显示行数`。同上。
     display_command_lines: usize,

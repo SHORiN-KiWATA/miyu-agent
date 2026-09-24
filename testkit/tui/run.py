@@ -32,6 +32,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# 收缩行认法统一走 testkit/fold_summary.py(09-24 摘要改成按工具类别写)。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fold_summary import FOLD_SUMMARY_RE, is_fold_summary  # noqa: E402,F401
+
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
 for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
@@ -81,7 +85,6 @@ PUA = re.compile(r"^  ([\ue000-\uf8ff])[ \x1b]")
 BAR = "┃"
 # 过程时间线：收缩行 / 展开后的时间线项 / 再展开才看得到的思考正文
 #（正文和 stub_llm.py 的 REASONING_TEXT 对齐）
-PROC_HEAD = "Worked for"
 PROC_STEP = "已思考"
 THINK_BODY = "折叠时看不到"
 
@@ -690,7 +693,10 @@ def main():
         report["tool_row_has_peek"] = bool(
             re.search(r"运行命令 · [\d.]+m?s · \S", stream)
         )
-        report["tool_counted_in_summary"] = bool(re.search(r"Worked for [^·]+· \d+ tool", stream))
+        # 09-24 起跑过命令的那段写成 `Ran N commands · …`,其余仍是 `Worked for … · N tools`。
+        report["tool_counted_in_summary"] = bool(
+            re.search(r"Ran \d+ commands?\b|Worked for [^·]+· \d+ tools?\b", stream)
+        )
         defaults = {
             "tool_detail_has_command": False,
             "tool_detail_has_output": False,
@@ -700,9 +706,12 @@ def main():
         }
         report.update(defaults)
 
+        def hit(marker, line):
+            return marker(line) if callable(marker) else marker in line
+
         def find_row(marker, screen=None):
             screen = screen if screen is not None else render(bytes(sink))
-            return next((i for i, line in enumerate(screen) if marker in line), None)
+            return next((i for i, line in enumerate(screen) if hit(marker, line)), None)
 
         def find_last_row(marker, screen=None):
             """最后一个匹配。
@@ -712,9 +721,9 @@ def main():
             上去，后面一串断言跟着连锁假报红（实测踩过）。
             """
             screen = screen if screen is not None else render(bytes(sink))
-            return max((i for i, line in enumerate(screen) if marker in line), default=None)
+            return max((i for i, line in enumerate(screen) if hit(marker, line)), default=None)
 
-        head = find_last_row("Worked for")
+        head = find_last_row(is_fold_summary)
         if head is not None:
             mark_expand = len(sink)
             click(master, sink, 3, head)
@@ -1106,7 +1115,7 @@ def main():
         screen = render(bytes(sink))
         head = None
         for index, line in enumerate(screen):
-            if PROC_HEAD in line:
+            if is_fold_summary(line):
                 head = index
         if head is not None:
             click(master, sink, 3, head)
@@ -1146,7 +1155,7 @@ def main():
             closed = render(bytes(sink))
             report["proc_collapses"] = not any(
                 PROC_STEP in line for line in closed
-            ) and any(PROC_HEAD in line for line in closed)
+            ) and any(is_fold_summary(line) for line in closed)
             # item02：收起之后正文照旧在（展开那一下不能把它吃掉）
             report["item02_collapse_restores_body"] = any(
                 line.strip() for line in closed[: ROWS - 6]
@@ -1632,7 +1641,7 @@ def main():
         replay = render(bytes(again))
         (OUT / "reopened.txt").write_text("\n".join(replay), encoding="utf-8")
         report["item24_reopen_has_no_zero_seconds"] = not any(
-            "Worked for 0.0s" in line for line in replay
+            is_fold_summary(line) and re.search(r"\b0\.0s\b", line) for line in replay
         )
         # item01：**工具之前**那段思考也要带回来。桩模型每轮想两次（调工具前
         # 一次、交卷前一次），而 `turns.assistant_reasoning` 那一列只留得住最后

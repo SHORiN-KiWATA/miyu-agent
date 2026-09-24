@@ -984,11 +984,43 @@
     }
   }
 
-  // 总结行文字:Worked for 5.4 s · 3 tools · 1 thought · 1 err(回看的没有耗时)
+  // 摘要行的工具分类,与 crates/miyu-base/src/tool_names.rs 的 COMMAND_TOOLS /
+  // FILE_EDIT_TOOLS 是同一张名单(Rust 单测 web_fold_summary_lists_match_rust 盯着)。
+  // edits 只数改磁盘文件的那几步;知识库、artifact、删文件和其余一切算 tools(09-24)。
+  const COMMAND_TOOLS = ["run_command", "Bash"];
+  const FILE_EDIT_TOOLS = [
+    "edit",
+    "apply_patch",
+    "write_file",
+    "edit_file",
+    "edit_string",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "write_to_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+  ];
+
+  function toolKindOf(name) {
+    const base = String(name || "");
+    if (COMMAND_TOOLS.includes(base)) return "command";
+    if (FILE_EDIT_TOOLS.includes(base)) return "edit";
+    return "other";
+  }
+
+  // 总结行文字(09-24,与 TUI 的 summary_line 同一套规则):
+  //   跑过命令 → Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err · 12s
+  //   没跑命令 → Worked for 12s · 2 edits · 4 tools · 1 thought
+  //   只想了想 → 1 thought(网页的思考块不记耗时)
   function procLineRefresh(line) {
     const proc = line?.miyuProc;
     if (!proc?.closed) return;
-    const tools = proc.steps.querySelectorAll(":scope > .tool-card").length;
+    const counts = { command: 0, edit: 0, other: 0 };
+    for (const card of proc.steps.querySelectorAll(":scope > .tool-card")) {
+      counts[toolKindOf(card.dataset.toolName)] += 1;
+    }
     const thoughts = proc.steps.querySelectorAll(":scope > .reasoning-block").length;
     const errs = proc.steps.querySelectorAll(":scope > .tool-card.is-failure").length;
     // 「Worked for」= 第一个工具开跑到最后一个工具跑完。实时用 performance.now,
@@ -1002,7 +1034,6 @@
       last = Math.max(last, timing.finishedAt);
     }
     const elapsed = Number.isFinite(first) && Number.isFinite(last) ? formatToolDuration(last - first) : "";
-    const parts = [];
     const strong = (text) => {
       const b = document.createElement("b");
       b.textContent = text;
@@ -1014,19 +1045,22 @@
       span.textContent = text;
       return span;
     };
-    if (tools) {
-      const count = `${tools} tool${tools > 1 ? "s" : ""}`;
-      if (elapsed) {
-        parts.push(strong(`Worked for ${elapsed}`));
-        parts.push(plain(count));
-      } else {
-        parts.push(strong(count));
-      }
-      if (thoughts) parts.push(plain(`${thoughts} thought${thoughts > 1 ? "s" : ""}`));
-      if (errs) parts.push(plain(`${errs} err${errs > 1 ? "s" : ""}`, "proc-err"));
+    const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    // 先排好文字,打头那一项加粗;报错那一项标红。
+    const items = [];
+    const acted = counts.command + counts.edit + counts.other > 0;
+    if (!acted) {
+      items.push({ text: thoughts ? count(thoughts, "thought", "thoughts") : (elapsed ? `Worked for ${elapsed}` : t("已完成")) });
     } else {
-      parts.push(strong("Thought"));
+      if (counts.command) items.push({ text: `Ran ${count(counts.command, "command", "commands")}` });
+      else if (elapsed) items.push({ text: `Worked for ${elapsed}` });
+      if (counts.edit) items.push({ text: count(counts.edit, "edit", "edits") });
+      if (counts.other) items.push({ text: count(counts.other, "tool", "tools") });
+      if (thoughts) items.push({ text: count(thoughts, "thought", "thoughts") });
+      if (errs) items.push({ text: `${errs} err`, className: "proc-err" });
+      if (counts.command && elapsed) items.push({ text: elapsed });
     }
+    const parts = items.map((item, index) => (index === 0 ? strong(item.text) : plain(item.text, item.className || "")));
     proc.summary.replaceChildren();
     parts.forEach((part, index) => {
       if (index) proc.summary.appendChild(plain(" · ", "proc-dot"));
@@ -8490,7 +8524,8 @@
     const card = document.createElement("section");
     card.className = state.toolExpanded ? "tool-card" : "tool-card collapsed";
     const name = String(call?.name || "");
-    if (name === "run_command" || name === "Bash") card.classList.add("is-command");
+    card.dataset.toolName = name;
+    if (COMMAND_TOOLS.includes(name)) card.classList.add("is-command");
     if (isSubagentTool(name)) card.classList.add("is-task");
     // 图标配色来自 is-success（金）/ is-failure（红）。两个都不加会退回默认色，
     // 看起来就是「颜色不对」。
@@ -8791,7 +8826,9 @@
     const card = document.createElement("section");
     card.className = state.toolExpanded ? "tool-card" : "tool-card collapsed";
     card.dataset.toolId = toolId;
-    const isCommand = ["run_command", "Bash"].includes(String(data?.name || ""));
+    // 收缩行按工具名分类数(09-24):命令 / 改文件 / 其余。
+    card.dataset.toolName = String(data?.name || "");
+    const isCommand = COMMAND_TOOLS.includes(String(data?.name || ""));
     if (isCommand) card.classList.add("is-command");
     const isTask =
       isSubagentTool(data?.name) ||

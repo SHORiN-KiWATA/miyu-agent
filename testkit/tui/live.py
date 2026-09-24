@@ -31,6 +31,9 @@ import urllib.request
 from pathlib import Path
 
 import pyte
+# 收缩行认法统一走 testkit/fold_summary.py(09-24 摘要改成按工具类别写)。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fold_summary import is_fold_summary  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -288,7 +291,7 @@ def main():
         screen = render(bytes(sink))
         head = None
         for index, line in enumerate(screen):
-            if "Worked for" in line:
+            if is_fold_summary(line):
                 head = index
         if head is not None:
             click(master, sink, 3, head)
@@ -310,7 +313,7 @@ def main():
                     and i > opened_head
                     and line.startswith("  ")
                     and " · " in line
-                    and "Worked for" not in line
+                    and not is_fold_summary(line)
                 ),
                 None,
             )
@@ -362,7 +365,7 @@ def main():
             deadline = time.time() + 90.0
             while time.time() < deadline:
                 read_into(master, sink2, quiet=1.5, timeout=20.0)
-                if any("Worked for" in line for line in render(bytes(sink2))):
+                if any(is_fold_summary(line) for line in render(bytes(sink2))):
                     break
             (OUT / "screen-95-reopened.txt").write_text(
                 "\n".join(render(bytes(sink2))), encoding="utf-8"
