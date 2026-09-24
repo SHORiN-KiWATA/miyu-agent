@@ -8279,6 +8279,12 @@
       return compactLine(`${args.pattern || ""}${target ? ` · ${target}` : ""}`);
     }
     if (toolName === "glob") return compactLine(`${args.pattern || ""}${args.path ? ` · ${compactPath(args.path)}` : ""}`);
+    if (toolName === "todowrite" || toolName === "todoupdate") {
+      // 清单本体画在任务卡片里，这里只说这一下动了几项。
+      if (Array.isArray(args.todos)) return t("{count} 项", {count: args.todos.length});
+      if (Array.isArray(args.updates)) return t("更新 {count} 项", {count: args.updates.length});
+      return "";
+    }
     if (["webfetch", "web_fetch"].includes(toolName)) return compactLine(args.url);
     if (["web_search", "search_web", "search_web_images"].includes(toolName)) return compactLine(args.query || args.q);
     if (toolName === "generate_image") return compactLine(args.prompt);
@@ -9232,6 +9238,10 @@
       // 文件编辑(edit/kb/artifact):diff 卡已由 patchText 参数在建卡时画好,「准备修改」
       // 这类阶段签、`__patch_preview__` 预览等中间进度都是噪点,一律丢弃,只留 diff + 结果。
       if (message.startsWith("__patch_preview__") || window.MiyuDiff?.isEditTool?.(tool.name)) return;
+      // todowrite 的清单：那是给终端画表用的标记（`__todo_table__` + 整张清单的 JSON）。
+      // 网页的任务卡片另从会话的 todos 接口取，这条对网页没用；原来没拦，没有主语时
+      // 被拿来当主语，整段 JSON 印在时间线上（09-24）。
+      if (message.startsWith("__todo_table__")) return;
       // 阶段签(「准备修改」这类)只描述过程,不是结果:工具失败后不该留在卡片上
       // 当错误说明(09-11 手机端实测 edit 被沙盒拒后还挂着「准备修改」)。
       tool.lastProgressWasPhase = message.startsWith("__tool_phase__");
@@ -9446,7 +9456,7 @@
     });
     const question = questionState.questions[nextIndex] || {};
     questionState.prompt.textContent = String(question.question || question.header || t("问题 {index}", {index: nextIndex + 1}));
-    questionState.position.textContent = `${nextIndex + 1} of ${questionState.pages.length}`;
+    questionState.position.textContent = `${nextIndex + 1} / ${questionState.pages.length}`;
     updateQuestionNavigation(questionState);
     elements.questionDock.scrollTop = 0;
     window.requestAnimationFrame(() => {
@@ -9682,7 +9692,9 @@
     previous.appendChild(makeIconSlot("chevron-right"));
     const position = document.createElement("span");
     position.className = "question-position";
-    position.textContent = `1 of ${questions.length}`;
+    // 页码只用数字和斜杠，中英文界面都通用。原来写死「1 of N」，中文界面也显示英文
+    //（i18n 门禁只查中文字符串，英文模板查不到，09-24）。
+    position.textContent = `1 / ${questions.length}`;
     position.setAttribute("aria-live", "polite");
     const next = document.createElement("button");
     next.type = "button";

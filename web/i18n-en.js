@@ -1488,6 +1488,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "暂无记录": "No records yet",
   "曲线": "Curves",
   "更多": "More",
+  "更新 {count} 项": "{count} updates",
   "更新": "Update",
   "更新中…": "Updating…",
   "更新于 {time}": "Updated at {time}",
