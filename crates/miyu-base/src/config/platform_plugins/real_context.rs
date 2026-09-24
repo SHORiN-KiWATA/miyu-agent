@@ -53,8 +53,11 @@ pub struct RealContextPluginSettings {
     pub active_reply_supersede_enable: bool,
     pub active_reply_supersede_window_seconds: u64,
     pub reply_restraint_enable: bool,
+    /// 冷静机制的半衰期:她回的每一轮记一笔,过这么多分钟衰减一半。09-24 之前
+    /// 是「每点热度线性回落所需分钟」,键名沿用免迁移。
     pub reply_restraint_recover_minutes: u64,
     pub reply_restraint_strength: String,
+    /// 每回一轮记几笔近期发言量。
     pub reply_restraint_multiplier: f64,
     pub judge_relevance_weight: f64,
     pub judge_willingness_weight: f64,
@@ -1006,6 +1009,7 @@ fn default_after_speaking_window_seconds() -> u64 {
     30
 }
 
+/// 用户 09-24 从 0.15 降到 0.10:观察窗口里的插话偏多。
 fn default_after_speaking_score_boost() -> f64 {
-    0.15
+    0.10
 }

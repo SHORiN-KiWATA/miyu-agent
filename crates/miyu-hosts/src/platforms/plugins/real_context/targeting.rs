@@ -69,6 +69,15 @@ impl TriggerKind {
         })
     }
 
+    /// 判断通过后要不要在对方消息上贴「在看了」的表情。
+    ///
+    /// 抽样与刚说过话是她自己凑过去插话,没人在等她回;先贴个表情等于举手宣布
+    /// 「我要插话了」(用户 09-24 拍板这两路不贴)。按主触发归类:同时被 @ 或在
+    /// 续聊窗口里的照贴;补救顶替沿用原始触发,所以整条顶替链贴与不贴一致。
+    pub(in crate::platforms::plugins::real_context) fn marks_with_reaction(self) -> bool {
+        !matches!(self, Self::Probability | Self::AfterSpeaking)
+    }
+
     pub(in crate::platforms::plugins::real_context) fn log_label(
         self,
         locale: Locale,

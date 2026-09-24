@@ -339,12 +339,6 @@ fn keyword_matching_is_case_insensitive_and_unicode_safe() {
     assert_eq!(find_keyword(&keywords, "大家晚安"), Some("晚安"));
 }
 
-#[test]
-fn restraint_matches_deployed_medium_defaults() {
-    assert_eq!(restraint_adjustments(true, "medium", 1.0), (0.05, 0.025));
-    assert_eq!(restraint_adjustments(false, "strong", 10.0), (0.0, 0.0));
-}
-
 /// 纯附件让位(08-26 取证:文字提问触发回复后补一张表情包,表情占了"本轮
 /// 新消息"位,模型先评图再答题;而且同一张图还被渲染两遍——"本轮新消息"
 /// 与"随后补充"各一份)。修好后:文字占当前消息位,附件只在补充块出现一次。

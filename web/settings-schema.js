@@ -2375,13 +2375,14 @@
             {
               key: "reply_restraint_enable",
               label: t("回复克制"),
-              hint: t("连续主动回复后逐渐提高门槛"),
+              hint: t("她最近说得越多,回复门槛抬得越高"),
               kind: "toggle",
               default: true,
             },
             {
               key: "reply_restraint_recover_minutes",
-              label: t("克制恢复时间(分钟)"),
+              label: t("克制半衰期(分钟)"),
+              hint: t("她每回一轮记一笔,过这么多分钟衰减一半"),
               kind: "number",
               integer: true,
               min: 1,
@@ -2403,6 +2404,7 @@
             {
               key: "reply_restraint_multiplier",
               label: t("克制倍率"),
+              hint: t("每回一轮记几笔"),
               kind: "number",
               min: 0,
               max: 3,
@@ -2434,7 +2436,7 @@
               unit: t("秒"),
               default: 30,
             },
-            score01("after_speaking_score_boost", t("群聊发完消息后观察窗口加分"), 0.15, t("她发完消息后那段时间,每条消息都判一次;这个值给判断分数加一点,让她更容易接上话")),
+            score01("after_speaking_score_boost", t("群聊发完消息后观察窗口加分"), 0.1, t("她发完消息后那段时间,每条消息都判一次;这个值给判断分数加一点,让她更容易接上话")),
             {
               key: "continuation_window_seconds",
               label: t("续聊窗口(秒)"),
@@ -2571,6 +2573,7 @@
             {
               key: "active_reply_reaction_enable",
               label: t("确认主动回复后贴表情"),
+              hint: t("抽样和刚说过话触发的回复不贴"),
               kind: "toggle",
               default: true,
             },

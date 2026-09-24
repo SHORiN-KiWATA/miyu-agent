@@ -2,10 +2,12 @@ mod decision_log;
 mod history;
 mod inject;
 mod pending;
+mod restraint;
 mod runtime;
 mod targeting;
 use decision_log::*;
 use history::*;
+use restraint::*;
 use runtime::*;
 // onebot 侧也用 safe_prompt_*（拼提示词前的注入边界）
 pub(crate) use targeting::safe_prompt_field;
@@ -235,7 +237,7 @@ impl PlatformPlugin for RealContextPlugin {
             };
             let now = Instant::now();
             let session_key = runtime_session_key(context);
-            let old_reactions = {
+            let (old_reactions, trigger) = {
                 let mut runtime = self.runtime.lock().unwrap();
                 let Some(pending) = runtime
                     .sessions
@@ -250,7 +252,7 @@ impl PlatformPlugin for RealContextPlugin {
                 pending.committed = true;
                 pending.targets.push(active_reply_target(event));
                 normalize_active_targets(&mut pending.targets, &event.sender_id);
-                std::mem::take(&mut pending.reactions)
+                (std::mem::take(&mut pending.reactions), pending.trigger)
             };
             for (message_id, reaction_id) in old_reactions {
                 self.cancel_reaction_expiration(context, &message_id, &reaction_id);
@@ -261,7 +263,7 @@ impl PlatformPlugin for RealContextPlugin {
                     tracing::debug!(error = %error, %message_id, "{}", miyu_base::i18n::text("superseded QQ reaction could not be removed", "无法移除已被新消息覆盖的 QQ 表情回应"));
                 }
             }
-            let reactions = self.add_reactions(context, event, &settings).await;
+            let reactions = self.add_reactions(context, event, &settings, trigger).await;
             let mut runtime = self.runtime.lock().unwrap();
             if let Some(pending) = runtime
                 .sessions

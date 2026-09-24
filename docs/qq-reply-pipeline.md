@@ -44,14 +44,14 @@ flowchart TD
 | `direct` | @她 / 私聊 / 命令 | — | +0.3 | `takeover_direct_trigger_boost_score` |
 | `inherited` | 覆盖窗口内沿用上一轮 | 7s | 看继承到的是什么 | `active_reply_supersede_enable` / `active_reply_supersede_window_seconds` |
 | `continuation` | **同一个人**又说话 | 15s | +0.1 | `continuation_enable` / `continuation_window_seconds` / `continuation_boost_score` |
-| `after_speaking` | 她刚发过言，**任何人**说话（纯表情包除外） | 30s | +0.15 | `after_speaking_enable` / `after_speaking_window_seconds` / `after_speaking_score_boost` |
+| `after_speaking` | 她刚发过言，**任何人**说话（纯表情包除外） | 30s | +0.10（09-24 前 0.15） | `after_speaking_enable` / `after_speaking_window_seconds` / `after_speaking_score_boost` |
 | `probability` | 摇中骰子 | — | 0 | `active_judge_probability`（默认 5%） |
 | `moderation` | 命中违规关键词 | — | 0 | `moderation_enable` / `moderation_keywords` |
 
 **两件事要分清**：
 
 - **加分按成立的条件求和**，不封顶。她刚发完言（观察窗口开着）时有人 @ 她，
-  `+0.3 + 0.15` 两份都拿到——回复意愿本来就该更高，冷静机制在另一头压着。
+  `+0.3 + 0.10` 两份都拿到——回复意愿本来就该更高，冷静机制在另一头压着。
   （判官侧一直是 `final_score += continuation_boost + system_trigger_boost +
   after_speaking_score_boost`；09-19 之前卡住叠加的是 `inject.rs` 让它们互斥。）
 - **主触发（`primary()`）只用于归类**：好感度算不算「直接互动」、要不要注入
@@ -84,6 +84,28 @@ flowchart TD
 - 路人 B 说话 → 续聊只认同一个 `user_id`，天然不成立，归类是观察窗口
   ——**不会被记成「跟她直接互动」去喂好感度**；
 - 判断结果是「不回复」→ 两个窗口都不续命，自然到期。
+
+### 冷静机制：她最近说了多少话（09-24 重做）
+
+她在群里每真发出一轮回复（回 @ 的也算），就记一笔（`reply_restraint_multiplier`，
+默认 1）。每笔按半衰期衰减（`reply_restraint_recover_minutes`，默认 3 分钟：3 分钟
+后剩一半、10 分钟后剩一成），加起来就是「近期发言量」。判断时门槛抬高
+`min(近期发言量 × 每笔, 封顶)`，中档每笔 0.09、封顶 0.40（轻 0.03 / 0.22，强
+0.18 / 0.62）。所有触发都受它压，包括被 @——真人不会因为被艾特就不累。代码在
+`restraint.rs`。
+
+旧版（09-24 前）是「每回一次 +1、每 3 分钟线性回落 1」的热度，外加扣分、抬门槛
+两套系数。7 天日志显示主群热度常年几十上百（峰值 223），效果早在 3–5 点封顶，
+等于全天恒定抬 0.33，分不出「刚连说三句」和「下午忙过一阵」，忙完要十几个小时
+才降回来。扣分和抬门槛在数学上是同一件事，新版只留抬门槛；每笔与封顶取旧版两者
+合计的 1.2 倍（用户要求整体 +20%）。
+
+### 贴表情（`active_reply_reaction_*`）
+
+判断通过（或直触发确定要回）时，在对方那条消息上贴「在看了」的表情，回复发出后
+摘掉。**抽样和刚说过话这两种主触发不贴**（09-24）：她是自己凑过去插话的，没人在
+等她，先贴表情等于举手宣布要插话。按主触发归类，同时被 @ 或在续聊窗口里的照贴；
+覆盖顶替沿用原始触发，整条顶替链贴与不贴一致（`TriggerKind::marks_with_reaction`）。
 
 ## 三个模型各自看到什么
 

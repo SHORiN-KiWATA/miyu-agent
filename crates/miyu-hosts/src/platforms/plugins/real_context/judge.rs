@@ -28,10 +28,9 @@ pub(super) struct JudgeRequest<'a> {
     pub(super) continuation_boost: f64,
     pub(super) system_trigger_boost: f64,
     pub(super) moderation_only: bool,
-    #[allow(dead_code)] // 有写无读:疑似判官侧漏了实现(09-16 记入死代码清单),不删
-    pub(super) reply_heat: f64,
-    pub(super) heat_penalty: f64,
-    pub(super) heat_threshold_boost: f64,
+    /// 近期发言量与它折算的门槛抬高量(冷静机制,见 restraint.rs)。
+    pub(super) reply_pressure: f64,
+    pub(super) restraint_threshold: f64,
     pub(super) short_message_threshold_boost: f64,
     /// 「刚说过话」(她刚在群里发过言)这一路的加分。这种判断是「人发完言之后
     /// 大概率会看到接下来的消息」在模拟,窗口内给她一点加分更容易接上话
@@ -218,7 +217,7 @@ fn build_prompt(
     // Ahead of them they land in the cached prefix instead. A one-line format
     // reminder stays at the tail, where models follow it best.
     Ok(format!(
-        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nCurrent program adjustments: natural continuation +{:.3}, direct-trigger takeover +{:.3}, after-speaking +{:.3}, affection {:+.3}; reply heat {:.3}, heat penalty -{:.3}, heat threshold +{:.3}, short-message threshold +{:.3}, emotion threshold {:+.3}.\nReturn JSON only.",
+        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nCurrent program adjustments: natural continuation +{:.3}, direct-trigger takeover +{:.3}, after-speaking +{:.3}, affection {:+.3}; recent replies {:.2}, restraint threshold +{:.3}, short-message threshold +{:.3}, emotion threshold {:+.3}.\nReturn JSON only.",
         if persona.trim().is_empty() {
             "(not provided; judge as a generic group-chat assistant)"
         } else {
@@ -244,9 +243,8 @@ fn build_prompt(
         request.system_trigger_boost,
         request.after_speaking_score_boost,
         request.affection_bias,
-        request.reply_heat,
-        request.heat_penalty,
-        request.heat_threshold_boost,
+        request.reply_pressure,
+        request.restraint_threshold,
         request.short_message_threshold_boost,
         request.emotion_adjustment,
     ))
@@ -456,9 +454,9 @@ fn normalize_result(
         + request.system_trigger_boost
         + request.after_speaking_score_boost
         + request.affection_bias;
-    final_score = (final_score - request.heat_penalty).max(0.0);
+    final_score = final_score.max(0.0);
     let effective_threshold = (settings.reply_threshold
-        + request.heat_threshold_boost
+        + request.restraint_threshold
         + request.short_message_threshold_boost
         + request.emotion_adjustment)
         .max(0.0);
@@ -797,9 +795,8 @@ mod tests {
             continuation_boost: 0.0,
             system_trigger_boost: 0.0,
             moderation_only,
-            reply_heat: 0.0,
-            heat_penalty: 0.0,
-            heat_threshold_boost: 0.0,
+            reply_pressure: 0.0,
+            restraint_threshold: 0.0,
             short_message_threshold_boost: 0.0,
             after_speaking_score_boost: 0.0,
             affection_level: "中立",
@@ -837,6 +834,26 @@ mod tests {
         );
         // 只加分,门槛不动——不能再顺手把门槛也抬一遍。
         assert!((spoke.effective_threshold - plain.effective_threshold).abs() < 1e-9);
+    }
+
+    /// 冷静机制只抬门槛,不再同时扣分(09-24 重做:两者数学上是同一件事,旧版
+    /// 两份一起算)。
+    #[test]
+    fn restraint_only_raises_the_bar() {
+        let settings = RealContextPluginSettings::default();
+        let verdict = serde_json::json!({
+            "should_reply": true,
+            "relevance": 8, "willingness": 8, "social": 8, "timing": 8, "continuity": 8,
+            "reasoning": "",
+        });
+        let calm = normalize_result(&settings, &request(false), &verdict).expect("未冷静");
+        let mut busy = request(false);
+        busy.restraint_threshold = 0.4;
+        let busy = normalize_result(&settings, &busy, &verdict).expect("冷静中");
+
+        assert!((busy.final_score - calm.final_score).abs() < 1e-9);
+        assert!((busy.effective_threshold - calm.effective_threshold - 0.4).abs() < 1e-9);
+        assert!(calm.should_reply && !busy.should_reply);
     }
 
     /// 违规检查只看全局开关，和这一次是什么触发无关。

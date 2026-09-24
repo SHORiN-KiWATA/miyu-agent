@@ -41,25 +41,6 @@ pub(in crate::platforms::plugins::real_context) fn prepare_history(
     }
 }
 
-pub(in crate::platforms::plugins::real_context) fn restraint_adjustments(
-    enabled: bool,
-    strength: &str,
-    heat: f64,
-) -> (f64, f64) {
-    if !enabled {
-        return (0.0, 0.0);
-    }
-    let (penalty_per_heat, max_penalty, threshold_per_heat, max_threshold) = match strength {
-        "light" => (0.01, 0.13, 0.015, 0.05),
-        "strong" => (0.11, 0.40, 0.04, 0.12),
-        _ => (0.05, 0.25, 0.025, 0.08),
-    };
-    (
-        (heat * penalty_per_heat).min(max_penalty),
-        (heat * threshold_per_heat).min(max_threshold),
-    )
-}
-
 pub(in crate::platforms::plugins::real_context) fn short_message_boost(
     event: &PlatformInboundEvent,
     continuation_boost: f64,

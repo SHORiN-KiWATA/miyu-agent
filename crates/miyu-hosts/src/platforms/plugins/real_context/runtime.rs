@@ -68,8 +68,9 @@ impl RuntimeState {
 pub(in crate::platforms::plugins::real_context) struct SessionRuntime {
     pub(in crate::platforms::plugins::real_context) last_touched: Instant,
     pub(in crate::platforms::plugins::real_context) last_reply: Option<Instant>,
-    pub(in crate::platforms::plugins::real_context) heat: f64,
-    pub(in crate::platforms::plugins::real_context) heat_updated: Instant,
+    /// 近期发言量(冷静机制,见 restraint.rs)。只在内存里:半衰期是分钟级,
+    /// daemon 重启丢了也几分钟内就追平。
+    pub(in crate::platforms::plugins::real_context) pressure: ReplyPressure,
     pub(in crate::platforms::plugins::real_context) continuation: Option<Continuation>,
     pub(in crate::platforms::plugins::real_context) pending: HashMap<String, PendingReply>,
 }
@@ -79,25 +80,22 @@ impl SessionRuntime {
         Self {
             last_touched: now,
             last_reply: None,
-            heat: 0.0,
-            heat_updated: now,
+            pressure: ReplyPressure::new(now),
             continuation: None,
             pending: HashMap::new(),
         }
     }
 
-    pub(in crate::platforms::plugins::real_context) fn decay_heat(
-        &mut self,
+    pub(in crate::platforms::plugins::real_context) fn reply_pressure(
+        &self,
         now: Instant,
-        recover_minutes: u64,
-    ) {
-        let recover = Duration::from_secs(recover_minutes.max(1) * 60).as_secs_f64();
-        let elapsed = now.duration_since(self.heat_updated).as_secs_f64();
-        self.heat = (self.heat - elapsed / recover).max(0.0);
-        self.heat_updated = now;
+        settings: &RealContextPluginSettings,
+    ) -> f64 {
+        self.pressure.level(now, restraint_half_life(settings))
     }
 
-    pub(in crate::platforms::plugins::real_context) fn increase_heat(
+    /// 她在这个群真发出去一轮回复:记一笔。回 @ 的也记(用户 09-24 拍板)。
+    pub(in crate::platforms::plugins::real_context) fn record_reply(
         &mut self,
         now: Instant,
         settings: &RealContextPluginSettings,
@@ -105,9 +103,11 @@ impl SessionRuntime {
         if !settings.reply_restraint_enable {
             return;
         }
-        self.decay_heat(now, settings.reply_restraint_recover_minutes);
-        self.heat += settings.reply_restraint_multiplier;
-        self.heat_updated = now;
+        self.pressure.record(
+            now,
+            restraint_half_life(settings),
+            settings.reply_restraint_multiplier,
+        );
     }
 
     pub(in crate::platforms::plugins::real_context) fn continuation_match(

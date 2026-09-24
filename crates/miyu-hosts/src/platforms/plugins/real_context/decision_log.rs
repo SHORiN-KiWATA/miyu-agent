@@ -24,9 +24,8 @@ pub(in crate::platforms::plugins::real_context) struct ActiveReplyDecisionLog<'a
     pub(in crate::platforms::plugins::real_context) emotion_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) continuation_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) system_adjustment: f64,
-    pub(in crate::platforms::plugins::real_context) reply_heat: f64,
-    pub(in crate::platforms::plugins::real_context) heat_penalty: f64,
-    pub(in crate::platforms::plugins::real_context) heat_threshold_adjustment: f64,
+    pub(in crate::platforms::plugins::real_context) reply_pressure: f64,
+    pub(in crate::platforms::plugins::real_context) restraint_threshold: f64,
     pub(in crate::platforms::plugins::real_context) short_message_threshold_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) after_speaking_score_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) moderation: &'a judge::ModerationResult,
@@ -166,20 +165,18 @@ pub(in crate::platforms::plugins::real_context) fn format_active_reply_decision_
             &format_adjustment(log.after_speaking_score_adjustment),
         ));
     }
-    if log.heat_penalty.abs() >= 0.0005 || log.heat_threshold_adjustment.abs() >= 0.0005 {
+    if log.restraint_threshold.abs() >= 0.0005 {
         lines.push(if locale == Locale::Zh {
             format!(
-                "冷静机制调整：扣分 {}，阈值 {}（冷静度 {:.3}）",
-                format_adjustment(-log.heat_penalty),
-                format_adjustment(log.heat_threshold_adjustment),
-                log.reply_heat
+                "冷静机制调整：阈值 {}（近期发言量 {:.2}）",
+                format_adjustment(log.restraint_threshold),
+                log.reply_pressure
             )
         } else {
             format!(
-                "Restraint adjustment: penalty {}, threshold {} (heat {:.3})",
-                format_adjustment(-log.heat_penalty),
-                format_adjustment(log.heat_threshold_adjustment),
-                log.reply_heat
+                "Restraint adjustment: threshold {} (recent replies {:.2})",
+                format_adjustment(log.restraint_threshold),
+                log.reply_pressure
             )
         });
     }

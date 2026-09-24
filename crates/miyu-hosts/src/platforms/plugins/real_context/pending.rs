@@ -94,7 +94,9 @@ impl RealContextPlugin {
         targets.push(active_reply_target(event));
         normalize_active_targets(&mut targets, &event.sender_id);
         set_active_targets(context, &targets);
-        let reactions = self.add_reactions(context, event, settings).await;
+        let reactions = self
+            .add_reactions(context, event, settings, TriggerKind::Direct)
+            .await;
         self.register_committed_pending(context, TriggerKind::Direct, reactions, targets, false);
     }
 
@@ -139,8 +141,12 @@ impl RealContextPlugin {
         context: &PlatformTurnContext,
         event: &PlatformInboundEvent,
         settings: &RealContextPluginSettings,
+        trigger: TriggerKind,
     ) -> Vec<(String, String)> {
-        if !settings.active_reply_reaction_enable || event.message_id.is_empty() {
+        if !settings.active_reply_reaction_enable
+            || !trigger.marks_with_reaction()
+            || event.message_id.is_empty()
+        {
             return Vec::new();
         }
         let mut active = Vec::new();

@@ -41,9 +41,8 @@ fn active_reply_decision_log_is_structured_for_humans() {
         emotion_adjustment: 0.0,
         continuation_adjustment: 0.05,
         system_adjustment: 0.0,
-        reply_heat: 1.25,
-        heat_penalty: 0.06,
-        heat_threshold_adjustment: 0.03,
+        reply_pressure: 1.0,
+        restraint_threshold: 0.09,
         short_message_threshold_adjustment: 0.01,
         after_speaking_score_adjustment: 0.15,
         moderation: &moderation,
@@ -65,7 +64,7 @@ fn active_reply_decision_log_is_structured_for_humans() {
     assert!(rendered.contains("好感度调整：熟人 +0.030"));
     assert!(rendered.contains("自然续聊调整：+0.050"));
     assert!(!rendered.contains("直接触发调整"));
-    assert!(rendered.contains("冷静机制调整：扣分 -0.060，阈值 +0.030（冷静度 1.250）"));
+    assert!(rendered.contains("冷静机制调整：阈值 +0.090（近期发言量 1.00）"));
     assert!(rendered.contains("短句阈值调整：+0.010"));
     assert!(rendered.contains("刚说过话加分：+0.150"));
     assert!(!rendered.contains("安全初判"));

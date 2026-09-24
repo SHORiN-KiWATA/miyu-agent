@@ -75,7 +75,7 @@ pub(in crate::config_tui) fn edit_real_context_active_reply(
             ),
             format!(
                 "{}: {}",
-                t("Restraint recovery (minutes)", "克制恢复时间（分钟）"),
+                t("Restraint half-life (minutes)", "克制半衰期（分钟）"),
                 settings.reply_restraint_recover_minutes
             ),
             format!(
@@ -187,7 +187,7 @@ pub(in crate::config_tui) fn edit_real_context_active_reply(
                 }
                 10 => edit_real_context_number(
                     ui,
-                    t("Restraint recovery (minutes)", "克制恢复时间（分钟）"),
+                    t("Restraint half-life (minutes)", "克制半衰期（分钟）"),
                     settings.reply_restraint_recover_minutes,
                     settings,
                     |candidate, value| candidate.reply_restraint_recover_minutes = value,

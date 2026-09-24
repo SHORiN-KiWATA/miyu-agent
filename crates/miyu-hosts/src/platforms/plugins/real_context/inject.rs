@@ -149,12 +149,11 @@ impl RealContextPlugin {
             inherited_trigger,
             old_reactions,
             mut inherited_targets,
-            heat,
+            pressure,
         ) = {
             let mut runtime = self.runtime.lock().unwrap();
             runtime.prune(now);
             let session = runtime.session_mut(&session_key, now);
-            session.decay_heat(now, settings.reply_restraint_recover_minutes);
             let continuation =
                 session.continuation_match(&event.sender_id, now, settings.continuation_enable);
             let after_speaking = session.spoke_recently(now, settings);
@@ -204,7 +203,7 @@ impl RealContextPlugin {
                 inherited_trigger,
                 old_reactions,
                 inherited_targets,
-                session.heat,
+                session.reply_pressure(now, settings),
             )
         };
 
@@ -284,7 +283,7 @@ impl RealContextPlugin {
             context.set_plugin_value(TRIGGER_KEY, Value::String(trigger.as_str().to_string()));
             decision.should_reply = true;
             decision.response_target = adaptive_response_target(context, event, settings);
-            let reactions = self.add_reactions(context, event, settings).await;
+            let reactions = self.add_reactions(context, event, settings, trigger).await;
             self.register_committed_pending(context, trigger, reactions, inherited_targets, true);
             self.log_bypass(context, trigger, "覆盖窗口内沿用上一轮已承诺的回复");
             return Ok(());
@@ -409,10 +408,10 @@ impl RealContextPlugin {
             .after_speaking
             .then_some(settings.after_speaking_score_boost)
             .unwrap_or_default();
-        let (heat_penalty, heat_threshold_boost) = restraint_adjustments(
+        let restraint = restraint_threshold(
             settings.reply_restraint_enable,
             &settings.reply_restraint_strength,
-            heat,
+            pressure,
         );
         let continuation_boost = conditions
             .continuation
@@ -479,9 +478,8 @@ impl RealContextPlugin {
                     continuation_boost,
                     system_trigger_boost: system_boost,
                     moderation_only: conditions.moderation_only(),
-                    reply_heat: heat,
-                    heat_penalty,
-                    heat_threshold_boost,
+                    reply_pressure: pressure,
+                    restraint_threshold: restraint,
                     short_message_threshold_boost: short_boost,
                     after_speaking_score_boost,
                     affection_level,
@@ -550,9 +548,8 @@ impl RealContextPlugin {
                 emotion_adjustment: judged.emotion_adjustment,
                 continuation_adjustment: continuation_boost,
                 system_adjustment: system_boost,
-                reply_heat: heat,
-                heat_penalty,
-                heat_threshold_adjustment: heat_threshold_boost,
+                reply_pressure: pressure,
+                restraint_threshold: restraint,
                 short_message_threshold_adjustment: short_boost,
                 after_speaking_score_adjustment: after_speaking_score_boost,
                 moderation: &judged.moderation,
@@ -578,7 +575,9 @@ impl RealContextPlugin {
                 );
                 // 保留 pending 并标记承诺:直触发的表情记录在案,
                 // 补救窗口内的新消息可以顶替并转移表情。
-                let reactions = self.add_reactions(context, event, settings).await;
+                let reactions = self
+                    .add_reactions(context, event, settings, TriggerKind::Direct)
+                    .await;
                 let mut runtime = self.runtime.lock().unwrap();
                 if let Some(pending) = runtime
                     .sessions
@@ -609,7 +608,7 @@ impl RealContextPlugin {
         context.set_plugin_value(TRIGGER_KEY, Value::String(trigger.as_str().to_string()));
         decision.should_reply = true;
         decision.response_target = adaptive_response_target(context, event, settings);
-        let reactions = self.add_reactions(context, event, settings).await;
+        let reactions = self.add_reactions(context, event, settings, trigger).await;
         if let Some(pending) = self
             .runtime
             .lock()
@@ -991,7 +990,7 @@ impl RealContextPlugin {
             session.pending.remove(&sender_id);
         }
         session.last_reply = Some(now);
-        session.increase_heat(now, settings);
+        session.record_reply(now, settings);
         session.mark_continuation(&sender_id, now, settings);
     }
 }
