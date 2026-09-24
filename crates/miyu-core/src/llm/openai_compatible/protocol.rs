@@ -621,6 +621,9 @@ pub(in crate::llm::openai_compatible) fn anthropic_thinking_config() -> Value {
 /// only to providers known to understand it and strip it everywhere else, so
 /// the transport copy stays byte-identical to the pre-A17 shape on unrelated
 /// endpoints (prompt-cache prefix preserved).
+///
+/// mimo 与 sensenova 是 09-24 用 `testkit/reasoning-passback/probe.py` 实测后加的:
+/// 网关收下这个键并转给了模型(prompt 多出约 20 token)。新加一家先跑这个探针。
 pub(in crate::llm::openai_compatible) fn provider_accepts_reasoning_content(
     provider: &ProviderConfig,
 ) -> bool {
@@ -630,7 +633,16 @@ pub(in crate::llm::openai_compatible) fn provider_accepts_reasoning_content(
         provider.base_url.to_ascii_lowercase(),
         provider.default_model.to_ascii_lowercase()
     );
-    ["deepseek", "glm-", "zhipu", "bigmodel", "kimi", "moonshot"]
-        .iter()
-        .any(|needle| haystack.contains(needle))
+    [
+        "deepseek",
+        "glm-",
+        "zhipu",
+        "bigmodel",
+        "kimi",
+        "moonshot",
+        "mimo",
+        "sensenova",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
 }

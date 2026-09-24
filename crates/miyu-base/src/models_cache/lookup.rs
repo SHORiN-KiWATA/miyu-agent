@@ -15,7 +15,7 @@ pub(crate) const CNY_PER_USD: f64 = 7.25;
 
 pub fn input_modalities(provider_id: &str, model_id: &str) -> Option<Vec<String>> {
     let lock = cache_lock().lock().unwrap();
-    let cache = lock.as_ref()?;
+    let cache = lock.loaded.as_ref()?;
     lookup_input_modalities(&cache.data, provider_id, model_id)
 }
 
@@ -57,13 +57,13 @@ pub fn context_window(provider_id: &str, model_id: &str) -> Option<u64> {
         return Some(window);
     }
     let lock = cache_lock().lock().unwrap();
-    let cache = lock.as_ref()?;
+    let cache = lock.loaded.as_ref()?;
     lookup_context_window(&cache.data, provider_id, model_id)
 }
 
 pub fn reasoning_info(provider_id: &str, model_id: &str) -> Option<ModelReasoningInfo> {
     let lock = cache_lock().lock().unwrap();
-    let cache = lock.as_ref()?;
+    let cache = lock.loaded.as_ref()?;
     lookup_reasoning_info(&cache.data, provider_id, model_id)
 }
 
@@ -194,7 +194,7 @@ pub(crate) fn lookup_context_window(
 /// 模型在不同渠道价格不同,跨供应商模糊匹配会算错钱。
 pub fn model_cost(provider_id: &str, base_url: &str, model_id: &str) -> Option<ApiCost> {
     let lock = cache_lock().lock().unwrap();
-    let cache = lock.as_ref()?;
+    let cache = lock.loaded.as_ref()?;
     if let Some(cost) = cache
         .data
         .get(provider_id)

@@ -1,9 +1,11 @@
 mod api;
 mod lookup;
 mod provider_api;
+mod selection;
 pub use api::*;
 pub use lookup::*;
 pub use provider_api::*;
+use selection::Catalogue;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -49,12 +51,12 @@ struct Cache {
     provider_api: HashMap<String, String>,
 }
 
-static CACHE: OnceLock<Mutex<Option<Cache>>> = OnceLock::new();
+static CACHE: OnceLock<Mutex<Catalogue>> = OnceLock::new();
 static REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static ACTIVE_METADATA_STARTED: AtomicBool = AtomicBool::new(false);
 
-fn cache_lock() -> &'static Mutex<Option<Cache>> {
-    CACHE.get_or_init(|| Mutex::new(None))
+fn cache_lock() -> &'static Mutex<Catalogue> {
+    CACHE.get_or_init(|| Mutex::new(Catalogue::default()))
 }
 
 fn refresh_lock() -> &'static Mutex<()> {
@@ -66,7 +68,7 @@ fn provider_api_cache_lock() -> &'static Mutex<HashMap<(String, String), u64>> {
 }
 
 pub fn is_loaded() -> bool {
-    cache_lock().lock().unwrap().is_some()
+    cache_lock().lock().unwrap().loaded.is_some()
 }
 
 fn cache_file(paths: &crate::paths::MiyuPaths) -> PathBuf {
@@ -109,19 +111,15 @@ pub fn try_load(paths: &crate::paths::MiyuPaths) {
     let path = cache_file(paths);
     let cache = load_from_disk(&path).ok();
     if let Some(cache) = cache {
-        let mut lock = cache_lock().lock().unwrap();
-        *lock = Some(cache);
+        cache_lock().lock().unwrap().install_full(cache);
     }
 }
 
 pub fn try_load_active(paths: &crate::paths::MiyuPaths, config: &crate::config::AppConfig) {
     let path = cache_file(paths);
     let cache = load_from_disk(&path).ok();
-    if let Some(mut cache) = cache {
-        retain_configured_models(&mut cache.data, config);
-        let mut lock = cache_lock().lock().unwrap();
-        *lock = Some(cache);
-        drop(lock);
+    if let Some(cache) = cache {
+        cache_lock().lock().unwrap().install_pruned(cache, config);
         // 3.6MB 的目录 JSON 全量解析出的临时树刚被释放，立刻还给 OS，
         // 别让它抬着进程高水位（REPL 冷启动路径也走这里）。
         crate::process::trim_process_memory();
@@ -134,8 +132,7 @@ pub fn spawn_background_refresh(paths: crate::paths::MiyuPaths) {
         let _refresh = refresh_lock().lock().unwrap();
         let fetched = fetch_and_cache(&path).ok();
         if let Some(cache) = fetched {
-            let mut lock = cache_lock().lock().unwrap();
-            *lock = Some(cache);
+            cache_lock().lock().unwrap().install_full(cache);
         }
     });
 }
@@ -149,18 +146,16 @@ pub fn spawn_background_refresh_active(
     std::thread::spawn(move || {
         let _refresh = refresh_lock().lock().unwrap();
         let fetched = fetch_and_cache(&path).ok();
-        if let Some(mut cache) = fetched {
-            retain_configured_models(&mut cache.data, &config);
-            let mut lock = cache_lock().lock().unwrap();
-            *lock = Some(cache);
-            drop(lock);
+        if let Some(cache) = fetched {
+            cache_lock().lock().unwrap().install_pruned(cache, &config);
             crate::process::trim_process_memory();
         }
     });
 }
 
 pub fn ensure_active_metadata(paths: &crate::paths::MiyuPaths, config: &crate::config::AppConfig) {
-    if !is_loaded() {
+    let stale = cache_lock().lock().unwrap().want(config);
+    if stale {
         try_load_active(paths, config);
     }
     if ACTIVE_METADATA_STARTED
@@ -171,77 +166,6 @@ pub fn ensure_active_metadata(paths: &crate::paths::MiyuPaths, config: &crate::c
     }
 }
 
-fn retain_configured_models(
-    data: &mut HashMap<String, HashMap<String, ModelInfo>>,
-    config: &crate::config::AppConfig,
-) {
-    let mut selected = HashMap::<String, HashSet<String>>::new();
-    let mut selected_model_ids = HashSet::new();
-    for provider in &config.providers {
-        selected
-            .entry(provider.id.clone())
-            .or_default()
-            .insert(provider.default_model.clone());
-        if !provider.default_model.trim().is_empty() {
-            selected_model_ids.insert(provider.default_model.clone());
-        }
-    }
-    let conversation_models = config.platforms.qq.conversations.iter().flat_map(|route| {
-        route
-            .text_models
-            .iter()
-            .flatten()
-            .chain(route.multimodal_models.iter().flatten())
-    });
-    let real_context_models: Vec<crate::config::ActiveProviderModelConfig> = config
-        .platforms
-        .qq
-        .plugins
-        .get(crate::config::REAL_CONTEXT_PLUGIN_ID)
-        .and_then(|instance| crate::config::RealContextPluginSettings::from_instance(instance).ok())
-        .map(|settings| {
-            settings
-                .text_models
-                .explicit_entries()
-                .iter()
-                .chain(settings.affection_text_models.explicit_entries())
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-    for choice in config
-        .active_provider_models
-        .iter()
-        .flatten()
-        .chain(config.active_multimodal_provider_models.iter().flatten())
-        .chain(config.platforms.qq.text_models.explicit_entries())
-        .chain(config.platforms.qq.multimodal_models.explicit_entries())
-        .chain(
-            config
-                .platforms
-                .qq
-                .non_whitelist_text_models
-                .explicit_entries(),
-        )
-        .chain(conversation_models)
-        .chain(real_context_models.iter())
-    {
-        selected
-            .entry(choice.provider_id.clone())
-            .or_default()
-            .insert(choice.model.clone());
-        selected_model_ids.insert(choice.model.clone());
-    }
-    data.retain(|provider_id, models| {
-        let provider_models = selected.get(provider_id);
-        models.retain(|model_id, _| {
-            provider_models.is_some_and(|ids| ids.contains(model_id))
-                || selected_model_ids.contains(model_id)
-        });
-        !models.is_empty()
-    });
-}
-
 pub fn refresh_blocking(paths: &crate::paths::MiyuPaths) -> Result<()> {
     let _refresh = refresh_lock().lock().unwrap();
     if is_loaded() {
@@ -249,8 +173,7 @@ pub fn refresh_blocking(paths: &crate::paths::MiyuPaths) -> Result<()> {
     }
     let path = cache_file(paths);
     let cache = fetch_and_cache(&path)?;
-    let mut lock = cache_lock().lock().unwrap();
-    *lock = Some(cache);
+    cache_lock().lock().unwrap().install_full(cache);
     Ok(())
 }
 
@@ -396,147 +319,6 @@ mod tests {
         assert_eq!(
             lookup_context_window(&data, "provider-a", "shared-model"),
             Some(128_000)
-        );
-    }
-
-    #[test]
-    fn compact_cache_retains_only_configured_models() {
-        let config = crate::config::AppConfig::default();
-        let provider = &config.providers[0];
-        let mut data = HashMap::from([
-            (
-                provider.id.clone(),
-                HashMap::from([
-                    (provider.default_model.clone(), model(128_000)),
-                    ("unused-model".to_string(), model(64_000)),
-                ]),
-            ),
-            (
-                "unused-provider".to_string(),
-                HashMap::from([("unused-model".to_string(), model(32_000))]),
-            ),
-        ]);
-
-        retain_configured_models(&mut data, &config);
-
-        assert!(!data.contains_key("unused-provider"));
-        assert!(data[&provider.id].contains_key(&provider.default_model));
-        assert!(!data[&provider.id].contains_key("unused-model"));
-    }
-
-    #[test]
-    fn compact_cache_retains_models_used_only_by_platform_routes() {
-        let mut config = crate::config::AppConfig::default();
-        let provider_id = config.providers[0].id.clone();
-        config.providers[0].models.extend([
-            "route-text".to_string(),
-            "route-vision".to_string(),
-            "platform-text".to_string(),
-            "non-whitelist-text".to_string(),
-            "context-text".to_string(),
-        ]);
-        config.platforms.qq.text_models =
-            crate::config::ModelPoolRef::models(vec![crate::config::ActiveProviderModelConfig {
-                provider_id: provider_id.clone(),
-                model: "platform-text".to_string(),
-            }]);
-        config.platforms.qq.non_whitelist_text_models =
-            crate::config::ModelPoolRef::models(vec![crate::config::ActiveProviderModelConfig {
-                provider_id: provider_id.clone(),
-                model: "non-whitelist-text".to_string(),
-            }]);
-        let mut real_context = crate::config::PlatformPluginInstanceConfig::default();
-        crate::config::merge_real_context_settings(
-            &mut real_context,
-            &crate::config::RealContextPluginSettings {
-                text_models: crate::config::ModelPoolRef::models(vec![
-                    crate::config::ActiveProviderModelConfig {
-                        provider_id: provider_id.clone(),
-                        model: "context-text".to_string(),
-                    },
-                ]),
-                ..Default::default()
-            },
-        );
-        config.platforms.qq.plugins.insert(
-            crate::config::REAL_CONTEXT_PLUGIN_ID.to_string(),
-            real_context,
-        );
-        config
-            .platforms
-            .qq
-            .conversations
-            .push(crate::config::PlatformModelRoute {
-                conversation: crate::config::PlatformConversationConfig {
-                    kind: crate::config::PlatformConversationKind::Group,
-                    id: "20000".to_string(),
-                },
-                persona: crate::config::PlatformPersonaOverride::Inherit,
-                text_models_inheritance: crate::config::PlatformModelPoolInheritance::Platform,
-                text_models: Some(vec![crate::config::ActiveProviderModelConfig {
-                    provider_id: provider_id.clone(),
-                    model: "route-text".to_string(),
-                }]),
-                multimodal_models_inheritance:
-                    crate::config::PlatformModelPoolInheritance::Platform,
-                multimodal_models: Some(vec![crate::config::ActiveProviderModelConfig {
-                    provider_id: provider_id.clone(),
-                    model: "route-vision".to_string(),
-                }]),
-                extra_prompt: String::new(),
-                session_limits: None,
-                probability_reply: None,
-                probability_reply_rate: None,
-                ignore_sleep_hours: None,
-                rate_limit: None,
-            });
-        let mut data = HashMap::from([(
-            provider_id.clone(),
-            HashMap::from([
-                (config.providers[0].default_model.clone(), model(128_000)),
-                ("route-text".to_string(), model(64_000)),
-                ("route-vision".to_string(), model(96_000)),
-                ("platform-text".to_string(), model(64_000)),
-                ("non-whitelist-text".to_string(), model(64_000)),
-                ("context-text".to_string(), model(64_000)),
-                ("unused-model".to_string(), model(32_000)),
-            ]),
-        )]);
-
-        retain_configured_models(&mut data, &config);
-
-        let retained = &data[&provider_id];
-        assert!(retained.contains_key("route-text"));
-        assert!(retained.contains_key("route-vision"));
-        assert!(retained.contains_key("platform-text"));
-        assert!(retained.contains_key("non-whitelist-text"));
-        assert!(retained.contains_key("context-text"));
-        assert!(!retained.contains_key("unused-model"));
-    }
-
-    #[test]
-    fn compact_cache_retains_same_model_metadata_from_other_providers() {
-        let mut config = crate::config::AppConfig::default();
-        let provider = &mut config.providers[0];
-        provider.models = vec!["custom-model".to_string()];
-        provider.default_model = "custom-model".to_string();
-        let mut data = HashMap::from([
-            (
-                provider.id.clone(),
-                HashMap::from([("custom-model".to_string(), model(64_000))]),
-            ),
-            (
-                "catalog-provider".to_string(),
-                HashMap::from([("custom-model".to_string(), model(128_000))]),
-            ),
-        ]);
-
-        retain_configured_models(&mut data, &config);
-
-        assert!(data.contains_key("catalog-provider"));
-        assert_eq!(
-            lookup_context_window(&data, "custom-provider", "custom-model"),
-            Some(64_000)
         );
     }
 
