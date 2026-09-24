@@ -47,7 +47,14 @@ before=$(git show HEAD:test_scripts/.test-count 2>/dev/null || echo 0)
 # 码，由下面的逻辑决定放不放行。
 # --no-fail-fast:某个 target 失败之后其余 target 照跑。不加的话一个用例
 # 失败就少统计好几百个，看起来像「测试消失了」。
-output=$(cargo test --workspace --no-fail-fast 2>&1 | tee /dev/stderr || true)
+#
+# 给人看的那份直接写 fd 2（`>&2` 是复制描述符，不重新打开）。原来是
+# `tee /dev/stderr`：它按路径重新打开 stderr，门禁输出被重定向进文件时带着
+# O_TRUNC 把文件清空，前几道的输出整个没了，看日志还以为那几道没跑（09-24）。
+test_log=$(mktemp)
+trap 'rm -f "$test_log"' EXIT
+cargo test --workspace --no-fail-fast 2>&1 | tee "$test_log" >&2 || true
+output=$(cat "$test_log")
 now=$(printf '%s\n' "$output" | awk '/^test result:/ {sum += $4 + $6} END {print sum+0}')
 failed=$(printf '%s\n' "$output" | awk '/^test result:/ {sum += $6} END {print sum+0}')
 echo "$now" > test_scripts/.test-count
