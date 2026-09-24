@@ -117,15 +117,19 @@ mod projection_tests {
     }
 }
 
+/// 回合尾巴里的一条:紧跟用户消息的瞬态纯文本块。化石只收这一段,工具流从这一段之后
+/// 记起(`derive_tool_flow`)——两处同一个判据,化石与工具流才正好拼回活体、不重不漏。
+///
+/// Keyed on the explicit marker rather than the role: these blocks now ride
+/// as `user` messages (see `ChatMessage::turn_context`), which is
+/// indistinguishable by role from a real user turn.
+pub(in crate::agent) fn is_turn_tail_message(message: &ChatMessage) -> bool {
+    message.transient_context && matches!(message.content.as_ref(), Some(ChatContent::Text(_)))
+}
+
 pub(in crate::agent) fn fossil_context_messages(tail: &[ChatMessage]) -> Vec<ChatMessage> {
-    // Keyed on the explicit marker rather than the role: these blocks now ride
-    // as `user` messages (see `ChatMessage::turn_context`), which is
-    // indistinguishable by role from a real user turn.
     tail.iter()
-        .take_while(|message| {
-            message.transient_context
-                && matches!(message.content.as_ref(), Some(ChatContent::Text(_)))
-        })
+        .take_while(|message| is_turn_tail_message(message))
         .cloned()
         .collect()
 }

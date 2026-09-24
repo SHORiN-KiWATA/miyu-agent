@@ -468,6 +468,87 @@ async fn a_turn_interrupted_while_a_tool_runs_replays_its_finished_rounds_first(
     h.server.abort();
 }
 
+/// 每条请求里某个块出现了几份(只数 user 侧正文)。
+fn copies(body: &Value, block: &str) -> usize {
+    body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .filter_map(|message| message["content"].as_str())
+        .map(|text| text.matches(block).count())
+        .sum()
+}
+
+/// 回合尾巴非空(网页 artifact 清单、联想记忆、平台上下文……)的工具轮。尾巴随化石回放
+/// 一次;工具流从尾巴追加之前扫起,曾把它当成「第一轮之前并进来的消息」再记一份,回放
+/// 出两份,下一轮前缀断在这里(09-24 C3 黑盒实测抓到:工具轮之后那一轮纯追加为假)。
+const TURN_TAIL: &str = "<transport-context>trusted per-turn context</transport-context>";
+
+fn with_tail(mut agent: Agent) -> Agent {
+    agent.set_turn_system_context(vec![TURN_TAIL.to_string()]);
+    agent
+}
+
+#[tokio::test]
+async fn a_tool_turn_with_a_turn_tail_replays_the_tail_once() {
+    let h = harness().await;
+    miyu_base::workspace::with_workspace(h.paths.root_dir.clone(), async {
+        h.script(vec![
+            tool_step("call_a1", 1),
+            tool_step("call_a2", 2),
+            final_step("done one"),
+        ]);
+        h.turn(&mut with_tail(h.agent()), "first question").await;
+        second_turn_extends(&h, "tool turn with a turn tail", 2).await;
+        assert_eq!(copies(&h.bodies()[3], TURN_TAIL), 1);
+    })
+    .await;
+    h.server.abort();
+}
+
+#[tokio::test]
+async fn a_followup_turn_with_a_turn_tail_replays_the_tail_once() {
+    let h = harness().await;
+    miyu_base::workspace::with_workspace(h.paths.root_dir.clone(), async {
+        h.script(vec![
+            enqueue_on_receipt(tool_step("call_a1", 1), "also check the other file"),
+            tool_step("call_a2", 2),
+            final_step("done one"),
+        ]);
+        h.turn(&mut with_tail(h.agent()), "first question").await;
+        second_turn_extends(&h, "followup turn with a turn tail", 2).await;
+        assert_eq!(copies(&h.bodies()[3], TURN_TAIL), 1);
+    })
+    .await;
+    h.server.abort();
+}
+
+#[tokio::test]
+async fn an_interrupted_turn_with_a_turn_tail_replays_the_tail_once() {
+    let h = harness().await;
+    miyu_base::workspace::with_workspace(h.paths.root_dir.clone(), async {
+        h.script(vec![
+            tool_step("call_a1", 1),
+            tool_step("call_a2", 2),
+            Step {
+                reply: Reply::Hang,
+                enqueue: None,
+            },
+        ]);
+        h.interrupted_turn(
+            &mut with_tail(h.agent()),
+            "first question",
+            h.request_arrived(3),
+        )
+        .await;
+        second_turn_extends(&h, "interrupted turn with a turn tail", 2).await;
+        assert_eq!(copies(&h.bodies()[3], TURN_TAIL), 1);
+    })
+    .await;
+    h.server.abort();
+}
+
 /// 轮间消息怎么落 flow:纯文本插话与尾巴原样存字节;带图的插话只记排队消息 id
 /// (图的 base64 不抄第二份);工具结果后面那条媒体伴随消息不抄(回放按库里的媒体重建)。
 #[test]

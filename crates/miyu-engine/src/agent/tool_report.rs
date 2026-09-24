@@ -545,7 +545,16 @@ pub(in crate::agent) fn derive_tool_flow(
     let mut rounds: Vec<miyu_core::state::ToolFlowRound> = Vec::new();
     // 第一轮之前就进了对话的消息(模型还没调工具就并进来的插话)。
     let mut leading: Vec<miyu_core::state::FlowMessage> = Vec::new();
-    for message in &messages[live_start.min(messages.len())..] {
+    // `live_start` 取在回合尾巴追加之前。尾巴已作为化石单独落库、回放时紧跟用户消息,
+    // 这里再记一份就回放出两份(09-24:尾巴非空的工具轮,下一轮前缀断在这里)。
+    // 与化石同一个判据跳过,化石的终点就是工具流的起点。
+    let start = live_start.min(messages.len());
+    let start = start
+        + messages[start..]
+            .iter()
+            .take_while(|message| is_turn_tail_message(message))
+            .count();
+    for message in &messages[start..] {
         if message.role == "assistant" {
             if let Some(calls) = message
                 .tool_calls
