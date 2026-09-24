@@ -41,7 +41,10 @@ pub struct QuestionRequest {
 
 pub type QuestionAnswers = Vec<Vec<String>>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// 可序列化是给「补发时附上结果」用的（09-24）：daemon 把一道早已了结的题连同
+// 它的结果一起补发给后挂上来的终端，两头认同一份编码，免得各写一套字段名。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "status", content = "detail", rename_all = "snake_case")]
 pub enum QuestionResponse {
     Answered(QuestionAnswers),
     Closed,

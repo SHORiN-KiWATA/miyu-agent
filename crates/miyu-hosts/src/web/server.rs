@@ -339,7 +339,7 @@ pub(in crate::web) async fn follow_run(
             break;
         }
         last_id = record.id;
-        let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
+        let Ok(mut data) = serde_json::from_str::<Value>(&record.data) else {
             continue;
         };
         if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
@@ -366,6 +366,9 @@ pub(in crate::web) async fn follow_run(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"
         );
+        if record.kind == "question.requested" {
+            mark_settled_question(&state.questions, &mut data);
+        }
         ipc::send(
             stream,
             &IpcFrame::Event {
@@ -380,6 +383,26 @@ pub(in crate::web) async fn follow_run(
         }
     }
     Ok(())
+}
+
+/// 补发到的提问要是已经了结了，把结果附在事件上（09-24）。
+///
+/// 挂上来的终端从头补这一轮时，一道早就答完的题会原样再发一次；不附结果，
+/// 终端只能当新题弹面板（用户 09-24：答完退出 TUI 再进，又进了同一个提问
+/// 界面）。还在等人回答的题照发不动，那才是该弹面板的。
+///
+/// 只加在这条补发给终端的流上：事件缓冲里的原件不动，网页那头有自己的一套
+/// （收到 `question.answered` 就把卡片标成已答）。
+pub(in crate::web) fn mark_settled_question(questions: &QuestionBroker, data: &mut Value) {
+    let Some(question_id) = data.get("question_id").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(outcome) = questions.settled(question_id) else {
+        return;
+    };
+    if let (Some(object), Ok(outcome)) = (data.as_object_mut(), serde_json::to_value(outcome)) {
+        object.insert("settled".to_string(), outcome);
+    }
 }
 
 pub(in crate::web) fn router(state: DaemonState) -> Router {

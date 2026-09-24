@@ -105,7 +105,10 @@ async fn run_remote_chat_inner(
         }),
     )
     .await?;
-    let Some(first) = ipc::receive::<IpcFrame>(&mut stream).await? else {
+    // 收帧走带缓冲的读取器：提问面板开着时要靠它往前看一眼事件流（09-24，见
+    // `question_flow`）。
+    let mut frames = ipc::FrameReader::new(stream);
+    let Some(first) = frames.receive::<IpcFrame>().await? else {
         bail!("Miyu core closed the connection before accepting the turn");
     };
     // `TurnUpdateAccepted` = 这个会话已经有一轮在跑（另一个 TUI、另一个终端），
@@ -236,11 +239,10 @@ async fn run_remote_chat_inner(
     input_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     input_tick.tick().await;
     let completion = loop {
-        // The receive future must survive across select iterations: dropping
-        // it after it consumed the 4-byte length prefix (but before the
-        // payload arrived) would desynchronize the frame stream.
-        let recv = ipc::receive::<IpcFrame>(&mut stream);
-        tokio::pin!(recv);
+        // 收帧的 future 跨 select 的每一拍都留着（读取器本身也经得起中途放弃，
+        // 半截帧留在它的缓冲里）。装箱而不是 `tokio::pin!`：取到这一帧就把它
+        // 放掉，分发表里提问那一支还要借同一个读取器往前看（09-24）。
+        let mut recv = Box::pin(frames.receive::<IpcFrame>());
         let frame = loop {
             tokio::select! {
                 biased;
@@ -572,6 +574,7 @@ async fn run_remote_chat_inner(
                 }
             }
         };
+        drop(recv);
         let Some(frame) = frame else {
             renderer.finish()?;
             if let Some(live) = live.as_deref_mut() {
@@ -814,6 +817,7 @@ async fn run_remote_chat_inner(
                     &mut renderer,
                     &data,
                     &run_id,
+                    &mut frames,
                     Some(&herdr_turn),
                 )
                 .await?;

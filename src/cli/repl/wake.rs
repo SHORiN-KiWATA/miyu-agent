@@ -45,7 +45,10 @@ pub(in crate::cli) async fn follow_wake_run(
         }),
     )
     .await?;
-    let mut turn_id: Option<String> = match ipc::receive::<IpcFrame>(&mut stream).await? {
+    // 收帧走带缓冲的读取器：提问面板开着时要靠它往前看一眼事件流（09-24，见
+    // `question_flow`）。
+    let mut frames = ipc::FrameReader::new(stream);
+    let mut turn_id: Option<String> = match frames.receive::<IpcFrame>().await? {
         Some(IpcFrame::Accepted { turn_id, .. }) => turn_id,
         // Run already finished — the DB report path will print it instead.
         _ => return Ok(()),
@@ -150,8 +153,9 @@ pub(in crate::cli) async fn follow_wake_run(
     let mut follow_strip_tick: u32 = 0;
 
     'outer: loop {
-        let recv = ipc::receive::<IpcFrame>(&mut stream);
-        tokio::pin!(recv);
+        // 装箱而不是 `tokio::pin!`：取到这一帧就把它放掉，分发表里提问那一支
+        // 还要借同一个读取器往前看（09-24）。
+        let mut recv = Box::pin(frames.receive::<IpcFrame>());
         let frame = loop {
             tokio::select! {
                 biased;
@@ -419,6 +423,7 @@ pub(in crate::cli) async fn follow_wake_run(
                 }
             }
         };
+        drop(recv);
         if let Some(IpcFrame::Event { id, .. }) = &frame {
             last_event_id = *id;
         }
@@ -702,6 +707,7 @@ pub(in crate::cli) async fn follow_wake_run(
                     &mut renderer,
                     &data,
                     run_id,
+                    &mut frames,
                     // 目标续轮 / 后台唤醒里她反问，herdr 侧栏一样要标红——这
                     // 条路原来一个状态都没报（09-20）。
                     Some(&herdr_follow),

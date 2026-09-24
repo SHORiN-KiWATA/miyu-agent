@@ -52,9 +52,41 @@ pub fn available(plain: bool) -> bool {
 /// 面板得整个擦干净、光标放回面板顶上，那一步才落在原位。
 pub fn ask_with(
     request: &QuestionRequest,
-    mut scroll: Option<&mut dyn FnMut(isize, u16)>,
+    scroll: Option<&mut dyn FnMut(isize, u16)>,
     leave_summary: bool,
 ) -> Result<QuestionResponse> {
+    ask_watched(request, scroll, None, leave_summary).map(Asked::into_response)
+}
+
+/// 面板是怎么收场的。
+#[derive(Debug)]
+pub enum Asked {
+    /// 在这块面板上答的 / 关的：结果要由调用方回发给 daemon。
+    Here(QuestionResponse),
+    /// 别处先有了结果（同一个会话的另一个终端或网页答了、回合在别处结束了），
+    /// 面板自己收了场。结果已经在 daemon 那边，不用再回发。
+    Elsewhere(QuestionResponse),
+}
+
+impl Asked {
+    pub fn into_response(self) -> QuestionResponse {
+        match self {
+            Asked::Here(response) | Asked::Elsewhere(response) => response,
+        }
+    }
+}
+
+/// 同 [`ask_with`]，外加 `watch`：面板每一拍（约 100ms）问一次「别处有结果了吗」，
+/// 有就按那个结果收场（09-24）。
+///
+/// 面板开着时事件泵是停着的，不这么问，另一个终端答完了这边的面板还一直挂着，
+/// 按两下 Esc 更会把人家正跑着的回合掐掉。
+pub fn ask_watched(
+    request: &QuestionRequest,
+    mut scroll: Option<&mut dyn FnMut(isize, u16)>,
+    mut watch: Option<&mut dyn FnMut() -> Option<QuestionResponse>>,
+    leave_summary: bool,
+) -> Result<Asked> {
     request.validate()?;
     if !available(false) {
         bail!("interactive terminal is unavailable");
@@ -68,6 +100,15 @@ pub fn ask_with(
     let mut state = QuestionState::new(request);
 
     loop {
+        if let Some(outcome) = watch.as_deref_mut().and_then(|watch| watch()) {
+            match &outcome {
+                QuestionResponse::Answered(answers) => {
+                    session.finish_answered(request, answers, leave_summary)?
+                }
+                _ => session.finish_cancelled()?,
+            }
+            return Ok(Asked::Elsewhere(outcome));
+        }
         if state
             .cancel_armed_until
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -118,13 +159,13 @@ pub fn ask_with(
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
                     session.finish_cancelled()?;
-                    return Ok(QuestionResponse::Cancelled);
+                    return Ok(Asked::Here(QuestionResponse::Cancelled));
                 }
                 if state.editing {
                     if handle_editing_key(request, &mut state, key)? && !request.needs_review() {
                         if let Some(answers) = submitted_answers(request, &state)? {
                             session.finish_answered(request, &answers, leave_summary)?;
-                            return Ok(QuestionResponse::Answered(answers));
+                            return Ok(Asked::Here(QuestionResponse::Answered(answers)));
                         }
                     }
                     continue;
@@ -136,7 +177,7 @@ pub fn ask_with(
                         .is_some_and(|deadline| Instant::now() < deadline)
                     {
                         session.finish_cancelled()?;
-                        return Ok(QuestionResponse::Cancelled);
+                        return Ok(Asked::Here(QuestionResponse::Cancelled));
                     }
                     state.cancel_armed_until = Some(Instant::now() + CANCEL_CONFIRM_WINDOW);
                     continue;
@@ -150,7 +191,7 @@ pub fn ask_with(
                         KeyCode::Enter => {
                             if let Some(answers) = submitted_answers(request, &state)? {
                                 session.finish_answered(request, &answers, leave_summary)?;
-                                return Ok(QuestionResponse::Answered(answers));
+                                return Ok(Asked::Here(QuestionResponse::Answered(answers)));
                             }
                             state.go_to_first_unanswered(request);
                         }
@@ -176,7 +217,7 @@ pub fn ask_with(
                         if !request.needs_review() {
                             if let Some(answers) = submitted_answers(request, &state)? {
                                 session.finish_answered(request, &answers, leave_summary)?;
-                                return Ok(QuestionResponse::Answered(answers));
+                                return Ok(Asked::Here(QuestionResponse::Answered(answers)));
                             }
                         }
                     }

@@ -138,3 +138,66 @@ fn content_limit_counts_characters() {
     let error = validate_content("界".repeat(MAX_CONTENT_CHARS + 1)).unwrap_err();
     assert_eq!(error.status, StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+/// 补发给后挂上来的终端时，已了结的题要带上结果（09-24：答完退出 TUI 再进，
+/// 又进了同一个提问界面）；还在等的题照发不动。
+#[test]
+fn replayed_question_carries_its_outcome_once_settled() {
+    let broker = QuestionBroker::new();
+    let (responder, _response) = oneshot::channel();
+    let question_id = broker.insert("run_test", sample_question(), responder);
+    let requested = || json!({ "run_id": "run_test", "question_id": question_id });
+
+    let mut waiting = requested();
+    mark_settled_question(&broker, &mut waiting);
+    assert!(waiting.get("settled").is_none(), "还在等的题不该带结果");
+
+    broker
+        .answer(&question_id, vec![vec![" All ".to_string()]], |_, _| {})
+        .unwrap();
+    let mut replayed = requested();
+    mark_settled_question(&broker, &mut replayed);
+    assert_eq!(
+        replayed["settled"],
+        json!({ "status": "answered", "detail": [["All"]] })
+    );
+    // 终端那头按同一份定义解回来。
+    assert_eq!(
+        serde_json::from_value::<QuestionResponse>(replayed["settled"].clone()).unwrap(),
+        QuestionResponse::Answered(vec![vec!["All".to_string()]])
+    );
+}
+
+#[test]
+fn every_way_a_question_ends_is_remembered() {
+    let broker = QuestionBroker::new();
+
+    let (responder, _closed_rx) = oneshot::channel();
+    let closed = broker.insert("run_a", sample_question(), responder);
+    broker.close(&closed, |_| {}).unwrap();
+    assert_eq!(broker.settled(&closed), Some(QuestionResponse::Closed));
+
+    let (responder, _cancelled_rx) = oneshot::channel();
+    let cancelled = broker.insert("run_b", sample_question(), responder);
+    assert_eq!(broker.settled(&cancelled), None);
+    broker.cancel_run("run_b");
+    assert_eq!(
+        broker.settled(&cancelled),
+        Some(QuestionResponse::Cancelled)
+    );
+
+    // 回合循环等超时放弃了：题还在表里，但等答案的那一头已经走了。
+    let (responder, timed_out_rx) = oneshot::channel();
+    let timed_out = broker.insert("run_c", sample_question(), responder);
+    drop(timed_out_rx);
+    assert!(matches!(
+        broker.settled(&timed_out),
+        Some(QuestionResponse::Unavailable(_))
+    ));
+
+    // 查无此题也不当「还在等」：弹一个答不了的面板比什么都不弹更糟。
+    assert!(matches!(
+        broker.settled("question_unknown"),
+        Some(QuestionResponse::Unavailable(_))
+    ));
+}
