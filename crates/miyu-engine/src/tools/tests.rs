@@ -22,6 +22,33 @@ fn script_display_names_survive_registering_a_registry_without_them() {
     assert_eq!(readable_tool_name("battery_care_probe_test"), "电池养护");
 }
 
+/// 双语表认得的内置工具，工具目录里也得有显示名。时间线读的是那张表，目录读的是
+/// 注册时挂上的显示名：没有 JSON、代码里也没手挂的那几件原来落空，send_subagent_message
+/// 在时间线上是「给子代理留言」，在目录里是裸 id（09-24）。
+#[test]
+fn builtin_tools_known_to_the_readable_table_carry_a_catalog_display_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let config = miyu_base::config::AppConfig::default();
+    for lane in [PersonaLane::Active, PersonaLane::Dev] {
+        let registry = build_tool_registry(&config, &paths, lane, false).unwrap();
+        let missing: Vec<String> = registry
+            .tool_names()
+            .into_iter()
+            .filter(|name| crate::tools::builtin_readable_tool_name(name).is_some())
+            .filter(|name| {
+                registry
+                    .display_name(name)
+                    .is_none_or(|shown| shown.is_empty() || shown == *name)
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{lane:?}: no catalog display name for {missing:?}"
+        );
+    }
+}
+
 /// 内置工具 schema 的 token 预算:每件工具的 description + parameters 折成的
 /// token 数封顶。这份东西每轮都进上下文(full 模式)或按需拉入(stub),膨胀
 /// 是慢性的、靠肉眼发现不了。超线的名字连同前十名一起打出来,好知道该修谁。

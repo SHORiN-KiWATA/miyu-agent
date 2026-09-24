@@ -396,6 +396,12 @@ impl ToolSpec {
                 self.timeout_seconds = desc.timeout_seconds;
             }
             self.trust = desc.trust;
+        } else if self.display_name.is_none() {
+            // 没有 JSON、代码里也没手挂显示名的内置工具（send_subagent_message 那一类）
+            // 同样从双语表取。工具目录（`miyu tool --list`、网页工具清单）读的是这里，
+            // 时间线读的是那张表：漏挂一件，目录里就是裸 id、时间线上却是中文名（09-24）。
+            self.display_name =
+                crate::tools::builtin_readable_tool_name(&self.name).map(str::to_string);
         }
         self
     }
