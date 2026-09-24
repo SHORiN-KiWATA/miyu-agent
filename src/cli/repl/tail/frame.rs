@@ -388,10 +388,18 @@ impl LiveReplTail {
         let mut input_row = row;
         let mut rendered_rows = 0u16;
         let mut drawn_input = Vec::new();
-        // 全屏（不在大厅）时活动区底下留着一行空（`tail_height = total_rows + 1`），
-        // 用量挪到那一行（用户 09-24）；大厅窄框和行内模式没有这一行。
+        // 全屏（不在大厅）时活动区底下留着一行空（`tail_height = total_rows + 1`）：
+        // 状态行放不下用量时才挪到那一行（用户 09-24：放得下一行，放不下才分两行）。
+        // 大厅窄框和行内模式没有这一行。
         self.usage_placement = if self.screen.is_some() && layout_box.is_none() {
-            crate::cli::footer::UsagePlacement::RowBelow
+            crate::cli::footer::UsagePlacement::Fullscreen {
+                below: !crate::cli::footer::usage_fits_on_footer_line(
+                    self.editor.mode,
+                    self.editor.readonly,
+                    &self.footer,
+                    usize::from(cols),
+                ),
+            }
         } else {
             crate::cli::footer::UsagePlacement::FooterRight
         };
@@ -455,6 +463,22 @@ impl LiveReplTail {
                 )?;
                 job_row = job_row.saturating_add(1);
             }
+        }
+        // 全屏活动区底下留着的那一行（`tail_height = total_rows + 1`）在后台任务状态行
+        // 下面，不紧贴 footer：用量挪下去就画在这儿，一行放得下时画成空的——之前挪下去
+        // 时画的字得擦掉。原来画在 footer 下一行，有后台任务时被状态行盖住（09-24）。
+        if let crate::cli::footer::UsagePlacement::Fullscreen { below } = self.usage_placement {
+            let width = usize::from(cols);
+            let row = if below {
+                crate::cli::footer::repl_usage_line(&self.footer, width)
+            } else {
+                " ".repeat(width)
+            };
+            queue!(
+                stdout,
+                MoveTo(0, self.job_strip_start.saturating_add(job_rows)),
+                Print(row)
+            )?;
         }
         // 一帧的收尾**永远**是把光标放回输入位置：在这之前画的东西（状态行、
         // 反显）都会把光标带走。原来只有「有后台任务」那条分支才收尾，于是

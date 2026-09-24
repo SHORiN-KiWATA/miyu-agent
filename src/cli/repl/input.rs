@@ -1040,17 +1040,6 @@ pub(in crate::cli) fn render_repl_input_with_footer(
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
             Print(repl_footer_line(mode, readonly, footer, cols, usage))
         )?;
-        // 用量那一行不算进输入区的行数:它占的是活动区底下本来就留着的空行。
-        if usage == crate::cli::footer::UsagePlacement::RowBelow {
-            queue!(
-                stdout,
-                MoveTo(
-                    x0,
-                    (*input_row).saturating_add(row_offset).saturating_add(1)
-                ),
-                Print(crate::cli::footer::repl_usage_line(footer, cols))
-            )?;
-        }
         if show_hint {
             row_offset = row_offset.saturating_add(1);
             queue!(

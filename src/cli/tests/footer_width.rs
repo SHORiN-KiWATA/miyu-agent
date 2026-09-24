@@ -21,6 +21,12 @@ fn status(model: &str, running: bool) -> ReplFooterStatus {
     }
 }
 
+const ALL_PLACEMENTS: [UsagePlacement; 3] = [
+    UsagePlacement::FooterRight,
+    UsagePlacement::Fullscreen { below: false },
+    UsagePlacement::Fullscreen { below: true },
+];
+
 fn assert_single_row(line: &str, cols: usize) {
     let plain = strip_terminal_control_sequences(line);
     let width = UnicodeWidthStr::width(plain.as_str());
@@ -58,7 +64,7 @@ fn footer_stays_on_one_terminal_row_at_every_narrow_width() {
             let footer = status(model, running);
             for mode in [PersonaLane::Active, PersonaLane::Dev] {
                 for cols in 1..=160 {
-                    for usage in [UsagePlacement::FooterRight, UsagePlacement::RowBelow] {
+                    for usage in ALL_PLACEMENTS {
                         assert_single_row(
                             &repl_footer_line(mode, false, &footer, cols, usage),
                             cols,
@@ -113,7 +119,7 @@ fn the_turn_clock_rides_right_of_the_wave_only_while_running() {
     let clock_at = left.find("1h 02m 03s").expect("clock shown while running");
     assert!(left.find(&wave).unwrap() < clock_at, "{left}");
     for cols in [48, 60, 80, 160] {
-        for usage in [UsagePlacement::FooterRight, UsagePlacement::RowBelow] {
+        for usage in ALL_PLACEMENTS {
             assert_single_row(
                 &repl_footer_line(PersonaLane::Active, false, &footer, cols, usage),
                 cols,
@@ -127,7 +133,7 @@ fn the_turn_clock_rides_right_of_the_wave_only_while_running() {
         false,
         &footer,
         160,
-        UsagePlacement::RowBelow,
+        UsagePlacement::Fullscreen { below: true },
     ));
     assert!(
         !done.contains("02m"),
@@ -135,8 +141,8 @@ fn the_turn_clock_rides_right_of_the_wave_only_while_running() {
     );
 }
 
-/// 全屏下用量挪到 footer 底下那一行（用户 09-24）：footer 只剩模式、模型、声波，
-/// 用量那一行右对齐、整行垫满。退回「用量跟在 footer 右端」这条会红。
+/// 全屏下一行放不下时用量挪到 footer 底下那一行（用户 09-24）：footer 只剩模式、模型、
+/// 声波，用量那一行右对齐、整行垫满。
 #[test]
 fn fullscreen_moves_the_usage_to_its_own_row() {
     let mut footer = status("model-name", true);
@@ -147,7 +153,7 @@ fn fullscreen_moves_the_usage_to_its_own_row() {
         false,
         &footer,
         120,
-        UsagePlacement::RowBelow,
+        UsagePlacement::Fullscreen { below: true },
     ));
     for gauge in ["tok/s", "Σ", "/1M"] {
         assert!(!line.contains(gauge), "{gauge} left the footer: {line}");
@@ -164,5 +170,76 @@ fn fullscreen_moves_the_usage_to_its_own_row() {
     assert!(
         usage.starts_with(' ') && !usage.ends_with(' '),
         "right-aligned: {usage:?}"
+    );
+}
+
+/// 用户 09-24 截图里那一行（约 95 列）：模式、模型、声波、计时加整串用量放得下，就不
+/// 分两行——分成两行时两行都空一半，看着像折了行。退回「全屏一律挪到底行」这条会红。
+#[test]
+fn the_usage_stays_on_the_footer_line_when_it_fits() {
+    let mut footer = status("deepseek-v4.1-flash", false);
+    footer.provider = "opencodego".to_string();
+    footer.thinking = None;
+    footer.token_usage = render::TokenMeter {
+        session_tokens: 15_700,
+        context_window: Some(1_000_000),
+        cumulative_tokens: Some(107_100),
+        cumulative_prompt_tokens: 100_000,
+        cumulative_cached_tokens: 85_000,
+        generation_tokens: 1_040,
+        generation_ms: 10_000,
+        ..Default::default()
+    };
+    // 2（竖条）+ 26（普通 · deepseek-v4.1-flash）+ 16（声波与计时）+ 3 + 42（用量）= 89。
+    for cols in [89, 95, 160] {
+        assert!(
+            usage_fits_on_footer_line(PersonaLane::Active, false, &footer, cols),
+            "{cols} columns hold one line"
+        );
+    }
+    for cols in [88, 70] {
+        assert!(
+            !usage_fits_on_footer_line(PersonaLane::Active, false, &footer, cols),
+            "{cols} columns spill the usage"
+        );
+    }
+    // 跑不跑着都按跑着量：回合开始、结束时不在一行和两行之间来回换。
+    let mut running = footer.clone();
+    running.running_spinner = Some(3);
+    running.turn_started =
+        std::time::Instant::now().checked_sub(std::time::Duration::from_secs(65));
+    for cols in [88, 89, 95] {
+        assert_eq!(
+            usage_fits_on_footer_line(PersonaLane::Active, false, &footer, cols),
+            usage_fits_on_footer_line(PersonaLane::Active, false, &running, cols),
+            "{cols}"
+        );
+    }
+    // 放得下时整串用量都在这一行，供应商名头一个让位，声波和计时照旧。
+    let line = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Active,
+        false,
+        &running,
+        95,
+        UsagePlacement::Fullscreen { below: false },
+    ));
+    for piece in [
+        "104 tok/s",
+        "15.7k/1M(1.6%)",
+        "Σ107.1k(C85%)",
+        "deepseek-v4.1-flash",
+        "1m 05s",
+    ] {
+        assert!(line.contains(piece), "{piece} missing: {line}");
+    }
+    assert_single_row(
+        &repl_footer_line(
+            PersonaLane::Active,
+            false,
+            &running,
+            95,
+            UsagePlacement::Fullscreen { below: false },
+        ),
+        95,
     );
 }

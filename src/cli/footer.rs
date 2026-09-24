@@ -1,9 +1,10 @@
-//! REPL 底部的状态：footer 那一行，加上全屏下它底下的用量行。
+//! REPL 底部的状态：footer 那一行，全屏下一行放不下时再加上它底下的用量行。
 //!
 //! footer 显示当前模式、provider/模型、思考变体，回合跑着时跟着声波和这一轮的计时。
-//! token 计量（输出速度、上下文占用与窗口、会话累计与缓存命中率）全屏下单独画在
-//! 输入框下面那一行（09-24），大厅窄框与行内模式没有那一行，照旧跟在 footer 右端。
-//! 窄终端下要按优先级丢弃——模型名比累计数字重要，模式标签又比模型名重要。
+//! token 计量（输出速度、上下文占用与窗口、会话累计与缓存命中率）跟在 footer 右端；
+//! 全屏下一行放不下时才挪到输入框下面那一行（用户 09-24：放得下一行，放不下才分两行）。
+//! 大厅窄框与行内模式没有那一行，照旧跟在 footer 右端、按优先级丢弃——模型名比累计
+//! 数字重要，模式标签又比模型名重要。
 
 use crate::cli::*;
 
@@ -29,13 +30,47 @@ pub(in crate::cli) struct ReplFooterStatus {
     pub(in crate::cli) turn_started: Option<std::time::Instant>,
 }
 
-/// 用量那串数字画在哪（09-24：footer 挤，用户让它挪到输入框下面、原来空着的最底行）。
+/// 用量那串数字画在哪。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::cli) enum UsagePlacement {
-    /// 跟在 footer 右端：大厅窄框、行内模式——它们底下没有留给这一行的空。
+    /// 跟在 footer 右端：大厅窄框、行内模式——它们底下没有留给用量的那一行。
     FooterRight,
-    /// footer 底下单独一行（[`repl_usage_line`]）：全屏活动区底下本来就空着一行。
-    RowBelow,
+    /// 全屏：活动区底下本来就空着一行。`below` 为假（一行放得下，见
+    /// [`usage_fits_on_footer_line`]）时用量跟在 footer 右端、那一行画成空的——之前挪
+    /// 下去时画的字得擦掉；为真时用量单独画在那一行（[`repl_usage_line`]）。
+    Fullscreen { below: bool },
+}
+
+/// 量一行放不放得下时给声波和计时留的宽：三个空格 + 五柱声波 + 空格 + `59m 59s`。
+const RUNNING_ALLOWANCE: usize = 3 + 5 + 1 + 7;
+/// 同一行里左右两段之间至少空这么宽，挨得再近就像一整串了。
+const USAGE_GAP: usize = 3;
+
+/// 全屏下用量放不放得回 footer 那一行（用户 09-24：放得下一行，放不下才分两行）。
+///
+/// 按「跑着」的样子量：声波加一段分钟级的计时，空闲时也照这个量——回合一开始一结束
+/// 就不会在一行和两行之间来回换。供应商名不算在内：同一行里它是头一个让位的。模式、
+/// 模型名、思考档位要整个留得下，用量也要整串（带速度和累计）。
+pub(in crate::cli) fn usage_fits_on_footer_line(
+    mode: PersonaLane,
+    readonly: bool,
+    footer: &ReplFooterStatus,
+    cols: usize,
+) -> bool {
+    let bar = footer_display_width(&input_prompt_bar(mode));
+    let label = if readonly {
+        t("read-only", "只读")
+    } else {
+        mode.label()
+    };
+    let essential = footer_display_width(&repl_footer_left_parts(
+        label,
+        &footer.model,
+        None,
+        footer.thinking.as_deref().unwrap_or_default(),
+    ));
+    let usage = footer_display_width(&usage_text_fitting(footer, usize::MAX, 0));
+    bar + essential + RUNNING_ALLOWANCE + USAGE_GAP + usage <= cols
 }
 
 /// 这一轮跑了多久：只在跑着（声波在动）时给，跑完就不显示（用户 09-24）。
@@ -327,10 +362,10 @@ pub(in crate::cli) fn repl_footer_line(
     let bar = input_prompt_bar(mode);
     let bar_width = footer_display_width(&bar);
     let right_plain = match usage {
-        UsagePlacement::FooterRight => {
+        UsagePlacement::FooterRight | UsagePlacement::Fullscreen { below: false } => {
             usage_text_fitting(footer, cols.saturating_sub(bar_width), 24)
         }
-        UsagePlacement::RowBelow => String::new(),
+        UsagePlacement::Fullscreen { below: true } => String::new(),
     };
     let right = if right_plain.is_empty() {
         String::new()
@@ -353,7 +388,7 @@ pub(in crate::cli) fn repl_footer_line(
     pad_row(&line, cols)
 }
 
-/// 全屏下 footer 底下那一行：用量右对齐，整行垫满（重画时不先擦）。
+/// 全屏下一行放不下时 footer 底下那一行：用量右对齐，整行垫满（重画时不先擦）。
 pub(in crate::cli) fn repl_usage_line(footer: &ReplFooterStatus, cols: usize) -> String {
     let cols = cols.max(1);
     let text = usage_text_fitting(footer, cols, 0);
