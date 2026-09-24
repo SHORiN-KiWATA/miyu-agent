@@ -337,6 +337,8 @@ pub(in crate::cli) fn replay_recent_turns(
     store: &StateStore,
     live_repl: &mut LiveReplTail,
 ) -> Result<()> {
+    // 换到这条会话：上一条会话那一轮的用时不再挂在输入框旁边（09-24）。
+    live_repl.clear_turn_clock();
     if config.display.repl_replay_turns == 0 {
         return Ok(());
     }

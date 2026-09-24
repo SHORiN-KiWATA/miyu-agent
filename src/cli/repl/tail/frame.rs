@@ -388,6 +388,13 @@ impl LiveReplTail {
         let mut input_row = row;
         let mut rendered_rows = 0u16;
         let mut drawn_input = Vec::new();
+        // 全屏（不在大厅）时活动区底下留着一行空（`tail_height = total_rows + 1`），
+        // 用量挪到那一行（用户 09-24）；大厅窄框和行内模式没有这一行。
+        self.usage_placement = if self.screen.is_some() && layout_box.is_none() {
+            crate::cli::footer::UsagePlacement::RowBelow
+        } else {
+            crate::cli::footer::UsagePlacement::FooterRight
+        };
         let footer_row = render_repl_input_with_footer(
             &mut stdout,
             &mut input_row,
@@ -401,6 +408,7 @@ impl LiveReplTail {
             &self.footer,
             false,
             layout_box,
+            self.usage_placement,
         )?;
         self.footer_offset = footer_row.map(|abs| abs.saturating_sub(tail_start));
         if let Some(screen) = &mut self.screen {

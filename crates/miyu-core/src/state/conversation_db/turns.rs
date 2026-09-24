@@ -484,6 +484,19 @@ impl ConversationDb {
         Ok(merged)
     }
 
+    /// 这一轮从什么时候开始（RFC3339 原文）。挂到一轮已经在跑的回合上时，输入框
+    /// 旁的计时从这儿算起（09-24）。
+    pub fn turn_started_at(&self, turn_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT user_timestamp FROM turns WHERE turn_id = ?1",
+            params![turn_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn turn_session_id(&self, turn_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(

@@ -390,6 +390,10 @@ impl RemoteRepl {
                 &self.jobs_shared,
             )
             .await;
+            // 这一轮不管怎么结束（断线、报错也算），footer 的声波和这一轮的计时都得停——
+            // 和 `try_run_remote_chat` 同一个兜底，幂等。回合中执行完命令挂回来时，计时
+            // 按这一轮真正开始的时刻重新接上（`follow_wake_run` 里 `set_turn_clock_start`）。
+            let _ = self.live_repl.stop_footer_spinner();
             let error = match outcome {
                 Ok(()) => return Ok(LoopStep::Continue),
                 Err(error) => error,

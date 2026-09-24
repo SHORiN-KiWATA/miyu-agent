@@ -55,6 +55,14 @@ pub(in crate::cli) async fn follow_wake_run(
     // 建目标不退大厅）。目标续轮、后台任务的跟进回复都从这儿过，所以放这一处
     // 就够；命令自己那条路另有一处，那儿不必等 daemon 真的起轮。
     live.set_session_empty(&config, paths, false);
+    // 这一轮的总计时按它真正开始的时刻起算（09-24）：挂上来之前它可能已经跑了一阵
+    // （同一会话的第二个 TUI、回合中执行完命令挂回来）。
+    if let Some(started) = turn_id
+        .as_deref()
+        .and_then(|turn_id| turn_started_instant(paths, turn_id))
+    {
+        live.set_turn_clock_start(started);
+    }
 
     let mut renderer = render::StreamRenderer::new(
         render::ReasoningDisplayMode::from_expand(config.display.expand_reasoning),
@@ -723,4 +731,18 @@ pub(in crate::cli) async fn follow_wake_run(
         rendered.insert(turn_id);
     }
     Ok(())
+}
+
+/// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。
+fn turn_started_instant(paths: &MiyuPaths, turn_id: &str) -> Option<std::time::Instant> {
+    let started = StateStore::new(paths)
+        .ok()?
+        .turn_started_at(turn_id)
+        .ok()
+        .flatten()?;
+    let started = chrono::DateTime::parse_from_rfc3339(&started).ok()?;
+    let ago = (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
+        .to_std()
+        .unwrap_or_default();
+    std::time::Instant::now().checked_sub(ago)
 }

@@ -295,6 +295,8 @@
               <span class="ctx-nums"><span class="k" data-i18n="上下文">上下文</span> <span id="contextNumbers">-- / --</span></span>
               <i id="contextBar" hidden></i>
             </div>
+            <!-- 这一轮的总计时(用户 09-24):跑着的时候一秒一跳,跑完就不显示。 -->
+            <span class="composer-timer" id="composerTimer" hidden title="这一轮用时" data-i18n-title="这一轮用时"><span class="k" data-i18n="用时">用时</span> <b id="composerTimerValue">--</b></span>
           </div>
           <!-- 模型菜单挂在 dock 上而不是 form 里：`.composer` 为了圆角开了
                overflow: hidden，菜单在它里面会被裁成半截。定位由

@@ -457,6 +457,7 @@ pub(in crate::cli) fn read_repl_input(
             footer,
             show_shortcut_hint,
             None,
+            crate::cli::footer::UsagePlacement::FooterRight,
         )
     };
     render_repl_input(
@@ -942,6 +943,8 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     // 全屏空会话的大厅:输入框不在屏底、也不全宽,而是嵌在 banner 下面的一个
     // 窄框里。None = 老样子,从第 0 列画到终端右边。
     layout: Option<EditorBox>,
+    // 用量画在 footer 右端,还是 footer 底下那一行(调用方替它留好了那一行)。
+    usage: crate::cli::footer::UsagePlacement,
 ) -> Result<Option<u16>> {
     let suggestions = repl_command_suggestions(input);
     let lines = repl_input_lines(input);
@@ -1035,8 +1038,19 @@ pub(in crate::cli) fn render_repl_input_with_footer(
         queue!(
             stdout,
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
-            Print(repl_footer_line(mode, readonly, footer, cols))
+            Print(repl_footer_line(mode, readonly, footer, cols, usage))
         )?;
+        // 用量那一行不算进输入区的行数:它占的是活动区底下本来就留着的空行。
+        if usage == crate::cli::footer::UsagePlacement::RowBelow {
+            queue!(
+                stdout,
+                MoveTo(
+                    x0,
+                    (*input_row).saturating_add(row_offset).saturating_add(1)
+                ),
+                Print(crate::cli::footer::repl_usage_line(footer, cols))
+            )?;
+        }
         if show_hint {
             row_offset = row_offset.saturating_add(1);
             queue!(

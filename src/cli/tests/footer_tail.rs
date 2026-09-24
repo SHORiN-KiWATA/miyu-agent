@@ -185,7 +185,8 @@ fn footer_turn_completion_updates_the_rendered_token_accounting() {
             PersonaLane::Active,
             false,
             &footer,
-            80
+            80,
+            UsagePlacement::FooterRight,
         ))
         .split_whitespace()
         .last(),
@@ -245,6 +246,7 @@ fn the_footer_drops_the_output_speed_before_the_cumulative_total() {
         false,
         &footer,
         100,
+        UsagePlacement::FooterRight,
     ));
     assert!(
         wide.contains("361 tok/s · 21.7k/1M(2.2%) · Σ180.1k(C24%)"),
@@ -255,6 +257,7 @@ fn the_footer_drops_the_output_speed_before_the_cumulative_total() {
         false,
         &footer,
         64,
+        UsagePlacement::FooterRight,
     ));
     assert!(!narrow.contains("tok/s"), "{narrow}");
     assert!(narrow.contains("Σ180.1k(C24%)"), "{narrow}");
@@ -285,6 +288,7 @@ fn the_footer_leaves_the_per_turn_figure_to_the_token_line() {
         false,
         &footer,
         80,
+        UsagePlacement::FooterRight,
     ));
     // Two standing gauges only. Carrying the turn figure as well cost 14
     // columns and pushed the whole footer past 80.
@@ -504,7 +508,9 @@ fn spinner_does_not_resume_tail_during_external_output() {
         footer: ReplFooterStatus::from_config(&config, 0, TurnTokens::default()),
         round_base_footer: None,
         footer_offset: None,
+        usage_placement: UsagePlacement::FooterRight,
         footer_spinner_last: None,
+        turn_started: None,
         goal_hint_drawn: String::new(),
         output_cursor: (0, 0),
         tail_start: 0,
@@ -556,7 +562,9 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         footer: ReplFooterStatus::from_config(&config, 0, TurnTokens::default()),
         round_base_footer: None,
         footer_offset: None,
+        usage_placement: UsagePlacement::FooterRight,
         footer_spinner_last: None,
+        turn_started: None,
         goal_hint_drawn: String::new(),
         output_cursor: (0, 0),
         tail_start: 0,

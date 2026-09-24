@@ -60,14 +60,24 @@ fn an_uncounted_lane_shows_a_dash_for_its_context() {
 
     footer.mark_session_tokens_unknown();
     assert_eq!(footer.session_tokens(), None);
-    let line =
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Dev, false, &footer, 80));
+    let line = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Dev,
+        false,
+        &footer,
+        80,
+        UsagePlacement::FooterRight,
+    ));
     assert!(line.contains("—/200k"), "{line}");
     assert!(!line.contains('%'), "{line}");
 
     footer.update_session_tokens(3_100);
     assert_eq!(footer.session_tokens(), Some(3_100));
-    let line =
-        strip_terminal_control_sequences(&repl_footer_line(PersonaLane::Dev, false, &footer, 80));
+    let line = strip_terminal_control_sequences(&repl_footer_line(
+        PersonaLane::Dev,
+        false,
+        &footer,
+        80,
+        UsagePlacement::FooterRight,
+    ));
     assert!(line.contains("3.1k/200k(1.6%)"), "{line}");
 }

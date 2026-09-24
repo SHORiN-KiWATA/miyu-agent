@@ -130,6 +130,10 @@ impl StateStore {
         self.conv_db.has_turn_after(session_id, seq)
     }
 
+    pub fn turn_started_at(&self, turn_id: &str) -> Result<Option<String>> {
+        self.conv_db.turn_started_at(turn_id)
+    }
+
     pub fn interrupt_turn_revision(&self, turn_id: &str, revision: i64) -> Result<()> {
         self.interrupt_turn_revision_with_usage(turn_id, revision, TurnTokens::default())
     }

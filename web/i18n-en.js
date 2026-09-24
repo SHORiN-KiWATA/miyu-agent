@@ -397,6 +397,8 @@ window.MIYU_I18N_EN = Object.freeze({
   "仍然记下": "Record anyway",
   "从": "From",
   "从 /models 端点拉取，并用 models.dev 目录补全能力与价格。": "Fetch from the /models endpoint and fill capabilities and prices from the models.dev catalog.",
+  "用时": "Time",
+  "这一轮用时": "Time spent on this turn",
   "Miyu 重启了，接着上一轮继续": "Miyu restarted, continuing the previous turn",
   "Miyu 又重启了，接着上一轮继续（第 {n} 次）": "Miyu restarted again, continuing the previous turn (attempt {n})",
   "从 {name}（{id}）收到消息": "Message from {name} ({id})",

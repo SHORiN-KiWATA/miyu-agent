@@ -5845,7 +5845,8 @@ body[data-color-scheme="matugen"] .tool-card.is-command {
   font-family: var(--font-mono);
 }
 .composer-speed,
-.composer-cumulative {
+.composer-cumulative,
+.composer-timer {
   display: inline-flex;
   align-items: center;
   gap: 4px;

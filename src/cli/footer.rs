@@ -1,8 +1,9 @@
-//! REPL 底部那一行状态。
+//! REPL 底部的状态：footer 那一行，加上全屏下它底下的用量行。
 //!
-//! 显示当前模式、provider/模型、思考变体，以及 token 计量：本轮用量、上下文
-//! 占用与窗口、会话累计与缓存命中率。窄终端下要按优先级丢弃——模型名比累计
-//! 数字重要，模式标签又比模型名重要。
+//! footer 显示当前模式、provider/模型、思考变体，回合跑着时跟着声波和这一轮的计时。
+//! token 计量（输出速度、上下文占用与窗口、会话累计与缓存命中率）全屏下单独画在
+//! 输入框下面那一行（09-24），大厅窄框与行内模式没有那一行，照旧跟在 footer 右端。
+//! 窄终端下要按优先级丢弃——模型名比累计数字重要，模式标签又比模型名重要。
 
 use crate::cli::*;
 
@@ -22,6 +23,27 @@ pub(in crate::cli) struct ReplFooterStatus {
     pub(in crate::cli) running_spinner: Option<usize>,
     /// 会话上挂着的目标（`/goal`）。画在输入框第一行的右端，不占 footer。
     pub(in crate::cli) goal: Option<miyu_core::ipc::GoalHint>,
+    /// 这一轮从什么时候开始算（09-24：声波右边那个计时，是这一轮对话的总用时，不是
+    /// 会话的）。权威那份在 `LiveReplTail::turn_started`，这里是每次换 footer 时同步
+    /// 过来的副本（`goal` 就是整份覆盖时漏过的）。
+    pub(in crate::cli) turn_started: Option<std::time::Instant>,
+}
+
+/// 用量那串数字画在哪（09-24：footer 挤，用户让它挪到输入框下面、原来空着的最底行）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::cli) enum UsagePlacement {
+    /// 跟在 footer 右端：大厅窄框、行内模式——它们底下没有留给这一行的空。
+    FooterRight,
+    /// footer 底下单独一行（[`repl_usage_line`]）：全屏活动区底下本来就空着一行。
+    RowBelow,
+}
+
+/// 这一轮跑了多久：只在跑着（声波在动）时给，跑完就不显示（用户 09-24）。
+/// `12s` / `1m 05s` / `1h 02m 05s`，和 `/goal` 提示、收段行同一个写法。
+pub(in crate::cli) fn turn_clock_label(footer: &ReplFooterStatus) -> Option<String> {
+    footer.running_spinner?;
+    let started = footer.turn_started?;
+    Some(miyu_base::durations::format_hms(started.elapsed()))
 }
 
 /// 这条车道的高亮色：输入框左侧那根粗线、footer 左下角的模式标签、输入框右上
@@ -128,6 +150,7 @@ impl ReplFooterStatus {
             // 目标状态由轮询线程一秒一拍地喂（`LiveReplTail::tick_goal_hint`），
             // 配置构造这一路不知道。
             goal: None,
+            turn_started: None,
             token_usage: render::TokenMeter {
                 session_tokens,
                 context_window: window.map(|(value, _)| value),
@@ -298,41 +321,22 @@ pub(in crate::cli) fn repl_footer_line(
     readonly: bool,
     footer: &ReplFooterStatus,
     cols: usize,
+    usage: UsagePlacement,
 ) -> String {
     let cols = cols.max(1);
     let bar = input_prompt_bar(mode);
     let bar_width = footer_display_width(&bar);
-    // The footer carries only the two standing gauges — how much context is
-    // left, and what the session has cost. The per-turn figure is transient and
-    // already has its own home in the `Token:` line printed after each reply;
-    // keeping it here cost 14 columns and pushed the whole footer past 80.
-    let usage = render::TokenMeter {
-        turn_tokens: 0,
-        ..footer.token_usage
-    };
-    // Narrow terminals: drop the output speed first, then the cumulative
-    // total, then the percent, so the core context meter survives as long
-    // as possible.
-    let mut right_plain = String::new();
-    for (with_speed, with_cumulative, with_percent) in [
-        (true, true, true),
-        (false, true, true),
-        (false, false, true),
-        (false, false, false),
-    ] {
-        let meter = render::TokenMeter {
-            cumulative_tokens: usage.cumulative_tokens.filter(|_| with_cumulative),
-            ..usage
-        };
-        right_plain = render::format_token_usage_inline_opts(&meter, with_percent, with_speed);
-        let left_room = cols
-            .saturating_sub(bar_width)
-            .saturating_sub(footer_display_width(&right_plain));
-        if left_room >= 24 {
-            break;
+    let right_plain = match usage {
+        UsagePlacement::FooterRight => {
+            usage_text_fitting(footer, cols.saturating_sub(bar_width), 24)
         }
-    }
-    let right = format!("\x1b[2m{right_plain}\x1b[0m");
+        UsagePlacement::RowBelow => String::new(),
+    };
+    let right = if right_plain.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[2m{right_plain}\x1b[0m")
+    };
     let right_width = footer_display_width(&right);
     let left_budget = cols.saturating_sub(bar_width.saturating_add(right_width).saturating_add(1));
     let left = repl_footer_left(mode, readonly, footer, left_budget);
@@ -346,9 +350,58 @@ pub(in crate::cli) fn repl_footer_line(
     let line = format!("{bar}{left}{}{right}", " ".repeat(gap));
     // Even the fixed fields can exceed a tiny terminal. Keep the footer on
     // one row and pad it fully because spinner ticks overwrite without clearing.
-    let line = render::clip_to_display_width(&line, cols);
+    pad_row(&line, cols)
+}
+
+/// 全屏下 footer 底下那一行：用量右对齐，整行垫满（重画时不先擦）。
+pub(in crate::cli) fn repl_usage_line(footer: &ReplFooterStatus, cols: usize) -> String {
+    let cols = cols.max(1);
+    let text = usage_text_fitting(footer, cols, 0);
+    if text.is_empty() {
+        return " ".repeat(cols);
+    }
+    let width = footer_display_width(&text);
+    let line = format!(
+        "{}\x1b[2m{text}\x1b[0m",
+        " ".repeat(cols.saturating_sub(width))
+    );
+    pad_row(&line, cols)
+}
+
+fn pad_row(line: &str, cols: usize) -> String {
+    let line = render::clip_to_display_width(line, cols);
     let padding = cols.saturating_sub(footer_display_width(&line));
     format!("{line}{}", " ".repeat(padding))
+}
+
+/// 用量那串字，按宽度降级：先丢输出速度，再丢累计，最后丢百分比，上下文表撑到最后。
+/// `reserve` 是同一行上还要留给左边的列数（跟在 footer 右端时，模式和模型名至少要
+/// 留出这么宽）。
+fn usage_text_fitting(footer: &ReplFooterStatus, width: usize, reserve: usize) -> String {
+    // The usage figures carry only the standing gauges — how much context is
+    // left, and what the session has cost. The per-turn figure is transient and
+    // already has its own home in the `Token:` line printed after each reply.
+    let usage = render::TokenMeter {
+        turn_tokens: 0,
+        ..footer.token_usage
+    };
+    let mut text = String::new();
+    for (with_speed, with_cumulative, with_percent) in [
+        (true, true, true),
+        (false, true, true),
+        (false, false, true),
+        (false, false, false),
+    ] {
+        let meter = render::TokenMeter {
+            cumulative_tokens: usage.cumulative_tokens.filter(|_| with_cumulative),
+            ..usage
+        };
+        text = render::format_token_usage_inline_opts(&meter, with_percent, with_speed);
+        if footer_display_width(&text).saturating_add(reserve) <= width {
+            break;
+        }
+    }
+    text
 }
 
 pub(in crate::cli) fn repl_footer_left(
@@ -362,10 +415,15 @@ pub(in crate::cli) fn repl_footer_left(
     let colored_thinking = colored_thinking.as_deref().unwrap_or_default();
     // 回合运行中,模型信息右侧是 Miyu 的声波律动(用户 08-20 选定):五柱
     // 波浪的高度与亮度随帧流动,颜色跟随模式主色(普通蓝/dev 酒红)。与
-    // 模型信息之间隔三个空格,不进 " · " 序列(用户点名)。
-    let wave = footer
-        .running_spinner
-        .map(|frame| sound_wave_frame(frame, mode == PersonaLane::Dev));
+    // 模型信息之间隔三个空格,不进 " · " 序列(用户点名)。波浪右边紧跟这一轮
+    // 的计时(用户 09-24),两样同进同退:跑完一起消失。
+    let wave = footer.running_spinner.map(|frame| {
+        let wave = sound_wave_frame(frame, mode == PersonaLane::Dev);
+        match turn_clock_label(footer) {
+            Some(clock) => format!("{wave} \x1b[2m{clock}\x1b[0m"),
+            None => wave,
+        }
+    });
     let with_wave = |text: String| match wave.as_deref() {
         Some(wave) => format!("{text}   {wave}"),
         None => text,

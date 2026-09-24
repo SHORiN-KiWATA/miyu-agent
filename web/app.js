@@ -227,6 +227,8 @@
     composerSpeedValue: document.getElementById("composerSpeedValue"),
     composerCumulative: document.getElementById("composerCumulative"),
     composerCumulativeValue: document.getElementById("composerCumulativeValue"),
+    composerTimer: document.getElementById("composerTimer"),
+    composerTimerValue: document.getElementById("composerTimerValue"),
     consoleButton: document.getElementById("consoleButton"),
     sidebarSettingsButton: document.getElementById("sidebarSettingsButton"),
     consoleView: document.getElementById("consoleView"),
@@ -394,6 +396,8 @@
   };
 
   const state = {
+    // 输入框下面那排的「用时」(09-24):{ runId, startedAt };这个视图没有在跑的轮就是 null。
+    turnClock: null,
     backgroundJobs: new Map(),
     jobsStripOpen: localStorage.getItem("miyu.web.jobsStripOpen") === "1",
     expandedJobs: new Set(),
@@ -6511,6 +6515,13 @@
     }
   }
 
+  // 输入框那排的「用时」跑着的时候半秒刷一次(一秒一刷的相位对不上,读数最多晚一秒);
+  // 停了它就不在了。
+  setInterval(() => {
+    if (document.hidden || !state.turnClock) return;
+    renderTurnClock();
+  }, 500);
+
   // 子过程时间线里「正在思考」的读秒 ticker:主对话那份有各自的 live 计时器,
   // 子过程这份没有,所以读秒永远停在 0s。这个全局 ticker 按 is-live 更新所有
   // 子过程思考块的读秒(用 dataset.subStart 存的起点)。
@@ -7632,9 +7643,38 @@
 
   // 只要这个视图里有回合在跑就转，与是正文、推理还是工具无关。
   function syncRunIndicator() {
+    syncTurnClock();
     const indicator = elements.composerRunIndicator;
     if (!indicator) return;
     indicator.hidden = !conversationRunning();
+  }
+
+  /// 输入框下面那排最右边的「用时」(用户 09-24):这个视图里正在跑的那一轮从它开始
+  /// (中途打开页面时取库里的 user_timestamp)算起;跑完就不显示,和终端一个规矩。
+  function syncTurnClock() {
+    let running = null;
+    for (const live of state.liveRuns.values()) {
+      if (!live.ended && liveViewed(live)) running = live;
+    }
+    if (!running) {
+      state.turnClock = null;
+    } else if (!state.turnClock || state.turnClock.runId !== running.runId) {
+      const startedAt = new Date(running.startedAt).getTime();
+      state.turnClock = {
+        runId: running.runId,
+        startedAt: Number.isFinite(startedAt) ? startedAt : Date.now()
+      };
+    }
+    renderTurnClock();
+  }
+
+  function renderTurnClock() {
+    const element = elements.composerTimer;
+    if (!element) return;
+    const clock = state.turnClock;
+    element.hidden = !clock;
+    if (!clock) return;
+    elements.composerTimerValue.textContent = formatHms((Date.now() - clock.startedAt) / 1000);
   }
 
   // 三点已挪到输入框那排，这里只保留 `is-streaming` 状态位（正文流式时的
@@ -10040,6 +10080,17 @@
     strip.replaceChildren(fragment);
     strip.hidden = false;
     updateJumpButtonOffset();
+  }
+
+  /// 时分秒:`12s` / `1m 05s` / `1h 02m 05s`,和终端的 `format_hms` 一个写法。
+  function formatHms(seconds) {
+    const value = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(value / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const rest = value % 60;
+    if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(rest).padStart(2, "0")}s`;
+    if (minutes > 0) return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+    return `${rest}s`;
   }
 
   function formatJobDuration(seconds) {

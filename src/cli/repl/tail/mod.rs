@@ -162,7 +162,13 @@ pub(in crate::cli) struct LiveReplTail {
     /// 行号会过期——tick 在旧行覆写就画出第二份 footer(孤儿),取消回合后
     /// 那行永远没人清(用户 08-20 截图实锤)。
     pub(in crate::cli) footer_offset: Option<u16>,
+    /// 上一次整帧渲染时用量画在哪（全屏在 footer 底下单独一行，大厅与行内在 footer
+    /// 右端）。转轮 tick 只原地重画 footer 那一行，得按同一种摆法画。
+    pub(in crate::cli) usage_placement: crate::cli::footer::UsagePlacement,
     pub(in crate::cli) footer_spinner_last: Option<std::time::Instant>,
+    /// 这一轮从什么时候开始算（09-24）。权威在这儿：`footer` 常被整份换掉，每次换都
+    /// 把它同步过去。跑完就清掉（跑完不显示）。
+    pub(in crate::cli) turn_started: Option<std::time::Instant>,
     /// 输入框右上角那行 `/goal …` 上一次画出去的**原文**。秒数每秒自己变，
     /// 光比 `GoalHint` 比不出来；比字符串则「没变就不重画」，空闲时一秒最多
     /// 一帧。见 [`Self::tick_goal_hint`]。
@@ -615,6 +621,8 @@ impl LiveReplTail {
             round_base_footer: None,
             footer_offset: None,
             footer_spinner_last: None,
+            usage_placement: crate::cli::footer::UsagePlacement::FooterRight,
+            turn_started: None,
             goal_hint_drawn: String::new(),
             jobs: Vec::new(),
             suppressed_jobs: std::collections::HashMap::new(),
@@ -662,6 +670,7 @@ impl LiveReplTail {
     ) {
         self.editor.mode_switchable = empty;
         if empty {
+            self.clear_turn_clock();
             if self.banner.is_none() {
                 let mut banner =
                     crate::cli::repl::banner::BannerScene::load(config, paths, self.editor.mode);
@@ -818,6 +827,7 @@ impl LiveReplTail {
 
     pub(in crate::cli) fn set_footer(&mut self, footer: ReplFooterStatus) {
         self.footer = footer;
+        self.footer.turn_started = self.turn_started;
         self.round_base_footer = None;
         self.footer_spinner_last = None;
         // 刷新之前开读的 Σ 作废，别让空闲循环拿它盖回来（见 `footer_generation`）。
@@ -825,8 +835,24 @@ impl LiveReplTail {
         self.cumulative_from_poll = false;
     }
 
+    /// 挂到一轮已经在跑的回合上时，按它真正开始的时刻起算（09-24）。
+    pub(in crate::cli) fn set_turn_clock_start(&mut self, started: std::time::Instant) {
+        self.turn_started = Some(started);
+        self.footer.turn_started = self.turn_started;
+    }
+
+    /// 这一轮完了（或换了会话）：计时不再挂着。
+    pub(in crate::cli) fn clear_turn_clock(&mut self) {
+        self.turn_started = None;
+        self.footer.turn_started = None;
+    }
+
     /// 回合收尾:熄掉运行转轮并原地重绘 footer 行(不整帧重绘)。
     pub(in crate::cli) fn stop_footer_spinner(&mut self) -> Result<()> {
+        // 这一轮说完了：计时跟着声波一起消失（用户 09-24：跑完就不显示）。转轮没起过
+        // 也要清，不然挂上来时记下的开始时刻会被下一轮接着用。中途挂起再接上的，由
+        // `follow_wake_run` 按这一轮在库里的开始时刻重新起算。
+        self.clear_turn_clock();
         if self.footer.running_spinner.take().is_none() {
             return Ok(());
         }
@@ -847,6 +873,7 @@ impl LiveReplTail {
             self.editor.readonly,
             &self.footer,
             usize::from(cols),
+            self.usage_placement,
         );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
@@ -874,6 +901,7 @@ impl LiveReplTail {
         display.apply_round_usage(context_tokens, turn, speed);
         // 基线快照拍于回合开始(转轮未起),别让计量刷新把转轮拍灭。
         display.running_spinner = self.footer.running_spinner;
+        display.turn_started = self.turn_started;
         self.footer = display;
         if self.rendered && !self.external_output_active {
             synchronized_terminal_update(CursorAfterUpdate::Shown, || self.redraw())?;
@@ -1078,6 +1106,12 @@ impl LiveReplTail {
             return Ok(());
         }
         self.footer_spinner_last = Some(now);
+        // 转轮起转 = 这一轮开始了：还没有计时就从现在起算。挂到别人起的轮上时由
+        // `set_turn_clock_start` 改成它真正开始的时刻。
+        if self.turn_started.is_none() {
+            self.turn_started = Some(now);
+        }
+        self.footer.turn_started = self.turn_started;
         self.footer.running_spinner =
             Some(self.footer.running_spinner.map_or(0, |f| f.wrapping_add(1)));
         let Some(offset) = self.footer_offset else {
@@ -1093,6 +1127,7 @@ impl LiveReplTail {
             self.editor.readonly,
             &self.footer,
             usize::from(cols),
+            self.usage_placement,
         );
         let input_cursor = self.input_cursor;
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
