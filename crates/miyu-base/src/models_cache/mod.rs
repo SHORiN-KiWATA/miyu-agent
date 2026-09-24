@@ -488,6 +488,7 @@ mod tests {
                 probability_reply: None,
                 probability_reply_rate: None,
                 ignore_sleep_hours: None,
+                rate_limit: None,
             });
         let mut data = HashMap::from([(
             provider_id.clone(),

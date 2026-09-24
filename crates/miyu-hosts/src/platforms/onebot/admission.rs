@@ -304,11 +304,8 @@ pub(in crate::platforms::onebot) fn admission_for_access_at(
             Admission {
                 allowed: whitelisted || config.group_chats.allow_non_whitelist,
                 rate_key: (!privileged).then(|| format!("qq:{self_id}:group:{group_id}")),
-                rate_limit: if whitelisted {
-                    config.group_chats.whitelist_rate_limit
-                } else {
-                    config.group_chats.non_whitelist_rate_limit
-                },
+                // 本群的专属限流优先(09-24),没设就按白名单 / 非白名单那一档。
+                rate_limit: config.group_rate_limit(&group_id_text, whitelisted),
                 use_non_whitelist_text_models: !whitelisted,
             }
         }

@@ -60,5 +60,6 @@ pub(super) fn test_route(config: &AppConfig) -> PlatformModelRoute {
         probability_reply: None,
         probability_reply_rate: None,
         ignore_sleep_hours: None,
+        rate_limit: None,
     }
 }

@@ -2209,6 +2209,16 @@
           default: null,
         },
         {
+          key: "rate_limit",
+          label: t("覆盖群聊限流"),
+          hint: t("不勾选 = 按上面的白名单 / 非白名单群聊限流"),
+          kind: "rate-limit",
+          optional: true,
+          overrideLabel: t("覆盖群聊限流"),
+          default: { max_messages: 20, window_seconds: 60 },
+          showWhen: { key: "conversation.kind", value: "group" },
+        },
+        {
           key: "probability_reply",
           label: t("开关概率主动回复"),
           hint: t("只管主动回复判断里的概率抽样;@、关键词、引用、接话、覆盖顶替和群管审核不受影响"),

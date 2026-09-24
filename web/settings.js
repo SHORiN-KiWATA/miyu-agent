@@ -1215,16 +1215,41 @@ window.MiyuSettings = (() => {
   function rateLimitControl(getValue, setValue, field) {
     const anchor = el("button.st-picker.is-compact", { type: "button" });
     const paint = () => {
-      const value = getValue() || field.default || { max_messages: 0, window_seconds: 0 };
-      anchor.replaceChildren(el("span.st-picker-text", null, el("strong", { text: t("{count} 条", { count: value.max_messages }) }), el("small", { text: t("/ {seconds} 秒", { seconds: value.window_seconds }) })), icon("pencil", "st-picker-caret"));
+      const current = getValue();
+      anchor.replaceChildren();
+      // 可选(会话专属覆盖,09-24):没设就显示「继承」,别拿默认值冒充已经覆盖了。
+      if (!current && field.optional) anchor.append(el("span.st-picker-text.is-muted", { text: field.inheritLabel || t("继承") }));
+      else {
+        const value = current || field.default || { max_messages: 0, window_seconds: 0 };
+        anchor.append(el("span.st-picker-text", null, el("strong", { text: t("{count} 条", { count: value.max_messages }) }), el("small", { text: t("/ {seconds} 秒", { seconds: value.window_seconds }) })));
+      }
+      anchor.append(icon("pencil", "st-picker-caret"));
     };
     anchor.addEventListener("click", () => {
       openPopover(anchor, (body) => {
-        const value = { ...(field.default || { max_messages: 2, window_seconds: 600 }), ...(getValue() || {}) };
-        body.append(
-          row(t("窗口内最多条数"), numberInput({ label: t("条数"), min: 1, max: 100000, integer: true }, value.max_messages, (next) => { value.max_messages = next; setValue({ ...value }); paint(); })),
-          row(t("窗口秒数"), numberInput({ label: t("秒数"), min: 1, max: 86400, integer: true }, value.window_seconds, (next) => { value.window_seconds = next; setValue({ ...value }); paint(); }))
-        );
+        const fallback = field.default || { max_messages: 2, window_seconds: 600 };
+        let value = getValue() ? { ...fallback, ...getValue() } : (field.optional ? null : { ...fallback });
+        const form = el("div");
+        const paintForm = () => {
+          form.replaceChildren();
+          if (!value) return;
+          form.append(
+            row(t("窗口内最多条数"), numberInput({ label: t("条数"), min: 1, max: 100000, integer: true }, value.max_messages, (next) => { value.max_messages = next; setValue({ ...value }); paint(); })),
+            row(t("窗口秒数"), numberInput({ label: t("秒数"), min: 1, max: 86400, integer: true }, value.window_seconds, (next) => { value.window_seconds = next; setValue({ ...value }); paint(); }))
+          );
+        };
+        if (field.optional) {
+          const check = el("input", { type: "checkbox", checked: Boolean(value) });
+          check.addEventListener("change", () => {
+            value = check.checked ? { ...fallback } : null;
+            setValue(value ? { ...value } : null);
+            paint();
+            paintForm();
+          });
+          body.append(el("label.st-check-row.is-strong", null, check, el("span", null, el("strong", { text: field.overrideLabel || field.label }), el("small", { text: field.inheritHint || t("不勾选则继承上层设置") }))));
+        }
+        body.append(form);
+        paintForm();
       }, { title: field.label, width: "300px" });
     });
     paint();
@@ -2393,6 +2418,7 @@ window.MiyuSettings = (() => {
     else if (route.probability_reply === true) chips.push(chip(t("概率主动回复：开"), "is-soft"));
     if (typeof route.probability_reply_rate === "number") chips.push(chip(t("抽样概率 {rate}", { rate: route.probability_reply_rate }), "is-soft"));
     if (route.ignore_sleep_hours === true) chips.push(chip(t("忽略睡眠时间"), "is-soft"));
+    if (route.conversation?.kind === "group" && route.rate_limit) chips.push(chip(t("限流 {count} 条/{seconds} 秒", { count: route.rate_limit.max_messages, seconds: route.rate_limit.window_seconds }), "is-soft"));
     return chips;
   }
 
@@ -2453,6 +2479,17 @@ window.MiyuSettings = (() => {
           set: (value) => {
             if (typeof value === "number" && Number.isFinite(value)) route.probability_reply_rate = value;
             else delete route.probability_reply_rate;
+            dirty();
+          }
+        };
+      }
+      // 群聊限流覆盖:取消勾选 = 回到档位,键删干净别留 null(09-24)。
+      if (key === "rate_limit") {
+        return {
+          get: () => route.rate_limit || null,
+          set: (value) => {
+            if (value) route.rate_limit = value;
+            else delete route.rate_limit;
             dirty();
           }
         };

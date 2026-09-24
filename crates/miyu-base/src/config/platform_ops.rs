@@ -167,6 +167,13 @@ impl AppConfig {
         {
             bail!("QQ conversation probability_reply_rate must be between 0 and 1");
         }
+        // 群聊专属限流(09-24):窗口秒数与平台限流同一套范围;0 条 = 不限,照旧放行。
+        if route
+            .rate_limit
+            .is_some_and(|limit| !(1..=86_400).contains(&limit.window_seconds))
+        {
+            bail!("QQ conversation rate_limit.window_seconds must be between 1 and 86400");
+        }
         if let PlatformPersonaOverride::Custom { name } = &route.persona {
             let path = Path::new(name);
             if name.is_empty()

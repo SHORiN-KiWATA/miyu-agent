@@ -109,12 +109,13 @@ pub(in crate::config_tui) fn edit_platform_model_route(
             probability_reply: None,
             probability_reply_rate: None,
             ignore_sleep_hours: None,
+            rate_limit: None,
         });
     let mut selected = 0usize;
     loop {
         let kind_label = platform_conversation_kind_label(route.conversation.kind);
         let id_label = platform_conversation_id_label(route.conversation.kind);
-        let options = [
+        let mut options = vec![
             format!("{}: {}", t("Conversation type", "会话类型"), kind_label,),
             format!(
                 "{id_label}: {}",
@@ -175,6 +176,19 @@ pub(in crate::config_tui) fn edit_platform_model_route(
                 ignore_sleep_label(route.ignore_sleep_hours)
             ),
         ];
+        // 群聊才有「覆盖群聊限流」(09-24):私聊路由上这一项不生效,就别摆出来。
+        if route.conversation.kind == PlatformConversationKind::Group {
+            options.push(format!(
+                "{}: {}",
+                t("Override group rate limit", "覆盖群聊限流"),
+                route
+                    .rate_limit
+                    .map(rate_limit_label)
+                    .unwrap_or_else(|| t("inherit", "继承").to_string())
+            ));
+        }
+        // 从群聊切成私聊时最后一项会消失,光标别停在不存在的行上。
+        selected = selected.min(options.len() - 1);
         draw_menu(
             ui,
             t(" EDIT QQ CONVERSATION ", " 编辑 QQ 会话配置 "),
@@ -301,6 +315,27 @@ pub(in crate::config_tui) fn edit_platform_model_route(
                         true,
                     )?;
                     route.ignore_sleep_hours = (picked == choices[1]).then_some(true);
+                }
+                10 if route.conversation.kind == PlatformConversationKind::Group => {
+                    let enabled = select_bool(
+                        ui,
+                        t("Override group rate limit", "覆盖群聊限流"),
+                        route.rate_limit.is_some(),
+                    )?;
+                    if enabled {
+                        let whitelisted = route.conversation.id.parse::<i64>().is_ok_and(|id| {
+                            config.platforms.qq.group_chats.whitelist.contains(&id)
+                        });
+                        let limit = route.rate_limit.get_or_insert(
+                            config
+                                .platforms
+                                .qq
+                                .group_rate_limit(&route.conversation.id, whitelisted),
+                        );
+                        edit_platform_rate_limit(ui, limit)?;
+                    } else {
+                        route.rate_limit = None;
+                    }
                 }
                 _ => {}
             },

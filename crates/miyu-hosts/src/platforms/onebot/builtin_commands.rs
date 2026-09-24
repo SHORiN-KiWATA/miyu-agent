@@ -397,6 +397,7 @@ pub(in crate::platforms::onebot) fn execute_models_command(
             probability_reply: None,
             probability_reply_rate: None,
             ignore_sleep_hours: None,
+            rate_limit: None,
         });
     route.text_models = Some(vec![miyu_base::config::ActiveProviderModelConfig {
         provider_id: selected.provider_id.clone(),

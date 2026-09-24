@@ -361,6 +361,7 @@ async fn qq_conversation_persona_drives_context_and_session_binding() {
             probability_reply: None,
             probability_reply_rate: None,
             ignore_sleep_hours: None,
+            rate_limit: None,
         });
     let target = Target::Group { group_id: 99 };
     let event = json!({

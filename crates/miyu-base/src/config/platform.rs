@@ -490,6 +490,10 @@ pub struct PlatformModelRoute {
     /// 在睡眠时间,这个会话照样正常进行。管理员本来就叫得醒,这条是给普通会话的。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore_sleep_hours: Option<bool>,
+    /// 本群的限流,覆盖白名单 / 非白名单群聊那一档(用户 09-24:不同群该有不同的
+    /// 硬上限)。None = 按档位走。只对群聊生效,私聊路由上这一项被忽略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<PlatformRateLimit>,
 }
 
 impl PlatformModelRoute {
@@ -924,6 +928,19 @@ impl OneBotConfig {
     pub fn is_sleeping_at(&self, now: chrono::NaiveTime) -> bool {
         self.sleep_window()
             .is_some_and(|window| window.contains(now))
+    }
+
+    /// 群聊限流:本群有专属覆盖就用它,否则按白名单 / 非白名单那一档。
+    pub fn group_rate_limit(&self, group_id: &str, whitelisted: bool) -> PlatformRateLimit {
+        self.conversations
+            .iter()
+            .find(|route| route.matches(PlatformConversationKind::Group, group_id))
+            .and_then(|route| route.rate_limit)
+            .unwrap_or(if whitelisted {
+                self.group_chats.whitelist_rate_limit
+            } else {
+                self.group_chats.non_whitelist_rate_limit
+            })
     }
 
     /// 一个会话的回合并发闸值。覆盖优先级:按会话 > 按会话类型 > QQ 默认;

@@ -784,6 +784,7 @@ async fn probability_gate_passed(plugin_rate: f64, route_rate: Option<f64>) -> b
         probability_reply: None,
         probability_reply_rate: route_rate,
         ignore_sleep_hours: None,
+        rate_limit: None,
     }];
     let event = inbound_event();
     let context = PlatformTurnContext::new(

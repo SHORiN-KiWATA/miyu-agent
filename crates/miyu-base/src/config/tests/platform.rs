@@ -274,6 +274,41 @@ fn qq_non_whitelist_model_pool_normalizes_for_dynamic_inheritance() {
     assert!(config.platforms.qq.non_whitelist_text_models.is_inherit());
 }
 
+/// 群聊专属限流(09-24):没设就不写进配置;窗口秒数与平台限流同一套校验。
+#[test]
+fn a_group_rate_limit_override_round_trips_and_is_validated() {
+    let mut config = AppConfig::default();
+    let mut route = test_route(&config);
+    // 夹具里的模型池指向默认配置里没有的模型,与这里要验的无关。
+    route.text_models = None;
+    route.multimodal_models = None;
+    let json = serde_json::to_value(&route).unwrap();
+    assert!(json.get("rate_limit").is_none(), "没设就别写进配置");
+
+    route.rate_limit = Some(PlatformRateLimit {
+        max_messages: 3,
+        window_seconds: 120,
+    });
+    let json = serde_json::to_value(&route).unwrap();
+    assert_eq!(json["rate_limit"]["max_messages"], 3);
+    let back: PlatformModelRoute = serde_json::from_value(json).unwrap();
+    assert_eq!(back.rate_limit, route.rate_limit);
+    assert!(config.validate_platform_model_route(&route).is_ok());
+
+    route.rate_limit = Some(PlatformRateLimit {
+        max_messages: 3,
+        window_seconds: 0,
+    });
+    assert!(config.validate_platform_model_route(&route).is_err());
+
+    config.platforms.qq.group_chats.whitelist.push(20002);
+    assert_eq!(
+        config.platforms.qq.group_rate_limit("20002", true),
+        config.platforms.qq.group_chats.whitelist_rate_limit,
+        "没有会话配置时按档位"
+    );
+}
+
 #[test]
 fn session_limits_resolve_from_conversation_then_kind_then_qq() {
     let mut qq = OneBotConfig::default();
@@ -316,6 +351,7 @@ fn session_limits_resolve_from_conversation_then_kind_then_qq() {
         probability_reply: None,
         probability_reply_rate: None,
         ignore_sleep_hours: None,
+        rate_limit: None,
     });
     assert_eq!(
         qq.session_limits(PlatformConversationKind::Group, "42"),
@@ -381,6 +417,7 @@ fn qq_text_model_pool_resolution_preserves_conversation_priority() {
         probability_reply: None,
         probability_reply_rate: None,
         ignore_sleep_hours: None,
+        rate_limit: None,
     });
 
     {
@@ -1169,6 +1206,7 @@ fn probability_reply_override_is_per_conversation_and_round_trips() {
         probability_reply: Some(false),
         probability_reply_rate: None,
         ignore_sleep_hours: None,
+        rate_limit: None,
     };
     config.platforms.upsert_model_route(route.clone());
     assert!(!config
@@ -1216,6 +1254,7 @@ fn probability_reply_rate_override_is_per_conversation_and_normalizes() {
         probability_reply: None,
         probability_reply_rate: Some(0.3),
         ignore_sleep_hours: None,
+        rate_limit: None,
     };
     config.platforms.upsert_model_route(route.clone());
     assert_eq!(
@@ -1361,6 +1400,7 @@ fn ignoring_sleep_hours_is_scoped_to_the_one_conversation() {
         probability_reply: None,
         probability_reply_rate: None,
         ignore_sleep_hours: Some(true),
+        rate_limit: None,
     });
 
     let night = chrono::NaiveTime::from_hms_opt(2, 0, 0).unwrap();

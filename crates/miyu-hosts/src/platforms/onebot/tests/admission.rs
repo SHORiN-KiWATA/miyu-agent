@@ -660,6 +660,44 @@ async fn tool_followup_reservation_requires_the_same_conversation_and_sender() {
     assert!(reserve_tool_followup(&state, &session_id, &followup.conversation, "42").is_none());
 }
 
+/// 群聊专属限流(09-24):本群有覆盖就用覆盖,白名单与否都一样;没覆盖按档位走;
+/// 私聊路由上的覆盖不影响同号的群,也不改私聊限流;管理员照旧不计数。
+#[test]
+fn a_group_route_overrides_the_group_rate_limit() {
+    let mut config = OneBotConfig::default();
+    config.admin_users.push(1);
+    config.group_chats.whitelist.push(10);
+    let route =
+        |kind: &str, id: &str, max: u32, window: u32| -> miyu_base::config::PlatformModelRoute {
+            serde_json::from_value(serde_json::json!({
+                "conversation": {"kind": kind, "id": id},
+                "rate_limit": {"max_messages": max, "window_seconds": window},
+            }))
+            .unwrap()
+        };
+    config.conversations = vec![
+        route("group", "10", 1, 60),
+        route("group", "11", 50, 30),
+        route("private", "13", 9, 9),
+    ];
+    let limit = |group_id: i64| {
+        admission_for_access(&config, None, Target::Group { group_id }, 100, 3).rate_limit
+    };
+    let per = |max_messages, window_seconds| PlatformRateLimit {
+        max_messages,
+        window_seconds,
+    };
+
+    assert_eq!(limit(10), per(1, 60), "白名单群的覆盖");
+    assert_eq!(limit(11), per(50, 30), "非白名单群的覆盖");
+    assert_eq!(limit(12), per(5, 300), "没覆盖的群按非白名单档位");
+    assert_eq!(limit(13), per(5, 300), "私聊路由不影响同号的群");
+    let private = admission_for_access(&config, None, Target::Private { user_id: 13 }, 100, 13);
+    assert_eq!(private.rate_limit, per(5, 300), "私聊限流不吃这项覆盖");
+    let admin = admission_for_access(&config, None, Target::Group { group_id: 10 }, 100, 1);
+    assert!(admin.rate_key.is_none(), "管理员照旧不计数");
+}
+
 #[test]
 fn rate_limit_notices_are_silent_in_private_chats_only() {
     assert!(!sends_rate_limit_notice(Target::Private { user_id: 7 }));
