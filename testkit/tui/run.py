@@ -1571,8 +1571,17 @@ def main():
             while time.time() < deadline:
                 settle(master, sink, quiet=0.3, timeout=1.0)
             after = bytes(sink)[mark_ctrlc:].decode("utf-8", "replace")
-            # 停之后整段流里都不该再出现那个任务名（出现 = 又画了一遍）
-            report["item05_ctrlc_no_strip_flash"] = "走查后台任务二" not in after
+            # 以画出「已停止 N 个后台任务」那条提示的那一帧为界。按键写出去之后、
+            # daemon 回话之前，任务还真在跑，状态行的转轮照转（负载高时这一段有好
+            # 几帧），那不叫闪。提示那一帧里状态行已经清掉，从那一帧起再出现任务名
+            # 才是又画了一遍。提示一直没出来，就是 Ctrl+C 没停掉任务，同样算红。
+            stopped = re.search(r"已停止 \d+ 个后台任务|stopped \d+ background task", after)
+            if stopped:
+                frame = after.rfind("\x1b[?2026h", 0, stopped.start())
+                boundary = frame if frame >= 0 else stopped.start()
+                report["item05_ctrlc_no_strip_flash"] = "走查后台任务二" not in after[boundary:]
+            else:
+                report["item05_ctrlc_no_strip_flash"] = False
             (OUT / "ctrlc-after.txt").write_text(after[-4000:], encoding="utf-8")
 
         # 11b. Ctrl+C 是有优先级的：有草稿先清草稿，人留在 REPL 里。
