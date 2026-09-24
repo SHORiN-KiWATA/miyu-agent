@@ -2,6 +2,7 @@
 
 ## 重要更新
 
+- **开发模式默认不再带提示词**：以前开发模式会先塞一句内置的「You are a helpful software engineer assistant.」，现在默认为空，系统提示词只有主机环境（系统、工作目录、模型这些事实）。想要就在 `miyu config` 的开发模式里自己写，写什么发什么；老版本自动写进 `dev-prompt.md` 的那句会被当成没写，你自己改过的内容照旧生效。新装机不再预先生成 `dev-prompt.md`。**需要重启 daemon**。
 - **过程收起后的那一行说得更具体了**：以前统一是「Worked for 12s · 7 tools · 2 thoughts」，现在按做了什么分开写——跑过命令写成「Ran 3 commands · 2 edits · 2 tools · 2 thoughts · 1 err · 42s」（动作在前、思考在后、耗时挂在最后），没跑命令写成「Worked for 8s · 2 edits · 3 tools」，只想了想写成「Thought for 5s」。edits 只数改文件的那几步，知识库、artifact 和其余工具都算 tools。终端和网页一个写法，子代理面板里也一样；设置里那一项改名为「过程收起成一行摘要」。网页那部分**需要重启 daemon**。
 - **QQ 长回复转成的图好看多了**：
   - 文里的 `<br>` 画成换行，以前会原样印在表格格子里；`<b>`、`<i>`、`<s>`、`<code>` 转成对应的粗体、斜体、删除线和代码样式，其余标签只留字。
