@@ -149,6 +149,13 @@ impl LiveReplEditor {
         self.box_cols.unwrap_or_else(terminal_cols)
     }
 
+    /// 光标在输入框最后一个物理行上：再按 ↓ 光标已经挪不动了（任务条从这儿进，见
+    /// `tail::navigate`）。
+    pub(in crate::cli) fn cursor_on_last_row(&self) -> bool {
+        repl_move_cursor_vertical_for_cols("  ", &self.input, self.cursor, 1, self.content_cols())
+            == self.cursor
+    }
+
     pub(in crate::cli) fn clear(&mut self) {
         self.input.clear();
         self.cursor = 0;

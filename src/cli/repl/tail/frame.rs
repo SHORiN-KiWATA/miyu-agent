@@ -180,7 +180,7 @@ impl LiveReplTail {
             &self.strip_rows(),
             self.job_spinner_frame(),
             usize::from(cols),
-            self.job_hover,
+            self.strip_view(),
         );
         let job_rows = job_lines.len().min(u16::MAX as usize) as u16;
         // 空会话 banner:inline 下占活动区顶上几行;全屏下画进正文区(见下面)。
@@ -219,7 +219,7 @@ impl LiveReplTail {
         // 再补个空格（多一次按键 = 多一帧）才蹦出来——用户实测报的「我要打
         // `/` 空格才会出现」就是这个。
         let hint_lines = if self.screen.is_some() {
-            command_hint_lines(&self.editor.input, usize::from(cols))
+            command_hint_lines(&self.editor.input, usize::from(cols), self.command_pick())
         } else {
             Vec::new()
         };
@@ -410,6 +410,7 @@ impl LiveReplTail {
             &mut drawn_input,
             self.editor.mode,
             self.footer_badges(),
+            self.command_pick(),
             &self.editor.input,
             self.editor.cursor,
             self.editor.raw_pasted_lines,

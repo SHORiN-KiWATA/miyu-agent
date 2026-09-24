@@ -171,15 +171,37 @@ impl StripRow<'_> {
     }
 }
 
-/// 任务条：头上一行空的，然后一条一行，用时右对齐到终端宽度。
+/// 任务条最多露几条（用户 09-25：状态行最多显示 5 个，多了底下写「↓ 还有 x 个」）。
+pub(in crate::cli) const STRIP_VISIBLE_ROWS: usize = 5;
+
+/// 任务条此刻怎么画：从第几条露起、鼠标悬在哪条、方向键停在哪条。下标都是
+/// `strip_rows` 里的下标。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::cli) struct StripView {
+    pub(in crate::cli) scroll: usize,
+    pub(in crate::cli) hovered: Option<usize>,
+    pub(in crate::cli) focused: Option<usize>,
+}
+
+impl StripView {
+    /// 露出来的是哪几条。
+    pub(in crate::cli) fn window(&self, len: usize) -> std::ops::Range<usize> {
+        let start = self.scroll.min(len);
+        start..(start + STRIP_VISIBLE_ROWS).min(len)
+    }
+}
+
+/// 任务条：头上一行空的，然后一条一行，用时右对齐到终端宽度。露不下的在底下写一行
+/// 「↓ 还有 x 个」。
 ///
-/// `hovered`：鼠标正悬在哪一条上（下标，不算头上的空行），那一行不 dim——和正文里
-/// 可点的块一个规矩：悬浮提亮，好让人知道这行能点（用户 09-18：任务条行悬浮没有高亮）。
+/// 悬浮的那一条不 dim——和正文里可点的块一个规矩：悬浮提亮，好让人知道这行能点（用户
+/// 09-18：任务条行悬浮没有高亮）。方向键停着的那一条和选择面板的选中项一个样子：
+/// 行首一个 `›`，整行加粗。
 pub(in crate::cli) fn strip_lines(
     rows: &[StripRow<'_>],
     spinner_phase: usize,
     cols: usize,
-    hovered: Option<usize>,
+    view: StripView,
 ) -> Vec<String> {
     if rows.is_empty() {
         return Vec::new();
@@ -190,15 +212,19 @@ pub(in crate::cli) fn strip_lines(
         .map(|row| visible_width(row.kind_word()))
         .max()
         .unwrap_or(0);
+    let window = view.window(rows.len());
     let mut lines = vec![String::new()];
-    for (index, row) in rows.iter().enumerate() {
+    for index in window.clone() {
+        let row = &rows[index];
+        let focused = view.focused == Some(index);
         let kind_word = row.kind_word();
         let kind_pad = " ".repeat(kind_col.saturating_sub(visible_width(kind_word)));
-        let mut left = format!(
-            "{} {kind_word}{kind_pad} {}",
-            row.marker(spinner_phase),
-            row.body()
-        );
+        let marker = if focused {
+            '›'
+        } else {
+            row.marker(spinner_phase)
+        };
+        let mut left = format!("{marker} {kind_word}{kind_pad} {}", row.body());
         let timer = row.timer();
         let timer_width = visible_width(&timer);
         // Never exceed the terminal width: a wrapped strip line would shift
@@ -207,16 +233,31 @@ pub(in crate::cli) fn strip_lines(
         while visible_width(&left) > max_left && !left.is_empty() {
             left.pop();
         }
-        let pad = cols
-            .saturating_sub(visible_width(&left))
-            .saturating_sub(timer_width)
-            .max(1);
-        let dim = if hovered == Some(index) {
-            ""
+        let pad = " ".repeat(
+            cols.saturating_sub(visible_width(&left))
+                .saturating_sub(timer_width)
+                .max(1),
+        );
+        lines.push(if focused {
+            let rest = left.strip_prefix('›').unwrap_or(&left);
+            format!("\x1b[1m\x1b[35m›\x1b[0m\x1b[1m{rest}{pad}{timer}\x1b[0m")
+        } else if view.hovered == Some(index) {
+            format!("{left}{pad}{timer}\x1b[0m")
         } else {
-            "\x1b[2m"
+            format!("\x1b[2m{left}{pad}{timer}\x1b[0m")
+        });
+    }
+    // 露不下的时候底下那一行一直留着，滚到底了就空着：不然往下挪到底那一下它没了，
+    // 输入框整个往下跳一行。
+    if rows.len() > STRIP_VISIBLE_ROWS {
+        let hidden = rows.len() - window.end;
+        let more = match hidden {
+            0 => String::new(),
+            _ if miyu_base::i18n::is_zh() => format!("↓ 还有 {hidden} 个"),
+            _ => format!("↓ {hidden} more"),
         };
-        lines.push(format!("{dim}{left}{}{timer}\x1b[0m", " ".repeat(pad)));
+        let pad = " ".repeat(cols.saturating_sub(visible_width(&more)));
+        lines.push(format!("\x1b[2m{more}{pad}\x1b[0m"));
     }
     lines
 }

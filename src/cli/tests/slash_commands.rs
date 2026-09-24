@@ -84,33 +84,33 @@ fn suggestions_survive_a_fully_typed_command() {
 /// 全屏候选面板：打全了照样在，并带上参数提示；别名那一行注明等于哪条正名。
 #[test]
 fn command_hint_panel_keeps_showing_a_fully_typed_command() {
-    let lines = command_hint_lines("/session", 80);
+    let lines = command_hint_lines("/session", 80, None);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].starts_with("/session [name|index]"), "{lines:?}");
-    let lines = command_hint_lines("/session 3", 80);
+    let lines = command_hint_lines("/session 3", 80, None);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].starts_with("/session [name|index]"), "{lines:?}");
     // 没打全时不带参数提示，和以前一样只列名字。
-    let lines = command_hint_lines("/sessio", 80);
+    let lines = command_hint_lines("/sessio", 80, None);
     assert!(lines[0].starts_with("/session  "), "{lines:?}");
-    let lines = command_hint_lines("/var", 80);
+    let lines = command_hint_lines("/var", 80, None);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].starts_with("/variant"), "{lines:?}");
     assert!(lines[0].contains("= /effort"), "{lines:?}");
     // 无参数的命令打全了不带空的参数提示。
-    let lines = command_hint_lines("/usage", 80);
+    let lines = command_hint_lines("/usage", 80, None);
     assert!(lines[0].starts_with("/usage  "), "{lines:?}");
-    assert!(command_hint_lines("/sessio 3", 80).is_empty());
+    assert!(command_hint_lines("/sessio 3", 80, None).is_empty());
 }
 
 #[test]
 fn command_suggestions_are_prefixed_and_truncated() {
     let suggestions = repl_command_suggestions("/");
-    let line = repl_command_suggestions_line(&suggestions, 24);
+    let line = repl_command_suggestions_line(&suggestions, 24, None);
     assert!(line.starts_with("/new"));
     assert!(visible_width(&line) <= 24);
 
-    let line = repl_command_suggestions_line(&["/compact"], 40);
+    let line = repl_command_suggestions_line(&["/compact"], 40, None);
     assert_eq!(line, "/compact");
 }
 

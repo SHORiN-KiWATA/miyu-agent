@@ -11,9 +11,10 @@
       MIYU_TUI_RUNTIME=~/.cache/miyu-subagent-visit/rt OUT=~/.cache/miyu-subagent-visit/out \\
       python3 testkit/tui/subagent_visit.py
 
-步骤：说一句 → 主线派一个前台子代理（它跑一条 25 秒的命令）→
+步骤：说一句 → 主线派一个前台子代理（它跑一条 40 秒的命令）→
 1. 点时间线上子代理那一行 → 在子会话里 → `/back` 回来；
-2. 点任务条上那一行 → 在子会话里 → 点「↑ 主会话」回来；
+2. 点任务条上那一行 → 在子会话里 → 点「↑ 主会话」回来；再用方向键 ↓ + 回车进去、
+   ↓ + 回车回来；
 3. 等整轮跑完 → `/subagent` 挑它 → 在子会话里、看得到它的回复 → 说一句，它接着回 →
    `/back`，主会话里没有这句；
 4. `/session` 面板里没有子会话。
@@ -36,7 +37,7 @@ REPLY_HEAD = "好的,收到"
 FOLLOW_UP = "子会话里追问一句"
 STUB = {
     "STUB_SUBAGENT": "1",
-    "STUB_SUBAGENT_COMMAND": "sleep 25; printf 'SUBOUT\\n'",
+    "STUB_SUBAGENT_COMMAND": "sleep 40; printf 'SUBOUT\\n'",
     "STUB_CHUNK_SLEEP": "0.03",
 }
 
@@ -116,6 +117,21 @@ def main():
                 screen = r.wait_screen(master, sink, back_in_parent, 10.0)
                 report["up_row_returns"] = screen is not None
                 r.save("visit-up-row", screen or r.LAST["screen"] or [])
+
+        # 2b. 方向键：↓ 停在子代理那一行、回车进去；再 ↓ 停在「↑ 主会话」、回车回来。
+        os.write(master, b"\x1b[B")
+        h.settle(master, sink, quiet=0.3, timeout=1.5)
+        os.write(master, b"\r")
+        screen = r.wait_screen(master, sink, inside_child, 10.0)
+        report["keys_enter_child"] = screen is not None
+        r.save("visit-keys-in", screen or r.LAST["screen"] or [])
+        if screen is not None:
+            os.write(master, b"\x1b[B")
+            h.settle(master, sink, quiet=0.3, timeout=1.5)
+            os.write(master, b"\r")
+            screen = r.wait_screen(master, sink, back_in_parent, 10.0)
+            report["keys_return_to_parent"] = screen is not None
+            r.save("visit-keys-out", screen or r.LAST["screen"] or [])
 
         # 3. 整轮跑完之后 `/subagent`
         finished = r.wait_screen(

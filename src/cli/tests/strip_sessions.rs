@@ -68,7 +68,12 @@ fn session_rows_come_first_and_absorb_their_mirror_job() {
         job("j1", "subagent", Some("≈3.1K")),
         job("cmd1", "command", None),
     ];
-    let lines = plain(strip_lines(&strip_rows(&sessions, &jobs), 0, 80, None));
+    let lines = plain(strip_lines(
+        &strip_rows(&sessions, &jobs),
+        0,
+        80,
+        StripView::default(),
+    ));
 
     assert_eq!(lines.len(), 5, "{lines:#?}");
     assert!(lines[0].is_empty(), "头上一行空的: {lines:#?}");

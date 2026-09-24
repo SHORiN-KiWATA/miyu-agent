@@ -301,6 +301,20 @@ async fn run_remote_chat_inner(
                     let Some(live_tail) = live.as_deref_mut() else {
                         continue;
                     };
+                    // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
+                    // 任务条上回车是点那一行，不是发消息。
+                    if matches!(
+                        live_tail.navigate_key(&event)?,
+                        crate::cli::repl::tail::Navigated::Done
+                    ) {
+                        suspend_for_strip!(live_tail);
+                        if !live_tail.external_output_active {
+                            synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                                live_tail.redraw()
+                            })?;
+                        }
+                        continue;
+                    }
                     if matches!(
                         &event,
                         Event::Key(KeyEvent {

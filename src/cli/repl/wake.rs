@@ -132,6 +132,26 @@ pub(in crate::cli) async fn follow_wake_run(
     // （那一轮刚好没赶上），下面收到第一条事件后补起一次，不会一直没有。
     // 回合中执行斜杠命令要按这个号挂回来（09-20），和 `one_shot.rs` 同一套。
     let mut last_event_id = after.unwrap_or(0);
+    // 点了任务条上的会话行、时间线上子代理那一行，或者方向键停在会话行上回车（会话项目
+    // 第 3 段）：这一轮留在 daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一
+    // 条路。
+    macro_rules! suspend_for_strip {
+        () => {
+            if let Some(action) = live.take_strip_action() {
+                renderer.finish()?;
+                live.stop_footer_spinner()?;
+                live.apply_renderer_frame(&mut renderer)?;
+                return Err(anyhow::Error::new(
+                    crate::cli::repl::session::RemoteTurnSuspended {
+                        action: crate::cli::repl::session::SuspendedAction::Strip(action),
+                        run_id: run_id.to_string(),
+                        last_event_id,
+                        session_id: session_id.to_string(),
+                    },
+                ));
+            }
+        };
+    }
     let mut waiting_started = false;
     if !from_start && !resuming {
         renderer.start_waiting()?;
@@ -173,6 +193,20 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                     let event = event::read()?;
                     crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
+                    // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
+                    // 任务条上回车是点那一行，不是发消息。
+                    if matches!(
+                        live.navigate_key(&event)?,
+                        crate::cli::repl::tail::Navigated::Done
+                    ) {
+                        suspend_for_strip!();
+                        if !live.external_output_active {
+                            synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                                live.redraw()
+                            })?;
+                        }
+                        continue;
+                    }
                     // 斜杠命令在**编辑器处理回车之前**拦：编辑器一旦处理
                     // Enter 就会清空缓冲区，「输入原样留着」就成了空话——
                     // 显示滞留旧文本，下一次按键才暴露缓冲区其实已经空了。
@@ -341,23 +375,7 @@ pub(in crate::cli) async fn follow_wake_run(
                     if live.handle_screen_event(&event)? {
                         // 浮层里按了 x：跟着别处起的回合时也当场停（见 `job_stop`）。
                         stop_pending_job(paths, jobs_feed, live).await?;
-                        // 点了任务条上的会话行（会话项目第 3 段）：这一轮留在 daemon 里
-                        // 接着跑，人切走。和 `/session` 面板挑了别的会话同一条路。
-                        if let Some(action) = live.take_strip_action() {
-                            renderer.finish()?;
-                            live.stop_footer_spinner()?;
-                            live.apply_renderer_frame(&mut renderer)?;
-                            return Err(anyhow::Error::new(
-                                crate::cli::repl::session::RemoteTurnSuspended {
-                                    action: crate::cli::repl::session::SuspendedAction::Strip(
-                                        action,
-                                    ),
-                                    run_id: run_id.to_string(),
-                                    last_event_id,
-                                    session_id: session_id.to_string(),
-                                },
-                            ));
-                        }
+                        suspend_for_strip!();
                         continue;
                     }
                     match live.editor.handle_event(event, paths, true)? {

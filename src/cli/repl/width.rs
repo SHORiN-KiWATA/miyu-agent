@@ -55,6 +55,9 @@ pub fn visible_width(value: &str) -> usize {
     width
 }
 
+/// 截到 `max_width` 列，末尾补 `...`。ANSI 转义序列不占列，也不会从中间截断；截断时
+/// 带过样式的，末尾补一个复位——不然加粗、上色会漏到这一行后面去（命令候选的选中项
+/// 就是带样式开头的，09-25）。
 pub(in crate::cli) fn truncate_visible_width(value: &str, max_width: usize) -> String {
     if visible_width(value) <= max_width {
         return value.to_string();
@@ -66,7 +69,20 @@ pub(in crate::cli) fn truncate_visible_width(value: &str, max_width: usize) -> S
     let mut width = 0usize;
     let ellipsis_width = visible_width("...");
     let budget = max_width.saturating_sub(ellipsis_width);
+    let mut escape = false;
+    let mut styled = false;
     for ch in value.chars() {
+        if escape {
+            output.push(ch);
+            escape = ch != 'm';
+            continue;
+        }
+        if ch == '\x1b' {
+            escape = true;
+            styled = true;
+            output.push(ch);
+            continue;
+        }
         let ch_width = visible_width(&ch.to_string());
         if width.saturating_add(ch_width) > budget {
             break;
@@ -74,6 +90,15 @@ pub(in crate::cli) fn truncate_visible_width(value: &str, max_width: usize) -> S
         output.push(ch);
         width = width.saturating_add(ch_width);
     }
+    if escape {
+        // 截在一个转义序列当中：那半截扔掉。
+        if let Some(start) = output.rfind('\x1b') {
+            output.truncate(start);
+        }
+    }
     output.push_str("...");
+    if styled {
+        output.push_str("\x1b[0m");
+    }
     output
 }

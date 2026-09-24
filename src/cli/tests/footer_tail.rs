@@ -551,6 +551,9 @@ fn spinner_does_not_resume_tail_during_external_output() {
         strip_sessions: Vec::new(),
         visits: Vec::new(),
         pending_strip_action: None,
+        strip_focus: None,
+        strip_scroll: 0,
+        command_pick: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -608,6 +611,9 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         strip_sessions: Vec::new(),
         visits: Vec::new(),
         pending_strip_action: None,
+        strip_focus: None,
+        strip_scroll: 0,
+        command_pick: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -845,7 +851,7 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
             &[crate::cli::repl::strip::StripRow::Job(&job)],
             0,
             60,
-            None,
+            Default::default(),
         );
         strip_terminal_control_sequences(&lines[1])
             .trim_end()

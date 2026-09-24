@@ -11,10 +11,12 @@
 // 活动区还用着一批留在 cli::mod 的东西（footer 结构、队列渲染、job 条）。
 mod frame;
 mod job_strip;
+mod navigate;
 mod queue;
 pub(in crate::cli) mod screen;
 mod update;
 
+pub(in crate::cli) use navigate::Navigated;
 pub(in crate::cli) use update::{synchronized_terminal_update, term_out, TermOut};
 
 #[cfg(test)]
@@ -199,6 +201,13 @@ pub(in crate::cli) struct LiveReplTail {
     /// 点了任务条上的会话行：切进那条子会话，或者回去。事件层做不了换会话，攒在这儿
     /// 由空闲循环或回合循环取走（`take_strip_action`）。
     pub(in crate::cli) pending_strip_action: Option<crate::cli::repl::strip::StripAction>,
+    /// 方向键停在任务条的哪一条上（`strip_rows` 的下标）。`None` = 在输入框里。
+    /// 见 `navigate`。
+    pub(in crate::cli) strip_focus: Option<usize>,
+    /// 任务条从第几条露起（最多露 5 条）。
+    pub(in crate::cli) strip_scroll: usize,
+    /// 命令候选里方向键挑中的那一条，连同挑的时候输入框里是什么：输入一变就作废。
+    pub(in crate::cli) command_pick: Option<(usize, String)>,
     /// 最后一次鼠标移动落在哪、什么时候。
     ///
     /// 指针移出窗口时终端**什么都不发**——09-22 实测（`testkit/tui/
@@ -648,6 +657,9 @@ impl LiveReplTail {
             strip_sessions: Vec::new(),
             visits: Vec::new(),
             pending_strip_action: None,
+            strip_focus: None,
+            strip_scroll: 0,
+            command_pick: None,
             last_mouse_move: None,
             pending_stop_job: None,
             input_cursor: (0, 0),

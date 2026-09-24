@@ -4,7 +4,7 @@
 //! （切进子代理会话、回主会话）。
 
 use super::*;
-use crate::cli::repl::strip::{self, StripAction, StripRow};
+use crate::cli::repl::strip::{self, StripAction, StripRow, StripView};
 
 /// 下过"停"之后压住状态行多久。守护进程的任务快照一秒轮询一次，留出几轮的余量。
 const SUPPRESS_JOB_FOR: std::time::Duration = std::time::Duration::from_secs(5);
@@ -55,6 +55,7 @@ impl LiveReplTail {
                 .any(|(a, b)| a.job_id != b.job_id || a.status != b.status);
         self.jobs = jobs;
         self.strip_sessions = sessions;
+        self.clamp_strip_view();
         self.refresh_job_overlay_title();
         changed
     }
@@ -62,6 +63,31 @@ impl LiveReplTail {
     /// 任务条此刻的每一行：会话行在前，后台任务在后。
     pub(in crate::cli) fn strip_rows(&self) -> Vec<StripRow<'_>> {
         strip::strip_rows(&self.strip_sessions, &self.jobs)
+    }
+
+    /// 任务条此刻怎么画（从第几条露起、悬浮、方向键停在哪）。
+    pub(in crate::cli) fn strip_view(&self) -> StripView {
+        StripView {
+            scroll: self.strip_scroll,
+            hovered: self.job_hover,
+            focused: self.strip_focus,
+        }
+    }
+
+    /// 行数变了（任务跑完、子代理收工）：方向键停的那条、露出来的那一截跟着收回来。
+    fn clamp_strip_view(&mut self) {
+        let len = self.strip_rows().len();
+        self.strip_focus = self
+            .strip_focus
+            .and_then(|focus| (len > 0).then(|| focus.min(len - 1)));
+        let max_scroll = len.saturating_sub(strip::STRIP_VISIBLE_ROWS);
+        self.strip_scroll = self.strip_scroll.min(max_scroll);
+        if let Some(focus) = self.strip_focus {
+            if focus < self.strip_scroll {
+                self.strip_scroll = focus;
+            }
+        }
+        self.job_hover = self.job_hover.filter(|index| *index < len);
     }
 
     /// 面板开着哪个任务，就把那个任务此刻的抬头推给它。
@@ -108,7 +134,7 @@ impl LiveReplTail {
             &self.strip_rows(),
             self.job_spinner,
             usize::from(cols),
-            self.job_hover,
+            self.strip_view(),
         );
         let rows = lines.len().min(u16::MAX as usize) as u16;
         if rows > self.tail_rows {
@@ -144,10 +170,13 @@ impl LiveReplTail {
         if offset >= usize::from(self.job_strip_rows) {
             return None;
         }
-        // `strip_lines` 头一行是空的分隔行，任务从第二行起。
+        // `strip_lines` 头一行是空的分隔行，任务从第二行起；露不下时最后还有一行「↓ 还有
+        // x 个」，它不是哪一条。
+        let window = self.strip_view().window(self.strip_rows().len());
         offset
             .checked_sub(1)
-            .filter(|index| *index < self.strip_rows().len())
+            .filter(|visible| *visible < window.len())
+            .map(|visible| window.start + visible)
     }
 
     /// 在任务条第 `index` 条上点了一下（以后方向键选中回车也走这儿）。返回真表示这一下

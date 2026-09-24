@@ -273,6 +273,15 @@ pub(in crate::cli) fn read_live_repl_input(
             if live.handle_screen_event(&event)? {
                 continue;
             }
+            // 方向键先看命令候选和任务条（会话项目第 3 段）。任务条上回车点的是会话行
+            // 的话，下一拍空闲时取走（`take_strip_action`）。
+            if matches!(
+                live.navigate_key(&event)?,
+                crate::cli::repl::tail::Navigated::Done
+            ) {
+                redraw_pending = true;
+                continue;
+            }
             // 又打字了：候选面板可以重新弹出来（Esc 只关「当时那一串」）。
             if matches!(&event, Event::Key(KeyEvent { kind, .. }) if *kind != KeyEventKind::Release)
             {
@@ -454,6 +463,7 @@ pub(in crate::cli) fn read_repl_input(
             mode,
             // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切,也没有子代理会话。
             crate::cli::footer::FooterBadges::default(),
+            None,
             input,
             cursor,
             raw_pasted_lines,
@@ -938,6 +948,8 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     mode: PersonaLane,
     // 只读模式开着(09-23)、切进子代理会话几层(会话项目第 3 段):叠在状态行模式标签上。
     badges: crate::cli::footer::FooterBadges,
+    // 命令候选里方向键挑中的那一条(见 `tail::navigate`)。
+    command_pick: Option<usize>,
     input: &str,
     cursor: usize,
     raw_pasted_lines: usize,
@@ -1032,7 +1044,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
             Print(&prompt_prefix),
             Print(format!(
                 "\x1b[2m{}\x1b[0m",
-                repl_command_suggestions_line(&suggestions, suggestion_width)
+                repl_command_suggestions_line(&suggestions, suggestion_width, command_pick)
             ))
         )?;
         footer_row = None;
