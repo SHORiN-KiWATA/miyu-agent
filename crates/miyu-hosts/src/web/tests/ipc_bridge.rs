@@ -1061,7 +1061,14 @@ async fn the_bridge_honours_the_running_turns_tool_restrictions() {
         .state_store
         .adopt_sessions_for_persona(&persona)
         .unwrap();
-    let session_id = state.state_store.session_id().to_string();
+    // 登记表是进程级的、按会话号分。临时 daemon 的当前会话在每条用例里都叫
+    // `default`：拿它登记的话，同一进程里并发跑的别的用例查桥目录也会读到这里的
+    //「只许 read」，随机红（09-24）。开一条自己的会话。
+    let session_id = state
+        .state_store
+        .create_session(&persona, "restricted turn", "user", None)
+        .unwrap()
+        .session_id;
     let config = { state.manager.lock().unwrap().config.clone() };
     let bridge_tools = || {
         let mut registry = miyu_engine::tools::build_tool_registry(

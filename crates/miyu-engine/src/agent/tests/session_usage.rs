@@ -9,6 +9,21 @@ use miyu_base::config::AppConfig;
 fn agent_with(mode: PersonaLane, config: AppConfig, paths: &MiyuPaths) -> Agent {
     let state = StateStore::new(paths).unwrap();
     state.init_files().unwrap();
+    agent_on(mode, config, paths, state)
+}
+
+/// 挂在一条自己的会话上。单轮限制的登记表是进程级的、按会话号分：拿人人都有的
+/// `default` 登记，同一进程里并发跑的别的用例取工具定义时也会读到这份限制（09-24）。
+fn agent_on_own_session(mode: PersonaLane, config: AppConfig, paths: &MiyuPaths) -> Agent {
+    let state = StateStore::new(paths).unwrap();
+    state.init_files().unwrap();
+    let own = state
+        .create_session("default", "restricted turn", "user", None)
+        .unwrap();
+    agent_on(mode, config, paths, state.pinned(&own.session_id))
+}
+
+fn agent_on(mode: PersonaLane, config: AppConfig, paths: &MiyuPaths, state: StateStore) -> Agent {
     let client =
         OpenAiCompatibleClient::new(config.provider(None).unwrap(), &config, paths).unwrap();
     let tools = crate::tools::build_tool_registry(&config, paths, mode, false).unwrap();
@@ -57,7 +72,7 @@ fn a_restricted_turn_does_not_leak_the_late_registered_usage_tool() {
     use miyu_base::host_ports::{LiveTurnToolRestrictionsGuard, TurnToolRestrictions};
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
-    let agent = agent_with(PersonaLane::Active, AppConfig::default(), &paths);
+    let agent = agent_on_own_session(PersonaLane::Active, AppConfig::default(), &paths);
     let session = agent.state.session_id();
     assert!(!session.is_empty(), "用例前提:Agent 绑着会话");
     let names = |agent: &Agent| {
@@ -79,7 +94,7 @@ fn a_restricted_turn_does_not_leak_the_late_registered_usage_tool() {
         );
         assert_eq!(names(&agent), Vec::<String>::new());
     }
-    let agent = agent_with(PersonaLane::Active, AppConfig::default(), &paths);
+    let agent = agent_on_own_session(PersonaLane::Active, AppConfig::default(), &paths);
     let session = agent.state.session_id();
     let _turn = LiveTurnToolRestrictionsGuard::register(
         &session,
