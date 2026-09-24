@@ -5204,8 +5204,8 @@
       if (attributes.turnId) notice.dataset.turnId = attributes.turnId;
       const label = document.createElement("span");
       const headline = restartAttempt > 1
-        ? t("Miyu 又重启了，接着上一轮继续（第 {n} 次）", {n: restartAttempt})
-        : t("Miyu 重启了，接着上一轮继续");
+        ? t("又重启了，接着上一轮继续（第 {n} 次）", {n: restartAttempt})
+        : t("重启了，接着上一轮继续");
       label.textContent = `↻ ${headline}`;
       label.title = formatDateTime(timestamp);
       notice.appendChild(label);

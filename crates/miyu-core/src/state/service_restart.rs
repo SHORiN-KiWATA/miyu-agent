@@ -133,14 +133,14 @@ pub fn restart_chain_is_goal_round(content: &str) -> bool {
 pub fn service_restart_headline(attempt: u32) -> String {
     if attempt <= 1 {
         miyu_base::i18n::text(
-            "Miyu restarted, continuing the previous turn",
-            "Miyu 重启了，接着上一轮继续",
+            "Restarted, continuing the previous turn",
+            "重启了，接着上一轮继续",
         )
         .to_string()
     } else {
         miyu_base::i18n::text(
-            "Miyu restarted again, continuing the previous turn (attempt {n})",
-            "Miyu 又重启了，接着上一轮继续（第 {n} 次）",
+            "Restarted again, continuing the previous turn (attempt {n})",
+            "又重启了，接着上一轮继续（第 {n} 次）",
         )
         .replace("{n}", &attempt.to_string())
     }

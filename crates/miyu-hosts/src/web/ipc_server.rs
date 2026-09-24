@@ -151,7 +151,7 @@ async fn dispatch_ipc_connection(
                             "label": info.job_wake_label,
                             // 跨会话消息起的轮:开头那条消息就是要看的内容,终端
                             // 挂上来要从头补(`turn.started` 带着它,09-23)。重启续跑的
-                            // 轮同理,开头那行「Miyu 重启了,接着上一轮继续」要画出来(09-24)。
+                            // 轮同理,开头那行「重启了,接着上一轮继续」要画出来(09-24)。
                             // 接着跑的 `/goal` 续轮带的是续轮的身份,也是投递起的
                             // (`first_event_id` 有值);驱动器自己开的续轮没有,不受影响。
                             "from_start": info.first_event_id.is_some()

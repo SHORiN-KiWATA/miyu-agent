@@ -4,7 +4,7 @@
 TUI 里起一轮慢工具(sleep 30),命令跑起来之后把 daemon SIGKILL 掉,再在外面起一个新的
 (相当于用户 `miyu daemon restart` / 换二进制后重启)。判据:
 
-    tui01_restart_notice    TUI 自己挂到续跑那一轮上,画出「Miyu 重启了，接着上一轮继续」那一行
+    tui01_restart_notice    TUI 自己挂到续跑那一轮上,画出「重启了，接着上一轮继续」那一行
     tui02_resumed_reply     续跑那一轮的回话(RESUMED attempt=1)出现在同一屏
     tui03_no_envelope       屏上不露 <service-restart 外壳
     tui04_replay_notice     关掉 TUI 再开、切回那条会话:回放里还是那一行提示,不是用户气泡
@@ -53,7 +53,9 @@ sys.path.insert(0, str(HERE.parent / "tui"))
 import run as h  # noqa: E402
 import round26 as r  # noqa: E402
 
-NOTICE = "Miyu 重启了，接着上一轮继续"
+NOTICE = "重启了，接着上一轮继续"
+# 09-24 起提示里不带「Miyu」（用户：去掉这里的 Miyu）。只查 NOTICE 的话老文案也含它。
+STALE = "Miyu 重启"
 
 
 def write_config():
@@ -151,7 +153,7 @@ def main():
         save("resumed", screen)
         if os.environ.get("KEEP"):
             (OUT / "resumed.raw").write_bytes(bytes(sink))
-        report["tui01_restart_notice"] = any(NOTICE in line for line in screen)
+        report["tui01_restart_notice"] = any(NOTICE in line and STALE not in line for line in screen)
         report["tui02_resumed_reply"] = any("RESUMED attempt=1" in line for line in screen)
         report["tui03_no_envelope"] = not any("<service-restart" in line for line in screen)
 

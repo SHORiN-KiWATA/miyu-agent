@@ -4,7 +4,7 @@
 网页开着一条会话,里面跑着一轮慢工具(sleep 30);命令跑起来之后把 daemon SIGKILL 掉、
 再起一个新的(相当于重启、换二进制)。判据:
 
-    web01_notice_live        网页自己接上续跑那一轮:出现「↻ Miyu 重启了，接着上一轮继续」
+    web01_notice_live        网页自己接上续跑那一轮:出现「↻ 重启了，接着上一轮继续」
     web02_reply_live         续跑那一轮的回话(RESUMED attempt=1)出现在同一页
     web03_notice_after_reload  刷新之后回看,还是那一行提示
     web04_no_envelope        页面上不露 <service-restart 外壳,也不画成用户气泡
@@ -27,7 +27,9 @@ sys.path.insert(0, str(HERE.parent / "webui-composer"))
 from sandbox import WebSandbox  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", "/tmp/miyu-resume-webui"))
-NOTICE = "Miyu 重启了，接着上一轮继续"
+NOTICE = "重启了，接着上一轮继续"
+# 09-24 起提示里不带「Miyu」（用户：去掉这里的 Miyu）。只查 NOTICE 的话老文案也含它。
+STALE = "Miyu 重启"
 
 
 def main():
@@ -62,7 +64,7 @@ def main():
                     break
                 time.sleep(0.5)
             page.screenshot(path=str(OUT / "live.png"))
-            check("web01_notice_live", NOTICE in body, body[-300:])
+            check("web01_notice_live", NOTICE in body and STALE not in body, body[-300:])
             check("web02_reply_live", "RESUMED attempt=1" in body, body[-300:])
             page.reload()
             page.wait_for_selector("#composerInput:not([disabled])", timeout=20000)
