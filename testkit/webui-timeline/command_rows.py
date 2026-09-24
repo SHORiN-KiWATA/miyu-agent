@@ -241,7 +241,8 @@ def write_config(lines):
             }
         ],
         "memory": {"enabled": False},
-        "display": {"command_output_lines": lines},
+        # 界面语言钉成中文：判定比的是「参数」「结果」（见 run.py `UI_LANGUAGE`）。
+        "display": {"command_output_lines": lines, "language": harness.UI_LANGUAGE},
     }
     (harness.HOME / "config" / "config.jsonc").write_text(
         json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -300,6 +301,16 @@ def walk(lines, command, shot_name, report, expand=False):
                     "() => document.querySelectorAll('.tool-card.is-command.is-success,"
                     " .tool-card.is-command.is-failure').length > 0",
                     timeout=60000,
+                )
+            except Exception:
+                pass
+            # 等这一轮真跑完再展开：回复正文一到，时间线会被切断、整组收起
+            # （app.js `procLineBreak`）。命令卡成功时正文可能还没来，这时点开会被
+            # 随后那次收起盖掉，连线量出来是 0 高——09-24 连跑三遍，各场景开没开
+            # 每次都不一样。整轮收尾时 `live-assistant` 摘掉，那之后不会再收。
+            try:
+                page.wait_for_function(
+                    "() => !document.querySelector('.live-assistant')", timeout=60000
                 )
             except Exception:
                 pass

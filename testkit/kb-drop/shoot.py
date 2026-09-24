@@ -166,7 +166,8 @@ TEXT = "# 走查\n\n知识库拖放上传的样本文件。\n"
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+    page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="zh-CN")
     page.on("console", note_console)
     page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
     page.on("response", lambda r: http_errors.append((r.status, r.url)) if r.status >= 400 else None)

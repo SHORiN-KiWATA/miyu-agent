@@ -136,7 +136,8 @@ def ui_phase_badge(home, sid, member, workspace):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": 390, "height": 844})
+        # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="zh-CN")
         page.goto(e2e.BASE)
         page.wait_for_selector("#loginForm:not([hidden])", timeout=15000)
         page.fill("#loginUsername", "alice")

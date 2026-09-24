@@ -110,7 +110,8 @@ def main():
     check_percent_never_lies()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 1440, "height": 950})
+        # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+        page = browser.new_page(viewport={"width": 1440, "height": 950}, locale="zh-CN")
         page.goto(BASE, wait_until="networkidle")
         page.click("#sidebarSettingsButton")
         page.wait_for_selector('[data-console-panel="settings"]:not([hidden])')

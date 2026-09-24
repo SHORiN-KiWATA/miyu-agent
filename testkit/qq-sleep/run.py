@@ -62,6 +62,8 @@ def write_config(sleep_hours):
             "protocol": "openai-chat", "api_key": "stub", "models": ["stub-a"],
         }],
         "memory": {"enabled": False},
+        # 界面语言钉中文（判定比的是中文界面字；没写就跟浏览器走，无头 Chromium 是英文）。
+        "display": {"language": "zh"},
         "platforms": {"qq": {
             "enabled": True, "reverse_ws_port": QQ_PORT, "access_token": "",
             "admin_users": [ADMIN], "private_chats": {"whitelist": [WHITE]},
@@ -191,7 +193,8 @@ def main():
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+            page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="zh-CN")
             page.goto(BASE, wait_until="networkidle")
             page.click("#sidebarSettingsButton")
             page.wait_for_selector('[data-console-panel="settings"]:not([hidden])')

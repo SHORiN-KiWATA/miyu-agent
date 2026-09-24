@@ -177,6 +177,8 @@ def write_config(stub_port):
                     }
                 ],
                 "memory": {"enabled": False},
+                # 界面语言钉中文（判定比的是中文界面字；没写就跟浏览器走，无头 Chromium 是英文）。
+                "display": {"language": "zh"},
                 "tools": {"enabled": False},
             },
             ensure_ascii=False,
@@ -282,7 +284,8 @@ def main():
 
         with sync_playwright() as play:
             browser = play.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+            page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="zh-CN")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base)

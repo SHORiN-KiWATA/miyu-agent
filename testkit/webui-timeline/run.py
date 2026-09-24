@@ -58,6 +58,10 @@ OUT = Path(os.environ.get("OUT", "~/.cache/miyu-webui-timeline")).expanduser()
 HOME = OUT / "home"
 RUNTIME = OUT / "runtime"
 PORT = int(os.environ.get("PORT", "18483"))
+# 判定比的是中文界面字（「排队中」「参数」「结果」）。09-23 网页全量双语后，界面语言
+# 没写就跟浏览器走，无头 Chromium 是英文，整页成了 Queued / Arguments。配置和拦截
+# i18n.js 时的注入都按这一个来。
+UI_LANGUAGE = "zh"
 STUB_PORT = int(os.environ.get("STUB_PORT", "18497"))
 BASE = f"http://127.0.0.1:{PORT}"
 ENV = dict(os.environ, MIYU_HOME=str(HOME), XDG_RUNTIME_DIR=str(RUNTIME))
@@ -74,6 +78,7 @@ def write_config():
             "model_context_window": {"stub-tools": 100000},
         }],
         "memory": {"enabled": False},
+        "display": {"language": UI_LANGUAGE},
     }
     (HOME / "config" / "config.jsonc").write_text(json.dumps(config, ensure_ascii=False, indent=2), "utf-8")
 
@@ -104,7 +109,12 @@ def serve_local(route):
     if local.exists():
         ctype = {"html": "text/html; charset=utf-8", "js": "application/javascript; charset=utf-8",
                  "css": "text/css; charset=utf-8"}[name.rsplit(".", 1)[-1]]
-        route.fulfill(status=200, body=local.read_bytes(), headers={"content-type": ctype, "cache-control": "no-store"})
+        body = local.read_bytes()
+        if name == "i18n.js":
+            # 服务端端这个文件时会在开头注入界面语言（assets.rs `i18n_js_asset`），
+            # 没有它页面一律按英文走。拦下来换成本地文件，就得照样补上。
+            body = f'window.MIYU_LANG="{UI_LANGUAGE}";\n'.encode() + body
+        route.fulfill(status=200, body=body, headers={"content-type": ctype, "cache-control": "no-store"})
     else:
         route.continue_()
 

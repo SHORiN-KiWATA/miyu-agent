@@ -69,7 +69,8 @@ def main():
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 860})
+            # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
+            page = browser.new_page(viewport={"width": 1280, "height": 860}, locale="zh-CN")
             page.on("pageerror", lambda error: print("PAGEERROR", error))
             page.on("response", lambda response: print("HTTP", response.status, response.request.method, response.url) if response.status >= 400 else None)
             page.on("console", lambda msg: print("CONSOLE", msg.type, msg.text) if msg.type in ("error", "warning") else None)

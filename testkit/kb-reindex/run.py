@@ -84,6 +84,8 @@ def write_config():
         # 语义索引是这条走查的主角,必须真开着(本地内置模型)。
         "plugins": {"knowledge_base": {"enabled": True, "embedding_enabled": True}},
         "memory": {"enabled": False},
+        # 界面语言钉中文（判定比的是中文界面字；没写就跟浏览器走，无头 Chromium 是英文）。
+        "display": {"language": "zh"},
     }
     (HOME / "config" / "config.jsonc").write_text(
         json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
