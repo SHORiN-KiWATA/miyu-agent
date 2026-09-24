@@ -335,16 +335,31 @@ def scenario_config_applies_next_turn(report):
         report["before_config_is_collapsed"] = not any(
             THINK_BODY in line for line in screen
         )
-        # 主菜单第 9 项是「全局参数设置」，表里第 8 项是「展开思考内容」，
-        # 选「启用」，再回主菜单选「保存并退出」。
+        # 主菜单里进「全局参数设置」，表里「展开思考内容」选「启用」，再回主菜单选
+        #「保存并退出」。要按几下 ↓ 按屏上的菜单现数：原来写死「第 9 项 / 第 8 项」，
+        # 菜单精简掉一项之后就点进了「语音功能」（09-24 查实，纯 main 上也红）。
         os.write(master, b"/config")
         h.drain_until(master, sink, "/config", 3.0)
         os.write(master, b"\r")
         h.settle(master, sink, quiet=0.8, timeout=15)
-        for keys in ["\x1b[B" * 8, "\r", "\x1b[B" * 7, "\r", "\x1b[A", "\r",
-                     "\x1b", "\x1b[B" * 2, "\r"]:
+
+        def press(keys):
             os.write(master, keys.encode("latin1"))
             h.settle(master, sink, quiet=0.4, timeout=10)
+            return h.render(bytes(sink))
+
+        def downs(screen, first, target):
+            """同一张菜单里从 `first` 那一项走到 `target` 要按几下 ↓（一项一行）。"""
+            top, goal = row_of(screen, first), row_of(screen, target)
+            return 0 if top is None or goal is None else goal - top
+
+        screen = h.render(bytes(sink))
+        screen = press("\x1b[B" * downs(screen, "供应商和模型", "全局参数设置") + "\r")
+        screen = press("\x1b[B" * downs(screen, "界面语言", "展开思考内容") + "\r")
+        screen = press("\x1b[A")
+        screen = press("\r")
+        screen = press("\x1b")
+        press("\x1b[B" * downs(screen, "全局参数设置", "保存并退出") + "\r")
         saved = json.loads(path.read_text(encoding="utf-8"))
         report["config_tui_saved_it"] = saved.get("display", {}).get("expand_reasoning") is True
         os.write(master, "再来一句".encode())

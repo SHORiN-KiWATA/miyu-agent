@@ -85,13 +85,20 @@ def main():
             master, sink,
             lambda rows: sum(1 for l in rows if "分块吐出来" in l) >= 3, timeout=60,
         )
-        for _ in range(8):
+        # 按到顶为止（最多 40 下）：前两轮加时间线三百多行，写死按 8 下（约 350 行）
+        # 差一点点翻不到顶，`reached_top` 于是一直是假的（09-24 查实不是翻页坏了）。
+        presses = 0
+        top = h.render(bytes(sink))
+        while presses < 40 and not any("走查一句" in l for l in top[:12]):
             os.write(master, b"\x1b[5~")
             h.settle(master, sink, quiet=0.08, timeout=1)
-        top = h.render(bytes(sink))
+            presses += 1
+            top = h.render(bytes(sink))
         r.save("pagefollow-top", top)
         report["reached_top"] = any("走查一句" in l for l in top[:12])
-        for _ in range(16):
+        report["_pgup_presses"] = presses
+        # 翻回底：比翻上去多按几下，保证真到底。
+        for _ in range(presses + 8):
             os.write(master, b"\x1b[6~")
             h.settle(master, sink, quiet=0.08, timeout=1)
         t_bottom = int(time.time() * 1000)

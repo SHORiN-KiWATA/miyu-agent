@@ -57,6 +57,13 @@ BASE = f"http://127.0.0.1:{PORT}"
 # 32 行装不下带六行命令尾巴的展开时间线（`Worked for` 的抬头会滚出屏），加高。
 COLS, ROWS = 110, 50
 ENV = dict(os.environ, MIYU_HOME=str(HOME), XDG_RUNTIME_DIR=RUNTIME, MIYU_TUI="1")
+# 被测的 TUI 跑在 pyte 模拟的 xterm 里，TERM 要说这个终端，不能照搬调用方的。从
+# systemd 单元起的时候继承来的是 `TERM=linux`（cron 里干脆没有），TUI 就按 Linux 文本
+# 控制台退掉超链接，也不认真彩色——`round26` 的 OSC 8 两条、`readonly_toggle` 的取色
+# 一条只在那种环境里红（09-24 查实）。
+if ENV.get("TERM", "") in ("", "dumb", "linux"):
+    ENV["TERM"] = "xterm-256color"
+ENV.setdefault("COLORTERM", "truecolor")
 
 PROMPT = "走查一句"
 # 桩模型要改的那个文件。Add File 语义，跑之前得先不存在。
