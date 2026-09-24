@@ -187,9 +187,6 @@ impl Agent {
             }
         }
         let mut result = result;
-        if st.artifact_auto_publish && !st.artifact_published {
-            publish_auto_artifact_candidates(&st.artifact_candidates, on_event)?;
-        }
         if let Some(usage) = st.usage_accumulator.usage() {
             // 供应商已给出"最后一次请求"的口径(claude-code 中转:
             // 结果帧是整轮累计,真实上下文在流内最后一次调用里)时

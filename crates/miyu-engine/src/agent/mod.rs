@@ -1,4 +1,3 @@
-mod artifacts;
 mod context;
 mod context_meter;
 mod control;
@@ -18,12 +17,11 @@ mod setup;
 pub use setup::AgentProfile;
 mod tool_report;
 mod turn_state;
-use artifacts::*;
 // dto 要按同一条规则判定工具成败(见 web::dto::tool_call_succeeded),
 // 规则只能有一份。
-pub use artifacts::tool_output_succeeded;
 use context::*;
 use control::*;
+pub use tool_report::tool_output_succeeded;
 // agent 之外要用的几样：CLI、web、runtime、platforms 都会拿回合控制与模式，
 // 子模块本身是私有的，得显式再导出
 pub use context::archive_and_delete_visible_turns;

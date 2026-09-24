@@ -8,6 +8,38 @@
 
 use crate::agent::*;
 
+/// 工具输出的成败:只认输出 JSON 的 `success` / `ok` 布尔,不是 JSON 就当成功(AGENTS §2.3)。
+pub fn tool_output_succeeded(output: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(output)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("success")
+                .and_then(serde_json::Value::as_bool)
+                .or_else(|| value.get("ok").and_then(serde_json::Value::as_bool))
+        })
+        .unwrap_or(true)
+}
+
+/// 消息的正文文本:多段内容只取文字段,图、视频、文件段跳过。
+pub(in crate::agent) fn chat_message_text(message: &ChatMessage) -> Option<String> {
+    match message.content.as_ref()? {
+        ChatContent::Text(text) => Some(text.clone()),
+        ChatContent::Parts(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|part| match part {
+                    ChatContentPart::Text { text } => Some(text.as_str()),
+                    ChatContentPart::ImageUrl { .. }
+                    | ChatContentPart::VideoUrl { .. }
+                    | ChatContentPart::File { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+    }
+}
+
 /// 一次工具调用碰过的文件是读还是写。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::agent) enum PathAccess {

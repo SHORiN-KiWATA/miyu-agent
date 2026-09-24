@@ -28,32 +28,18 @@ pub(super) struct RoundState {
     pub(super) responses_continuation: Option<Box<miyu_core::llm::ResponsesContinuation>>,
     pub(super) continuation_input_start: usize,
     pub(super) continuation_context: Option<(usize, Vec<ChatMessage>)>,
-    pub(super) artifact_auto_publish: bool,
-    pub(super) artifact_candidates: Vec<AutoArtifactCandidate>,
-    pub(super) artifact_published: bool,
     pub(super) repeat_gate: ToolRepeatGate,
     pub(super) repeat_fused: bool,
 }
 
 impl RoundState {
     pub(super) fn new(
-        agent: &Agent,
         messages: &[ChatMessage],
         replay_start: usize,
         initial_tool_rounds: usize,
         initial_question_rounds: usize,
         loaded_tools: std::collections::BTreeSet<String>,
     ) -> Self {
-        let artifact_auto_publish = !agent.core.dev
-            && agent.core.prompt_audience == PromptAudience::External
-            && artifact_delivery_requested(messages)
-            && agent
-                .tools
-                .lock()
-                .unwrap()
-                .tool_names()
-                .iter()
-                .any(|name| name == "create_artifact");
         Self {
             tool_round: initial_tool_rounds,
             question_rounds: initial_question_rounds,
@@ -66,9 +52,6 @@ impl RoundState {
             responses_continuation: None,
             continuation_input_start: messages.len(),
             continuation_context: None,
-            artifact_auto_publish,
-            artifact_candidates: Vec::new(),
-            artifact_published: false,
             repeat_gate: ToolRepeatGate::new(),
             repeat_fused: false,
         }

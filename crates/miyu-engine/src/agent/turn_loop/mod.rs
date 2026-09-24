@@ -58,7 +58,6 @@ impl Agent {
             .unwrap()
             .clear();
         let mut st = RoundState::new(
-            self,
             messages,
             replay_start,
             initial_tool_rounds,

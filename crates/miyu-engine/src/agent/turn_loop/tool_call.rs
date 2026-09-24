@@ -372,20 +372,6 @@ impl Agent {
                 {
                     self.state.merge_turn_footprint(current_turn_id, &delta)?;
                 }
-                if matches!(
-                    call.function.name.as_str(),
-                    "create_artifact" | "apply_artifact_patch" | "present_artifact"
-                ) {
-                    st.artifact_published = true;
-                } else if st.artifact_auto_publish {
-                    for path in artifact_candidate_paths(&call.function.name, &output) {
-                        st.artifact_candidates.push(AutoArtifactCandidate {
-                            call_id: call_id.clone(),
-                            tool_name: event_name.clone(),
-                            path,
-                        });
-                    }
-                }
             }
             on_event(AgentEvent::ToolResult {
                 call_id,

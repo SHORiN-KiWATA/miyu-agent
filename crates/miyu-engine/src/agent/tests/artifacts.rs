@@ -1,41 +1,6 @@
-//! 产物识别与工具报告的持久化。
+//! 工具报告的持久化(artifact 工具报告、加载过的工具、足迹、表情包报告)。
 
 use crate::agent::*;
-
-#[test]
-fn artifact_delivery_detection_is_conservative() {
-    assert!(artifact_delivery_requested(&[ChatMessage::plain(
-        "user",
-        "生成一个 Linux 游玩报告，保存为 Markdown 文件",
-    )]));
-    assert!(artifact_delivery_requested(&[ChatMessage::plain(
-        "user",
-        "create a standalone HTML file",
-    )]));
-    assert!(!artifact_delivery_requested(&[ChatMessage::plain(
-        "user",
-        "修改 src/main.rs 修复这个错误",
-    )]));
-}
-
-#[test]
-fn artifact_candidates_only_include_new_files() {
-    let created = artifact_candidate_paths(
-        "write_file",
-        r#"{"ok":true,"created":true,"path":"report.md"}"#,
-    );
-    assert_eq!(created.len(), 1);
-    assert!(artifact_candidate_paths(
-        "write_file",
-        r#"{"ok":true,"created":false,"path":"src/main.rs"}"#,
-    )
-    .is_empty());
-    assert!(artifact_candidate_paths(
-        "apply_patch",
-        r#"{"ok":true,"files":[{"path":"report.md","operation":"update"}]}"#,
-    )
-    .is_empty());
-}
 
 #[test]
 fn artifact_tool_report_keeps_cross_turn_filename_memory() {
