@@ -16,7 +16,7 @@ mermaid 分支再接回卡片，无限递归——第一版就是这么写的，
     cargo build    # 静态资源编进二进制，改了 JS/CSS 必须重新构建
     python3 testkit/mermaid/webui.py
 
-截图落在 ~/.cache/miyu-mermaid-webui/。不花额度。
+截图落在 /tmp/miyu-mermaid-webui/。不花额度。
 """
 
 import json
@@ -43,7 +43,7 @@ import authlib  # noqa: E402
 BIN = Path(os.environ.get("MIYU_BIN", REPO / "target" / "debug" / "miyu"))
 HOME = Path("/tmp/miyu-mermaid-webui/home")
 RUNTIME = "/tmp/mx-mermaid"
-OUT = Path(os.environ.get("OUT", Path.home() / ".cache" / "miyu-mermaid-webui"))
+OUT = Path(os.environ.get("OUT", "/tmp/miyu-mermaid-webui"))
 SMOKE = REPO / "testkit" / "repl-smoke"
 
 GOOD = (
@@ -144,6 +144,22 @@ def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def wait_turn_done(base, session_id, timeout=60.0):
+    """等这一轮真跑完：库里有回合、没有在跑的 run。
+
+    睡固定 3 秒不够——桩模型吐完这段要 5 秒多，浏览器赶上回合还在跑，流式期间正文
+    每来一段整块重建、跑完又整段重画一次，拿到的卡片句柄随时被换掉，截图报「不在
+    DOM 里」（09-24 三跑一次）。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        data = api(base, f"/api/sessions/{session_id}/turns") or {}
+        if data.get("turns") and not data.get("runs") and not data.get("running_turn_id"):
+            return True
+        time.sleep(0.3)
+    return False
 
 
 def api(base, path, body=None, method="GET"):
@@ -280,7 +296,7 @@ def main():
         session = api(base, "/api/sessions", {"name": "图表走查", "switch": True}, "POST")
         session_id = session.get("session_id") or session.get("session", {}).get("session_id")
         api(base, "/api/turns", {"content": "画个图", "session_id": session_id}, "POST")
-        time.sleep(3.0)
+        wait_turn_done(base, session_id)
 
         with sync_playwright() as play:
             browser = play.chromium.launch()
@@ -309,8 +325,9 @@ def main():
             got = page.evaluate(PROBE)
             page.screenshot(path=str(OUT / "page.png"), full_page=True)
             # 单独给卡片来一张：整页图里它多半被滚出视口，看版式得看这张。
-            card = page.query_selector(".assistant-content .mermaid-block")
-            if card:
+            # 用 locator 不用元素句柄：每次截图都重新找，正文重画过也拍得到。
+            card = page.locator(".assistant-content .mermaid-block").first
+            if card.count():
                 card.screenshot(path=str(OUT / "card.png"))
 
             report["页面没有报错"] = not errors
@@ -343,7 +360,7 @@ def main():
             )
 
             toggled = page.evaluate(TOGGLE)
-            if card:
+            if card.count():
                 card.screenshot(path=str(OUT / "card-source-open.png"))
             report["点「源码」切得过去"] = toggled.get("hidden") is False
             report["切到源码时图让位（不是挂在下面）"] = toggled.get("figureHidden") is True
