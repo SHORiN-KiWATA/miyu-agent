@@ -15,7 +15,7 @@ static SHARED_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Weak<ConversationDb>>
 
 /// 库文件的 (设备号, inode)。进程内缓存靠它认出「库文件被整个换掉了」——删掉
 /// 重建、导入顶替之后,还拿着旧文件的连接读到的是已经不存在的数据。
-pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+pub(crate) fn file_identity(path: &Path) -> Option<(u64, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

@@ -21,13 +21,7 @@ struct BuiltinRegistrar {
 }
 
 fn reg_usage_query(registry: &mut ToolRegistry, config: &AppConfig, paths: &MiyuPaths) {
-    usage_query::register(
-        registry,
-        paths
-            .state_dir
-            .join(miyu_core::state::usage::USAGE_HISTORY_FILE),
-        config.clone(),
-    );
+    usage_query::register(registry, paths.state_dir.clone(), config.clone());
 }
 
 fn reg_alarm(registry: &mut ToolRegistry, _config: &AppConfig, paths: &MiyuPaths) {

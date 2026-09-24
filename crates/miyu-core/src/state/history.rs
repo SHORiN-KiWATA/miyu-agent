@@ -395,7 +395,7 @@ impl StateStore {
 
     pub fn reset_conversation(&self) -> Result<()> {
         self.clear_session_content()?;
-        usage::reset_conversation(&self.usage_file())
+        self.reset_conversation_usage()
     }
 
     pub fn reset_persona_contexts(&self, persona: &str, platform: &str) -> Result<Vec<String>> {

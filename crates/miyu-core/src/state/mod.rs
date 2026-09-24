@@ -320,9 +320,6 @@ impl StateStore {
 
     pub fn init_files(&self) -> Result<()> {
         std::fs::create_dir_all(&self.state_dir)?;
-        if !self.usage_file().exists() {
-            std::fs::write(self.usage_file(), "{\n  \"requests\": 0,\n  \"prompt_tokens\": 0,\n  \"completion_tokens\": 0,\n  \"total_tokens\": 0,\n  \"conversation_tokens\": 0\n}\n")?;
-        }
         if !self.profile_file().exists() {
             std::fs::write(self.profile_file(), "# Miyu Profile\n\n")?;
         }
@@ -343,10 +340,6 @@ impl StateStore {
 
     fn conversation_file(&self) -> PathBuf {
         self.state_dir.join("conversation.jsonl")
-    }
-
-    fn usage_file(&self) -> PathBuf {
-        self.state_dir.join("usage.json")
     }
 
     fn profile_file(&self) -> PathBuf {

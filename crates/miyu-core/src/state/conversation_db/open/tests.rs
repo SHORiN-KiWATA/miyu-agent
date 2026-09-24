@@ -292,3 +292,54 @@ mod shared_connection_tests {
         assert!(dir.path().join("conversation.db").exists());
     }
 }
+
+#[cfg(test)]
+mod open_cost_probe {
+    use super::*;
+
+    /// 量尺：终端启动要开 6 次库（09-24 调研）。改前每次都是整套维护（体检扫全文件、
+    /// 查迁移、够多空闲页就回收）；改后第一次是客户端开库，后面 5 次拿进程里那个。
+    ///
+    /// ```
+    /// python3 -c "import sqlite3; s=sqlite3.connect('file:<真库>?mode=ro', uri=True); \
+    ///   d=sqlite3.connect('<目录>/conversation.db'); s.backup(d)"
+    /// MIYU_OPEN_PROBE_DIR=<目录> cargo test --lib --release open_cost_probe -- --ignored --nocapture
+    /// ```
+    ///
+    /// 只认显式给的目录：量尺不该顺手打开用户正在用的库。拷副本要用只读连接的
+    /// backup（页原样照搬，空闲页也在，体检的代价才对得上），别 `cp` 活库。
+    #[test]
+    #[ignore]
+    fn six_opens_at_startup() {
+        let Some(dir) = std::env::var_os("MIYU_OPEN_PROBE_DIR") else {
+            println!("\n  跳过：没给 MIYU_OPEN_PROBE_DIR");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        // 先按守护进程的样子开一次：老库要回收的空闲页先回收掉，两边量的是同一个库。
+        drop(ConversationDb::open(&dir).unwrap());
+        let bytes = std::fs::metadata(dir.join("conversation.db"))
+            .unwrap()
+            .len();
+
+        let started = std::time::Instant::now();
+        for _ in 0..6 {
+            drop(ConversationDb::open(&dir).unwrap());
+        }
+        let before = started.elapsed();
+
+        let started = std::time::Instant::now();
+        let first = ConversationDb::shared(&dir, &dir, OpenRole::Client).unwrap();
+        for _ in 0..5 {
+            drop(ConversationDb::shared(&dir, &dir, OpenRole::Client).unwrap());
+        }
+        let after = started.elapsed();
+        drop(first);
+        println!(
+            "\n  库 {:.1} MB，开 6 次：改前 {:.1} ms，改后 {:.1} ms",
+            bytes as f64 / 1048576.0,
+            before.as_secs_f64() * 1000.0,
+            after.as_secs_f64() * 1000.0
+        );
+    }
+}

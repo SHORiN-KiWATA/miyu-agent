@@ -11,7 +11,7 @@ mod pages;
 pub use pages::{ReplayPage, TurnPage};
 mod session_state;
 mod sweep;
-pub(crate) use open::OpenRole;
+pub(crate) use open::{file_identity, OpenRole};
 pub use session_state::SessionValueKind;
 pub(crate) use session_state::{LegacyContent, LegacyKind};
 mod platform;
