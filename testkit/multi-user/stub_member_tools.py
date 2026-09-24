@@ -47,8 +47,11 @@ class Handler(BaseHTTPRequestHandler):
         messages = body.get("messages", [])
         if DUMP:
             system = next((content_text(m) for m in messages if m.get("role") == "system"), "")
+            # 沙盒说明 09-23 起不在系统提示词里，是请求尾部「变了才追加」的一条
+            # `<sandbox …/>`（1069b7d0）：记最近那一条，就是这次请求时的沙盒状态。
+            sandbox = ([t for t in map(content_text, messages) if t.startswith("<sandbox")] or [""])[-1]
             with open(DUMP, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"system": system}, ensure_ascii=False) + "\n")
+                f.write(json.dumps({"system": system, "sandbox": sandbox}, ensure_ascii=False) + "\n")
         # 一轮的第一个请求以用户消息收尾 → 把工具全叫一遍;带着工具结果回来的第二个
         # 请求 → 说一句话收尾。按「最后一条是不是 user」判,同一会话连跑几轮都成立
         # (09-13 沙盒走查要在同一会话上绑定→解绑各跑一轮)。

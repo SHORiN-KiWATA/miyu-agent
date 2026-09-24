@@ -7,8 +7,9 @@ e2e_hello)跑一轮,把脚本工具、read、glob、edit、run_command、print_i
 管理员同一套再跑一遍作对照(不套沙盒)。
 
 09-13 加管理员 `/sandbox`(PATCH /api/sessions/{id} {"sandbox": 根}):绑定后同一套调用
-读写都锁在根下、环境块带 sandbox 属性;不存在的目录 / 成员会话被拒;解绑后同一会话
-再跑一轮恢复不受限、环境块不再带 sandbox。
+读写都锁在根下、请求带沙盒说明;不存在的目录 / 成员会话被拒;解绑后同一会话
+再跑一轮恢复不受限、补一句 `<sandbox state="off"/>`。沙盒说明 09-23 起不在环境块里,
+是请求尾部「变了才追加」的一条 `<sandbox backend=… root=… writable=… readable=…/>`。
 
 09-14 加 `--allow-read`(同一接口带 `"sandbox_allow_read": true`):读侧整个放开(读得到
 `config/secret`、glob 得到家目录)、写侧与读写都锁时逐条相同,环境块 `readable="everything
@@ -35,7 +36,11 @@ import e2e  # noqa: E402
 
 PORT = int(os.environ.get("PORT", "18552"))
 STUB_PORT = int(os.environ.get("STUB_PORT", "18556"))
-OUT = Path("~/.cache/miyu-member-tools").expanduser()
+# 日志、截图、桩模型记录放 /tmp。沙箱家目录不能放：沙盒永远放行 /tmp 读写（/var、/run
+# 放行只读），家放在那儿「读 secret 被拒」这类检查会整片误报——只好放在家目录下，跑完
+# 就删（用户 09-24 定）。
+OUT = Path(os.environ.get("OUT", "/tmp/miyu-member-tools"))
+SANDBOX_HOME = Path(os.environ.get("MIYU_MEMBER_TOOLS_HOME", "~/.cache/miyu-member-tools-home")).expanduser()
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc000000301010018dd8db00000000049454e44ae426082")
 results = []
 
@@ -60,13 +65,18 @@ def calls_for(home, workspace):
     ]
 
 
-def last_system():
-    """桩模型 dump 的最后一个 system 消息(最近一次请求的环境块就在里面)。"""
+def last_dump(field):
+    """桩模型 dump 的最近一次请求里的某一项(`system` 系统提示词 / `sandbox` 沙盒说明)。"""
     path = OUT / "stub-system.jsonl"
     if not path.exists():
         return ""
     lines = path.read_text("utf-8").strip().splitlines()
-    return json.loads(lines[-1])["system"] if lines else ""
+    return json.loads(lines[-1]).get(field, "") if lines else ""
+
+
+def last_sandbox():
+    """最近一次请求时的沙盒说明:09-23 起是请求尾部的 `<sandbox …/>`,不在环境块里。"""
+    return last_dump("sandbox")
 
 
 def raw_get(client, path):
@@ -165,11 +175,13 @@ def ui_phase_badge(home, sid, member, workspace):
 
 def main():
     import shutil
-    if OUT.exists():
-        shutil.rmtree(OUT)
+    for path in (OUT, SANDBOX_HOME):
+        if path.exists():
+            shutil.rmtree(path)
+    OUT.mkdir(parents=True)
     e2e.PORT, e2e.STUB_PORT, e2e.BASE = PORT, STUB_PORT, f"http://127.0.0.1:{PORT}"
     e2e.OUT = OUT
-    e2e.HOME = OUT / "home"
+    e2e.HOME = SANDBOX_HOME
     e2e.RUNTIME = OUT / "runtime"
     e2e.ENV = dict(os.environ, MIYU_HOME=str(e2e.HOME), XDG_RUNTIME_DIR=str(e2e.RUNTIME),
                    MIYU_SYSTEM_SCRIPTS_DIR=str(REPO / "src/scripts"), MIYU_ADMIN_USER="admin")
@@ -229,7 +241,7 @@ def main():
             status, created = admin.call("POST", "/api/sessions", {"name": "管理员走查"})
             asid = created["session"]["session_id"]
             run_actor(admin, asid, "admin", str(HOME), str(admin_ws), sandboxed=False)
-            check("admin: 环境块不带 sandbox", 'sandbox="landlock"' not in last_system())
+            check("admin: 请求里没有沙盒说明", last_sandbox() == "", last_sandbox()[:120])
 
             # 管理员 /sandbox(09-13):绑定 → 同一套调用锁在根下;解绑 → 同一会话恢复
             real_ws = os.path.realpath(admin_ws)
@@ -245,11 +257,10 @@ def main():
             for name in ("made.txt", "cmd.txt"):
                 (admin_ws / name).unlink(missing_ok=True)
             run_actor(admin, ssid, "admin-sandbox", str(HOME), str(admin_ws), sandboxed=True)
-            system = last_system()
-            at = system.find("sandbox=")
-            check("admin-sandbox: 环境块带 sandbox 根与放行摘要",
-                  'sandbox="landlock"' in system and f'root="{real_ws}"' in system and 'writable="root, /tmp' in system and 'readable="root, /tmp, system dirs' in system,
-                  system[max(at - 2, 0):at + 200] if at >= 0 else system[:120])
+            sandbox = last_sandbox()
+            check("admin-sandbox: 沙盒说明带根与放行摘要",
+                  'backend="landlock"' in sandbox and f'root="{real_ws}"' in sandbox and 'writable="root, /tmp' in sandbox and 'readable="root, /tmp, system dirs' in sandbox,
+                  sandbox[:220])
             # `--allow-read`(09-14):同一个根重绑一次,只锁写。读侧全开、写侧不变。
             status, body = admin.call("PATCH", f"/api/sessions/{ssid}",
                                       {"sandbox": str(admin_ws), "sandbox_allow_read": True})
@@ -260,12 +271,11 @@ def main():
             for name in ("made.txt", "cmd.txt"):
                 (admin_ws / name).unlink(missing_ok=True)
             run_actor(admin, ssid, "admin-allow-read", str(HOME), str(admin_ws), sandboxed=True, read_all=True)
-            system = last_system()
-            at = system.find("sandbox=")
-            check("admin-allow-read: 环境块读侧写成 everything",
-                  'sandbox="landlock"' in system and f'root="{real_ws}"' in system
-                  and 'writable="root, /tmp' in system and 'readable="everything (read-only)"' in system,
-                  system[max(at - 2, 0):at + 220] if at >= 0 else system[:120])
+            sandbox = last_sandbox()
+            check("admin-allow-read: 沙盒说明读侧写成 everything",
+                  'backend="landlock"' in sandbox and f'root="{real_ws}"' in sandbox
+                  and 'writable="root, /tmp' in sandbox and 'readable="everything (read-only)"' in sandbox,
+                  sandbox[:240])
             # 回到读写都锁:不给开关的重绑必须把它关掉,不能继承上一次的尺度。
             status, body = admin.call("PATCH", f"/api/sessions/{ssid}", {"sandbox": str(admin_ws)})
             status, listing = admin.call("GET", "/api/sessions")
@@ -281,7 +291,7 @@ def main():
             for name in ("made.txt", "cmd.txt"):
                 (admin_ws / name).unlink(missing_ok=True)
             run_actor(admin, ssid, "admin-unbound", str(HOME), str(admin_ws), sandboxed=False)
-            check("admin-unbound: 环境块不再带 sandbox", 'sandbox="landlock"' not in last_system())
+            check("admin-unbound: 解绑后补一句沙盒已关", last_sandbox() == '<sandbox state="off"/>', last_sandbox()[:120])
         finally:
             stub2.terminate()
     finally:
@@ -292,6 +302,7 @@ def main():
                     proc.wait(timeout=5)
                 except Exception:
                     proc.kill()
+        shutil.rmtree(SANDBOX_HOME, ignore_errors=True)
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} PASS")
     sys.exit(1 if failed else 0)
