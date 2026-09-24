@@ -11,6 +11,7 @@ mod forward;
 mod identity;
 mod notices;
 mod parsing;
+mod receipt_recall;
 mod requests;
 mod shared;
 mod turn;

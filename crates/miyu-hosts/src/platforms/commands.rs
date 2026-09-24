@@ -1,5 +1,6 @@
 use miyu_base::config::{PlatformCommandPermission, PlatformsConfig};
 use miyu_base::i18n::text as t;
+use std::time::Duration;
 
 pub(crate) const RESET_COMMAND_ID: &str = "reset";
 pub(crate) const WIPE_COMMAND_ID: &str = "wipe";
@@ -71,6 +72,23 @@ pub(crate) enum ParsedPlatformCommand {
     Models {
         argument: Option<String>,
     },
+}
+
+/// 管控类命令的回执留 3 秒就撤（用户 09-24，先定 5 秒、试过后改 3 秒）：群里留着
+/// 「当前会话已重置」这种机器人内部状态不好看，发命令的人刚打完正看着，够读完。
+pub(crate) const RECEIPT_RECALL_DELAY: Duration = Duration::from_secs(3);
+
+impl ParsedPlatformCommand {
+    /// 回执发出去多久后撤回，`None` 是一直留着。只看是哪条命令：成功、失败、
+    /// 用法提示一样撤；/wipe、/models 不撤。都是用户 09-24 定的。
+    pub(crate) fn receipt_recall_delay(&self) -> Option<Duration> {
+        match self {
+            Self::Reset { .. } | Self::ResetMemory | Self::ResetAllMemory | Self::Stop { .. } => {
+                Some(RECEIPT_RECALL_DELAY)
+            }
+            Self::Wipe { .. } | Self::Models { .. } => None,
+        }
+    }
 }
 
 pub(crate) fn descriptor(id: &str) -> Option<&'static PlatformCommandDescriptor> {
@@ -321,6 +339,32 @@ mod tests {
             })
         );
         assert_eq!(parse(&config, "/reset"), None);
+    }
+
+    #[test]
+    fn reset_and_stop_recall_their_receipts() {
+        let config = PlatformsConfig::default();
+        let delay = |text: &str| {
+            parse(&config, text)
+                .unwrap_or_else(|| panic!("{text} is a command"))
+                .receipt_recall_delay()
+        };
+        // `/reset now`、`/stop now` 回的是用法提示，也撤。
+        for text in [
+            "/reset",
+            "/reset now",
+            "/reset-memory",
+            "/reset-memory confirm",
+            "/reset-all-memory",
+            "/reset-all-memory confirm",
+            "/stop",
+            "/stop now",
+        ] {
+            assert_eq!(delay(text), Some(RECEIPT_RECALL_DELAY), "{text}");
+        }
+        for text in ["/wipe", "/wipe confirm", "/models", "/models 2"] {
+            assert_eq!(delay(text), None, "{text}");
+        }
     }
 
     #[test]

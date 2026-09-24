@@ -282,6 +282,44 @@ pub(in crate::platforms::onebot) async fn execute_builtin_command(
     Some(OutboundMessage::text(OutboundOrigin::Command, response))
 }
 
+/// 回执发出去 `delay` 之后撤掉（哪些命令撤见 `receipt_recall_delay`）。
+///
+/// 后台等，不占着这条消息的处理；只带走适配器，不拖住整个回合上下文。模型那份
+/// 群聊记录要等 NapCat 推回撤回通知才会把它标成已撤回——和模型自己调撤回工具走
+/// 同一条路。这几秒里 daemon 重启就不撤了：回执留着无害，不值得落盘。
+pub(in crate::platforms::onebot) fn recall_receipt_later(
+    adapter: Arc<dyn PlatformAdapter>,
+    conversation: String,
+    message_ids: Vec<String>,
+    delay: Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if message_ids.is_empty() {
+        return None;
+    }
+    Some(tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        for message_id in message_ids {
+            match adapter.delete_message(&message_id).await {
+                Ok(()) => tracing::info!(
+                    target: "miyu::qq",
+                    %message_id,
+                    %conversation,
+                    "{}",
+                    t("command receipt recalled", "命令回执已撤回")
+                ),
+                Err(error) => tracing::warn!(
+                    target: "miyu::qq",
+                    %message_id,
+                    %conversation,
+                    error = %error,
+                    "{}",
+                    t("recalling a command receipt failed", "撤回命令回执失败")
+                ),
+            }
+        }
+    }))
+}
+
 /// `/models` lists the globally configured models; `/models <index|provider/model>`
 /// switches this conversation's text model by writing a single-model pool into
 /// its per-conversation route (私聊/群聊专属配置), creating the route if needed.

@@ -696,13 +696,26 @@ pub(in crate::platforms::onebot) async fn handle_message_with_activity(
     // 这种长清单在 QQ 里刷屏,该转图就得转图。限流与目标预留都不受影响:
     // 前者在此之前就判完了,后者只对 FinalReply/Tool 生效。
     if let Some(command) = builtin_command {
+        // 撤不撤回执只看是哪条命令，命令下面就交出去了，先取出来。
+        let recall_after = command.receipt_recall_delay();
         if let Some(response) =
             execute_builtin_command(&state, &context, target, &event, command).await
         {
-            if let Err(error) = context.send(response).await {
-                tracing::warn!(target: "miyu::qq", error = %error, "{}", t("OneBot built-in command response failed", "OneBot 内置命令响应失败"));
-            } else {
-                tracing::info!(target: "miyu::qq", self_id, sender_id = user_id, "{}", t("OneBot built-in command response sent", "OneBot 内置命令响应已发送"));
+            match context.send(response).await {
+                Ok(receipt) => {
+                    tracing::info!(target: "miyu::qq", self_id, sender_id = user_id, "{}", t("OneBot built-in command response sent", "OneBot 内置命令响应已发送"));
+                    if let Some(delay) = recall_after {
+                        recall_receipt_later(
+                            context.adapter.clone(),
+                            context.conversation.scope_key(),
+                            receipt.message_ids,
+                            delay,
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "miyu::qq", error = %error, "{}", t("OneBot built-in command response failed", "OneBot 内置命令响应失败"));
+                }
             }
         }
         return;
