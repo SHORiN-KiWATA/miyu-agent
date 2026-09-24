@@ -13,6 +13,8 @@ use crate::web::*;
 #[derive(serde::Serialize)]
 pub(in crate::web) struct WebCommand {
     name: &'static str,
+    /// 别名也是这条命令（`/clear` 就是 `/reset`，09-24）：前端回车认它、补全菜单列它。
+    aliases: &'static [&'static str],
     arg_hint: &'static str,
     help: &'static str,
 }
@@ -30,6 +32,7 @@ pub(in crate::web) async fn list_commands(
         .into_iter()
         .map(|spec| WebCommand {
             name: spec.name,
+            aliases: spec.aliases,
             arg_hint: spec.arg_hint,
             help: spec.help(),
         })

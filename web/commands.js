@@ -30,15 +30,25 @@ window.MiyuCommands = (() => {
     if (!text.startsWith("/")) return null;
     const [name] = split(text);
     const lowered = name.toLowerCase();
-    return catalog.find((spec) => spec.name === lowered) || null;
+    return catalog.find((spec) => spec.name === lowered || (spec.aliases || []).includes(lowered)) || null;
   }
 
   // 补全候选：前缀匹配，只在菜单里用。回车执行走 match()，不做前缀展开。
+  // 别名也列（`/clear` 就是 `/reset`，09-24）：列出来的是敲的那个名字，说明里注明它等于谁。
   function suggestions(input) {
     const text = String(input ?? "");
     if (!text.startsWith("/") || /\s/.test(text)) return [];
     const lowered = text.toLowerCase();
-    return catalog.filter((spec) => spec.name.startsWith(lowered));
+    const items = [];
+    for (const spec of catalog) {
+      if (spec.name.startsWith(lowered)) {
+        items.push({ spec, typed: spec.name });
+        continue;
+      }
+      const alias = (spec.aliases || []).find((name) => name.startsWith(lowered));
+      if (alias) items.push({ spec, typed: alias });
+    }
+    return items;
   }
 
   async function load(apiRequest) {
@@ -83,23 +93,23 @@ window.MiyuCommands = (() => {
     }
     highlighted = Math.min(highlighted, items.length - 1);
     menu.replaceChildren();
-    items.forEach((spec, index) => {
+    items.forEach(({ spec, typed }, index) => {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "commandMenuItem";
-      row.dataset.name = spec.name;
+      row.dataset.name = typed;
       if (index === highlighted) row.classList.add("isActive");
       const label = document.createElement("span");
       label.className = "commandMenuName";
-      label.textContent = spec.arg_hint ? `${spec.name} ${spec.arg_hint}` : spec.name;
+      label.textContent = spec.arg_hint ? `${typed} ${spec.arg_hint}` : typed;
       const help = document.createElement("span");
       help.className = "commandMenuHelp";
-      help.textContent = spec.help || "";
+      help.textContent = typed === spec.name ? spec.help || "" : `= ${spec.name} · ${spec.help || ""}`;
       row.append(label, help);
       // mousedown 而不是 click：click 之前输入框会先失焦，菜单已经关掉了。
       row.addEventListener("mousedown", (event) => {
         event.preventDefault();
-        if (onPick) onPick(spec.name);
+        if (onPick) onPick(typed);
         hide();
       });
       menu.appendChild(row);

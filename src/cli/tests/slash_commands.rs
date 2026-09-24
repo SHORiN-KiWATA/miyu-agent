@@ -9,6 +9,23 @@ fn reset_is_a_repl_command() {
     assert!(repl_commands().contains(&"/reset"));
 }
 
+/// `/clear` 就是 `/reset`（用户 09-24）：终端、直连道、网页都按命令表认它。
+/// 退回修复前这条会红：`/clear` 是另一条命令（清屏）。
+#[test]
+fn clear_is_an_alias_of_reset() {
+    use miyu_core::slash_commands::{
+        names_repl_command, repl_command_spec_for_name, ReplSlashCommand,
+    };
+    assert!(names_repl_command("/clear", ReplSlashCommand::Reset));
+    assert!(names_repl_command("/CLEAR", ReplSlashCommand::Reset));
+    let spec = repl_command_spec_for_name("/clear").expect("/clear is a command");
+    assert_eq!(spec.name, "/reset");
+    assert!(
+        crate::cli::repl::commands::repl_help_text().contains("/clear"),
+        "help should name the alias next to /reset"
+    );
+}
+
 #[test]
 fn compact_is_a_repl_command() {
     assert!(repl_commands().contains(&"/compact"));

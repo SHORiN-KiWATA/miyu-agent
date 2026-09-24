@@ -802,7 +802,11 @@ pub(in crate::cli) async fn run_direct_repl(
             println!("{}", t("all long-term memory erased", "全部长期记忆已清空"));
             continue;
         }
-        if command.eq_ignore_ascii_case("/reset") && command_args.trim().is_empty() {
+        if miyu_core::slash_commands::names_repl_command(
+            command,
+            miyu_core::slash_commands::ReplSlashCommand::Reset,
+        ) && command_args.trim().is_empty()
+        {
             run_reset(paths).await?;
             cumulative_tokens = TurnTokens::default();
             footer.reset_token_usage(agent.effective_context_tokens()?, agent.context_window());

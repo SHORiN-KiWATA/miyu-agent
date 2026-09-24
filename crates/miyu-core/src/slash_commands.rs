@@ -61,7 +61,6 @@ pub enum ReplSlashCommand {
     ResetAllMemory,
     Wipe,
     History,
-    Clear,
     Help,
     Exit,
 }
@@ -296,7 +295,9 @@ pub const REPL_COMMAND_TABLE: &[ReplCommandSpec] = &[
     },
     ReplCommandSpec {
         name: "/reset",
-        aliases: &[],
+        // `/clear` 就是 `/reset`（用户 09-24：功能相同）。它原来是清屏，清屏还有
+        // Ctrl+L；别处的提示（压缩打转时「或使用 /clear 重新开始」）说的一直是这个意思。
+        aliases: &["/clear"],
         command: ReplSlashCommand::Reset,
         arg_hint: "",
         help_en: "start this conversation over",
@@ -337,15 +338,6 @@ pub const REPL_COMMAND_TABLE: &[ReplCommandSpec] = &[
         arg_hint: "",
         help_en: "show recent conversation history",
         help_zh: "显示最近的会话历史",
-        web: false,
-    },
-    ReplCommandSpec {
-        name: "/clear",
-        aliases: &[],
-        command: ReplSlashCommand::Clear,
-        arg_hint: "",
-        help_en: "clear the screen",
-        help_zh: "清屏",
         web: false,
     },
     ReplCommandSpec {
@@ -535,12 +527,6 @@ pub fn during_turn(command: ReplSlashCommand, args: &str) -> DuringTurn {
         Delete | Wipe => DuringTurn::Blocked {
             reason_en: "this would kill the running reply; interrupt it first (Esc) if that is what you want",
             reason_zh: "这会把正在跑的这一轮掐掉；真要这么做就先按 Esc 打断",
-        },
-        // 全屏下清屏是「把视口顶空」，而正文还在往里写——顶完下一帧新内容
-        // 接着冒出来，屏幕既没干净也没保住上文。
-        Clear => DuringTurn::Blocked {
-            reason_en: "the reply is still being written; clearing now keeps neither the screen nor the scrollback",
-            reason_zh: "正文还在往屏幕上写，这会儿清屏既清不干净也保不住上文",
         },
         ResetMemory | ResetAllMemory => DuringTurn::Blocked {
             reason_en: "she may be writing memory this very turn; wait for it to finish",

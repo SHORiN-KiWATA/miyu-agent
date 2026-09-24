@@ -53,13 +53,6 @@ impl RemoteRepl {
         Ok(LoopStep::Continue)
     }
 
-    pub(super) async fn cmd_clear(&mut self) -> Result<LoopStep> {
-        synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-            self.live_repl.clear_screen()
-        })?;
-        Ok(LoopStep::Continue)
-    }
-
     pub(super) async fn cmd_usage(&mut self) -> Result<LoopStep> {
         let snapshot = StateStore::new(&self.paths)?.usage_snapshot()?;
         let usage = self.footer.token_usage;

@@ -466,7 +466,6 @@ impl RemoteRepl {
             ReplSlashCommand::Help => self.cmd_help().await?,
             ReplSlashCommand::Stt => self.cmd_stt().await?,
             ReplSlashCommand::History => self.cmd_history().await?,
-            ReplSlashCommand::Clear => self.cmd_clear().await?,
             ReplSlashCommand::New => self.cmd_new(command_args).await?,
             ReplSlashCommand::Session => self.cmd_session(command_args).await?,
             ReplSlashCommand::Dev => self.cmd_lane(PersonaLane::Dev, command_args).await?,

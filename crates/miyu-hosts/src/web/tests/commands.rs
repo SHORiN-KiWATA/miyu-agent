@@ -42,6 +42,13 @@ async fn command_catalog_carries_what_the_menu_needs() {
         .map(|command| command["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(actual, expected);
+
+    // 别名跟着走：网页里敲 `/clear` 也是 `/reset`（09-24）。
+    let reset = commands
+        .iter()
+        .find(|command| command["name"] == "/reset")
+        .expect("/reset is a web command");
+    assert_eq!(reset["aliases"], serde_json::json!(["/clear"]));
 }
 
 /// `/reset-all-memory` 走 WebUI 时必须真的清掉那份记忆，且 dev 与普通模式各清
