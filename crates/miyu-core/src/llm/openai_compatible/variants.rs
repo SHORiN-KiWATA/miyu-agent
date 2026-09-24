@@ -91,6 +91,28 @@ impl OpenAiCompatibleClient {
         self.restore_thinking_variants(&selections);
     }
 
+    /// 会话钉住的档位盖在全局（或成员）那份上（09-24：effort 做成会话级）。只盖这个
+    /// client 自己的端点模型；会话没钉的模型照旧跟着全局走，钉成模型默认档的
+    /// （[`MODEL_DEFAULT_PIN`]）连全局那一档也不带。
+    pub fn apply_session_thinking_variants(&mut self, paths: &MiyuPaths, session_id: &str) {
+        let pinned = ThinkingVariantPreferences::load_scoped(
+            paths,
+            ThinkingVariantScope::Session(session_id),
+        );
+        let mut selections = Vec::new();
+        for (provider_id, model) in self.endpoint_model_preferences() {
+            match pinned.selected(&provider_id, &model) {
+                Some(MODEL_DEFAULT_PIN) => {
+                    self.thinking_variants
+                        .remove(&thinking_variant_key(&provider_id, &model));
+                }
+                Some(selected) => selections.push((provider_id, model, selected.to_string())),
+                None => {}
+            }
+        }
+        self.restore_thinking_variants(&selections);
+    }
+
     pub fn save_thinking_variants(&self, paths: &MiyuPaths) -> Result<()> {
         let mut preferences = load_thinking_variant_preferences(paths);
         for (provider_id, model) in self.endpoint_model_preferences() {

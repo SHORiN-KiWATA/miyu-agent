@@ -6492,6 +6492,11 @@ body[data-color-scheme="matugen"] .tool-card.is-command {
   color: var(--md-sys-color-on-primary);
 }
 
+/* 这个会话钉住的档位(09-24):字用强调色,和跟随全局的灰字分得开。 */
+.model-level-chip.is-pinned:not(:hover):not([aria-expanded="true"]) {
+  color: var(--accent);
+}
+
 .model-level-chip .icon-slot {
   width: 11px;
   height: 11px;

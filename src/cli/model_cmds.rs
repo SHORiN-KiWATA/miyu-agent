@@ -637,6 +637,7 @@ pub(in crate::cli) fn run_variant(paths: &MiyuPaths, args: VariantArgs) -> Resul
         &mut client,
         selected,
         "miyu effort",
+        VariantScope::Global,
         inline_variant_select,
     )? {
         VariantOutcome::Updated => print_variant_updated(),
@@ -646,17 +647,30 @@ pub(in crate::cli) fn run_variant(paths: &MiyuPaths, args: VariantArgs) -> Resul
     Ok(())
 }
 
+/// 档位改到哪一份（09-24：effort 做成会话级）。终端会话里的 `/effort` 只改这个会话；
+/// `miyu effort` 与直连模式改全局默认档。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::cli) enum VariantScope<'a> {
+    Global,
+    Session(&'a str),
+}
+
 /// `pick`：不带参数时的交互菜单——行内 `inline_variant_select`，全屏 TUI 用
 /// `pick_effort`（面板贴在大厅提示下方 / 会话正文底部）。
+///
+/// `client` 进来时带的是全局档位；改完它带的是生效的那一档（会话钉了的用钉的），
+/// 调用方拿它刷 footer。
 pub(in crate::cli) fn execute_variant(
     paths: &MiyuPaths,
     client: &mut OpenAiCompatibleClient,
     selected: Option<&str>,
     selector_command: &str,
-    pick: impl FnOnce(&[ThinkingVariantOptions]) -> Result<Option<VariantSelections>>,
+    scope: VariantScope<'_>,
+    pick: impl FnOnce(VariantMenu) -> Result<Option<VariantSelections>>,
 ) -> Result<VariantOutcome> {
-    if let Some(selected) = selected {
-        if client.thinking_variant_options().len() != 1 {
+    let options = client.thinking_variant_options();
+    let selections = if let Some(selected) = selected {
+        if options.len() != 1 {
             let message = if is_zh() {
                 format!("当前激活了多个模型；请使用 {selector_command} 在 TUI 中分别设置")
             } else {
@@ -666,22 +680,74 @@ pub(in crate::cli) fn execute_variant(
             };
             return Ok(VariantOutcome::Rejected(message));
         }
-        let available = client.available_thinking_variants();
-        let variant = match resolve_variant_name(selected, &available) {
+        let option = &options[0];
+        let variant = match resolve_variant_name(selected, &option.variants) {
             Ok(variant) => variant,
             Err(message) => return Ok(VariantOutcome::Rejected(message)),
         };
-        client.set_thinking_variant(variant)?;
+        // 会话里 `/effort default` 是钉成模型默认档，不是回到跟随全局（用户 09-24）。
+        let variant = match scope {
+            VariantScope::Session(_) => {
+                variant.or_else(|| Some(miyu_core::llm::MODEL_DEFAULT_PIN.to_string()))
+            }
+            VariantScope::Global => variant,
+        };
+        vec![(option.provider_id.clone(), option.model.clone(), variant)]
     } else {
-        let options = client.thinking_variant_options();
-        let Some(selections) = pick(&options)? else {
+        let Some(menu) = variant_menu_for(paths, &options, scope) else {
             return Ok(VariantOutcome::Cancelled);
         };
-        client.set_thinking_variants(&selections)?;
+        let Some(selections) = pick(menu)? else {
+            return Ok(VariantOutcome::Cancelled);
+        };
+        selections
+    };
+    match scope {
+        VariantScope::Global => {
+            client.set_thinking_variants(&selections)?;
+            client.save_thinking_variants(paths)?;
+        }
+        VariantScope::Session(session_id) => {
+            // 会话那份只记钉住的：选「跟随全局」（值为空）就是拔掉钉子，选「默认」钉的是
+            // 模型默认档（`MODEL_DEFAULT_PIN`）。
+            let scope = miyu_core::llm::ThinkingVariantScope::Session(session_id);
+            let mut pinned = miyu_core::llm::ThinkingVariantPreferences::load_scoped(paths, scope);
+            for (provider_id, model, variant) in &selections {
+                pinned.set(provider_id, model, variant.clone());
+            }
+            pinned.save_scoped(paths, scope)?;
+            client.reload_thinking_variants(paths);
+            client.apply_session_thinking_variants(paths, session_id);
+        }
     }
-
-    client.save_thinking_variants(paths)?;
     Ok(VariantOutcome::Updated)
+}
+
+/// 菜单：全局档照常；会话档里每个模型先是「跟随全局（全局那一档）」，再是模型默认档和
+/// 各档位。光标先落在这个会话钉住的那一项上，没钉就落在「跟随全局」上——原样回车不会
+/// 把跟随变成钉住。
+fn variant_menu_for(
+    paths: &MiyuPaths,
+    options: &[ThinkingVariantOptions],
+    scope: VariantScope<'_>,
+) -> Option<VariantMenu> {
+    let VariantScope::Session(session_id) = scope else {
+        return VariantMenu::new(options);
+    };
+    let pinned = miyu_core::llm::ThinkingVariantPreferences::load_scoped(
+        paths,
+        miyu_core::llm::ThinkingVariantScope::Session(session_id),
+    );
+    let items = options
+        .iter()
+        .map(|option| {
+            VariantMenuItem::for_session(
+                option,
+                pinned.selected(&option.provider_id, &option.model),
+            )
+        })
+        .collect();
+    VariantMenu::from_items(items)
 }
 
 pub(in crate::cli) fn resolve_variant_name(

@@ -7,8 +7,9 @@ mod request_shape;
 
 pub use openai_compatible::ContentPolicyBlocked;
 pub use openai_compatible::{
-    forget_relay_sessions, remove_antigravity_relay_files, retire_relay_processes,
-    shutdown_relay_processes, thinking_variant_options_for_model, ThinkingVariantPreferences,
+    forget_relay_sessions, remove_antigravity_relay_files, remove_session_thinking_variants,
+    retire_relay_processes, shutdown_relay_processes, thinking_variant_options_for_model,
+    ThinkingVariantPreferences, ThinkingVariantScope, MODEL_DEFAULT_PIN,
 };
 pub use openai_compatible::{OpenAiCompatibleClient, ThinkingVariantOptions};
 pub use openai_compatible::{

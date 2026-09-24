@@ -53,8 +53,7 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
         daemon_state.context_tokens,
         cumulative_tokens,
     );
-    let client = OpenAiCompatibleClient::from_config(&session_config, paths)?;
-    let thinking_summary = client.thinking_variant_summary();
+    let thinking_summary = footer_thinking_summary(paths, &session_config, &active_session_id)?;
     footer.update_thinking_variant(thinking_summary.as_deref());
     footer.update_context_window(
         daemon_state.context_window,

@@ -258,7 +258,10 @@ pub(in crate::web) async fn set_thinking_variants(
             active_thinking_variant_options(&config, &member_paths).map_err(ApiError::internal)?;
         return Ok(Json(ThinkingVariantsResponse { options }));
     }
-    reserve_admin(&state.manager)?;
+    // 轻量预约：别的会话在跑也能改（用户 09-24：「有会话在运行的时候没法切换其中一个
+    // 会话的 effort」）。改的是按模型存的偏好和回合资源缓存，在跑的回合手里是自己那份
+    // 克隆，下一轮才用上新档位——终端 `/effort` 走的 ReloadConfig 一直就是这个预约。
+    reserve_admin_light(&state.manager)?;
     let (reply, receiver) = oneshot::channel();
     if state
         .actor_tx

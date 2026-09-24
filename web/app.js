@@ -36,6 +36,9 @@
   // 档位一律用供应商原值(max/high/minimal…),不翻译:译名和文档、和模型
   // 实际认的参数值对不上,查起来反而费劲。"没设"这一档没有原值,只好写字。
   const THINKING_VARIANT_DEFAULT_LABEL = "default";
+  // 会话钉成「模型默认档」的记法(09-24:会话里选默认是模型默认,不是回到跟随全局)。
+  // 与 daemon 的 `MODEL_DEFAULT_PIN` 同一个值。
+  const MODEL_DEFAULT_PIN = "@model-default";
 
   function layoutViewportWidth() {
     return (window.innerWidth || document.documentElement.clientWidth || 0) / UI_SCALE;
@@ -487,6 +490,11 @@
     sessionModelOverride: null,
     sessionModelOverrideFor: "",
     sessionModelOverrideToken: 0,
+    // 这个会话钉住的思考档位(09-24:effort 做成会话级):modelKey → 档位名。没钉的模型
+    // 跟着全局走(`thinkingVariantModels` 里的 selected)。
+    sessionThinkingPins: new Map(),
+    sessionThinkingPinsFor: "",
+    sessionThinkingPinsToken: 0,
     submitting: false,
     revisionSubmitting: false,
     redoCandidate: null,
@@ -1027,7 +1035,9 @@
   }
 
   function thinkingVariantLabel(variant, short = false) {
-    if (variant == null) return short ? THINKING_VARIANT_DEFAULT_LABEL : t("模型默认");
+    if (variant == null || variant === MODEL_DEFAULT_PIN) {
+      return short ? THINKING_VARIANT_DEFAULT_LABEL : t("模型默认");
+    }
     return String(variant);
   }
 
@@ -1929,7 +1939,51 @@
     updateModelMenuState();
   }
 
+  function setSessionThinkingPins(sessionId, pinned) {
+    state.sessionThinkingPinsFor = String(sessionId || "");
+    state.sessionThinkingPins = new Map(
+      (Array.isArray(pinned) ? pinned : [])
+        .filter((pin) => pin?.provider_id && pin?.model && pin?.selected)
+        .map((pin) => [modelKey(pin), String(pin.selected)])
+    );
+    updateCurrentModelDisplay();
+    if (!elements.modelMenu.hidden && !state.modelMenuTouched && !state.modelSelectionSubmitting) {
+      resetModelMenuStaging();
+      renderModelMenu();
+    }
+  }
+
+  async function refreshSessionThinkingPins(sessionId = state.viewSessionId) {
+    const target = String(sessionId || "");
+    const token = ++state.sessionThinkingPinsToken;
+    if (!target) {
+      setSessionThinkingPins("", []);
+      return;
+    }
+    try {
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(target)}/thinking-variants`);
+      const payload = await response.json();
+      if (token !== state.sessionThinkingPinsToken || state.viewSessionId !== target) return;
+      setSessionThinkingPins(target, payload?.pinned);
+    } catch (_) {
+      // 静默失败:按跟随全局显示,下次打开菜单再取。
+    }
+  }
+
+  /// 这个会话里某个模型实际用的档位:钉了用钉的,没钉跟着全局。
+  function sessionPinFor(key) {
+    return state.sessionThinkingPinsFor === String(state.viewSessionId || "")
+      ? state.sessionThinkingPins.get(key) ?? null
+      : null;
+  }
+
+  function globalVariantFor(key) {
+    const entry = state.thinkingVariantModels.find((model) => modelKey(model) === key);
+    return entry ? entry.selected ?? null : null;
+  }
+
   async function refreshSessionModelOverride(sessionId = state.viewSessionId) {
+    refreshSessionThinkingPins(sessionId);
     const target = String(sessionId || "");
     const token = ++state.sessionModelOverrideToken;
     if (!target) {
@@ -1980,7 +2034,8 @@
     }
     const selected = pool[0];
     // 档位并进按钮文字——它原本有自己的按钮,合并后这里是唯一能看到它的地方。
-    const level = state.thinkingVariantModels.find((model) => modelKey(model) === modelKey(selected))?.selected;
+    const pin = sessionPinFor(modelKey(selected));
+    const level = pin === MODEL_DEFAULT_PIN ? null : pin ?? globalVariantFor(modelKey(selected));
     const name = String(selected.model || "");
     elements.modelLabel.textContent = level == null ? name : `${name} · ${thinkingVariantLabel(level, true)}`;
     elements.modelLabel.title = `${selected.provider_name || selected.provider_id || ""} · ${selected.model || ""}（${scope}）`;
@@ -2001,8 +2056,9 @@
     // 思考档位以前是另一个按钮、另一个浮层,即点即写。现在它和模型选择合成
     // 一个面板,就得跟模型选择一样先暂存,由同一个「确认」一起提交——否则同一
     // 个面板里一半改动立刻生效、一半要按确认,「取消」也说不清取消的是什么。
+    // 暂存的是这个会话的钉子:值为 null 就是跟随全局(09-24:effort 做成会话级)。
     state.stagedVariants = new Map(
-      state.thinkingVariantModels.map((model) => [modelKey(model), model.selected ?? null])
+      state.thinkingVariantModels.map((model) => [modelKey(model), sessionPinFor(modelKey(model))])
     );
     state.expandedLevelKey = null;
     state.modelMenuTouched = false;
@@ -2015,12 +2071,17 @@
     return entry ? entry.variants : [];
   }
 
+  /// 暂存的钉子;null = 跟随全局。
   function stagedVariantFor(key) {
     if (state.stagedVariants instanceof Map && state.stagedVariants.has(key)) {
       return state.stagedVariants.get(key);
     }
-    const entry = state.thinkingVariantModels.find((model) => modelKey(model) === key);
-    return entry ? entry.selected ?? null : null;
+    return sessionPinFor(key);
+  }
+
+  /// 小片上显示的:钉了显示钉的,没钉显示全局那一档。
+  function stagedEffectiveVariant(key) {
+    return stagedVariantFor(key) ?? globalVariantFor(key);
   }
 
   function modelMenuStaging() {
@@ -2105,9 +2166,13 @@
       chip.type = "button";
       chip.className = "model-level-chip";
       chip.setAttribute("aria-expanded", String(state.expandedLevelKey === key));
-      chip.title = t("思考程度：{level}", {level: thinkingVariantLabel(stagedVariantFor(key))});
+      const pinned = stagedVariantFor(key) != null;
+      chip.classList.toggle("is-pinned", pinned);
+      chip.title = pinned
+        ? t("思考程度：{level}（本会话）", {level: thinkingVariantLabel(stagedEffectiveVariant(key))})
+        : t("思考程度：{level}（跟随全局）", {level: thinkingVariantLabel(stagedEffectiveVariant(key))});
       const chipText = document.createElement("span");
-      chipText.textContent = thinkingVariantLabel(stagedVariantFor(key), true);
+      chipText.textContent = thinkingVariantLabel(stagedEffectiveVariant(key), true);
       chip.append(chipText, makeIconSlot("chevron-down"));
       chip.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -2201,7 +2266,7 @@
     const menu = elements.modelLevelMenu;
     menu.replaceChildren();
     menu.setAttribute("aria-label", t("{model} 的思考程度", {model: modelName}));
-    for (const variant of [null, ...variants]) {
+    for (const variant of [null, MODEL_DEFAULT_PIN, ...variants]) {
       const staged = stagedVariantFor(key) === variant;
       const option = document.createElement("button");
       option.type = "button";
@@ -2209,8 +2274,13 @@
       option.setAttribute("role", "radio");
       option.setAttribute("aria-checked", String(staged));
       option.classList.toggle("selected", staged);
-      option.textContent = thinkingVariantLabel(variant);
-      option.title = variant == null ? t("使用模型默认设置") : String(variant);
+      const global = thinkingVariantLabel(globalVariantFor(key));
+      option.textContent = variant == null
+        ? t("跟随全局（{level}）", {level: global})
+        : thinkingVariantLabel(variant);
+      option.title = variant == null
+        ? t("不钉档位，用全局默认档")
+        : variant === MODEL_DEFAULT_PIN ? t("使用模型默认设置") : String(variant);
       option.addEventListener("click", (event) => {
         event.stopPropagation();
         stageVariant(key, variant);
@@ -3254,6 +3324,9 @@
       }
       if (Object.prototype.hasOwnProperty.call(data || {}, "model_override") && sessionId === state.viewSessionId) {
         setSessionModelOverride(sessionId, data.model_override);
+      }
+      if (Object.prototype.hasOwnProperty.call(data || {}, "thinking_variants") && sessionId === state.viewSessionId) {
+        setSessionThinkingPins(sessionId, data.thinking_variants);
       }
       renderSessionList();
       if (sessionId === state.viewSessionId) updateConversationChrome();
@@ -11343,26 +11416,26 @@
     }
   }
 
-  /// 把面板里改过的思考档位一次写回。档位是**全局按模型**存的偏好,和会话
-  /// 的模型选择不是一个作用域,所以是两次请求;这里先写档位——它失败了就整个
-  /// 确认中止,不会出现「模型换了但档位没跟上」的半套状态。
-  async function commitStagedVariants() {
+  /// 把面板里改过的思考档位一次写回。档位是**这个会话**钉住的(09-24:effort 做成
+  /// 会话级,null = 拔掉钉子、跟随全局),和会话的模型选择是两份存储,所以是两次请求;
+  /// 这里先写档位——它失败了就整个确认中止,不会出现「模型换了但档位没跟上」的半套状态。
+  async function commitStagedVariants(sessionId) {
     if (!(state.stagedVariants instanceof Map)) return;
     const updates = [];
     for (const model of state.thinkingVariantModels) {
       const key = modelKey(model);
       if (!state.stagedVariants.has(key)) continue;
       const desired = state.stagedVariants.get(key);
-      if (desired === (model.selected ?? null)) continue;
+      if (desired === sessionPinFor(key)) continue;
       updates.push({ provider_id: model.provider_id, model: model.model, selected: desired });
     }
     if (!updates.length) return;
-    const response = await apiRequest("/api/models/thinking-variants", {
+    const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/thinking-variants`, {
       method: "PUT",
       body: JSON.stringify({ updates })
     });
     const payload = await response.json();
-    state.thinkingVariantModels = normalizeThinkingVariantModels(payload?.options);
+    setSessionThinkingPins(sessionId, payload?.pinned);
   }
 
   async function confirmModelSelection() {
@@ -11386,7 +11459,7 @@
     updateModelMenuState();
     let applied = false;
     try {
-      await commitStagedVariants();
+      await commitStagedVariants(sessionId);
       const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/models`, {
         method: "PUT",
         body: JSON.stringify({

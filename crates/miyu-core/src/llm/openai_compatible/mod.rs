@@ -38,7 +38,10 @@ use errors::*;
 use lower::*;
 pub use protocol::ThinkingVariantOptions;
 use protocol::*;
-pub use protocol::{thinking_variant_options_for_model, ThinkingVariantPreferences};
+pub use protocol::{
+    remove_session_thinking_variants, thinking_variant_options_for_model,
+    ThinkingVariantPreferences, ThinkingVariantScope, MODEL_DEFAULT_PIN,
+};
 use sse::*;
 use wire::*;
 pub use zen_tools::WIRE_ALIASES as ZEN_WIRE_ALIASES;

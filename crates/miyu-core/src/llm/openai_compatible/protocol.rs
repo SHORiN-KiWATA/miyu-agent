@@ -315,10 +315,53 @@ pub struct ThinkingVariantPreferences {
     pub(in crate::llm::openai_compatible) provider_renames: Vec<(String, String)>,
 }
 
+/// 档位偏好存在哪一份（09-24：effort 做成会话级）。全局那份按「供应商 + 模型」记，
+/// 成员各有一份（`member_thinking_view`）；会话那份只记这个会话钉住的档位，没钉的
+/// 跟着全局走。会话里选「默认」是钉成模型默认档（[`MODEL_DEFAULT_PIN`]），不是回到
+/// 跟随全局（用户 09-24）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingVariantScope<'a> {
+    Global,
+    Session(&'a str),
+}
+
+/// 会话那份里「钉成模型默认档」的记法：不带任何档位参数，全局设了也不用。和没钉
+/// （跟随全局）是两回事，所以得有个值；真的档位名不会以 `@` 开头，全局那份不写它。
+pub const MODEL_DEFAULT_PIN: &str = "@model-default";
+
+/// 会话那份的目录。一个会话一个文件：写的时候互不牵连，删会话时连文件一起删。
+const SESSION_PREFERENCES_DIR: &str = "session-thinking-variants";
+
 pub(in crate::llm::openai_compatible) fn thinking_variant_preferences_file(
     paths: &MiyuPaths,
-) -> PathBuf {
-    paths.state_dir.join("thinking-variants.json")
+    scope: ThinkingVariantScope<'_>,
+) -> Result<PathBuf> {
+    match scope {
+        ThinkingVariantScope::Global => Ok(paths.state_dir.join("thinking-variants.json")),
+        ThinkingVariantScope::Session(session_id) => {
+            // 会话 id 进了文件名：只认字母、数字、`_`、`-`，别让它拼出别的路径来。
+            if session_id.is_empty()
+                || !session_id
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+            {
+                bail!("invalid session id for thinking variants: {session_id:?}");
+            }
+            Ok(paths
+                .state_dir
+                .join(SESSION_PREFERENCES_DIR)
+                .join(format!("{session_id}.json")))
+        }
+    }
+}
+
+/// 删会话时顺手删掉它那份档位。没有就算了。
+pub fn remove_session_thinking_variants(paths: &MiyuPaths, session_id: &str) {
+    if let Ok(path) =
+        thinking_variant_preferences_file(paths, ThinkingVariantScope::Session(session_id))
+    {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 pub(in crate::llm::openai_compatible) fn lock_thinking_variant_preferences(
@@ -356,11 +399,18 @@ pub(in crate::llm::openai_compatible) fn load_thinking_variant_preferences(
 
 impl ThinkingVariantPreferences {
     pub fn load(paths: &MiyuPaths) -> Self {
-        Self::load_for_update(paths).unwrap_or_default()
+        Self::load_scoped(paths, ThinkingVariantScope::Global)
     }
 
-    pub(in crate::llm::openai_compatible) fn load_for_update(paths: &MiyuPaths) -> Result<Self> {
-        let path = thinking_variant_preferences_file(paths);
+    pub fn load_scoped(paths: &MiyuPaths, scope: ThinkingVariantScope<'_>) -> Self {
+        Self::load_for_update(paths, scope).unwrap_or_default()
+    }
+
+    pub(in crate::llm::openai_compatible) fn load_for_update(
+        paths: &MiyuPaths,
+        scope: ThinkingVariantScope<'_>,
+    ) -> Result<Self> {
+        let path = thinking_variant_preferences_file(paths, scope)?;
         match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).with_context(|| {
                 format!("failed to parse thinking variant state: {}", path.display())
@@ -408,17 +458,21 @@ impl ThinkingVariantPreferences {
     }
 
     pub fn save(&self, paths: &MiyuPaths) -> Result<()> {
+        self.save_scoped(paths, ThinkingVariantScope::Global)
+    }
+
+    pub fn save_scoped(&self, paths: &MiyuPaths, scope: ThinkingVariantScope<'_>) -> Result<()> {
         if self.changes.is_empty() && self.provider_renames.is_empty() {
             return Ok(());
         }
 
-        let path = thinking_variant_preferences_file(paths);
+        let path = thinking_variant_preferences_file(paths, scope)?;
         let parent = path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("thinking variant state path has no parent"))?;
         std::fs::create_dir_all(parent)?;
         let _lock = lock_thinking_variant_preferences(paths)?;
-        let mut persisted = Self::load_for_update(paths)?;
+        let mut persisted = Self::load_for_update(paths, scope)?;
         for (old_id, new_id) in &self.provider_renames {
             rename_thinking_variant_entries(&mut persisted.selected, old_id, new_id);
         }

@@ -700,6 +700,10 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
             get(get_session_models_http).put(set_session_models_http),
         )
         .route(
+            "/api/sessions/{session_id}/thinking-variants",
+            get(get_session_thinking_variants_http).put(set_session_thinking_variants_http),
+        )
+        .route(
             "/api/sessions/{session_id}/turns/{turn_id}/redo",
             post(redo_turn),
         )

@@ -333,3 +333,99 @@ fn mixed_endpoint_switch_has_three_values_and_needs_a_mixed_pool() {
         "尾巴留一个空行,后面的块才不贴上来"
     );
 }
+
+/// 终端里的 `/effort` 只改这个会话（09-24：effort 做成会话级）：钉在会话那份上，全局默认
+/// 档不动；菜单里第一项是「跟随全局（全局那一档）」，选它就是拔掉钉子。
+#[test]
+fn effort_in_a_session_pins_that_session_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = super::shared::pop_test_paths(temp.path());
+    std::fs::create_dir_all(&paths.state_dir).unwrap();
+    let mut config = AppConfig::default();
+    let active = config.active_provider.clone();
+    let provider = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == active)
+        .expect("the default provider");
+    // codex 线自带档位表，不靠 models.dev 元数据。
+    provider.enabled = true;
+    provider.protocol = "codex".to_string();
+    if provider.default_model.is_empty() {
+        provider.default_model = "gpt-test".to_string();
+    }
+    provider.models = vec![provider.default_model.clone()];
+    let provider_id = provider.id.clone();
+    let model = provider.default_model.clone();
+    config.active_provider = provider_id.clone();
+    config.active_provider_models = None;
+    let mut global = miyu_core::llm::ThinkingVariantPreferences::load(&paths);
+    global.set(&provider_id, &model, Some("low".to_string()));
+    global.save(&paths).unwrap();
+    let scope = miyu_core::llm::ThinkingVariantScope::Session("sess_a");
+    let pinned = || {
+        miyu_core::llm::ThinkingVariantPreferences::load_scoped(&paths, scope)
+            .selected(&provider_id, &model)
+            .map(str::to_string)
+    };
+
+    let mut client = OpenAiCompatibleClient::from_config(&config, &paths).unwrap();
+    let outcome = execute_variant(
+        &paths,
+        &mut client,
+        Some("high"),
+        "/effort",
+        VariantScope::Session("sess_a"),
+        |_| unreachable!("a named level needs no menu"),
+    )
+    .unwrap();
+    assert!(matches!(outcome, VariantOutcome::Updated));
+    assert_eq!(pinned().as_deref(), Some("high"));
+    assert_eq!(client.thinking_variant_summary().as_deref(), Some("high"));
+    assert_eq!(
+        miyu_core::llm::ThinkingVariantPreferences::load(&paths).selected(&provider_id, &model),
+        Some("low"),
+        "the global default stays where it was"
+    );
+
+    let mut client = OpenAiCompatibleClient::from_config(&config, &paths).unwrap();
+    let outcome = execute_variant(
+        &paths,
+        &mut client,
+        None,
+        "/effort",
+        VariantScope::Session("sess_a"),
+        |mut menu| {
+            let text = menu.lines(80, 12).join("\n");
+            let text = strip_terminal_control_sequences(&text);
+            assert!(
+                text.contains("跟随全局（low）") || text.contains("follow global (low)"),
+                "{text}"
+            );
+            assert!(
+                text.lines()
+                    .any(|line| line.trim_end().ends_with("default")),
+                "the model default is its own entry: {text}"
+            );
+            Ok(Some(vec![(provider_id.clone(), model.clone(), None)]))
+        },
+    )
+    .unwrap();
+    assert!(matches!(outcome, VariantOutcome::Updated));
+    assert_eq!(pinned(), None, "follow global removes the pin");
+    assert_eq!(client.thinking_variant_summary().as_deref(), Some("low"));
+
+    // 会话里选「默认」是模型默认档，不是回到跟随全局（用户 09-24）：钉住，且不带全局那一档。
+    let mut client = OpenAiCompatibleClient::from_config(&config, &paths).unwrap();
+    execute_variant(
+        &paths,
+        &mut client,
+        Some("default"),
+        "/effort",
+        VariantScope::Session("sess_a"),
+        |_| unreachable!("a named level needs no menu"),
+    )
+    .unwrap();
+    assert_eq!(pinned().as_deref(), Some(miyu_core::llm::MODEL_DEFAULT_PIN));
+    assert_eq!(client.thinking_variant_summary(), None);
+}

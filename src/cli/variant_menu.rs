@@ -57,6 +57,46 @@ impl VariantMenuItem {
         }
     }
 
+    /// 会话档（09-24）：第一项「跟随全局（全局那一档）」，值为空 = 拔掉钉子；第二项是
+    /// 模型默认档，钉的是 `MODEL_DEFAULT_PIN`（选默认是模型默认，不是回到跟随全局）；
+    /// 后面是各档位。`pinned` 是这个会话钉住的那一项，没钉光标落在第一项。
+    pub(in crate::cli) fn for_session(
+        options: &ThinkingVariantOptions,
+        pinned: Option<&str>,
+    ) -> Self {
+        let global = options.selected.as_deref().unwrap_or("default");
+        let follow = if is_zh() {
+            format!("跟随全局（{global}）")
+        } else {
+            format!("follow global ({global})")
+        };
+        let mut entries = vec![
+            VariantMenuOption {
+                label: follow,
+                value: None,
+            },
+            VariantMenuOption {
+                label: "default".to_string(),
+                value: Some(miyu_core::llm::MODEL_DEFAULT_PIN.to_string()),
+            },
+        ];
+        entries.extend(Self::from_options(options).options.into_iter().skip(1));
+        let selected = pinned
+            .and_then(|pinned| {
+                entries
+                    .iter()
+                    .position(|entry| entry.value.as_deref() == Some(pinned))
+            })
+            .unwrap_or(0);
+        Self {
+            provider_id: options.provider_id.clone(),
+            model: options.model.clone(),
+            options: entries,
+            selected,
+            cursor: selected,
+        }
+    }
+
     pub(in crate::cli) fn selection(&self) -> (String, String, Option<String>) {
         (
             self.provider_id.clone(),
@@ -82,10 +122,10 @@ pub(in crate::cli) struct VariantMenu {
 
 impl VariantMenu {
     pub(in crate::cli) fn new(options: &[ThinkingVariantOptions]) -> Option<Self> {
-        let items = options
-            .iter()
-            .map(VariantMenuItem::from_options)
-            .collect::<Vec<_>>();
+        Self::from_items(options.iter().map(VariantMenuItem::from_options).collect())
+    }
+
+    pub(in crate::cli) fn from_items(items: Vec<VariantMenuItem>) -> Option<Self> {
         (!items.is_empty()).then_some(Self {
             items,
             active_column: 0,
@@ -288,11 +328,8 @@ impl VariantMenu {
 
 /// 行内版：在光标处往下画几行，选完擦掉。全屏 TUI 走 `repl::pickers::pick_effort`。
 pub(in crate::cli) fn inline_variant_select(
-    options: &[ThinkingVariantOptions],
+    mut menu: VariantMenu,
 ) -> Result<Option<VariantSelections>> {
-    let Some(mut menu) = VariantMenu::new(options) else {
-        return Ok(None);
-    };
     let menu_lines = menu.height();
     reserve_inline_fuzzy_space(menu_lines)?;
     let mut session = InlineRawMode::start()?;

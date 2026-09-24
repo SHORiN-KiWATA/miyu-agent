@@ -571,6 +571,18 @@ pub(in crate::cli) fn turn_meter(
     .with_generation_speed(speed)
 }
 
+/// footer 上的思考档位：会话作用域的模型池，加上这个会话钉住的档位（09-24：effort
+/// 做成会话级）。几处重算 footer 的地方都走这里，别再各自 `from_config` 了事。
+pub(in crate::cli) fn footer_thinking_summary(
+    paths: &MiyuPaths,
+    session_config: &AppConfig,
+    session_id: &str,
+) -> Result<Option<String>> {
+    let mut client = OpenAiCompatibleClient::from_config(session_config, paths)?;
+    client.apply_session_thinking_variants(paths, session_id);
+    Ok(client.thinking_variant_summary())
+}
+
 /// The footer/status display must reflect the session's pinned model pool,
 /// not just the global config.
 pub(in crate::cli) fn footer_config_for_session(

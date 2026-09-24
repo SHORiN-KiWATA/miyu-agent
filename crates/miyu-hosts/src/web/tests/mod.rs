@@ -2,6 +2,7 @@
 mod auth_secrets;
 mod commands;
 mod cross_session;
+mod effort;
 mod events_questions;
 mod http;
 mod ipc_bridge;

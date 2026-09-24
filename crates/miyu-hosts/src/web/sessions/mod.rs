@@ -616,20 +616,6 @@ pub(in crate::web) fn session_state(
     })
 }
 
-/// Global admin reservation (config/model changes): requires that no turn is
-/// running in any session.
-pub(in crate::web) fn reserve_admin(
-    manager: &Arc<Mutex<ManagerState>>,
-) -> std::result::Result<(), ApiError> {
-    let mut manager = manager.lock().unwrap();
-    if !manager.active_runs.is_empty() || manager.admin_busy {
-        return Err(ApiError::new(StatusCode::CONFLICT, ipc::ADMIN_BUSY_MESSAGE));
-    }
-    manager.admin_busy = true;
-    manager.admin_session = None;
-    Ok(())
-}
-
 /// Per-session admin reservation (reset/undo/pop/compact/delete/archive):
 /// only the target session must be idle; turns in other sessions keep
 /// running.

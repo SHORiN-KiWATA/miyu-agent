@@ -671,9 +671,11 @@ pub(in crate::cli) async fn run_direct_repl(
                 &mut client,
                 (!selected.is_empty()).then_some(selected),
                 "/effort",
-                |options| match live_repl.as_mut() {
-                    Some(live) if live.screen.is_some() => pick_effort(live, options),
-                    _ => inline_variant_select(options),
+                // 直连模式没有 daemon 替它按会话回读档位：改的还是全局默认档。
+                VariantScope::Global,
+                |menu| match live_repl.as_mut() {
+                    Some(live) if live.screen.is_some() => pick_effort(live, menu),
+                    _ => inline_variant_select(menu),
                 },
             )? {
                 VariantOutcome::Updated => {

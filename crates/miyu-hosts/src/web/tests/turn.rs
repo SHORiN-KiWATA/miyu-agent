@@ -75,7 +75,6 @@ fn active_turn_queue_never_crosses_prompt_audiences() {
 fn light_admin_reservation_allows_running_turns_and_serializes_mutations() {
     let (manager, _cancel_rx) = manager_with_run("active_run");
 
-    assert!(reserve_admin(&manager).is_err());
     assert!(reserve_admin_light(&manager).is_ok());
     assert!(reserve_admin_light(&manager).is_err());
     assert_eq!(manager.lock().unwrap().active_runs.len(), 1);

@@ -48,7 +48,8 @@ fn client_constructors_restore_saved_thinking_variants() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths),
+        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
+            .unwrap(),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -79,7 +80,8 @@ fn saving_thinking_variants_preserves_inactive_models_and_clears_unset_active_mo
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths),
+        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
+            .unwrap(),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -126,7 +128,8 @@ fn staged_thinking_variant_update_merges_only_the_edited_inactive_model() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths),
+        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
+            .unwrap(),
         serde_json::to_string(&concurrent).unwrap(),
     )
     .unwrap();
@@ -149,7 +152,8 @@ fn malformed_thinking_variant_state_is_not_overwritten() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     std::fs::create_dir_all(&paths.state_dir).unwrap();
-    let path = thinking_variant_preferences_file(&paths);
+    let path = thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
+        .unwrap();
     std::fs::write(&path, "{not-json").unwrap();
     let mut preferences = ThinkingVariantPreferences::load(&paths);
     preferences.set("provider", "model", Some("high".to_string()));
@@ -174,7 +178,8 @@ fn thinking_variant_preferences_follow_provider_renames() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths),
+        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
+            .unwrap(),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -410,4 +415,79 @@ fn variant_extra_body_merges_nested_reasoning_fields() {
     assert_eq!(merged["reasoning"]["exclude"], true);
     assert_eq!(merged["reasoning"]["effort"], "high");
     assert_eq!(merged["custom"], 1);
+}
+
+/// 会话级档位（09-24：effort 做成会话级）：钉在这个会话那份上、盖住全局；别的会话照旧
+/// 跟着全局；全局那份不动；删会话连文件一起删；会话 id 拼不出别的路径。退回「只有全局
+/// 一份」这条会红。
+#[test]
+fn a_session_pin_overrides_the_global_level_for_that_session_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    std::fs::create_dir_all(&paths.state_dir).unwrap();
+    let mut provider = test_provider("custom", "https://example.com/v1");
+    provider.default_model = "reasoning-model".to_string();
+    provider.models = vec![provider.default_model.clone()];
+    provider.api_key = Some("test-key".to_string());
+    let config = AppConfig {
+        active_provider: provider.id.clone(),
+        active_provider_models: None,
+        providers: vec![provider.clone()],
+        ..AppConfig::default()
+    };
+    let model = provider.default_model.clone();
+
+    let mut global = ThinkingVariantPreferences::load(&paths);
+    global.set(&provider.id, &model, Some("high".to_string()));
+    global.save(&paths).unwrap();
+    let scope = crate::llm::ThinkingVariantScope::Session("sess_a");
+    let mut pinned = ThinkingVariantPreferences::load_scoped(&paths, scope);
+    pinned.set(&provider.id, &model, Some("low".to_string()));
+    pinned.save_scoped(&paths, scope).unwrap();
+
+    let client_for = |session: &str| {
+        let mut client = OpenAiCompatibleClient::from_config(&config, &paths).unwrap();
+        client.apply_session_thinking_variants(&paths, session);
+        client
+    };
+    assert_eq!(
+        client_for("sess_a").selected_thinking_variant_id(),
+        Some("low")
+    );
+    assert_eq!(
+        client_for("sess_b").selected_thinking_variant_id(),
+        Some("high"),
+        "an unpinned session follows the global level"
+    );
+    assert_eq!(
+        ThinkingVariantPreferences::load(&paths).selected(&provider.id, &model),
+        Some("high")
+    );
+
+    // 选「默认」是钉成模型默认档：全局设了 high 也不带（用户 09-24），不是回到跟随全局。
+    let default_scope = crate::llm::ThinkingVariantScope::Session("sess_c");
+    let mut model_default = ThinkingVariantPreferences::load_scoped(&paths, default_scope);
+    model_default.set(
+        &provider.id,
+        &model,
+        Some(crate::llm::MODEL_DEFAULT_PIN.to_string()),
+    );
+    model_default.save_scoped(&paths, default_scope).unwrap();
+    assert_eq!(client_for("sess_c").selected_thinking_variant_id(), None);
+
+    crate::llm::remove_session_thinking_variants(&paths, "sess_a");
+    assert_eq!(
+        client_for("sess_a").selected_thinking_variant_id(),
+        Some("high")
+    );
+    for bad in ["", "../escape", "a/b", "sess a"] {
+        assert!(
+            thinking_variant_preferences_file(
+                &paths,
+                crate::llm::ThinkingVariantScope::Session(bad)
+            )
+            .is_err(),
+            "{bad:?}"
+        );
+    }
 }

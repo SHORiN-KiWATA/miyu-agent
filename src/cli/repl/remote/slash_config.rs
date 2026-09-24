@@ -255,8 +255,8 @@ impl RemoteRepl {
             state.context_tokens,
             self.cumulative_tokens,
         );
-        let client = OpenAiCompatibleClient::from_config(&session_config, &self.paths)?;
-        let thinking_summary = client.thinking_variant_summary();
+        let thinking_summary =
+            footer_thinking_summary(&self.paths, &session_config, &self.active_session_id)?;
         self.footer
             .update_thinking_variant(thinking_summary.as_deref());
         self.footer
@@ -288,9 +288,10 @@ impl RemoteRepl {
         // 钉了别的模型时，以前这里拿全局配置建 client，列出来的是全局那个模型的
         // 档位——全局模型只有 default 就只剩一个 default，怎么切都切不到会话模型
         // 的档位上（用户实测）。footer 与 /models 早就按会话作用域取配置，这里对齐。
-        // 存盘按「供应商 + 模型」记，daemon 下一轮按会话模型回读，改完就生效。
+        // 存盘按「会话 + 供应商 + 模型」记，daemon 下一轮开始时按会话回读，改完就生效。
         let session_config =
             footer_config_for_session(&self.paths, &self.config, &self.active_session_id);
+        // client 带的是全局档位：菜单里「跟随全局（…）」写的就是它。改完它带的是生效的那一档。
         let mut client = OpenAiCompatibleClient::from_config(&session_config, &self.paths)?;
         // 全屏走面板（大厅贴提示下方、会话贴正文底部）；行内还是光标处的老菜单。
         let fullscreen = self.live_repl.screen.is_some();
@@ -299,56 +300,30 @@ impl RemoteRepl {
             &mut client,
             (!selected.is_empty()).then_some(selected),
             "/effort",
-            |options| {
+            // 只改这个会话（用户 09-24：「effort 做成会话级」）。daemon 每一轮开始时按
+            // 会话回读，不用重载配置，别的会话跑着也改得了。全局默认档在 `miyu config`。
+            VariantScope::Session(&self.active_session_id),
+            |menu| {
                 if fullscreen {
-                    pick_effort(&mut self.live_repl, options)
+                    pick_effort(&mut self.live_repl, menu)
                 } else {
-                    inline_variant_select(options)
+                    inline_variant_select(menu)
                 }
             },
         )? {
             VariantOutcome::Updated => {
-                let Some((_, _)) =
-                    repl_ipc_admin(&self.paths, &mut self.live_repl, IpcCommand::ReloadConfig)
-                        .await?
-                else {
-                    return Ok(LoopStep::Continue);
-                };
-                self.config = AppConfig::load(&self.paths)?;
-                let (state, changed) = await_in_lobby(
-                    &mut self.live_repl,
-                    repl_active_or_default_state(&self.paths, &self.active_session_id),
-                )
-                .await?;
-                if changed {
-                    apply_repl_session_switch(
-                        &self.paths,
-                        &self.config,
-                        self.mode,
-                        &state,
-                        &mut self.active_session_id,
-                        &mut self.history,
-                        &mut self.live_repl,
-                        &mut self.footer,
-                        &mut self.cumulative_tokens,
-                    )
-                    .await?;
-                }
-                self.cumulative_tokens = state_cumulative(&state);
-                self.footer = ReplFooterStatus::from_config(
-                    &footer_config_for_session(&self.paths, &self.config, &self.active_session_id),
-                    state.context_tokens,
-                    self.cumulative_tokens,
-                );
-                let thinking_summary = client.thinking_variant_summary();
                 self.footer
-                    .update_thinking_variant(thinking_summary.as_deref());
-                self.footer
-                    .update_context_window(state.context_window, state.context_window_assumed);
+                    .update_thinking_variant(client.thinking_variant_summary().as_deref());
                 self.live_repl.set_footer(self.footer.clone());
                 repl_note(
                     &mut self.live_repl,
-                    &format!("{}\n", t("thinking variants updated", "已更新思考档位")),
+                    &format!(
+                        "{}\n",
+                        t(
+                            "thinking level updated for this session",
+                            "已更新本会话的思考档位"
+                        )
+                    ),
                 )?;
             }
             VariantOutcome::Cancelled => {}

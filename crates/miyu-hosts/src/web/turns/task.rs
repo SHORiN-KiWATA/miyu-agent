@@ -358,11 +358,18 @@ async fn run_turn_task_inner(
             .client
             .clone()
             .with_buffered_delivery(platform_context.is_some());
-        if let Some(username) = member_username.as_ref() {
-            // 共享 client 带的是管理员的全局档位;换成成员家里的偏好(没设 =
-            // 模型默认档),不改共享 client、不影响别的成员/管理员。
-            turn_client.reload_thinking_variants(&paths.member_thinking_view(username));
-        }
+        let variant_paths = match member_username.as_ref() {
+            Some(username) => {
+                // 共享 client 带的是管理员的全局档位;换成成员家里的偏好(没设 =
+                // 模型默认档),不改共享 client、不影响别的成员/管理员。
+                let member_paths = paths.member_thinking_view(username);
+                turn_client.reload_thinking_variants(&member_paths);
+                member_paths
+            }
+            None => paths.clone(),
+        };
+        // 这个会话钉住的档位盖在上面(09-24:effort 做成会话级,改它不必等别的会话跑完)。
+        turn_client.apply_session_thinking_variants(&variant_paths, &session_id);
         let agent_profile = if subagent_record.is_some() {
             miyu_engine::agent::AgentProfile::Subagent
         } else {

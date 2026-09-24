@@ -469,8 +469,8 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     let session_config = footer_config_for_session(paths, config, &state.session_id);
     *footer =
         ReplFooterStatus::from_config(&session_config, state.context_tokens, *cumulative_tokens);
-    let client = OpenAiCompatibleClient::from_config(&session_config, paths)?;
-    footer.update_thinking_variant(client.thinking_variant_summary().as_deref());
+    let thinking_summary = footer_thinking_summary(paths, &session_config, &state.session_id)?;
+    footer.update_thinking_variant(thinking_summary.as_deref());
     footer.update_context_window(state.context_window, state.context_window_assumed);
     live_repl.refresh_footer(footer.clone())?;
     // Every REPL session change funnels through here, so this is the one place
@@ -1056,8 +1056,8 @@ pub(in crate::cli) async fn session_footer_status(
     let cumulative = state_cumulative(&state);
     let mut footer =
         ReplFooterStatus::from_config(&session_config, state.context_tokens, cumulative);
-    let client = OpenAiCompatibleClient::from_config(&session_config, paths)?;
-    footer.update_thinking_variant(client.thinking_variant_summary().as_deref());
+    let thinking_summary = footer_thinking_summary(paths, &session_config, session_id)?;
+    footer.update_thinking_variant(thinking_summary.as_deref());
     footer.update_context_window(state.context_window, state.context_window_assumed);
     Ok((footer, cumulative))
 }

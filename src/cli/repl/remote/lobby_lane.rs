@@ -131,8 +131,9 @@ impl RemoteRepl {
             state.context_tokens,
             self.cumulative_tokens,
         );
-        let client = OpenAiCompatibleClient::from_config(&session_config, &self.paths)?;
-        footer.update_thinking_variant(client.thinking_variant_summary().as_deref());
+        let thinking_summary =
+            footer_thinking_summary(&self.paths, &session_config, &state.session_id)?;
+        footer.update_thinking_variant(thinking_summary.as_deref());
         footer.update_context_window(state.context_window, state.context_window_assumed);
         self.footer = footer;
         self.live_repl.set_footer(self.footer.clone());

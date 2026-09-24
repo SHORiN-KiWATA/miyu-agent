@@ -561,6 +561,11 @@ pub(in crate::web) async fn handle_session_command(
             miyu_core::llm::forget_relay_sessions(&record.session_id);
             release_admin(&state.manager);
             result?;
+            // 这个会话钉住的思考档位（09-24）跟着会话走。
+            miyu_core::llm::remove_session_thinking_variants(
+                &session_variant_paths(state, &record.owner),
+                &record.session_id,
+            );
             // 库里的目标行随会话级联删除；进程内的 goal 状态（armed 等）
             // 也一起清，不然条目在内存里陪跑到进程退出。
             miyu_engine::tools::goal::forget_session(&record.session_id);

@@ -25,11 +25,8 @@ impl PanelModel for VariantMenu {
 /// /effort 的面板。`None` = 取消。
 pub(in crate::cli) fn pick_effort(
     live: &mut LiveReplTail,
-    options: &[ThinkingVariantOptions],
+    mut menu: VariantMenu,
 ) -> Result<Option<VariantSelections>> {
-    let Some(mut menu) = VariantMenu::new(options) else {
-        return Ok(None);
-    };
     panel::pick(live, &mut menu)
 }
 
