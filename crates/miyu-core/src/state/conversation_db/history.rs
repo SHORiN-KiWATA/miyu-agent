@@ -532,6 +532,8 @@ impl ConversationDb {
             "DELETE FROM sessions WHERE parent_session_id = ?1 AND kind = 'subagent'",
             params![session_id],
         )?;
+        Self::forget_skill_catalog_snapshot(&tx, session_id)?;
+        super::skill_catalog::prune_orphan_snapshots(&tx)?;
         tx.commit()?;
         Ok(())
     }

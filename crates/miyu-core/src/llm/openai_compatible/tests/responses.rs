@@ -596,6 +596,7 @@ async fn responses_continuation_is_pinned_to_its_original_endpoint() {
         zen_session: None,
         log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
+        tool_choice_none: false,
     };
     let initial_result = initial_client
         .chat_stream(vec![ChatMessage::plain("user", "hi")], Vec::new(), |_| {
@@ -639,6 +640,7 @@ async fn responses_continuation_is_pinned_to_its_original_endpoint() {
         zen_session: None,
         log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
+        tool_choice_none: false,
     };
 
     let result = client
@@ -699,6 +701,8 @@ fn test_responses_request_extra_body_flatten() {
         previous_response_id: Some("resp_good".to_string()),
         stream: true,
         tools: None,
+        tool_choice: None,
+        prompt_cache_key: None,
         reasoning: Some(ResponsesReasoning {
             effort: Some("medium".to_string()),
             summary: Some("concise".to_string()),

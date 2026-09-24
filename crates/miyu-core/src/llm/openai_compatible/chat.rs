@@ -113,6 +113,8 @@ impl OpenAiCompatibleClient {
             stream_options: None,
             max_tokens: Some(1),
             tools: (!tools.is_empty()).then_some(tools),
+            tool_choice: None,
+            prompt_cache_key: self.prompt_cache_key(),
             chat_template_kwargs: taotoken_glm_chat_template_kwargs(&self.provider),
             extra_body,
         };
@@ -503,7 +505,9 @@ impl OpenAiCompatibleClient {
                 include_usage: true,
             }),
             max_tokens: self.max_tokens_override,
+            tool_choice: (self.tool_choice_none && !tools.is_empty()).then_some("none"),
             tools: (!tools.is_empty()).then_some(tools),
+            prompt_cache_key: self.prompt_cache_key(),
             chat_template_kwargs: taotoken_glm_chat_template_kwargs(&self.provider),
             extra_body,
         };
@@ -560,6 +564,28 @@ impl OpenAiCompatibleClient {
                     )
                 );
                 return self.bail_chat_completion_failure(retry_status.as_u16(), &retry_body);
+            }
+            if request.tool_choice.is_some() && tool_choice_unsupported(status.as_u16(), &body) {
+                // 有的网关不认 `tool_choice`（09-24 B5）：退回原来那种「这一轮不带工具」，
+                // 这一轮的缓存照旧断，但回答不受影响。
+                request.tool_choice = None;
+                request.tools = None;
+                response = self
+                    .send_chat_completion_request(
+                        &url,
+                        &request,
+                        request_id,
+                        "chat.retry_without_tool_choice",
+                    )
+                    .await?;
+                status = response.status();
+                if status.is_success() {
+                    return self
+                        .consume_chat_completion_stream(response, on_chunk)
+                        .await;
+                }
+                let body = response.text().await.unwrap_or_default();
+                return self.bail_chat_completion_failure(status.as_u16(), &body);
             }
             if stream_options_unsupported(status.as_u16(), &body) {
                 request.stream_options = None;

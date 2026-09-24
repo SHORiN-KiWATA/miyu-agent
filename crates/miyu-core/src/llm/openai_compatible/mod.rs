@@ -110,6 +110,9 @@ pub struct OpenAiCompatibleClient {
     /// window; None leaves the provider default untouched.
     max_tokens_override: Option<u32>,
     continuation_health: ResponsesContinuationHealth,
+    /// 这一次请求带着工具定义、但不许调用（`tool_choice: none`）。工具轮数用完的
+    /// 最后一轮用它：照带同一份 tools，前缀缓存不断（09-24 B5，对照 opencode）。
+    tool_choice_none: bool,
     /// Scope tag for the per-request cache accounting log ("chat", "qq-judge",
     /// "compact", …). Auxiliary callers override it via `with_request_scope`
     /// so cache stats separate the main conversation from side channels.

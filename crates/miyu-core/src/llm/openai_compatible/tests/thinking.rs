@@ -387,6 +387,7 @@ fn mixed_client_keeps_variants_per_provider_and_model() {
         zen_session: None,
         log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
+        tool_choice_none: false,
     };
 
     let first_endpoint = client.with_endpoint(&client.endpoints[0]);
