@@ -201,11 +201,18 @@ fn inline_media_parts(items: &[miyu_core::state::TurnInlineMedia]) -> Vec<ChatCo
 ///   的就是"工具返回了图",与 Claude Code 的 Read 同构(09-03 用户裁定)。
 /// - 否则:tool 消息照旧是文本,紧跟一条带媒体块的用户消息(供应商不认
 ///   tool 消息里的图时的退路)。
+/// 工具结果与它带的媒体。
+///
+/// 供应商不认工具结果里放图时，图片补成一条用户消息，放进 `companions`，由调用方
+/// 在整批工具结果都推完之后再追加（09-24）：紧跟在自己那条结果后面的话，一批多个
+/// 调用时它会插在别的工具结果中间，严格的网关 400，配平检查还会补一条占位、真结果
+/// 又出现一次。活体与回放都这样放，字节一致。
 pub(in crate::agent) fn push_tool_result_with_media(
     messages: &mut Vec<ChatMessage>,
     mut tool_message: ChatMessage,
     items: &[miyu_core::state::TurnInlineMedia],
     tool_form: bool,
+    companions: &mut Vec<ChatMessage>,
 ) {
     if items.is_empty() {
         messages.push(tool_message);
@@ -237,7 +244,7 @@ pub(in crate::agent) fn push_tool_result_with_media(
     if let Some(mut message) = inline_media_message(items) {
         // 回放由本函数按库里的媒体重新生成,`derive_tool_flow` 据此不再抄它。
         message.media_companion = true;
-        messages.push(message);
+        companions.push(message);
     }
 }
 

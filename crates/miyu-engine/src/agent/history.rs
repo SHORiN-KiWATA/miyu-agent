@@ -314,6 +314,8 @@ impl Agent {
                 ),
                 false,
             );
+            // 带图的伴随消息整轮工具结果放完再放，和活体同序（见 push_tool_result_with_media）。
+            let mut companions = Vec::new();
             for call in &round.calls {
                 push_tool_result_with_media(
                     messages,
@@ -323,8 +325,10 @@ impl Agent {
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
                     tool_form,
+                    &mut companions,
                 );
             }
+            messages.extend(companions);
             self.push_flow_messages(messages, &round.after, turn);
         }
     }

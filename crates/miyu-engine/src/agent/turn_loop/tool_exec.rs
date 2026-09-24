@@ -105,46 +105,61 @@ impl Agent {
         let question_round_allowed =
             question_call_count == 1 && st.question_rounds <= MAX_QUESTION_ROUNDS_PER_TURN;
         let defer_sibling_tools = question_call_count == 1 && result.tool_calls.len() > 1;
-        // Multiple `task` calls in one batch run concurrently (subagents
-        // are independent by design); everything else stays serial.
-        let mut parallel_task_outputs = if defer_sibling_tools || repeat_skip {
-            std::collections::HashMap::new()
+        // 相邻的可并发调用（只读、不抢终端、不往外发东西的，见 ToolSpec::concurrent；
+        // 多个子代理也算）编成一段一起跑，其余照旧一个一个来（09-24，同轮工具并发）。
+        // 段在调用顺序里原地执行：原来子代理组在整批循环之前先跑，会越过排在它前面的
+        // 调用（B9）。有复读跳过或提问的批次整批串行，那两条路各有自己的规矩。
+        let segments = if defer_sibling_tools || repeat_skip || question_call_count > 0 {
+            Vec::new()
         } else {
-            self.execute_parallel_task_calls(&result.tool_calls, on_event)
-                .await?
+            let tools = self.tools.lock().unwrap();
+            concurrent_segments(&result.tool_calls, |name| tools.is_concurrent(name))
         };
+        let calls = std::mem::take(&mut result.tool_calls);
+        let mut segment_runs = std::collections::HashMap::new();
+        // 带图的伴随消息整批工具结果都推完再放（见 push_tool_result_with_media）。
+        let mut companions = Vec::new();
         // 每个调用的执行起止:一次迭代压进 `messages` 的 tool 消息就是这个
         // 调用的结果(各分支都以 push + continue 收尾),下一次迭代开始时给
-        // 上一批盖章。并行 task 组早在循环前跑完,这里量到的只是入队那一瞬,
-        // 与其给一个假的 0 ms,不如让它没有耗时。
+        // 上一批盖章。并发段里的调用各自带着自己的起止，收尾时直接盖。
         let mut span_from = messages.len();
         let mut span_since = unix_ms();
         let mut span_skip = false;
-        for (call_index, call) in std::mem::take(&mut result.tool_calls)
-            .into_iter()
-            .enumerate()
-        {
+        for (call_index, call) in calls.iter().cloned().enumerate() {
             if !span_skip {
                 stamp_tool_spans(&mut messages[span_from..], span_since, unix_ms());
             }
             span_from = messages.len();
             span_since = unix_ms();
-            span_skip = parallel_task_outputs.contains_key(&call_index);
-            if let Some(group_output) = parallel_task_outputs.remove(&call_index) {
-                // Executed in the parallel group; events already emitted.
-                used_tools.push(call.function.name.clone());
-                if let Some(report) = group_output.report {
-                    persisted_tool_reports.push((call.function.name.clone(), report));
-                }
-                let model_output = self
-                    .spill_tool_output(
-                        current_turn_id,
-                        &call.id,
-                        &call.function.name,
-                        &group_output.output,
-                    )
-                    .unwrap_or(group_output.output);
-                messages.push(ChatMessage::tool(call.id, model_output));
+            if let Some(segment) = segments
+                .iter()
+                .find(|segment: &&std::ops::Range<usize>| segment.start == call_index)
+            {
+                let runs = self
+                    .run_concurrent_segment(&calls[segment.clone()], used_tools, on_event)
+                    .await?;
+                segment_runs.extend(segment.clone().zip(runs));
+            }
+            span_skip = segment_runs.contains_key(&call_index);
+            if let Some(segment_run) = segment_runs.remove(&call_index) {
+                let call_id = call.id.clone();
+                let event_name = tool_event_name(&call.function.name, &call.function.arguments);
+                let before = messages.len();
+                self.commit_tool_result(
+                    current_turn_id,
+                    messages,
+                    persisted_tool_reports,
+                    call,
+                    call_id,
+                    event_name,
+                    st,
+                    on_event,
+                    segment_run.run,
+                    &mut companions,
+                )
+                .await?;
+                let (started, finished) = segment_run.span_ms;
+                stamp_tool_spans(&mut messages[before..], started, finished);
                 continue;
             }
             let call_id = call.id.clone();
@@ -214,14 +229,40 @@ impl Agent {
                 event_name,
                 st,
                 on_event,
+                &mut companions,
             )
             .await?;
         }
         if !span_skip {
             stamp_tool_spans(&mut messages[span_from..], span_since, unix_ms());
         }
+        messages.extend(companions);
         Ok(ToolBatchOutcome::Executed {
             question_round_allowed,
         })
     }
+}
+
+/// 相邻的可并发调用编成一段；一段至少两个，单个的照旧走串行路径。
+fn concurrent_segments(
+    calls: &[ToolCall],
+    is_concurrent: impl Fn(&str) -> bool,
+) -> Vec<std::ops::Range<usize>> {
+    let mut segments = Vec::new();
+    let mut start = None;
+    for (index, call) in calls.iter().enumerate() {
+        if is_concurrent(&call.function.name) {
+            start.get_or_insert(index);
+        } else if let Some(begin) = start.take() {
+            if index - begin >= 2 {
+                segments.push(begin..index);
+            }
+        }
+    }
+    if let Some(begin) = start {
+        if calls.len() - begin >= 2 {
+            segments.push(begin..calls.len());
+        }
+    }
+    segments
 }

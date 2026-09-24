@@ -271,13 +271,6 @@ struct PreparedUserInput {
     hints: Vec<ChatMessage>,
 }
 
-/// Output of a `task` call executed in the parallel group.
-struct GroupTaskOutput {
-    output: String,
-    /// Persistable tool report, extracted at completion.
-    report: Option<String>,
-}
-
 impl Agent {
     /// /reset-all-memory:清空本模式人格的长期记忆(会话历史/技能不动),
     /// 然后重建句柄。dev 作用域由构造期的 dev_scoped 配置自动继承。

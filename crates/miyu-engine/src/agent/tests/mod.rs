@@ -19,4 +19,5 @@ mod session_usage;
 mod shared;
 mod stream;
 mod subsystems;
+mod tool_batches;
 mod vision;

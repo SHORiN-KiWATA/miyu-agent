@@ -6,39 +6,39 @@
 //! 排队消息在工具轮次之间消费：这个时机是刻意的，回合中途插入用户消息只能落在
 //! 一个完整的工具轮次边界上，否则会把工具调用和结果拆散。
 
+use super::tool_call::ToolRunResult;
+use super::unix_ms;
 use crate::agent::*;
 
+/// 一段可并发调用里一个调用的结果：跑出来的东西与起止时间（毫秒）。
+pub(in crate::agent) struct SegmentRun {
+    pub(in crate::agent) run: ToolRunResult,
+    pub(in crate::agent) span_ms: (u64, u64),
+}
+
 impl Agent {
-    /// Runs a batch's `task` tool calls concurrently, in waves bounded by
-    /// `tools.subagent_concurrency`. Subagents are independent by design, so
-    /// fanning them out preserves semantics while collapsing wall-clock time.
-    /// Batches with fewer than two task calls return an empty map and take the
-    /// serial path.
-    pub(in crate::agent) async fn execute_parallel_task_calls<F>(
+    /// 一段相邻的可并发调用一起跑（09-24，同轮工具并发；多个子代理的并行也走这里）。
+    ///
+    /// 只跑、不回填：结果按调用顺序交回，由调用方逐个 `commit_tool_result`——模型看到的
+    /// 结果顺序必须和它发出的调用一致，和谁先跑完无关，回放也才对得上。按
+    /// `tools.subagent_concurrency` 分波。全在同一个 task 里轮询、不 spawn：沙盒、工作
+    /// 目录、会话这些 task-local 出了这个 task 就拿不到，路径检查会直接放行。
+    pub(in crate::agent) async fn run_concurrent_segment<F>(
         &self,
         calls: &[miyu_core::llm::ToolCall],
+        used_tools: &mut Vec<String>,
         on_event: &mut F,
-    ) -> Result<std::collections::HashMap<usize, GroupTaskOutput>>
+    ) -> Result<Vec<SegmentRun>>
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
-        let mut outputs = std::collections::HashMap::new();
-        let eligible: Vec<usize> = calls
-            .iter()
-            .enumerate()
-            .filter(|(_, call)| call.function.name == "subagent")
-            .map(|(index, _)| index)
-            .collect();
-        if eligible.len() < 2 {
-            return Ok(outputs);
-        }
-
         struct Slot {
-            call_index: usize,
+            position: usize,
             call_id: String,
             event_name: String,
             future: Option<tools::ToolFuture>,
             progress: mpsc::UnboundedReceiver<tools::ToolProgressEvent>,
+            started_ms: u64,
         }
         enum WaveEvent {
             Done(usize, Result<String>),
@@ -46,65 +46,63 @@ impl Agent {
             Spinner,
         }
 
+        let mut runs: Vec<Option<SegmentRun>> = calls.iter().map(|_| None).collect();
         let limit = self.core.config.tools.subagent_concurrency.max(1);
-        for wave in eligible.chunks(limit) {
+        let positions = (0..calls.len()).collect::<Vec<_>>();
+        for wave in positions.chunks(limit) {
             let mut slots: Vec<Slot> = Vec::new();
-            {
-                let tools = self.tools.lock().unwrap();
-                for &call_index in wave {
-                    let call = &calls[call_index];
-                    let event_name = tool_event_name(&call.function.name, &call.function.arguments);
-                    on_event(AgentEvent::ToolCall {
-                        call_id: call.id.clone(),
-                        name: event_name.clone(),
-                        arguments: call.function.arguments.clone(),
-                    })?;
-                    let (progress_tx, progress_rx) = mpsc::unbounded_channel();
-                    match tools.call_with_progress_future(
+            for &position in wave {
+                let call = &calls[position];
+                used_tools.push(call.function.name.clone());
+                let event_name = tool_event_name(&call.function.name, &call.function.arguments);
+                on_event(AgentEvent::ToolCall {
+                    call_id: call.id.clone(),
+                    name: event_name.clone(),
+                    arguments: call.function.arguments.clone(),
+                })?;
+                let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+                let future = {
+                    let tools = self.tools.lock().unwrap();
+                    tools.call_with_progress_future(
                         &call.function.name,
                         &call.function.arguments,
                         progress_tx,
-                        &crate::tools::GuardCtx::default(),
-                    ) {
-                        Ok(future) => slots.push(Slot {
-                            call_index,
-                            call_id: call.id.clone(),
-                            event_name,
-                            future: Some(future),
-                            progress: progress_rx,
-                        }),
-                        Err(err) => {
-                            let output = format!("tool error: {err}");
-                            on_event(AgentEvent::ToolResult {
-                                call_id: call.id.clone(),
-                                name: event_name,
-                                ok: false,
-                                output: output.clone(),
-                            })?;
-                            outputs.insert(
-                                call_index,
-                                GroupTaskOutput {
-                                    output,
-                                    report: None,
-                                },
-                            );
-                        }
+                        &crate::tools::GuardCtx {
+                            used_tools: used_tools.as_slice(),
+                        },
+                    )
+                };
+                let started_ms = unix_ms();
+                match future {
+                    Ok(future) => slots.push(Slot {
+                        position,
+                        call_id: call.id.clone(),
+                        event_name,
+                        future: Some(future),
+                        progress: progress_rx,
+                        started_ms,
+                    }),
+                    Err(err) => {
+                        runs[position] = Some(SegmentRun {
+                            run: Err(err),
+                            span_ms: (started_ms, started_ms),
+                        })
                     }
                 }
             }
-            let mut remaining = slots.iter().filter(|slot| slot.future.is_some()).count();
+            let mut remaining = slots.len();
             let mut spinner_interval = tokio::time::interval(self.core.spinner_interval);
             spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             spinner_interval.tick().await;
             while remaining > 0 {
                 let event = {
                     let poll_slots = std::future::poll_fn(|context| {
-                        for (position, slot) in slots.iter_mut().enumerate() {
+                        for (index, slot) in slots.iter_mut().enumerate() {
                             if let std::task::Poll::Ready(Some(progress)) =
                                 slot.progress.poll_recv(context)
                             {
                                 return std::task::Poll::Ready(WaveEvent::Progress(
-                                    position, progress,
+                                    index, progress,
                                 ));
                             }
                             if let Some(future) = slot.future.as_mut() {
@@ -112,9 +110,7 @@ impl Agent {
                                     future.as_mut().poll(context)
                                 {
                                     slot.future = None;
-                                    return std::task::Poll::Ready(WaveEvent::Done(
-                                        position, result,
-                                    ));
+                                    return std::task::Poll::Ready(WaveEvent::Done(index, result));
                                 }
                             }
                         }
@@ -127,62 +123,38 @@ impl Agent {
                 };
                 match event {
                     WaveEvent::Spinner => on_event(AgentEvent::SpinnerTick)?,
-                    WaveEvent::Progress(position, progress) => {
-                        tee_subagent_trace(&slots[position].call_id, &progress);
+                    WaveEvent::Progress(index, progress) => {
+                        tee_subagent_trace(&slots[index].call_id, &progress);
                         emit_tool_progress(
                             on_event,
-                            &slots[position].call_id,
-                            &slots[position].event_name,
+                            &slots[index].call_id,
+                            &slots[index].event_name,
                             progress,
                         )?;
                     }
-                    WaveEvent::Done(position, result) => {
+                    WaveEvent::Done(index, result) => {
                         remaining -= 1;
-                        while let Ok(progress) = slots[position].progress.try_recv() {
-                            tee_subagent_trace(&slots[position].call_id, &progress);
+                        while let Ok(progress) = slots[index].progress.try_recv() {
+                            tee_subagent_trace(&slots[index].call_id, &progress);
                             emit_tool_progress(
                                 on_event,
-                                &slots[position].call_id,
-                                &slots[position].event_name,
+                                &slots[index].call_id,
+                                &slots[index].event_name,
                                 progress,
                             )?;
                         }
-                        let call_index = slots[position].call_index;
-                        let call_id = slots[position].call_id.clone();
-                        let event_name = slots[position].event_name.clone();
-                        match result {
-                            Ok(output) => {
-                                on_event(AgentEvent::ToolResult {
-                                    call_id,
-                                    name: event_name,
-                                    ok: true,
-                                    output: output.clone(),
-                                })?;
-                                let report = extract_persistable_tool_report("subagent", &output);
-                                outputs.insert(call_index, GroupTaskOutput { output, report });
-                            }
-                            Err(err) => {
-                                let output = format!("tool error: {err}");
-                                on_event(AgentEvent::ToolResult {
-                                    call_id,
-                                    name: event_name,
-                                    ok: false,
-                                    output: output.clone(),
-                                })?;
-                                outputs.insert(
-                                    call_index,
-                                    GroupTaskOutput {
-                                        output,
-                                        report: None,
-                                    },
-                                );
-                            }
-                        }
+                        runs[slots[index].position] = Some(SegmentRun {
+                            run: result,
+                            span_ms: (slots[index].started_ms, unix_ms()),
+                        });
                     }
                 }
             }
         }
-        Ok(outputs)
+        Ok(runs
+            .into_iter()
+            .map(|run| run.expect("every call in a concurrent segment runs once"))
+            .collect())
     }
 
     pub(in crate::agent) async fn consume_queued_prompts<F>(

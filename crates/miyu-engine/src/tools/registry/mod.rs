@@ -442,6 +442,11 @@ impl ToolRegistry {
         self.tools.keys().cloned().collect()
     }
 
+    /// 这个工具能不能和同一批里相邻的可并发调用一起跑（未注册的一律不能）。
+    pub fn is_concurrent(&self, name: &str) -> bool {
+        self.tools.get(name).is_some_and(|tool| tool.concurrent)
+    }
+
     pub fn contains(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }

@@ -64,7 +64,8 @@ pub fn register_fetch(registry: &mut ToolRegistry) {
             "additionalProperties": false
         }),
         |args| async move { web_fetch(args).await },
-    ));
+    )
+    .concurrent());
 }
 
 fn register_search_tool(registry: &mut ToolRegistry, name: &'static str, config: WebPluginConfig) {
@@ -85,7 +86,8 @@ fn register_search_tool(registry: &mut ToolRegistry, name: &'static str, config:
             let config = config.clone();
             async move { web_search(args, config).await }
         },
-    ));
+    )
+    .concurrent());
 }
 
 async fn web_search(args: Value, config: WebPluginConfig) -> Result<String> {

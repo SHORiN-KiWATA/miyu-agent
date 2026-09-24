@@ -219,7 +219,9 @@ pub fn register(
             let context = context.clone();
             async move { run_subagent(args, context, progress).await }
         },
-    ).writes());
+    )
+    .writes()
+    .concurrent());
     // resume_id 只有进程内老循环读得到(`run_subagent`:端口在场就整个走
     // `run_via_host`,那条路从不碰它)。daemon 里它是模型看得见、却永远不会
     // 生效的一个参数——续接子代理在会话化之后走 session_id。端口在 daemon

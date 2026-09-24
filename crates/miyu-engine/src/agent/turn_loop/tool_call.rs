@@ -4,6 +4,9 @@
 
 use super::parallel;
 use super::round_state::RoundState;
+
+/// 一次工具调用跑出来的东西：`Ok` 是工具输出，`Err` 是没跑成的错误（收尾时补契约、报失败）。
+pub(super) type ToolRunResult = std::result::Result<String, anyhow::Error>;
 use super::QUESTION_WAIT_LIMIT;
 use crate::agent::*;
 
@@ -95,7 +98,7 @@ impl Agent {
         Ok(())
     }
 
-    /// 真执行一个工具并把结果压进 `messages`(各失败分支同样压一条 tool 消息后返回)。
+    /// 串行路径：真执行一个工具，再把结果压进 `messages`(失败同样压一条 tool 消息)。
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_tool_call<F>(
         &mut self,
@@ -108,11 +111,81 @@ impl Agent {
         event_name: String,
         st: &mut RoundState,
         on_event: &mut F,
+        companions: &mut Vec<ChatMessage>,
     ) -> Result<()>
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
         used_tools.push(call.function.name.clone());
+        let run = self
+            .execute_tool_call(
+                current_turn_id,
+                messages,
+                used_tools,
+                &call,
+                &call_id,
+                &event_name,
+                st,
+                on_event,
+            )
+            .await?;
+        self.commit_tool_result(
+            current_turn_id,
+            messages,
+            persisted_tool_reports,
+            call,
+            call_id,
+            event_name,
+            st,
+            on_event,
+            run,
+            companions,
+        )
+        .await
+    }
+
+    /// 桩工具失败时把真契约补进返回体(每个工具每回合只补一次)。
+    fn attach_stub_contract(
+        &self,
+        st: &mut RoundState,
+        tool_name: &str,
+        message: String,
+    ) -> String {
+        if !tools::is_stub_loading_mode(&self.core.config.tools.loading_mode) {
+            return message;
+        }
+        if !st.contract_hinted.insert(tool_name.to_string()) {
+            return message;
+        }
+        let tools = self.tools.lock().unwrap();
+        if !tools.is_stub_presented(tool_name) {
+            return message;
+        }
+        match tools.contract_text(tool_name) {
+            Some(contract) => format!(
+                "{message}\n\nThis tool was declared with an empty parameter shell, so its real schema follows. Call it again with these arguments at the top level.{contract}"
+            ),
+            None => message,
+        }
+    }
+
+    /// 只跑工具：进度事件、转圈、子代理子过程的限流检查点。回填交给 `commit_tool_result`
+    /// ——并发的一段也是先一起跑、再按调用顺序逐个收尾（09-24，同轮工具并发）。
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tool_call<F>(
+        &mut self,
+        current_turn_id: &str,
+        messages: &mut Vec<ChatMessage>,
+        used_tools: &[String],
+        call: &ToolCall,
+        call_id: &str,
+        event_name: &str,
+        st: &mut RoundState,
+        on_event: &mut F,
+    ) -> Result<ToolRunResult>
+    where
+        F: FnMut(AgentEvent) -> Result<()>,
+    {
         // 模式级 ReadOnly 权限门随闲聊模式一并删除:拒绝层现在是
         // registry 的单调 guard(软失败),不可用工具靠 registry 组合
         // 不注册(平台 restricted 同理),未知工具在分发处软失败。
@@ -124,43 +197,12 @@ impl Agent {
                 &call.function.name,
                 &call.function.arguments,
                 progress_tx,
-                &crate::tools::GuardCtx {
-                    used_tools: &used_tools,
-                },
+                &crate::tools::GuardCtx { used_tools },
             )
-        };
-        // 桩工具失败时把真契约补进返回体(每个工具每回合只补一次)。
-        let mut attach_contract = |message: String| -> String {
-            if !tools::is_stub_loading_mode(&self.core.config.tools.loading_mode) {
-                return message;
-            }
-            if !st.contract_hinted.insert(call.function.name.clone()) {
-                return message;
-            }
-            let tools = self.tools.lock().unwrap();
-            if !tools.is_stub_presented(&call.function.name) {
-                return message;
-            }
-            match tools.contract_text(&call.function.name) {
-                Some(contract) => format!(
-                    "{message}\n\nThis tool was declared with an empty parameter shell, so its real schema follows. Call it again with these arguments at the top level.{contract}"
-                ),
-                None => message,
-            }
         };
         let tool_future = match tool_future {
             Ok(f) => f,
-            Err(err) => {
-                let output = attach_contract(format!("tool error: {err}"));
-                on_event(AgentEvent::ToolResult {
-                    call_id: call_id.clone(),
-                    name: event_name.clone(),
-                    ok: false,
-                    output: output.clone(),
-                })?;
-                messages.push(ChatMessage::tool(call.id, output));
-                return Ok(());
-            }
+            Err(err) => return Ok(Err(err)),
         };
         tokio::pin!(tool_future);
         let mut spinner_interval = tokio::time::interval(self.core.spinner_interval);
@@ -180,32 +222,14 @@ impl Agent {
         // 刷新即丢。所以工具空转的 spinner tick 上补一刀:脏了且过了节流窗就把尾巴落了。
         let mut last_sub_checkpoint: Option<std::time::Instant> = None;
         let mut sub_dirty = false;
-        let (output, tool_succeeded) = loop {
+        let run = loop {
             tokio::select! {
                 result = &mut tool_future => {
-                    break match result {
-                        Ok(output) => {
-                            while let Ok(progress) = progress_rx.try_recv() {
-                                parallel::tee_subagent_trace(&call_id, &progress);
-                                emit_tool_progress(on_event, &call_id, &event_name, progress)?;
-                            }
-                            (output, true)
-                        }
-                        Err(err) => {
-                            while let Ok(progress) = progress_rx.try_recv() {
-                                parallel::tee_subagent_trace(&call_id, &progress);
-                                emit_tool_progress(on_event, &call_id, &event_name, progress)?;
-                            }
-                            let output = attach_contract(format!("tool error: {err}"));
-                            on_event(AgentEvent::ToolResult {
-                                call_id: call_id.clone(),
-                                name: event_name.clone(),
-                                ok: false,
-                                output: output.clone(),
-                            })?;
-                            (output, false)
-                        }
-                    };
+                    while let Ok(progress) = progress_rx.try_recv() {
+                        parallel::tee_subagent_trace(call_id, &progress);
+                        emit_tool_progress(on_event, call_id, event_name, progress)?;
+                    }
+                    break result;
                 }
                 Some(progress) = progress_rx.recv() => {
                     let is_sub_marker = matches!(
@@ -213,8 +237,8 @@ impl Agent {
                         tools::ToolProgressEvent::Message(message)
                             if tools::is_subagent_marker(message)
                     );
-                    parallel::tee_subagent_trace(&call_id, &progress);
-                    emit_tool_progress(on_event, &call_id, &event_name, progress)?;
+                    parallel::tee_subagent_trace(call_id, &progress);
+                    emit_tool_progress(on_event, call_id, event_name, progress)?;
                     // 限流:首条立刻落,之后每 ~1.5s 一次(peek 不清空,幂等),
                     // 避免逐 token 写库。跳过的标记记脏,交给下面 spinner tick 补落。
                     if is_sub_marker {
@@ -250,6 +274,46 @@ impl Agent {
                         );
                     }
                 }
+            }
+        };
+        Ok(run)
+    }
+
+    /// 收尾：失败补契约并报结果；外溢、复读闸记账、内联媒体（落库、视觉退回）、load_tools
+    /// 记账、推 tool 消息、足迹、结果事件、报告。一批里按调用顺序逐个调用——实时发出
+    /// 去的顺序必须和回放一样，缓存前缀才不在这里断。
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn commit_tool_result<F>(
+        &mut self,
+        current_turn_id: &str,
+        messages: &mut Vec<ChatMessage>,
+        persisted_tool_reports: &mut Vec<(String, String)>,
+        call: ToolCall,
+        call_id: String,
+        event_name: String,
+        st: &mut RoundState,
+        on_event: &mut F,
+        run: ToolRunResult,
+        companions: &mut Vec<ChatMessage>,
+    ) -> Result<()>
+    where
+        F: FnMut(AgentEvent) -> Result<()>,
+    {
+        let (output, tool_succeeded) = match run {
+            Ok(output) => (output, true),
+            Err(err) => {
+                let output = self.attach_stub_contract(
+                    st,
+                    &call.function.name,
+                    format!("tool error: {err}"),
+                );
+                on_event(AgentEvent::ToolResult {
+                    call_id: call_id.clone(),
+                    name: event_name.clone(),
+                    ok: false,
+                    output: output.clone(),
+                })?;
+                (output, false)
             }
         };
         let inline_media = if tool_succeeded {
@@ -363,6 +427,7 @@ impl Agent {
             tool_message,
             &stamped,
             self.core.config.active_pool_tool_result_media(),
+            companions,
         );
         if tool_succeeded {
             let result_ok = tool_output_succeeded(&output);

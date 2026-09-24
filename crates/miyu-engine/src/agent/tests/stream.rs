@@ -145,7 +145,8 @@ fn structured_tool_business_failure_marks_the_event_failed() {
 }
 
 #[tokio::test]
-async fn parallel_task_calls_run_concurrently_and_map_outputs() {
+async fn a_concurrent_segment_runs_together_and_maps_outputs_in_call_order() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let config = AppConfig::default();
@@ -153,21 +154,36 @@ async fn parallel_task_calls_run_concurrently_and_map_outputs() {
     state.init_files().unwrap();
     let client =
         OpenAiCompatibleClient::new(config.provider(None).unwrap(), &config, &paths).unwrap();
+    let running = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
     let mut registry = ToolRegistry::new();
-    registry.register(crate::tools::ToolSpec::new(
-        "subagent",
-        "stub subagent",
-        crate::tools::empty_parameters(),
-        |args| async move {
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            Ok(format!(
-                "done:{}",
-                args.get("n")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("?")
-            ))
-        },
-    ));
+    let (running_in, peak_in) = (running.clone(), peak.clone());
+    registry.register(
+        crate::tools::ToolSpec::new(
+            "subagent",
+            "stub subagent",
+            crate::tools::empty_parameters(),
+            move |args| {
+                let running = running_in.clone();
+                let peak = peak_in.clone();
+                async move {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    // 先发的那个睡得最久：完成顺序和调用顺序相反。
+                    let n = args
+                        .get("n")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("0")
+                        .parse::<u64>()
+                        .unwrap_or(0);
+                    tokio::time::sleep(Duration::from_millis(120 - n * 30)).await;
+                    running.fetch_sub(1, Ordering::SeqCst);
+                    Ok(format!("done:{n}"))
+                }
+            },
+        )
+        .concurrent(),
+    );
     let agent = Agent::new(
         config,
         &paths,
@@ -188,47 +204,30 @@ async fn parallel_task_calls_run_concurrently_and_map_outputs() {
             },
         })
         .collect();
-    let mut events = Vec::new();
-    let started = std::time::Instant::now();
-    let outputs = agent
-        .execute_parallel_task_calls(&calls, &mut |event| {
-            match &event {
-                AgentEvent::ToolCall { call_id, .. } => events.push((call_id.clone(), "call")),
-                AgentEvent::ToolResult {
-                    call_id, ok: true, ..
-                } => events.push((call_id.clone(), "ok")),
-                AgentEvent::ToolResult {
-                    call_id, ok: false, ..
-                } => events.push((call_id.clone(), "err")),
-                _ => {}
+    let mut started = Vec::new();
+    let mut used_tools = Vec::new();
+    let runs = agent
+        .run_concurrent_segment(&calls, &mut used_tools, &mut |event| {
+            if let AgentEvent::ToolCall { call_id, .. } = &event {
+                started.push(call_id.clone());
             }
             Ok(())
         })
         .await
         .unwrap();
-    let elapsed = started.elapsed();
 
-    assert_eq!(outputs.len(), 3);
-    for index in 0..3 {
-        assert_eq!(outputs[&index].output, format!("done:{index}"));
-    }
-    // Three 80ms tasks run concurrently, not sequentially (~240ms).
-    assert!(
-        elapsed < Duration::from_millis(200),
-        "tasks did not run in parallel: {elapsed:?}"
+    assert_eq!(
+        peak.load(Ordering::SeqCst),
+        3,
+        "the three calls must overlap"
     );
-    for index in 0..3 {
-        let call_id = format!("call_{index}");
-        assert!(events.contains(&(call_id.clone(), "call")));
-        assert!(events.contains(&(call_id, "ok")));
-    }
-
-    // Fewer than two task calls: empty map, serial path handles it.
-    let single = agent
-        .execute_parallel_task_calls(&calls[..1], &mut |_| Ok(()))
-        .await
-        .unwrap();
-    assert!(single.is_empty());
+    let outputs = runs
+        .iter()
+        .map(|run| run.run.as_ref().unwrap().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(outputs, vec!["done:0", "done:1", "done:2"]);
+    assert_eq!(started, vec!["call_0", "call_1", "call_2"]);
+    assert_eq!(used_tools, vec!["subagent"; 3]);
 }
 
 #[tokio::test]
