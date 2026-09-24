@@ -501,7 +501,12 @@ impl OpenAiCompatibleClient {
         Ok(result)
     }
 
-    pub(crate) fn bail_chat_completion_failure<T>(&self, status: u16, body: &str) -> Result<T> {
+    pub(crate) fn bail_chat_completion_failure<T>(
+        &self,
+        status: u16,
+        body: &str,
+        retry_after: Option<Duration>,
+    ) -> Result<T> {
         let hint = claude_protocol_hint(&self.provider);
         Err(anyhow::anyhow!(
             "{} ({}): {}{}",
@@ -510,6 +515,6 @@ impl OpenAiCompatibleClient {
             body,
             hint
         )
-        .context(HttpStatusFailure::classify(status, body)))
+        .context(HttpStatusFailure::classify(status, body).with_retry_after(retry_after)))
     }
 }

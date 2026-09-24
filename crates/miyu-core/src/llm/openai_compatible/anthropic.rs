@@ -26,6 +26,7 @@ impl OpenAiCompatibleClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
             let sent_thinking_blocks = messages.iter().any(|message| {
                 message.thinking_signature.is_some()
@@ -77,7 +78,9 @@ impl OpenAiCompatibleClient {
                     "Anthropic Messages 流式请求失败"
                 )
             )
-            .context(HttpStatusFailure::classify(status.as_u16(), &body)));
+            .context(
+                HttpStatusFailure::classify(status.as_u16(), &body).with_retry_after(retry_after),
+            ));
         }
 
         self.consume_anthropic_stream(response, on_chunk).await
@@ -284,6 +287,7 @@ impl OpenAiCompatibleClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
             if responses_unsupported(status.as_u16(), &body) {
                 return Ok(None);
@@ -292,7 +296,9 @@ impl OpenAiCompatibleClient {
                 "{} ({status}): {body}",
                 t("responses stream request failed", "Responses 流式请求失败")
             )
-            .context(HttpStatusFailure::classify(status.as_u16(), &body)));
+            .context(
+                HttpStatusFailure::classify(status.as_u16(), &body).with_retry_after(retry_after),
+            ));
         }
 
         let dsml = dsml_enabled_for(&self.provider);
