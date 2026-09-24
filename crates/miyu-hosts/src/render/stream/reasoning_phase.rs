@@ -130,6 +130,7 @@ impl StreamRenderer {
             return Ok(());
         }
         self.reasoning_title = Some(title);
+        self.reasoning_last_delta_at = Some(std::time::Instant::now());
         self.ensure_waiting_phase(self.reasoning_live_text(), self.wait_style())
     }
 
@@ -200,6 +201,7 @@ impl StreamRenderer {
 
     pub fn tick_spinner(&mut self) -> Result<()> {
         let now = std::time::Instant::now();
+        self.settle_stalled_reasoning(now)?;
         let should_tick = self
             .last_tick
             .map(|last| now.duration_since(last) >= SPINNER_INTERVAL)
@@ -380,6 +382,7 @@ impl StreamRenderer {
     pub(crate) fn record_reasoning_text(&mut self, text: &str) {
         self.reasoning_started_at
             .get_or_insert_with(std::time::Instant::now);
+        self.reasoning_last_delta_at = Some(std::time::Instant::now());
         self.reasoning_text.push_str(text);
         // Incremental: recounting the whole accumulated text on every chunk is
         // O(n²) over the stream and the value only feeds the spinner label.

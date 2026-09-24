@@ -35,6 +35,7 @@ mod glyphs;
 mod live;
 mod panel_preview;
 mod question;
+mod stall;
 mod subagent;
 mod thought_rows;
 
@@ -399,6 +400,17 @@ impl Timeline {
             self.started = Some(at);
         }
         self.spent = self.spent.saturating_add(spent);
+    }
+
+    /// 只把起点往前挪到 `at`，不记耗时。
+    ///
+    /// 给「步收进来的时刻」晚于「这一步结束的时刻」的那种收法用：按
+    /// [`Self::note_start_since`] 从此刻倒推会把起点算晚，中间那截空档就从
+    /// `Worked for` 里漏掉了。
+    fn note_started_at(&mut self, at: Instant) {
+        if self.started.is_none_or(|existing| at < existing) {
+            self.started = Some(at);
+        }
     }
 
     fn is_empty(&self) -> bool {

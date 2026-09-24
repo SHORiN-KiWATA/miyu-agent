@@ -22,6 +22,10 @@ REPLY = os.environ.get(
 # 默认不发思考:老的走查脚本按「回复就是全部输出」断言。置 STUB_REASONING=1
 # 才多吐一段 reasoning_content,给全屏 TUI 的「点击展开」测具用。
 REASONING = os.environ.get("STUB_REASONING")
+# 置 STUB_TOOL_GAP=<秒>:想完之后静默这么久才吐工具调用。有的线路把整段工具调用
+# 扣着、模型写完才放(09-24 实测 opencodego 的 deepseek 1.5–3.9s、bigmodel 的 glm
+# 12s),这段静默里屏上该只剩转轮(`timeline/stall.rs`)。
+TOOL_GAP = float(os.environ.get("STUB_TOOL_GAP", "0"))
 # 置 STUB_TOOL=1:第一次请求先要一次 run_command,拿到结果再正常作答。
 # 全屏 TUI 的时间线、命令窥视、点开看完整输出都得有真工具才验得了。
 TOOL = os.environ.get("STUB_TOOL")
@@ -197,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
                                             "delta": {"content": chunk},
                                             "finish_reason": None}]})
                     time.sleep(CHUNK_SLEEP)
+            if TOOL_GAP > 0:
+                time.sleep(TOOL_GAP)
             if stage == "ask":
                 for line in os.environ.get("STUB_ASK_PREFACE", "").splitlines(keepends=True):
                     self._sse({"choices": [{"index": 0,

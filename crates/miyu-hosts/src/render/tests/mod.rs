@@ -12,6 +12,7 @@ mod markdown;
 mod math;
 mod patch;
 mod reasoning;
+mod reasoning_stall;
 mod shared;
 mod surface;
 mod table;

@@ -81,6 +81,9 @@ pub struct StreamRenderer {
     pub(crate) reasoning_title: Option<String>,
     pub(crate) reasoning_started_at: Option<std::time::Instant>,
     pub(crate) reasoning_elapsed: Option<std::time::Duration>,
+    /// 最后一片思考（正文或标题）到的时刻。思考停了多久拿它量，见
+    /// [`Self::settle_stalled_reasoning`]。
+    pub(crate) reasoning_last_delta_at: Option<std::time::Instant>,
     /// 点不开的面 + 完整档：这一段思考的正文边想边往下流。见 [`timeline::ThoughtStream`]。
     /// `None` = 这一段没走这条路（全屏 / 摘要档 / 还没来第一条 delta）。
     pub(crate) thought_stream: Option<timeline::ThoughtStream>,
@@ -181,6 +184,7 @@ impl StreamRenderer {
             thought_stream: None,
             sync_depth: 0,
             reasoning_elapsed: None,
+            reasoning_last_delta_at: None,
             tool_stats: BTreeMap::new(),
             tool_seq: 0,
             readable_tool_names,
