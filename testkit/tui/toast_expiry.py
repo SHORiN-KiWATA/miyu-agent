@@ -4,8 +4,10 @@
 import argparse
 import os
 import socket
-import tempfile
 from pathlib import Path
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 
 def free_port():
@@ -22,13 +24,13 @@ def main():
     os.environ.pop("MIYU_DIRECT", None)
     if args.direct:
         os.environ["MIYU_DIRECT"] = "1"
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-toast-expiry-"))
+    sandbox = sandbox_dir.make("miyu-toast-expiry-")
     os.environ.update(
         MIYU_HOME=str(sandbox / "home"),
         MIYU_TUI_RUNTIME=str(sandbox / "run"),
         MIYU_TUI_PORT=str(free_port()),
         STUB_PORT=str(free_port()),
-        OUT=str(sandbox / "out"),
+        OUT=os.environ.get("OUT") or str(Path.home() / ".cache" / "miyu-toast-expiry"),
     )
     import round26 as q
 

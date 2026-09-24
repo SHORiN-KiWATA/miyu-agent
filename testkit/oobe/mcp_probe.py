@@ -13,6 +13,10 @@
 import fcntl, json, os, pty, select, struct, subprocess, sys, tempfile, termios, time
 
 import pyte
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -25,7 +29,7 @@ BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
 COLS = int(sys.argv[2]) if len(sys.argv) > 2 else 100
 ROWS = int(sys.argv[3]) if len(sys.argv) > 3 else 60
 
-home = tempfile.mkdtemp(prefix="miyu-oobe-mcp-")
+home = str(sandbox_dir.make("miyu-oobe-mcp-"))
 env = dict(os.environ)
 env.update({"TERM": "xterm-256color", "MIYU_HOME": home, "LANG": "zh_CN.UTF-8"})
 subprocess.run([BIN, "init"], env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -159,7 +163,7 @@ try:
     os.kill(pid, 15)
 except ProcessLookupError:
     pass
-print("家目录:", home)
+print("家目录:", home, "（跑完即删；要留着看设 MIYU_KEEP_SANDBOX=1）")
 try:
     after = json.loads(open(cfg_path, encoding="utf-8").read())
     print("跑完后 config.jsonc 的 mcp 段:", json.dumps(after.get("mcp"), ensure_ascii=False))

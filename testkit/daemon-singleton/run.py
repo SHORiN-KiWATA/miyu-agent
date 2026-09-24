@@ -18,9 +18,10 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -325,7 +326,7 @@ def main():
         return 2
     print(f"二进制：{binary}")
 
-    workdir = Path(tempfile.mkdtemp(prefix="miyu-singleton-"))
+    workdir = sandbox_dir.make("miyu-singleton-", delete_at_exit=False)
     try:
         scenario_same_home(binary, workdir)
         scenario_separate_homes(binary, workdir)

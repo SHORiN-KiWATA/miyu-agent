@@ -21,12 +21,14 @@ import re
 import select
 import struct
 import subprocess
-import tempfile
 import termios
 import time
 from pathlib import Path
 
 import pyte
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -134,7 +136,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-persona-menu-"))
+    sandbox = sandbox_dir.make("miyu-persona-menu-")
+    out = Path(os.environ.get("OUT") or Path.home() / ".cache" / "miyu-persona-menu")
+    out.mkdir(parents=True, exist_ok=True)
     home = sandbox / "home"
     (home / "config").mkdir(parents=True)
     (home / "run").mkdir()
@@ -252,11 +256,11 @@ def main():
         check(manifest_of(home) == saved_toml, "答「不保存」，persona.toml 原封不动",
               manifest_of(home)[:100].replace("\n", " "))
     finally:
-        (sandbox / "last.txt").write_text(driver.text())
+        (out / "last.txt").write_text(driver.text())
         driver.close()
 
     passed = sum(results)
-    print(f"\n{passed}/{len(results)} passed  ({sandbox})")
+    print(f"\n{passed}/{len(results)} passed  ({out})")
     raise SystemExit(0 if passed == len(results) else 1)
 
 

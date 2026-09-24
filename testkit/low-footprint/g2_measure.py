@@ -16,9 +16,10 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -72,7 +73,7 @@ def sample(procs, seconds):
 
 
 def main():
-    profile = tempfile.mkdtemp(prefix="g2-chrome-")
+    profile = str(sandbox_dir.make("g2-chrome-"))
     xvfb = subprocess.Popen(
         ["Xvfb", XDISPLAY, "-screen", "0", "1400x900x24"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

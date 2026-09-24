@@ -20,11 +20,13 @@ import argparse
 import json
 import os
 import re
-import tempfile
 import time
 from pathlib import Path
 
 from persona_menu import Driver
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 results = []
 LOCAL = "本地 · bge-small-zh-v1.5-int8"
@@ -48,7 +50,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-kb-embedding-row-"))
+    sandbox = sandbox_dir.make("miyu-kb-embedding-row-")
+    out = Path(os.environ.get("OUT") or Path.home() / ".cache" / "miyu-kb-embedding-row")
+    out.mkdir(parents=True, exist_ok=True)
     home = sandbox / "home"
     (home / "config").mkdir(parents=True)
     (home / "run").mkdir()
@@ -147,11 +151,11 @@ def main():
         check(kb.get("max_search_results") == 59, "表单里改的 59 落盘了",
               str(kb.get("max_search_results")))
     finally:
-        (sandbox / "last.txt").write_text(driver.text())
+        (out / "last.txt").write_text(driver.text())
         driver.close()
 
     passed = sum(results)
-    print(f"\n{passed}/{len(results)} passed  ({sandbox})")
+    print(f"\n{passed}/{len(results)} passed  ({out})")
     raise SystemExit(0 if passed == len(results) else 1)
 
 

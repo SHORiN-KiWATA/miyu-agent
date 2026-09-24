@@ -15,9 +15,10 @@ import functools
 import http.server
 import os
 import sys
-import tempfile
 import threading
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 # MIYU_APP_JS 指向别的副本,用来跑「修之前会红」这一步:
@@ -135,7 +136,7 @@ def main():
 
     # 得有个真 origin:about:blank 上 Chromium 不给碰 localStorage,而 app.js
     # 顶层就在读它。起个只服务这两个文件的本地 http。
-    serve = Path(tempfile.mkdtemp(prefix="miyu-md-"))
+    serve = sandbox_dir.make("miyu-md-")
     (serve / "app.js").write_text(harness)
     (serve / "index.html").write_text(
         "<!doctype html><meta charset=utf-8><div id=root></div><script src=app.js></script>"

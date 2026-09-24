@@ -21,9 +21,10 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -33,7 +34,7 @@ for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
 REPO = Path(__file__).resolve().parents[2]
 # 子进程 cwd 是工作目录,BIN 给相对路径也要先解析成绝对路径。
 MIYU = Path(os.environ.get("BIN") or REPO / "target" / "release" / "miyu").resolve()
-BASE = Path(os.environ.get("PROBE_DIR") or tempfile.mkdtemp(prefix="miyu-relay-probe-"))
+BASE = Path(os.environ.get("PROBE_DIR") or sandbox_dir.make("miyu-relay-probe-"))
 HOME = BASE / "home"
 RUN = BASE / "run"
 WORK = BASE / "work"
@@ -175,7 +176,7 @@ def main():
             ok = ok and has_read and has_mod and any(p.endswith("notes.txt") for p in restored)
     finally:
         cli(["daemon", "stop"], timeout=60)
-    print("PASS" if ok else "FAIL", "| probe dir:", BASE)
+    print("PASS" if ok else "FAIL", "| probe dir:", BASE, "（没设 PROBE_DIR 时跑完即删；要留着看设 MIYU_KEEP_SANDBOX=1）")
     sys.exit(0 if ok else 1)
 
 

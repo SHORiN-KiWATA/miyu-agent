@@ -19,12 +19,14 @@ import pty
 import select
 import struct
 import subprocess
-import tempfile
 import termios
 import time
 from pathlib import Path
 
 import pyte
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -36,7 +38,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-config-resize-"))
+    sandbox = sandbox_dir.make("miyu-config-resize-")
+    out = Path(os.environ.get("OUT") or Path.home() / ".cache" / "miyu-config-resize")
+    out.mkdir(parents=True, exist_ok=True)
     home = sandbox / "home"
     (home / "config").mkdir(parents=True)
     config = {
@@ -89,10 +93,10 @@ def main():
             if all(word in text for word in required):
                 # 换屏的内容是逐行落下的，第一眼看到的屏还差下面几行。
                 pump(0.8)
-                (sandbox / f"{name}.txt").write_text("\n".join(screen.display))
+                (out / f"{name}.txt").write_text("\n".join(screen.display))
                 return
-        (sandbox / f"{name}.txt").write_text("\n".join(screen.display))
-        raise AssertionError(f"{name}: no frame containing {required}. See {sandbox}")
+        (out / f"{name}.txt").write_text("\n".join(screen.display))
+        raise AssertionError(f"{name}: no frame containing {required}. See {out}")
 
     def send(keys, name, required):
         os.write(master, keys)
@@ -123,9 +127,9 @@ def main():
         send(b"\rq", "error", ["Something went wrong", "any key"])
         resize(88, 28, "error-resized", ["Something went wrong", "any key"])
         send(b"x", "error-dismissed", ["CONFIG"])
-        print(f"PASS: menu resize, message/error stay open, editing text/cursor retained. {sandbox}")
+        print(f"PASS: menu resize, message/error stay open, editing text/cursor retained. {out}")
     finally:
-        (sandbox / "config.raw").write_bytes(sink)
+        (out / "config.raw").write_bytes(sink)
         if process.poll() is None:
             process.terminate()
             try:

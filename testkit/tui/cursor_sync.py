@@ -18,11 +18,12 @@ import select
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 
 import pyte
 import round26 as harness
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -74,8 +75,9 @@ def main():
     parser.add_argument("--direct", action="store_true")
     args = parser.parse_args()
     h = harness.h
-    base = Path(tempfile.mkdtemp(prefix="miyu-cursor-sync-"))
-    h.HOME, h.OUT, h.RUNTIME = base / "home", base / "out", str(base / "run")
+    base = sandbox_dir.make("miyu-cursor-sync-")
+    h.HOME, h.RUNTIME = base / "home", str(base / "run")
+    h.OUT = Path(os.environ.get("OUT") or Path.home() / ".cache" / "miyu-cursor-sync")
     h.EDIT_FILE = base / "unused-edit.txt"
     h.PORT, h.STUB_PORT = free_port(), free_port()
     h.BASE = f"http://127.0.0.1:{h.PORT}"
@@ -103,7 +105,7 @@ def main():
         if args.direct:
             # A direct core cannot share its home with a running daemon.
             Path(h.RUNTIME).mkdir()
-            h.OUT.mkdir()
+            h.OUT.mkdir(parents=True, exist_ok=True)
             h.write_config()
             stub = subprocess.Popen(
                 [sys.executable, str(h.SMOKE / "stub_llm.py")],

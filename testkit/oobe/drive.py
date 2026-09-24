@@ -14,6 +14,10 @@ MIYU_OOBE_NO_IME=1 免得反复开关真输入法。
 import fcntl, os, pty, select, struct, sys, tempfile, termios, time
 
 import pyte
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -26,7 +30,7 @@ BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
 COLS = int(sys.argv[2]) if len(sys.argv) > 2 else 90
 ROWS = int(sys.argv[3]) if len(sys.argv) > 3 else 34
 
-home = tempfile.mkdtemp(prefix="miyu-oobe-")
+home = str(sandbox_dir.make("miyu-oobe-"))
 screen = pyte.Screen(COLS, ROWS)
 stream = pyte.ByteStream(screen)
 
@@ -180,7 +184,7 @@ except ProcessLookupError:
     pass
 
 print()
-print("家目录:", home)
+print("家目录:", home, "（跑完即删；要留着看设 MIYU_KEEP_SANDBOX=1）")
 for root, _, files in os.walk(home):
     for name in files:
         path = os.path.join(root, name)

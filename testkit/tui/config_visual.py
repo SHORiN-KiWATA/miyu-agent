@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 
 import pyte
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -252,7 +254,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-config-visual-"))
+    sandbox = sandbox_dir.make("miyu-config-visual-")
+    out = Path(os.environ.get("OUT") or Path.home() / ".cache" / "miyu-config-visual")
+    out.mkdir(parents=True, exist_ok=True)
     home = sandbox / "home"
     (home / "config").mkdir(parents=True)
     # 运行时目录**不能**挂在沙箱底下。daemon 的 IPC socket 落在
@@ -423,7 +427,7 @@ def main():
             if text:
                 break
         text = text or driver.text()
-        (sandbox / "error.txt").write_text(text)
+        (out / "error.txt").write_text(text)
         check("获取模型失败" in text, "拉不到模型会说一声")
         # 折了行 = 开头那半和结尾那半不在同一行上。
         head_line = line_with(text, "获取模型失败")
@@ -461,12 +465,12 @@ def main():
         text = driver.wait("供应商和模型")
         check(text is not None and BLOCK in text, "拉回大窗口 banner 回来了")
     finally:
-        (sandbox / "last.txt").write_text(driver.text())
+        (out / "last.txt").write_text(driver.text())
         driver.close()
         shutil.rmtree(runtime, ignore_errors=True)
 
     passed = sum(results)
-    print(f"\n{passed}/{len(results)} passed  ({sandbox})")
+    print(f"\n{passed}/{len(results)} passed  ({out})")
     raise SystemExit(0 if passed == len(results) else 1)
 
 

@@ -13,9 +13,11 @@ import termios
 import os
 import select
 import socket
-import tempfile
 import time
 from pathlib import Path
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 
 def free_port():
@@ -31,13 +33,13 @@ def main():
     parser.add_argument("--explicit-active", action="store_true", help="Check explicit active session index is a no-op")
     args = parser.parse_args()
     os.environ.pop("MIYU_DIRECT", None)
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-session-picker-"))
+    sandbox = sandbox_dir.make("miyu-session-picker-")
     os.environ.update(
         MIYU_HOME=str(sandbox / "home"),
         MIYU_TUI_RUNTIME=str(sandbox / "run"),
         MIYU_TUI_PORT=str(free_port()),
         STUB_PORT=str(free_port()),
-        OUT=str(sandbox / "out"),
+        OUT=os.environ.get("OUT") or str(Path.home() / ".cache" / "miyu-session-picker"),
     )
     import round26 as q
     import pyte

@@ -30,10 +30,11 @@ import sqlite3
 import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
@@ -58,7 +59,7 @@ def check(name, ok, detail=""):
 class Sandbox:
     def __init__(self, miyu: Path):
         self.miyu = miyu
-        self.home = Path(tempfile.mkdtemp(prefix="miyu-xs-", dir="/tmp"))
+        self.home = sandbox_dir.make("miyu-xs-", delete_at_exit=False)
         self.run = self.home / "run"
         self.stub_log = self.home / "stub.jsonl"
         for path in (self.run, self.home / "config", self.home / "work"):
@@ -226,7 +227,7 @@ def main():
         if all(results.values()):
             shutil.rmtree(box.home, ignore_errors=True)
         else:
-            print(f"失败现场留在 {box.home}(看完手动删)")
+            print(f"失败现场留在 {box.home}(看完手动删；放一天也会被下次跑测具时清掉)")
     failed = [name for name, ok in results.items() if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} 通过" + (f",失败:{failed}" if failed else ""))
     return 1 if failed else 0

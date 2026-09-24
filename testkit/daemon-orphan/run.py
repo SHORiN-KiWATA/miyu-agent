@@ -26,9 +26,10 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -105,7 +106,7 @@ def main():
         print(f"! 先 cargo build：{binary} 不存在", file=sys.stderr)
         return 2
 
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-orphan-"))
+    sandbox = sandbox_dir.make("miyu-orphan-", delete_at_exit=False)
     report = {}
     leaked = []
     try:

@@ -22,6 +22,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 BIN = Path(os.environ.get("MIYU_BIN", REPO / "target" / "debug" / "miyu"))
@@ -66,7 +68,7 @@ def main():
     if not BIN.exists():
         sys.exit(f"先 cargo build:{BIN} 不存在")
 
-    home = Path(tempfile.mkdtemp(prefix="miyu-fish-pty-"))
+    home = sandbox_dir.make("miyu-fish-pty-")
     env = dict(
         os.environ,
         MIYU_HOME=str(home / "miyu"),

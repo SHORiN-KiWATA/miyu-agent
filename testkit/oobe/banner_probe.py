@@ -27,7 +27,7 @@ COLS = int(sys.argv[2]) if len(sys.argv) > 2 else 100
 ROWS = int(sys.argv[3]) if len(sys.argv) > 3 else 36
 FULLSCREEN = os.environ.get("PROBE_INLINE") is None
 
-home = tempfile.mkdtemp(prefix="miyu-banner-")
+home = str(sandbox_dir.make("miyu-banner-"))
 env = dict(os.environ)
 env.update({
     "TERM": "xterm-256color",
@@ -52,6 +52,10 @@ daemon = subprocess.Popen(
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
 )
 import urllib.request, urllib.error
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 _deadline = time.time() + 30
 while time.time() < _deadline:
     try:
@@ -169,4 +173,4 @@ try:
     daemon.wait(timeout=5)
 except subprocess.TimeoutExpired:
     daemon.kill()
-print("家目录:", home)
+print("家目录:", home, "（跑完即删；要留着看设 MIYU_KEEP_SANDBOX=1）")

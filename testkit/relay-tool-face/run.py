@@ -20,9 +20,10 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 PORT = "18397"
 
@@ -51,7 +52,7 @@ def main() -> int:
     if (miyu.parent / "miyu-voice").exists():
         print(f"{miyu.parent} 里有 miyu-voice,开着语音唤醒会把它拉起来开麦克风,换一个二进制")
         return 2
-    home = Path(tempfile.mkdtemp(prefix="relay-face-", dir="/tmp"))
+    home = sandbox_dir.make("relay-face-", delete_at_exit=False)
     run = home / "run"
     empty_path = home / "empty-path"
     for path in (run, empty_path, home / "config"):

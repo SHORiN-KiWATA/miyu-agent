@@ -19,10 +19,12 @@ import json
 import os
 import struct
 import subprocess
-import tempfile
 from pathlib import Path
 
 from PIL import Image
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 # 跑测具的进程多半坐在某个 herdr pane 里(AI 会话的终端):它的 HERDR_* 漏给被测的 miyu,
 # 被测进程就会往那个 pane 报状态、认领它,把人正在看的侧栏搅乱(09-23)。
@@ -97,7 +99,7 @@ def main():
     binary = args.binary.resolve()
     out = Path(os.environ.get("OUT", Path.home() / ".cache" / "miyu-qq-longtext-link"))
     out.mkdir(parents=True, exist_ok=True)
-    home = Path(tempfile.mkdtemp(prefix="miyu-longtext-link-"))
+    home = sandbox_dir.make("miyu-longtext-link-")
 
     for theme in ("paper", "light", "dark"):
         image = render(binary, home, SOURCES, theme)

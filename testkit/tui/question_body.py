@@ -11,9 +11,11 @@ import json
 import os
 import socket
 import struct
-import tempfile
 import termios
 from pathlib import Path
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox_dir  # noqa: E402
 
 
 def free_port():
@@ -30,13 +32,13 @@ def main():
     os.environ.pop("MIYU_DIRECT", None)
     if args.direct:
         os.environ["MIYU_DIRECT"] = "1"
-    sandbox = Path(tempfile.mkdtemp(prefix="miyu-question-body-"))
+    sandbox = sandbox_dir.make("miyu-question-body-")
     os.environ.update(
         MIYU_HOME=str(sandbox / "home"),
         MIYU_TUI_RUNTIME=str(sandbox / "run"),
         MIYU_TUI_PORT=str(free_port()),
         STUB_PORT=str(free_port()),
-        OUT=str(sandbox / "out"),
+        OUT=os.environ.get("OUT") or str(Path.home() / ".cache" / "miyu-question-body"),
     )
     import round26 as q
 
