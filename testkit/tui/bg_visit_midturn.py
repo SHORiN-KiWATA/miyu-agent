@@ -13,7 +13,11 @@
 
 步骤：主回合派一条后台子代理（它跑两轮命令，每轮先想一句）→ 主回合慢慢吐一大段 → 主回合
 说完之前点状态行上那条子代理 → 在子会话里，每秒看一眼：跑命令那一步出现、同时库里主回合
-还在跑，才算跟上 → `/back` → 主回合这一轮接着画完。
+还在跑，才算跟上；一直看到主回合在库里跑完，子会话的画面上不许出现主回合的字、子代理自己
+的回复要出来 → `/back` → 主回合这一轮接着画完。
+
+子代理的回复另给一段（桩的 `STUB_SUBAGENT_REPLY`）：桩默认两边吐同一段，子代理说的话会被
+认成主回合串进来（09-25 老走查 `bg_panel_midturn.py` 的「turn_running=false」就是这么来的）。
 """
 
 import json
@@ -31,10 +35,15 @@ TITLE = "走查后台子代理"
 TASK = "来自主会话的任务"
 UP = "↑ 主会话"
 BADGE = "子代理 ↳1"
-ASK = "STUB_SUBBG 开条后台子代理"
+# 带上桩认主线的那句（`STUB_MAIN_MARK`，默认「走查一句」）：派完子代理之后主线的消息里也有
+# 子代理的任务（在工具调用的参数里），没有这句，桩会把主回合也当成子代理，让它跑命令、回
+# 子代理那段话。
+ASK = "走查一句 STUB_SUBBG 开条后台子代理"
 REPLY_END = "主回合说到这里结束"
+# 子代理自己的回复另给一段：桩默认两边吐同一段，分不清画面上是谁说的。
+SUB_REPLY = "子代理这边说完了。"
 STUB = {
-    "STUB_SUBAGENT": "1",
+    "STUB_SUBAGENT_REPLY": SUB_REPLY,
     "STUB_SUBBG": "1",
     "STUB_REASONING": "1",
     "STUB_SUBAGENT_BG_COMMAND": "sleep 2; printf 'BGOUT走查输出\\n'",
@@ -74,8 +83,11 @@ def inside_child(screen):
 
 
 def back_in_parent(screen):
+    """回到主会话：没有「子代理 ↳1」、任务条上没有「↑ 主会话」，画面上是主回合的东西（默认档
+    的回复有 250 行，开场白早滚出屏幕了，只认它会漏判）。"""
     joined = "\n".join(screen)
-    return ASK in joined and BADGE not in joined and strip_row(screen, UP) is None
+    mine = ASK in joined or "主回合" in joined
+    return mine and BADGE not in joined and strip_row(screen, UP) is None
 
 
 def child_moved(screen):
@@ -84,6 +96,17 @@ def child_moved(screen):
     if SUB_THINKING:
         return THOUGHT_MARK in joined
     return any(mark in joined for mark in ("跑个命令", "运行命令", "BGOUT"))
+
+
+def parent_text_in_child(screen):
+    """人还在子会话里（footer 带「子代理 ↳1」），画面上却有主回合的字。
+
+    主回合的思考和子代理的思考是桩里同一段话，分不出来；认回复：默认档是一行行「主回合还在
+    慢慢说」，三档都以「主回合说到这里结束」收尾。子代理的回复是另一段（`SUB_REPLY`）。"""
+    joined = "\n".join(screen)
+    if BADGE not in joined:
+        return False
+    return REPLY_END in joined or "主回合还在慢慢说" in joined
 
 
 def parent_running():
@@ -122,23 +145,42 @@ def main():
         if screen is None:
             return report
         # 主回合说完之前，每秒看一眼子会话：跑命令那一步出现、同时主回合还在跑，才算跟上。
+        # 一直看到主回合在库里跑完、再多看几秒：这段时间人还在子会话里，主回合那一轮在 daemon
+        # 里照跑，它的字一个都不许画进来。
         samples = []
-        followed_at = None
+        # 进门那一屏就算数：子代理常常在点进去之后一两秒就跑完，步骤收成一行「Ran …」，
+        # 第一拍（1 秒后）就看不见了。
+        followed_at = 0.0 if child_moved(screen) and parent_running() else None
+        leaked_at = None
+        parent_done_at = None
         entered = time.time()
-        while time.time() - entered < 25.0:
+        while time.time() - entered < 90.0:
             h.drain(master, 1.0, sink)
             screen = h.render(bytes(sink))
             running = parent_running()
             moved = child_moved(screen)
-            samples.append({"t": round(time.time() - entered, 1), "parent_running": running, "moved": moved})
+            leaked = parent_text_in_child(screen)
+            now = round(time.time() - entered, 1)
+            samples.append({"t": now, "parent_running": running, "moved": moved, "leaked": leaked})
             if moved and running and followed_at is None:
-                followed_at = samples[-1]["t"]
+                followed_at = now
+                r.save("bg-visit-followed", screen)
+            if leaked and leaked_at is None:
+                leaked_at = now
+                r.save("bg-visit-leaked", screen)
+            if not running and parent_done_at is None:
+                parent_done_at = now
+            if parent_done_at is not None and now - parent_done_at >= 4.0:
                 break
-            if not running:
-                break
-        r.save("bg-visit-followed", h.render(bytes(sink)))
+        r.save("bg-visit-watched", h.render(bytes(sink)))
         report["child_moves_while_the_parent_runs"] = followed_at is not None
+        report["child_reply_shows_in_the_child"] = SUB_REPLY in "".join(
+            line.strip() for line in h.render(bytes(sink))
+        )
+        report["parent_text_stays_out_of_the_child"] = leaked_at is None and parent_done_at is not None
         report["_followed_at_s"] = followed_at
+        report["_leaked_at_s"] = leaked_at
+        report["_parent_done_at_s"] = parent_done_at
         report["_samples"] = samples
         os.write(master, b"/back")
         h.drain_until(master, sink, "/back", 3.0)
