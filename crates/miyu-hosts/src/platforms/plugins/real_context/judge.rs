@@ -17,7 +17,7 @@ const REPLY_DECISION_GUIDANCE: &str = "Judging requirements:\n1. When the curren
 
 const MODERATION_JUDGE_GUIDANCE: &str = "This call only performs a preliminary violation check on the current message; there is no need to judge whether the bot is the expected responder. You must confirm the meaning and the evidence in context; never rule a violation merely because a keyword appears.";
 
-const REPLY_SCORING_GUIDANCE: &str = "Score each of five dimensions from 0-10: relevance — how relevant the current message is to the persona and the current topic; willingness — the persona's willingness to reply given its character and relationship state; social — whether stepping in respects social boundaries, or would talk over someone, misidentify the addressee or interrupt others; timing — whether now is a suitable moment, or a clearer expected responder exists; continuity — whether the reply would naturally continue the current live conversation rather than turning to historical messages. should_reply only expresses the overall inclination; the program will still add or subtract score per its configuration. reasoning should briefly state the main communication target of the current message, whether the bot is the explicit or a reasonable responder, and the core reason for replying or not replying.";
+const REPLY_SCORING_GUIDANCE: &str = "Score each of five dimensions from 0-10: relevance — how relevant the current message is to the persona and the current topic; willingness — the persona's willingness to reply given its character and relationship state; social — whether stepping in respects social boundaries, or would talk over someone, misidentify the addressee or interrupt others; timing — whether now is a suitable moment, or a clearer expected responder exists; continuity — whether the reply would naturally continue the current live conversation rather than turning to historical messages. should_reply only expresses the overall inclination; the program will still add or subtract score per its configuration. to_bot is true when the current message speaks to the bot, talks about the bot, or reacts to what the bot just said. Sharing a topic with the bot is not enough. reasoning should briefly state the main communication target of the current message, whether the bot is the explicit or a reasonable responder, and the core reason for replying or not replying.";
 
 const MODERATION_SCORING_GUIDANCE: &str = "Reply-inclination scoring is not used in this call: return false for should_reply and 0 for all five dimensions. Fill in only the moderation judgment and its basis; the program decides whether to trigger a reply based solely on the moderation result.";
 
@@ -28,10 +28,9 @@ pub(super) struct JudgeRequest<'a> {
     pub(super) continuation_boost: f64,
     pub(super) system_trigger_boost: f64,
     pub(super) moderation_only: bool,
-    /// 近期发言量与它折算的门槛抬高量(冷静机制,见 restraint.rs)。
-    pub(super) reply_pressure: f64,
+    /// 冷静机制折算的门槛抬高量(见 restraint.rs)。被 @ 的已在调用方置 0,
+    /// 判官判定冲她来的在这里置 0。
     pub(super) restraint_threshold: f64,
-    pub(super) short_message_threshold_boost: f64,
     /// 「刚说过话」(她刚在群里发过言)这一路的加分。这种判断是「人发完言之后
     /// 大概率会看到接下来的消息」在模拟,窗口内给她一点加分更容易接上话
     /// (用户 09-15:原来是抬门槛)。
@@ -62,6 +61,10 @@ pub(super) struct JudgeResult {
     pub(super) final_score: f64,
     pub(super) effective_threshold: f64,
     pub(super) model_should_reply: Option<bool>,
+    /// 判官认为这条消息是不是冲她来的(见 REPLY_SCORING_GUIDANCE)。
+    pub(super) to_bot: Option<bool>,
+    /// 实际计入门槛的冷静抬高量:冲她来的为 0。
+    pub(super) restraint_threshold: f64,
     pub(super) affection_level: String,
     pub(super) affection_bias: f64,
     pub(super) emotion_adjustment: f64,
@@ -216,8 +219,13 @@ fn build_prompt(
     // per-call float knobs, they were re-billed at full price on every call.
     // Ahead of them they land in the cached prefix instead. A one-line format
     // reminder stays at the tail, where models follow it best.
+    //
+    // 尾巴上原来还有一行「程序加减分」的数字(续聊 +0.1、热度、冷静门槛……),
+    // 09-24 删掉:判官会把它当成打分依据,把程序事后本来就要加减的分提前再算一遍
+    // (7 天日志里 13 条理由直接引用「回复热度低」「takeover 加分」)。被 @、续聊
+    // 这些事实它从元数据和群聊记录里本来就看得见。
     Ok(format!(
-        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nCurrent program adjustments: natural continuation +{:.3}, direct-trigger takeover +{:.3}, after-speaking +{:.3}, affection {:+.3}; recent replies {:.2}, restraint threshold +{:.3}, short-message threshold +{:.3}, emotion threshold {:+.3}.\nReturn JSON only.",
+        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"to_bot\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nReturn JSON only.",
         if persona.trim().is_empty() {
             "(not provided; judge as a generic group-chat assistant)"
         } else {
@@ -239,14 +247,6 @@ fn build_prompt(
         event_metadata,
         signed_current_message(context, request.current_text),
         decoded,
-        request.continuation_boost,
-        request.system_trigger_boost,
-        request.after_speaking_score_boost,
-        request.affection_bias,
-        request.reply_pressure,
-        request.restraint_threshold,
-        request.short_message_threshold_boost,
-        request.emotion_adjustment,
     ))
 }
 
@@ -455,11 +455,16 @@ fn normalize_result(
         + request.after_speaking_score_boost
         + request.affection_bias;
     final_score = final_score.max(0.0);
-    let effective_threshold = (settings.reply_threshold
-        + request.restraint_threshold
-        + request.short_message_threshold_boost
-        + request.emotion_adjustment)
-        .max(0.0);
+    // 冷静只管插嘴(用户 09-24 拍板):别人跟她说话、说她、接她刚说的话,真人照样
+    // 会回,不因为自己刚说了很多就装没看见。判官没给这个字段时按插嘴算。
+    let to_bot = flexible_bool(reply.get("to_bot"));
+    let restraint_threshold = if to_bot == Some(true) {
+        0.0
+    } else {
+        request.restraint_threshold
+    };
+    let effective_threshold =
+        (settings.reply_threshold + restraint_threshold + request.emotion_adjustment).max(0.0);
     let moderation = normalize_moderation(
         value.get("moderation").unwrap_or(&Value::Null),
         settings.moderation_min_severity,
@@ -475,6 +480,8 @@ fn normalize_result(
         final_score,
         effective_threshold,
         model_should_reply,
+        to_bot,
+        restraint_threshold,
         affection_level: request.affection_level.to_string(),
         affection_bias: request.affection_bias,
         emotion_adjustment: request.emotion_adjustment,
@@ -795,9 +802,7 @@ mod tests {
             continuation_boost: 0.0,
             system_trigger_boost: 0.0,
             moderation_only,
-            reply_pressure: 0.0,
             restraint_threshold: 0.0,
-            short_message_threshold_boost: 0.0,
             after_speaking_score_boost: 0.0,
             affection_level: "中立",
             affection_prompt: "按普通关系判断。",
@@ -854,6 +859,34 @@ mod tests {
         assert!((busy.final_score - calm.final_score).abs() < 1e-9);
         assert!((busy.effective_threshold - calm.effective_threshold - 0.4).abs() < 1e-9);
         assert!(calm.should_reply && !busy.should_reply);
+    }
+
+    /// 冷静只管插嘴(09-24):判官说冲她来的,冷静不压;说不是或没给,照压。
+    #[test]
+    fn a_message_aimed_at_her_is_not_held_back() {
+        let settings = RealContextPluginSettings::default();
+        let mut busy = request(false);
+        busy.restraint_threshold = 0.4;
+        let judged = |to_bot: Option<bool>| {
+            let mut verdict = serde_json::json!({
+                "should_reply": true,
+                "relevance": 8, "willingness": 8, "social": 8, "timing": 8, "continuity": 8,
+                "reasoning": "",
+            });
+            if let Some(to_bot) = to_bot {
+                verdict["to_bot"] = serde_json::json!(to_bot);
+            }
+            normalize_result(&settings, &busy, &verdict).expect("判官结果")
+        };
+
+        let aimed = judged(Some(true));
+        assert!(aimed.should_reply && aimed.restraint_threshold == 0.0);
+        assert!((aimed.effective_threshold - settings.reply_threshold).abs() < 1e-9);
+        for other in [Some(false), None] {
+            let interjection = judged(other);
+            assert!(!interjection.should_reply, "{other:?} 应照压");
+            assert!((interjection.restraint_threshold - 0.4).abs() < 1e-9);
+        }
     }
 
     /// 违规检查只看全局开关，和这一次是什么触发无关。

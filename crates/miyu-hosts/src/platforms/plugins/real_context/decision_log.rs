@@ -26,7 +26,9 @@ pub(in crate::platforms::plugins::real_context) struct ActiveReplyDecisionLog<'a
     pub(in crate::platforms::plugins::real_context) system_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) reply_pressure: f64,
     pub(in crate::platforms::plugins::real_context) restraint_threshold: f64,
-    pub(in crate::platforms::plugins::real_context) short_message_threshold_adjustment: f64,
+    pub(in crate::platforms::plugins::real_context) to_bot: Option<bool>,
+    /// 平台层面冲她来(被 @ / 回复她):冷静直接豁免,不看判官的 to_bot。
+    pub(in crate::platforms::plugins::real_context) addressed: bool,
     pub(in crate::platforms::plugins::real_context) after_speaking_score_adjustment: f64,
     pub(in crate::platforms::plugins::real_context) moderation: &'a judge::ModerationResult,
     pub(in crate::platforms::plugins::real_context) reason: &'a str,
@@ -165,6 +167,17 @@ pub(in crate::platforms::plugins::real_context) fn format_active_reply_decision_
             &format_adjustment(log.after_speaking_score_adjustment),
         ));
     }
+    if let Some(to_bot) = log.to_bot {
+        lines.push(format_decision_log_field(
+            locale,
+            text_for(locale, "Addressed to bot", "指向机器人"),
+            text_for(
+                locale,
+                if to_bot { "yes" } else { "no" },
+                if to_bot { "是" } else { "否" },
+            ),
+        ));
+    }
     if log.restraint_threshold.abs() >= 0.0005 {
         lines.push(if locale == Locale::Zh {
             format!(
@@ -179,13 +192,26 @@ pub(in crate::platforms::plugins::real_context) fn format_active_reply_decision_
                 log.reply_pressure
             )
         });
-    }
-    if log.short_message_threshold_adjustment.abs() >= 0.0005 {
-        lines.push(format_decision_log_field(
-            locale,
-            text_for(locale, "Short-message threshold adjustment", "短句阈值调整"),
-            &format_adjustment(log.short_message_threshold_adjustment),
-        ));
+    } else if log.reply_pressure >= 0.005 {
+        // 她最近说过话、但这条冲她来,冷静不压——写出来,免得看日志的人以为冷静
+        // 机制没生效。被 @ 时判官的 to_bot 可能是「否」(@ 一串人约别人),豁免
+        // 却照旧(用户 09-24 拍板 @ 优先),所以理由要分开写,不然两行读着打架。
+        let (zh, en) = if log.addressed {
+            ("直接触发", "direct trigger")
+        } else {
+            ("指向机器人", "addressed to bot")
+        };
+        lines.push(if locale == Locale::Zh {
+            format!(
+                "冷静机制调整：豁免（{zh}，近期发言量 {:.2}）",
+                log.reply_pressure
+            )
+        } else {
+            format!(
+                "Restraint adjustment: exempt ({en}, recent replies {:.2})",
+                log.reply_pressure
+            )
+        });
     }
     if log.moderation.violation {
         let category = if log.moderation.category.trim().is_empty() {

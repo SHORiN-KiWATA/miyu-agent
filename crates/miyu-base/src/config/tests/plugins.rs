@@ -217,6 +217,38 @@ fn real_context_legacy_settings_migrate_and_deprecated_keys_are_removed() {
     }
 }
 
+/// 09-24 冷静机制改成内置曲线,只留开关。旧配置里的恢复时间 / 强度档 / 倍率
+/// 读到了不报错(连 1.0 以外的倍率、不认识的档位名也一样),保存时清掉。
+#[test]
+fn retired_restraint_knobs_load_quietly_and_are_dropped_on_save() {
+    let mut instance = PlatformPluginInstanceConfig {
+        enabled: None,
+        settings: serde_json::json!({
+            "reply_restraint_enable": false,
+            "reply_restraint_recover_minutes": 9,
+            "reply_restraint_strength": "extreme",
+            "reply_restraint_multiplier": 2.5
+        })
+        .as_object()
+        .unwrap()
+        .clone(),
+    };
+
+    let settings = RealContextPluginSettings::from_instance(&instance).unwrap();
+    assert!(!settings.reply_restraint_enable);
+    assert!(settings.validate().is_ok());
+
+    merge_real_context_settings(&mut instance, &settings);
+    assert_eq!(instance.settings["reply_restraint_enable"], false);
+    for key in [
+        "reply_restraint_recover_minutes",
+        "reply_restraint_strength",
+        "reply_restraint_multiplier",
+    ] {
+        assert!(!instance.settings.contains_key(key), "{key} 应被清掉");
+    }
+}
+
 #[test]
 fn real_context_judge_persona_prompt_normalizes_validates_and_roundtrips() {
     let legacy =

@@ -203,7 +203,7 @@ impl RealContextPlugin {
                 inherited_trigger,
                 old_reactions,
                 inherited_targets,
-                session.reply_pressure(now, settings),
+                session.reply_pressure(now),
             )
         };
 
@@ -408,28 +408,21 @@ impl RealContextPlugin {
             .after_speaking
             .then_some(settings.after_speaking_score_boost)
             .unwrap_or_default();
-        let restraint = restraint_threshold(
-            settings.reply_restraint_enable,
-            &settings.reply_restraint_strength,
-            pressure,
-        );
+        // 冷静只管插嘴(用户 09-24 拍板):被 @ 的这里直接豁免,别人说她、接她的话
+        // 由判官的 to_bot 在 judge.rs 里豁免。
+        let restraint = if conditions.addressed() {
+            0.0
+        } else {
+            restraint_threshold(settings.reply_restraint_enable, pressure)
+        };
         let continuation_boost = conditions
             .continuation
             .then_some(settings.continuation_boost_score)
             .unwrap_or_default();
-        let system_boost = (conditions.direct
-            || matches!(
-                conditions.inherited,
-                Some(TriggerKind::Direct | TriggerKind::Supersede)
-            ))
-        .then_some(settings.takeover_direct_trigger_boost_score)
-        .unwrap_or_default();
-        let short_boost = short_message_boost(
-            event,
-            continuation_boost,
-            system_boost,
-            &settings.reply_restraint_strength,
-        );
+        let system_boost = conditions
+            .addressed()
+            .then_some(settings.takeover_direct_trigger_boost_score)
+            .unwrap_or_default();
         let affection = match affection::snapshot(context, settings, false) {
             Ok(value) => value,
             Err(error) => {
@@ -478,9 +471,7 @@ impl RealContextPlugin {
                     continuation_boost,
                     system_trigger_boost: system_boost,
                     moderation_only: conditions.moderation_only(),
-                    reply_pressure: pressure,
                     restraint_threshold: restraint,
-                    short_message_threshold_boost: short_boost,
                     after_speaking_score_boost,
                     affection_level,
                     affection_prompt,
@@ -549,8 +540,9 @@ impl RealContextPlugin {
                 continuation_adjustment: continuation_boost,
                 system_adjustment: system_boost,
                 reply_pressure: pressure,
-                restraint_threshold: restraint,
-                short_message_threshold_adjustment: short_boost,
+                restraint_threshold: judged.restraint_threshold,
+                to_bot: judged.to_bot,
+                addressed: conditions.addressed(),
                 after_speaking_score_adjustment: after_speaking_score_boost,
                 moderation: &judged.moderation,
                 reason: &judged.reasoning,

@@ -6,13 +6,34 @@
 //! 和「下午忙过一阵」,忙完要十几个小时才回落。扣分与抬门槛在数学上是同一件事
 //! (`分数 - 扣分 >= 门槛 + 抬高` 等价于 `分数 >= 门槛 + 扣分 + 抬高`)。
 //!
-//! 现在:每回一轮记一笔(权重 = 克制倍率),每笔按半衰期指数衰减(半衰期 = 克制
-//! 恢复时间),衰减后的总和就是「近期发言量」。它自带上限(话速 × 平均寿命),
-//! 停下来几个半衰期就消退。效果只有一个:门槛抬高 min(发言量 × 每笔, 封顶)。
-//! 被 @ 的消息照样受压,回 @ 的那几轮也照样记账——真人不会因为被艾特就不累
-//! (用户 09-24 原话的意思)。
+//! 现在:每回一轮记一笔,每笔 3 分钟衰减一半,衰减后的总和就是「近期发言量」。
+//! 它自带上限(话速 × 平均寿命),停下来十来分钟就消退。门槛按一条 S 形曲线抬:
+//! 说一句几乎不压,连说到三四句明显收住,再多也最多抬 0.35。
+//!
+//! 冷静只管插嘴(09-24 从真人聊天的角度定的):真人被搭话会接着回,只有往别人的
+//! 对话或开放话题里插嘴才讲分寸。所以被 @ 的(`TriggerConditions::addressed`)和
+//! 判官认定冲她来的(`to_bot`)不压。账照样记所有回复,回 @ 的也算——刚被一堆人
+//! @ 着忙,就更不会去插别人的嘴。
+//!
+//! 不给档位、倍率、半衰期这些旋钮(用户 09-24:「没有人回去调挡位的」),只留总
+//! 开关 `reply_restraint_enable`;出厂这条曲线就得是对的。
 
 use crate::platforms::plugins::real_context::*;
+
+/// 一笔衰减到一半要多久。
+pub(in crate::platforms::plugins::real_context) const RESTRAINT_HALF_LIFE: Duration =
+    Duration::from_secs(3 * 60);
+
+/// 曲线的渐近上限:说得再多,门槛最多抬这么高。
+///
+/// 09-24 用 7 天日志复核:判官放行的插嘴(不冲她来的)余量最大 0.38、中位 0.22。
+/// 上限若高过这个尾巴(原先 0.45),她连说三四句之后插嘴一条都过不去,曲线就成了
+/// 一堵墙;0.35 让最合适的那 3% 在她正忙时仍能搭一句。回放:插嘴 47 → 42。
+const RESTRAINT_CEILING: f64 = 0.35;
+/// 近期发言量到多少时,门槛抬到上限的一半。
+const RESTRAINT_MIDPOINT: f64 = 2.5;
+/// 曲线的陡度。3 让开头很平(一句只抬 0.02)、中段很陡。
+const RESTRAINT_STEEPNESS: i32 = 3;
 
 /// 一个群的近期发言量。只存「上次结算时的值」和结算时刻,读的时候现算衰减。
 #[derive(Clone, Copy, Debug)]
@@ -29,51 +50,30 @@ impl ReplyPressure {
         }
     }
 
-    pub(in crate::platforms::plugins::real_context) fn level(
-        &self,
-        now: Instant,
-        half_life: Duration,
-    ) -> f64 {
+    pub(in crate::platforms::plugins::real_context) fn level(&self, now: Instant) -> f64 {
         let elapsed = now.saturating_duration_since(self.settled_at).as_secs_f64();
-        let half_life = half_life.as_secs_f64().max(1.0);
-        self.value * 0.5_f64.powf(elapsed / half_life)
+        self.value * 0.5_f64.powf(elapsed / RESTRAINT_HALF_LIFE.as_secs_f64())
     }
 
-    pub(in crate::platforms::plugins::real_context) fn record(
-        &mut self,
-        now: Instant,
-        half_life: Duration,
-        weight: f64,
-    ) {
-        self.value = self.level(now, half_life) + weight.max(0.0);
+    /// 真发出去一轮回复:记一笔。
+    pub(in crate::platforms::plugins::real_context) fn record(&mut self, now: Instant) {
+        self.value = self.level(now) + 1.0;
         self.settled_at = now;
     }
 }
 
-/// 「克制恢复时间」现在的含义:一笔衰减到一半要多久。
-pub(in crate::platforms::plugins::real_context) fn restraint_half_life(
-    settings: &RealContextPluginSettings,
-) -> Duration {
-    Duration::from_secs(settings.reply_restraint_recover_minutes.max(1) * 60)
-}
-
-/// 近期发言量折算成的门槛抬高量。
+/// 近期发言量折算成的门槛抬高量:`上限 · pⁿ / (pⁿ + 半程点ⁿ)`。
 ///
-/// 每笔与封顶是旧版「扣分 + 抬门槛」合计的 1.2 倍(用户 09-24 要求整体 +20%),
-/// 取两位小数:旧中档合计每点 0.075、封顶 0.33,轻档 0.025 / 0.18,强档
-/// 0.15 / 0.52。
+/// 曲线形状 09-24 用 7 天日志回放选定:与此前验收过的「每笔 0.09、封顶 0.40」
+/// 直线相比,各触发的回复总量几乎一样(用户要的整体 +20% 保持住),只是把压力
+/// 从第一句挪到了连说的第三四句上。
 pub(in crate::platforms::plugins::real_context) fn restraint_threshold(
     enabled: bool,
-    strength: &str,
     pressure: f64,
 ) -> f64 {
-    if !enabled {
+    if !enabled || pressure <= 0.0 {
         return 0.0;
     }
-    let (per_reply, maximum) = match strength {
-        "light" => (0.03, 0.22),
-        "strong" => (0.18, 0.62),
-        _ => (0.09, 0.40),
-    };
-    (pressure.max(0.0) * per_reply).min(maximum)
+    let rising = pressure.powi(RESTRAINT_STEEPNESS);
+    RESTRAINT_CEILING * rising / (rising + RESTRAINT_MIDPOINT.powi(RESTRAINT_STEEPNESS))
 }

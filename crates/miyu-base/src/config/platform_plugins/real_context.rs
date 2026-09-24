@@ -52,13 +52,9 @@ pub struct RealContextPluginSettings {
     pub skip_pure_image_active_judge: bool,
     pub active_reply_supersede_enable: bool,
     pub active_reply_supersede_window_seconds: u64,
+    /// 冷静机制的总开关。曲线、半衰期都内置(09-24 用户:「没有人回去调挡位的」),
+    /// 原来的恢复时间 / 强度档 / 倍率三个键见 `DEPRECATED_REAL_CONTEXT_SETTINGS`。
     pub reply_restraint_enable: bool,
-    /// 冷静机制的半衰期:她回的每一轮记一笔,过这么多分钟衰减一半。09-24 之前
-    /// 是「每点热度线性回落所需分钟」,键名沿用免迁移。
-    pub reply_restraint_recover_minutes: u64,
-    pub reply_restraint_strength: String,
-    /// 每回一轮记几笔近期发言量。
-    pub reply_restraint_multiplier: f64,
     pub judge_relevance_weight: f64,
     pub judge_willingness_weight: f64,
     pub judge_social_weight: f64,
@@ -181,9 +177,6 @@ impl Default for RealContextPluginSettings {
             active_reply_supersede_enable: true,
             active_reply_supersede_window_seconds: 7,
             reply_restraint_enable: true,
-            reply_restraint_recover_minutes: 3,
-            reply_restraint_strength: "medium".to_string(),
-            reply_restraint_multiplier: 1.0,
             judge_relevance_weight: 0.25,
             judge_willingness_weight: 0.25,
             judge_social_weight: 0.15,
@@ -334,24 +327,6 @@ impl RealContextPluginSettings {
             self.active_reply_supersede_window_seconds as usize,
             1,
             300,
-        )?;
-        validate_real_context_count(
-            "reply_restraint_recover_minutes",
-            self.reply_restraint_recover_minutes as usize,
-            1,
-            1_440,
-        )?;
-        if !matches!(
-            self.reply_restraint_strength.as_str(),
-            "light" | "medium" | "strong"
-        ) {
-            bail!("platform plugin real_context.reply_restraint_strength must be light, medium, or strong");
-        }
-        validate_real_context_range(
-            "reply_restraint_multiplier",
-            self.reply_restraint_multiplier,
-            0.0,
-            3.0,
         )?;
         validate_real_context_range(
             "emotion_max_threshold_adjust",
@@ -661,6 +636,10 @@ pub(crate) const DEPRECATED_REAL_CONTEXT_SETTINGS: &[&str] = &[
     "judge_models",
     "affection_judge_models",
     "continuation_window_minutes",
+    // 09-24 冷静机制改成内置曲线,只留开关。
+    "reply_restraint_recover_minutes",
+    "reply_restraint_strength",
+    "reply_restraint_multiplier",
 ];
 
 pub(crate) fn migrate_real_context_settings_map(

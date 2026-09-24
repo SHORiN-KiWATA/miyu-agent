@@ -41,32 +41,6 @@ pub(in crate::platforms::plugins::real_context) fn prepare_history(
     }
 }
 
-pub(in crate::platforms::plugins::real_context) fn short_message_boost(
-    event: &PlatformInboundEvent,
-    continuation_boost: f64,
-    system_boost: f64,
-    strength: &str,
-) -> f64 {
-    if continuation_boost > 0.0 || system_boost > 0.0 || !event.media.is_empty() {
-        return 0.0;
-    }
-    let (maximum, boost) = match strength {
-        "light" => (6, 0.03),
-        "strong" => (8, 0.08),
-        _ => (6, 0.05),
-    };
-    let length = event
-        .text
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .count();
-    if length > 0 && length <= maximum {
-        boost
-    } else {
-        0.0
-    }
-}
-
 pub(super) fn format_history(
     messages: &[HistoryMessage],
     maximum_bytes: usize,

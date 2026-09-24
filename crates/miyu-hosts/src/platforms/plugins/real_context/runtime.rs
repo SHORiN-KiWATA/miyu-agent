@@ -86,12 +86,8 @@ impl SessionRuntime {
         }
     }
 
-    pub(in crate::platforms::plugins::real_context) fn reply_pressure(
-        &self,
-        now: Instant,
-        settings: &RealContextPluginSettings,
-    ) -> f64 {
-        self.pressure.level(now, restraint_half_life(settings))
+    pub(in crate::platforms::plugins::real_context) fn reply_pressure(&self, now: Instant) -> f64 {
+        self.pressure.level(now)
     }
 
     /// 她在这个群真发出去一轮回复:记一笔。回 @ 的也记(用户 09-24 拍板)。
@@ -100,14 +96,9 @@ impl SessionRuntime {
         now: Instant,
         settings: &RealContextPluginSettings,
     ) {
-        if !settings.reply_restraint_enable {
-            return;
+        if settings.reply_restraint_enable {
+            self.pressure.record(now);
         }
-        self.pressure.record(
-            now,
-            restraint_half_life(settings),
-            settings.reply_restraint_multiplier,
-        );
     }
 
     pub(in crate::platforms::plugins::real_context) fn continuation_match(

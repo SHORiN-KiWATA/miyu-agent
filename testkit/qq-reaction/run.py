@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""QQ 主动回复黑盒(09-24):贴表情、观察窗口加分、冷静机制。
+"""QQ 主动回复黑盒(09-24):贴表情、观察窗口加分、冷静机制、短消息与判官提示词。
 
 沙箱 daemon + 进程内判官桩(OpenAI SSE)+ 假 NapCat(反向 WS)。走的是真路径:
 群消息 → 触发条件 → 判官模型放行 → 主回合 → 投递 → 摘表情/记账。
@@ -8,11 +8,12 @@
 
 场景(抽样概率开到 1.0,判官桩永远给高分):
   1 群友 A 不 @ 说话      → 抽样触发       → 回了,不贴表情
-  2 群友 B 紧接着说话     → 刚说过话触发   → 回了,不贴表情,加分 +0.100
-  3 群友 C @ 她           → 直接触发       → 回了,贴过表情且回完摘掉
-  4 C 十五秒内接着说      → 续聊触发       → 回了,贴过表情
-  冷静机制:日志是新格式「阈值 +x（近期发言量 y）」,y 随回复次数上升且 x = min(0.09y, 0.40);
-  判官提示词尾巴带 recent replies / restraint threshold。
+  2 群友 B 紧接着说三个字 → 刚说过话触发   → 回了,不贴表情,加分 +0.100,短消息不再抬门槛
+  3 群友 C @ 她           → 直接触发       → 回了,贴过表情且回完摘掉,冷静不压
+  4 C 十五秒内叫着她接着说 → 续聊触发      → 回了,贴过表情,判官说冲她来 → 冷静不压
+  5 A 又抛一句开放话题    → 刚说过话触发   → 判官说不冲她来 → 冷静照压,发言量比场景 2 高
+  冷静机制:插嘴那两条日志「阈值 +x（近期发言量 y）」且 x = 0.35·y³/(y³+2.5³);
+  判官提示词里没有「程序加减分」那行数字(09-24 删掉,判官会拿它重复计分)。
 """
 import importlib.util
 import json
@@ -83,7 +84,9 @@ class Stub(BaseHTTPRequestHandler):
             text += (content or "") + "\n"
         if JUDGE_MARK in text:
             JUDGE_PROMPTS.append(text)
-            answer = json.dumps(VERDICT)
+            # 桩判官:当前消息里叫了 miyu 就算冲她来(to_bot),否则算插嘴。
+            current = text.split("Current message content", 1)[-1].lower()
+            answer = json.dumps(dict(VERDICT, to_bot="miyu" in current))
         else:
             answer = "嗯嗯"
         self.send_response(200)
@@ -217,9 +220,10 @@ def main():
         time.sleep(1.0)
 
         m1, r1 = say(ws, "今天晚饭吃什么好呢", A)
-        m2, r2 = say(ws, "我也在想这个问题", B)
+        m2, r2 = say(ws, "我也是", B)
         m3, r3 = say(ws, "你觉得呢", C, at=True)
-        m4, r4 = say(ws, "说说看嘛", C)
+        m4, r4 = say(ws, "miyu 你说说看嘛", C)
+        m5, r5 = say(ws, "这周末干啥好呢", A)
         time.sleep(1.0)
 
         marked = lambda mid: (mid, True) in REACTIONS
@@ -238,22 +242,35 @@ def main():
                            for p in sorted((HOME / "cache" / "logs").glob("miyu.*.log")))
         blocks = [b for b in decision_blocks(log_text) if b[0]]
         triggers = [t for t, _ in blocks]
-        check("判断日志触发顺序", triggers[:4] == ["probability", "after_speaking", "direct", "continuation"], str(triggers))
+        check("判断日志触发顺序", triggers[:5] == ["probability", "after_speaking", "direct", "continuation", "after_speaking"], str(triggers))
         after = next((body for t, body in blocks if t == "after_speaking"), "")
         check("刚说过话加分 +0.100", "刚说过话加分：+0.100" in after or "After-speaking bonus: +0.100" in after)
         first = next((body for t, body in blocks if t == "probability"), "")
         check("第一句之前没说过话:无冷静行", first != "" and restraint_of(first) is None)
-        values = [restraint_of(body) for _, body in blocks[1:4]]
-        detail = str(values)
-        ok = len(values) == 3 and all(v is not None for v in values)
+        second, direct, cont, fifth = (body for _, body in blocks[1:5])
+        curve = lambda p: 0.35 * p**3 / (p**3 + 2.5**3)
+        values = [restraint_of(second), restraint_of(fifth)]
+        ok = all(v is not None for v in values)
         if ok:
-            pressures = [p for _, p in values]
-            ok = pressures == sorted(pressures) and 0.85 < pressures[0] <= 1.0 and pressures[-1] > 2.5
-            ok = ok and all(abs(t - min(0.09 * p, 0.40)) < 0.0015 for t, p in values)
-        check("冷静行新格式,发言量随回复上升,阈值 = min(0.09×发言量, 0.40)", ok, detail)
-        tail_ok = len(JUDGE_PROMPTS) >= 2 and re.search(r"recent replies 0\.\d\d, restraint threshold \+0\.0\d\d", JUDGE_PROMPTS[1]) is not None
-        check("判官提示词带近期发言量与冷静门槛", tail_ok)
-        check("判官提示词里没有旧 heat 字样", all("heat" not in p for p in JUDGE_PROMPTS))
+            ok = values[1][1] > values[0][1] > 0.85 and all(abs(t - curve(p)) < 0.0015 for t, p in values)
+        check("插嘴照压:阈值 = 0.35·p³/(p³+2.5³),发言量随回复上升", ok, str(values))
+        check("被 @ 豁免(门槛就是 0.800),日志写「豁免（直接触发」", restraint_of(direct) is None and "豁免（直接触发" in direct and "阈值 0.800" in direct)
+        check("判官说指向机器人的豁免", "指向机器人：是" in cont and "豁免（指向机器人" in cont and restraint_of(cont) is None)
+        check("判官说没指向机器人的记一笔「指向机器人：否」", "指向机器人：否" in second and "指向机器人：否" in fifth)
+        after = second
+        # 三个字的短消息:门槛只该是 0.800 + 冷静,不再多出「短句阈值调整」。
+        threshold = re.search(r"阈值 ([\d.]+)）|threshold ([\d.]+)\)", after)
+        restraint = restraint_of(after)
+        short_ok = "短句阈值调整" not in after and "Short-message" not in after and threshold and restraint
+        if short_ok:
+            shown = float(next(g for g in threshold.groups() if g))
+            short_ok = abs(shown - (0.8 + restraint[0])) < 0.0015
+        check("短消息不再抬门槛(门槛 = 0.800 + 冷静)", bool(short_ok))
+        check("判官提示词带 to_bot 字段与说明", bool(JUDGE_PROMPTS) and all(
+            '"to_bot":false' in p and "to_bot is true when" in p for p in JUDGE_PROMPTS))
+        check("判官提示词里没有程序加减分那行", bool(JUDGE_PROMPTS) and all(
+            not any(mark in p for mark in ("program adjustments", "restraint threshold", "reply heat", "short-message threshold"))
+            for p in JUDGE_PROMPTS))
     finally:
         if daemon:
             daemon.terminate()

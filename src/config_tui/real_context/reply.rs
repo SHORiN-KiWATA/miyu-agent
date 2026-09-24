@@ -75,21 +75,6 @@ pub(in crate::config_tui) fn edit_real_context_active_reply(
             ),
             format!(
                 "{}: {}",
-                t("Restraint half-life (minutes)", "克制半衰期（分钟）"),
-                settings.reply_restraint_recover_minutes
-            ),
-            format!(
-                "{}: {}",
-                t("Restraint strength", "克制强度"),
-                real_context_restraint_label(&settings.reply_restraint_strength)
-            ),
-            format!(
-                "{}: {}",
-                t("Restraint multiplier", "克制倍率"),
-                settings.reply_restraint_multiplier
-            ),
-            format!(
-                "{}: {}",
                 t(
                     "Post-reply observation window (seconds)",
                     "群聊发完消息后观察窗口（秒）"
@@ -187,21 +172,6 @@ pub(in crate::config_tui) fn edit_real_context_active_reply(
                 }
                 10 => edit_real_context_number(
                     ui,
-                    t("Restraint half-life (minutes)", "克制半衰期（分钟）"),
-                    settings.reply_restraint_recover_minutes,
-                    settings,
-                    |candidate, value| candidate.reply_restraint_recover_minutes = value,
-                )?,
-                11 => edit_real_context_restraint_strength(ui, settings)?,
-                12 => edit_real_context_number(
-                    ui,
-                    t("Restraint multiplier", "克制倍率"),
-                    settings.reply_restraint_multiplier,
-                    settings,
-                    |candidate, value| candidate.reply_restraint_multiplier = value,
-                )?,
-                13 => edit_real_context_number(
-                    ui,
                     t(
                         "Post-reply observation window (seconds)",
                         "群聊发完消息后观察窗口（秒）",
@@ -210,17 +180,17 @@ pub(in crate::config_tui) fn edit_real_context_active_reply(
                     settings,
                     |candidate, value| candidate.after_speaking_window_seconds = value,
                 )?,
-                14 => edit_real_context_number(
+                11 => edit_real_context_number(
                     ui,
                     t("Post-reply score bonus", "群聊发完消息后观察窗口加分"),
                     settings.after_speaking_score_boost,
                     settings,
                     |candidate, value| candidate.after_speaking_score_boost = value,
                 )?,
-                15 => edit_real_context_continuation(ui, settings)?,
-                16 => edit_real_context_triggers(ui, settings)?,
-                17 => edit_real_context_judge_advanced(ui, settings)?,
-                18 => edit_real_context_number(
+                12 => edit_real_context_continuation(ui, settings)?,
+                13 => edit_real_context_triggers(ui, settings)?,
+                14 => edit_real_context_judge_advanced(ui, settings)?,
+                15 => edit_real_context_number(
                     ui,
                     t("Judge context window", "判断上下文消息数"),
                     settings.judge_context_window,
@@ -274,36 +244,6 @@ pub(in crate::config_tui) fn edit_active_judgement_skip_ids(
         )?;
     }
     Ok(())
-}
-
-pub(in crate::config_tui) fn edit_real_context_restraint_strength(
-    ui: &mut Ui,
-    settings: &mut RealContextPluginSettings,
-) -> Result<()> {
-    loop {
-        let mut fields = vec![Field::new(
-            t("Restraint strength", "克制强度"),
-            real_context_restraint_label(&settings.reply_restraint_strength).to_string(),
-        )
-        .choices(&[t("Light", "轻度"), t("Medium", "中度"), t("Strong", "强烈")])];
-        if !run_form(ui, t(" RESTRAINT STRENGTH ", " 克制强度 "), &mut fields)? {
-            return Ok(());
-        }
-        let mut candidate = settings.clone();
-        let parsed = (|| -> std::result::Result<(), String> {
-            candidate.reply_restraint_strength = real_context_restraint_value(&fields[0].value)
-                .ok_or_else(|| t("Invalid restraint strength.", "克制强度无效。").to_string())?
-                .to_string();
-            candidate.validate().map_err(|error| error.to_string())
-        })();
-        match parsed {
-            Ok(()) => {
-                *settings = candidate;
-                return Ok(());
-            }
-            Err(error) => message(ui, &error)?,
-        }
-    }
 }
 
 pub(in crate::config_tui) fn edit_real_context_judge_advanced(
@@ -767,22 +707,5 @@ pub(in crate::config_tui) fn edit_real_context_moderation(
             )?,
             _ => {}
         }
-    }
-}
-
-pub(in crate::config_tui) fn real_context_restraint_label(value: &str) -> &'static str {
-    match value {
-        "light" => t("Light", "轻度"),
-        "strong" => t("Strong", "强烈"),
-        _ => t("Medium", "中度"),
-    }
-}
-
-pub(in crate::config_tui) fn real_context_restraint_value(value: &str) -> Option<&'static str> {
-    match value.trim() {
-        "light" | "Light" | "轻度" => Some("light"),
-        "medium" | "Medium" | "中度" => Some("medium"),
-        "strong" | "Strong" | "强烈" => Some("strong"),
-        _ => None,
     }
 }

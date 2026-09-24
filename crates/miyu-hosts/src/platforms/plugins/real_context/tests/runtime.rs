@@ -41,9 +41,10 @@ fn active_reply_decision_log_is_structured_for_humans() {
         emotion_adjustment: 0.0,
         continuation_adjustment: 0.05,
         system_adjustment: 0.0,
-        reply_pressure: 1.0,
-        restraint_threshold: 0.09,
-        short_message_threshold_adjustment: 0.01,
+        reply_pressure: 3.0,
+        restraint_threshold: 0.285,
+        to_bot: Some(false),
+        addressed: false,
         after_speaking_score_adjustment: 0.15,
         moderation: &moderation,
         reason: "当前消息延续了上一轮问题。",
@@ -64,8 +65,10 @@ fn active_reply_decision_log_is_structured_for_humans() {
     assert!(rendered.contains("好感度调整：熟人 +0.030"));
     assert!(rendered.contains("自然续聊调整：+0.050"));
     assert!(!rendered.contains("直接触发调整"));
-    assert!(rendered.contains("冷静机制调整：阈值 +0.090（近期发言量 1.00）"));
-    assert!(rendered.contains("短句阈值调整：+0.010"));
+    assert!(rendered.contains("冷静机制调整：阈值 +0.285（近期发言量 3.00）"));
+    assert!(rendered.contains("指向机器人：否"));
+    assert!(!rendered.contains("豁免"));
+    assert!(!rendered.contains("短句阈值调整"));
     assert!(rendered.contains("刚说过话加分：+0.150"));
     assert!(!rendered.contains("安全初判"));
     assert!(rendered.ends_with("判断理由：当前消息延续了上一轮问题。"));
@@ -78,6 +81,29 @@ fn active_reply_decision_log_is_structured_for_humans() {
     assert!(english.contains("Conversation: group 20000 (bot QQ 10000)"));
     assert!(english.contains("Affection adjustment: 熟人 +0.030"));
     assert!(english.ends_with("Reason: 当前消息延续了上一轮问题。"));
+
+    // 判官认定指向机器人:冷静豁免,但要写明,免得以为冷静没生效。
+    let aimed = ActiveReplyDecisionLog {
+        to_bot: Some(true),
+        restraint_threshold: 0.0,
+        ..log
+    };
+    let rendered = format_active_reply_decision_log_for(&aimed, Locale::Zh);
+    assert!(rendered.contains("指向机器人：是"));
+    assert!(rendered.contains("冷静机制调整：豁免（指向机器人，近期发言量 3.00）"));
+    assert!(!rendered.contains("阈值 +"));
+
+    // 被 @ 但判官说没指向机器人(@ 一串人约别人):@ 优先照样豁免,理由写「直接触发」。
+    let mentioned = ActiveReplyDecisionLog {
+        to_bot: Some(false),
+        addressed: true,
+        restraint_threshold: 0.0,
+        ..log
+    };
+    let rendered = format_active_reply_decision_log_for(&mentioned, Locale::Zh);
+    assert!(rendered.contains("指向机器人：否"));
+    assert!(rendered.contains("冷静机制调整：豁免（直接触发，近期发言量 3.00）"));
+    assert!(!rendered.contains("豁免（指向机器人"));
 }
 
 #[test]

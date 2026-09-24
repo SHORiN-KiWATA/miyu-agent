@@ -174,6 +174,16 @@ impl TriggerConditions {
         self.moderation.then_some(TriggerKind::Moderation)
     }
 
+    /// 平台层面确定是冲她来的:被 @ / 回复她 / 直呼,或覆盖顶替了这样一条。
+    /// 直触发加分与冷静豁免(09-24:被 @ 不受冷静影响)共用这一个判据。
+    pub(in crate::platforms::plugins::real_context) fn addressed(self) -> bool {
+        self.direct
+            || matches!(
+                self.inherited,
+                Some(TriggerKind::Direct | TriggerKind::Supersede)
+            )
+    }
+
     /// 这一次判断只做违规初判(不花社交那套评分,提示词也换一套)。
     pub(in crate::platforms::plugins::real_context) fn moderation_only(self) -> bool {
         self.primary() == Some(TriggerKind::Moderation)
