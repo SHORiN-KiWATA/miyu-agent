@@ -43,8 +43,17 @@ def ui_login(page, username=ADMIN_USERNAME, password=ADMIN_PASSWORD, timeout=400
         page.wait_for_selector("#loginForm:not([hidden])", timeout=timeout)
     except Exception:
         return False
-    page.fill("#loginUsername", username)
-    page.fill("#loginPassword", password)
+    # 登录页出来的下一帧前端会把焦点挪到密码框（登出之后那条路）。Playwright 的 fill 是
+    # 先聚焦再往「当前焦点」里打字，焦点赶在两步之间被挪走，用户名就打进了密码框、
+    # 又被下一步覆盖，提交时报「请输入用户名」（09-24 multi-user/ui 撞到）。
+    # 填完核对一遍，不对就重填。
+    for _ in range(3):
+        page.fill("#loginUsername", username)
+        page.fill("#loginPassword", password)
+        if (page.input_value("#loginUsername") == username
+                and page.input_value("#loginPassword") == password):
+            break
+        page.wait_for_timeout(200)
     page.click("#loginSubmit")
     page.wait_for_function("() => !document.body.classList.contains('is-blocked')", timeout=20000)
     return True

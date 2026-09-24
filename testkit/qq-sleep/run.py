@@ -27,9 +27,11 @@ from pathlib import Path
 for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
     del os.environ[_herdr_key]
 
-REPO = Path("/home/shorin/Documents/github/Miyu")
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "testkit" / "webui-fixes"))
+import authlib  # noqa: E402
 BIN = Path(os.environ["BIN"])
-OUT = Path(os.environ.get("OUT", "~/.cache/miyu-sleep-e2e")).expanduser()
+OUT = Path(os.environ.get("OUT", "/tmp/miyu-sleep-e2e")).expanduser()
 HOME = OUT / "home"
 RUNTIME = OUT / "runtime"
 PORT = int(os.environ.get("PORT", "18523"))
@@ -89,7 +91,7 @@ def api(method, path, body=None):
     req = urllib.request.Request(BASE + path, data=data, method=method,
                                  headers={"content-type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with authlib.OPENER.open(req, timeout=30) as resp:
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as error:
@@ -147,7 +149,9 @@ def main():
         assert wait_http(f"http://127.0.0.1:{STUB_PORT}/v1/models"), "stub not up"
         daemon = subprocess.Popen([str(BIN), "__daemon", "--port", str(PORT)], env=ENV, cwd=str(HOME),
                                   stdout=(OUT / "daemon.log").open("w"), stderr=subprocess.STDOUT)
-        assert wait_http(f"{BASE}/api/config"), "daemon not up"
+        # 09-11 起 WebUI 要登录：/api/config 不登录一直是 401，等它等于没等。
+        assert wait_http(f"{BASE}/api/health"), "daemon not up"
+        authlib.bootstrap(BASE)
         time.sleep(1.5)
         ws = fake.WS.connect("")
         threading.Thread(target=pump, args=(ws,), daemon=True).start()
@@ -196,6 +200,7 @@ def main():
             # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
             page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="zh-CN")
             page.goto(BASE, wait_until="networkidle")
+            authlib.ui_login(page)
             page.click("#sidebarSettingsButton")
             page.wait_for_selector('[data-console-panel="settings"]:not([hidden])')
             page.wait_for_function("() => document.getElementById('settingsStatus')?.textContent?.includes('配置已同步')", timeout=15000)

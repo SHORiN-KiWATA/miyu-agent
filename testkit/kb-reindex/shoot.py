@@ -16,6 +16,9 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "webui-fixes"))
+import authlib  # noqa: E402  管理员由 run.py 建好了，这里只在页面上登录
+
 REPO = Path(__file__).resolve().parents[2]
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18436"
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/miyu-kb-reindex")
@@ -113,6 +116,7 @@ def main():
         # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
         page = browser.new_page(viewport={"width": 1440, "height": 950}, locale="zh-CN")
         page.goto(BASE, wait_until="networkidle")
+        authlib.ui_login(page)
         page.click("#sidebarSettingsButton")
         page.wait_for_selector('[data-console-panel="settings"]:not([hidden])')
         page.click('.con-rail-item[data-console-panel="kb"]')

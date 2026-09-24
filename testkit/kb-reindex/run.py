@@ -16,7 +16,7 @@
   4. 收尾断言:未索引归零、没有失败
 
 `--shoot` 再用 playwright 走一遍浏览器侧(拖放 → 进度条 → 完成),截图落在
-`~/.cache/miyu-kb-reindex/`。
+`/tmp/miyu-kb-reindex/shots/`。
 
 前置:`cargo build`(web 静态资源编进二进制)、本机装了 onnxruntime 与内置
 bge-small-zh 模型(`miyu embed status` 能探通)。端口默认 18436,别碰 8300。
@@ -41,11 +41,13 @@ for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
     del os.environ[_herdr_key]
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "testkit" / "webui-fixes"))
+import authlib  # noqa: E402  09-11 起 WebUI 的接口都要登录
 BIN = Path(os.environ.get("MIYU_BIN", REPO / "target" / "debug" / "miyu"))
 HOME = Path(os.environ.get("MIYU_HOME", "/tmp/miyu-kb-reindex/home"))
 LIBRARY = Path(os.environ.get("MIYU_KBR_LIB", "/tmp/miyu-kb-reindex/library"))
 RUNTIME = "/tmp/mx-kbr"
-SHOTS = Path(os.environ.get("MIYU_KBR_SHOTS", Path.home() / ".cache" / "miyu-kb-reindex"))
+SHOTS = Path(os.environ.get("MIYU_KBR_SHOTS", "/tmp/miyu-kb-reindex/shots"))
 
 
 def api(base, path, body=None, method="GET", timeout=120):
@@ -54,7 +56,7 @@ def api(base, path, body=None, method="GET", timeout=120):
         base + path, data=data, method=method,
         headers={"Content-Type": "application/json", "Origin": base},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with authlib.OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read() or b"null")
 
 
@@ -64,7 +66,7 @@ def upload(base, name, payload):
         data=payload, method="POST",
         headers={"Content-Type": "application/octet-stream", "Origin": base},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with authlib.OPENER.open(request, timeout=60) as response:
         return json.loads(response.read())
 
 
@@ -179,6 +181,7 @@ def main():
         if not wait_http(f"{base}/api/config"):
             print("! daemon 没起来", file=sys.stderr)
             return 2
+        authlib.bootstrap(base)
         print(f"· daemon {base}(home={HOME})")
         overview, status = snapshot(base)
         print(f"· 内置库就位:{overview['file_count']} 个文件,语义块 {overview['semantic_chunks']}"

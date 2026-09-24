@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """多用户浏览器走查:登录页(用户名+密码/注册表单)、成员看不到管理面板、账号页。
 
-BIN=<miyu> python3 testkit/multi-user/ui.py     # 截图落 ~/.cache/miyu-multi-user/ui-*.png
+BIN=<miyu> python3 testkit/multi-user/ui.py     # 截图落 /tmp/miyu-multi-user-ui/ui-*.png
 """
 import json
 import os
@@ -21,10 +21,12 @@ for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "webui-fixes"))
+import authlib  # noqa: E402
 import e2e  # noqa: E402  复用隔离 daemon 的准备
 
 BIN = Path(os.environ["BIN"]).expanduser()
-OUT = Path(os.environ.get("OUT", "~/.cache/miyu-multi-user")).expanduser()
+OUT = Path(os.environ.get("OUT", "/tmp/miyu-multi-user-ui")).expanduser()
 PORT = int(os.environ.get("PORT", "18492"))
 STUB_PORT = int(os.environ.get("STUB_PORT", "18496"))
 BASE = f"http://127.0.0.1:{PORT}"
@@ -154,10 +156,9 @@ def main():
             page.wait_for_selector("#loginForm:not([hidden])", timeout=10000)
             check("退出登录回到登录页", True)
 
-            # 管理员:账号页有邀请码与成员表
-            page.fill("#loginUsername", "admin")
-            page.fill("#loginPassword", e2e.ADMIN_PASSWORD)
-            page.click("#loginSubmit")
+            # 管理员:账号页有邀请码与成员表。登录走共用的 ui_login：登出后焦点会被挪到
+            # 密码框，直接 fill 偶尔把用户名打进密码框（09-24），它填完会核对。
+            authlib.ui_login(page, "admin", e2e.ADMIN_PASSWORD, timeout=10000)
             try:
                 page.wait_for_selector("#consoleButton", timeout=40000)
             except Exception:

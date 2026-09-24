@@ -18,6 +18,9 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "webui-fixes"))
+import authlib  # noqa: E402  09-11 起 WebUI 要登录，设置按钮只给登录后的管理员看
+
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18477"
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/miyu-kb-drop")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -164,15 +167,19 @@ def toast(page):
 
 TEXT = "# 走查\n\n知识库拖放上传的样本文件。\n"
 
+authlib.bootstrap(BASE)  # 建管理员；已经建过就只是登录，重复调用无害
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     # 界面按中文：判定比的是中文界面字，无头 Chromium 默认英文（09-23 网页双语起）。
     page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="zh-CN")
     page.on("console", note_console)
     page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
-    page.on("response", lambda r: http_errors.append((r.status, r.url)) if r.status >= 400 else None)
 
     page.goto(BASE, wait_until="networkidle")
+    authlib.ui_login(page)
+    # 登录之后才开始记：登录页那几个 401 是预期的，不是这条走查要抓的错。
+    page.on("response", lambda r: http_errors.append((r.status, r.url)) if r.status >= 400 else None)
     page.click("#sidebarSettingsButton")
     page.wait_for_selector('[data-console-panel="settings"]:not([hidden])')
     page.click('.con-rail-item[data-console-panel="kb"]')

@@ -35,7 +35,7 @@ BIN = Path(os.environ.get("MIYU_BIN", REPO / "target" / "debug" / "miyu"))
 HOME = Path(os.environ.get("MIYU_HOME", "/tmp/miyu-kb-drop/home"))
 RUNTIME = "/tmp/mx-kbd"
 PORT = int(os.environ.get("MIYU_KBD_PORT", "18477"))
-SHOTS = Path(os.environ.get("MIYU_KBD_SHOTS", Path.home() / ".cache" / "miyu-kb-drop"))
+SHOTS = Path(os.environ.get("MIYU_KBD_SHOTS", "/tmp/miyu-kb-drop/shots"))
 BASE = f"http://127.0.0.1:{PORT}"
 ENV = dict(os.environ, MIYU_HOME=str(HOME), XDG_RUNTIME_DIR=RUNTIME)
 
