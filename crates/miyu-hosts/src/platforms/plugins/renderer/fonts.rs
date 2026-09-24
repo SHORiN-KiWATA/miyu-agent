@@ -9,7 +9,9 @@ pub(in crate::platforms::plugins::renderer) const MAX_CACHED_GLYPHS: usize = 204
 
 pub(in crate::platforms::plugins::renderer) const MAX_CUSTOM_FONT_FILES: usize = 8;
 
-pub(in crate::platforms::plugins::renderer) const DEFAULT_BODY_FONT: &str = "Noto Sans CJK SC";
+// 正文和图里的字是同一套打包字体，名字只写在 `diagram_style` 一处。
+pub(in crate::platforms::plugins::renderer) const DEFAULT_BODY_FONT: &str =
+    crate::render::diagram_style::BUNDLED_CJK_FAMILY;
 
 // 代码字体:打包的 JetBrains Mono(拉丁等宽,OFL);CJK 字形经 FontSystem
 // 回退落到 NotoSansCJK。此前指向 "Noto Sans Mono CJK SC"——该字体从未被
@@ -18,7 +20,8 @@ pub(in crate::platforms::plugins::renderer) const DEFAULT_CODE_FONT: &str = "Jet
 
 pub(in crate::platforms::plugins::renderer) const DEFAULT_EMOJI_FONT: &str = "Noto Color Emoji";
 
-pub(in crate::platforms::plugins::renderer) const CJK_FONT_FILE: &str = "NotoSansCJK-Regular.ttc";
+pub(in crate::platforms::plugins::renderer) const CJK_FONT_FILE: &str =
+    crate::render::diagram_style::BUNDLED_CJK_FILE;
 
 pub(in crate::platforms::plugins::renderer) const CODE_FONT_FILE: &str =
     "JetBrainsMono-Regular.ttf";

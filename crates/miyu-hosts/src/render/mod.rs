@@ -2,6 +2,7 @@ mod agent_events;
 pub mod blocks;
 mod code;
 mod command;
+pub(crate) mod diagram_style;
 mod link;
 mod markdown;
 pub(crate) mod math;

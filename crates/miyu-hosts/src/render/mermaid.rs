@@ -39,9 +39,10 @@
 //! **认不出来就退回代码块**:终端不认图片协议、语法有硬错误、图型不支持,统统
 //! 返回 `None`,调用方照常打那个带语法高亮的围栏。永不阻断输出。
 
+use crate::render::diagram_style;
 use crate::render::t;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 /// 源码上限。渲染是同步的,挡住"把整本书塞进围栏"只能挡在入口:一张正常的图
 /// 几 KB,这里留两个数量级。(测过一次"渲染完再看花了多久"的写法——活儿已经干完
@@ -60,7 +61,8 @@ const CACHE_ENTRIES: usize = 128;
 
 /// 缓存键的版本。渲染口径一变(尺寸算法、底色、光栅化参数)就得换,否则读到的是
 /// 按老口径画的图。
-const CACHE_VERSION: u32 = 1;
+/// 2（09-24）：终端出图改用打包的中文字体，按老字体画的图作废。
+const CACHE_VERSION: u32 = 2;
 
 /// 这个终端能怎么出图。**在渲染之前就得问清楚**:两条路都走不通时直接退回代码
 /// 块,别白渲染一张再扔掉(管道、日志、非 kitty 又没装 chafa 的场合全是这样)。
@@ -88,6 +90,19 @@ pub(crate) fn is_mermaid_lang(lang: &str) -> bool {
 /// 以接受的;而终端那条路本来就有按「源码+终端几何」落盘的位图缓存,轮不到这儿
 /// 操心。
 pub fn render_svg(source: &str) -> Result<String, String> {
+    render_svg_styled(source, SvgStyle::Web)
+}
+
+/// 同一张图三条路出的 SVG 不一样：网页交给浏览器画，保持渲染器默认；终端和长图出
+/// 位图，换成打包的中文字体；长图再加自己的版式（见 `diagram_style`）。
+#[derive(Clone, Copy)]
+pub(crate) enum SvgStyle {
+    Web,
+    Terminal,
+    Image,
+}
+
+pub(crate) fn render_svg_styled(source: &str, style: SvgStyle) -> Result<String, String> {
     let source = source.trim();
     if source.is_empty() {
         return Err("empty mermaid source".to_string());
@@ -95,11 +110,29 @@ pub fn render_svg(source: &str) -> Result<String, String> {
     if source.len() > MAX_SOURCE {
         return Err(format!("mermaid source exceeds {MAX_SOURCE} bytes"));
     }
-    let key = blake3::hash(source.as_bytes());
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&[style as u8]);
+    hasher.update(source.as_bytes());
+    let key = hasher.finalize();
     if let Some(svg) = svg_cache_get(key.as_bytes()) {
         return Ok(svg);
     }
-    let svg = mermaid_rs_renderer::render(source).map_err(|error| error.to_string())?;
+    let layout = match style {
+        SvgStyle::Web => None,
+        SvgStyle::Terminal => Some(mermaid_rs_renderer::LayoutConfig::default()),
+        SvgStyle::Image => Some(diagram_style::image_layout()),
+    };
+    let svg = match layout {
+        None => mermaid_rs_renderer::render(source),
+        Some(layout) => mermaid_rs_renderer::render_with_options(
+            source,
+            mermaid_rs_renderer::RenderOptions {
+                theme: diagram_style::raster_theme(),
+                layout,
+            },
+        ),
+    }
+    .map_err(|error| error.to_string())?;
     svg_cache_put(*key.as_bytes(), &svg);
     Ok(svg)
 }
@@ -256,7 +289,7 @@ fn diagram_png(source: &str, cell_w: usize, cell_h: usize, max_cols: usize) -> O
             }
         }
     }
-    let svg = render_svg(source).ok()?;
+    let svg = render_svg_styled(source, SvgStyle::Terminal).ok()?;
     let png = rasterize(&svg, cell_w, cell_h, max_cols)?;
     if let Some(path) = cached.as_deref() {
         if let Some(dir) = path.parent() {
@@ -363,7 +396,8 @@ fn prune(dir: &Path) {
 ///
 /// 终端那条(`rasterize`)按格子定尺；成图渲染器按像素，而且**高度也要有上限**：
 /// 一张不能分页的图比整页还高的话，分页器只能把它整块丢到下一页，无限循环。
-/// 等比只缩不放：放大不会凭空长出细节。
+/// 比例按图上的字定到 `IMAGE_TEXT_PX`（SVG 是矢量，放大不糊），框只当上限。原先
+/// 一律铺满框：小图的字比正文还大，宽图只剩 10px（用户 09-24）。
 ///
 /// 把 SVG 那块**整幅底色矩形**改成给定的颜色。
 ///
@@ -374,6 +408,14 @@ fn prune(dir: &Path) {
 /// **只动这一块**:节点自己的浅色填充(`#F8FAFC` 一类)是图的一部分,改了图就不是
 /// 原来那张了。判据是「紧跟在 `<svg …>` 后面、且 x/y 都是 0」——不满足就原样返回,
 /// 宁可保持白底也不要乱改别人的图元。
+/// 标签里某个属性的值（前面得是空白，免得 `x` 认到 `rx` 上）。
+fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let len = tag[start..].find('"')?;
+    Some(&tag[start..start + len])
+}
+
 pub(crate) fn recolour_backdrop(svg: &str, replacement: &str) -> String {
     let Some(start) = svg.find("<rect") else {
         return svg.to_string();
@@ -390,7 +432,14 @@ pub(crate) fn recolour_backdrop(svg: &str, replacement: &str) -> String {
     };
     let end = start + len + 2;
     let rect = &svg[start..end];
-    if !rect.contains("x=\"0\"") || !rect.contains("y=\"0\"") {
+    // 思维导图那块写的是 `x="0.000027656555" y="-0.000002861023"` 这种浮点零头，
+    // 死认 `x="0"` 就放过了它，长图里的导图一直是白底（用户 09-24 截图）。
+    let at_origin = |attr: &str| {
+        attr_value(rect, attr)
+            .and_then(|value| value.parse::<f32>().ok())
+            .is_some_and(|value| value.abs() < 0.5)
+    };
+    if !at_origin("x") || !at_origin("y") {
         return svg.to_string();
     }
     let Some(fill_at) = rect.find("fill=\"") else {
@@ -449,10 +498,10 @@ pub(crate) fn render_png_in_box(
         "#{:02X}{:02X}{:02X}",
         background[0], background[1], background[2]
     );
-    let svg = recolour_backdrop(&render_svg(source).ok()?, &backdrop);
+    let svg = recolour_backdrop(&render_svg_styled(source, SvgStyle::Image).ok()?, &backdrop);
     let options = usvg::Options {
-        font_family: default_font_family(),
-        fontdb: fonts(),
+        font_family: diagram_style::BUNDLED_CJK_FAMILY.to_string(),
+        fontdb: diagram_style::raster_fonts(),
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_str(&svg, &options).ok()?;
@@ -460,7 +509,10 @@ pub(crate) fn render_png_in_box(
     if natural.width() <= 0.0 || natural.height() <= 0.0 {
         return None;
     }
-    let scale = (max_width as f32 / natural.width()).min(max_height as f32 / natural.height());
+    let text_scale = diagram_style::IMAGE_TEXT_PX / diagram_style::raster_theme().font_size;
+    let scale = text_scale
+        .min(max_width as f32 / natural.width())
+        .min(max_height as f32 / natural.height());
     let width = (natural.width() * scale).round().max(1.0) as u32;
     let height = (natural.height() * scale).round().max(1.0) as u32;
     let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
@@ -490,8 +542,8 @@ fn rasterize(svg: &str, cell_w: usize, cell_h: usize, max_cols: usize) -> Option
     use resvg::usvg;
 
     let options = usvg::Options {
-        font_family: default_font_family(),
-        fontdb: fonts(),
+        font_family: diagram_style::BUNDLED_CJK_FAMILY.to_string(),
+        fontdb: diagram_style::raster_fonts(),
         ..usvg::Options::default()
     };
     let backdrop = format!(
@@ -521,31 +573,6 @@ fn rasterize(svg: &str, cell_w: usize, cell_h: usize, max_cols: usize) -> Option
         &mut pixmap.as_mut(),
     );
     pixmap.encode_png().ok()
-}
-
-/// 系统字体库只扫一次。`mermaid_rs_renderer` 那边是每次调用重扫一遍——实测一张
-/// 三节点的小图光 PNG 那一段就要 25ms,基本都花在这儿。
-fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
-    static DB: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
-    DB.get_or_init(|| {
-        let mut db = resvg::usvg::fontdb::Database::new();
-        db.load_system_fonts();
-        Arc::new(db)
-    })
-    .clone()
-}
-
-/// SVG 里没写 `font-family` 时用哪个。取渲染器主题里的第一个族,和它自己出图时
-/// 的口径一致。
-fn default_font_family() -> String {
-    let theme = mermaid_rs_renderer::Theme::mermaid_default();
-    theme
-        .font_family
-        .split(',')
-        .next()
-        .map(|family| family.trim().trim_matches(['"', '\'']).to_string())
-        .filter(|family| !family.is_empty())
-        .unwrap_or_else(|| "sans-serif".to_string())
 }
 
 /// 图占多少格:按自然像素尺寸换算,超宽等比缩,再压一道防病态的行数天花板。
@@ -867,7 +894,7 @@ mod tests {
         ];
 
         let started = std::time::Instant::now();
-        let db = fonts();
+        let db = diagram_style::raster_fonts();
         println!(
             "字体库 {:.0}ms（{} 个 face，每进程一次；冷页缓存下会到一秒半）\n",
             started.elapsed().as_secs_f64() * 1000.0,
