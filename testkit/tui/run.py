@@ -70,8 +70,14 @@ if ENV.get("TERM", "") in ("", "dumb", "linux"):
 ENV.setdefault("COLORTERM", "truecolor")
 
 PROMPT = "走查一句"
-# 桩模型要改的那个文件。Add File 语义，跑之前得先不存在。
-EDIT_FILE = Path("/tmp/miyu-tui-smoke/walk.txt")
+# 桩模型要改的那个文件。Add File 语义，跑之前得先不存在。跟着沙箱走（默认仍是
+# /tmp/miyu-tui-smoke/walk.txt）：写死一个路径的话，两个会话同时跑走查，后跑的那个
+# 改文件时撞上「file already exists」，item12/22 平白变红（09-24）。
+EDIT_FILE = HOME.parent / "walk.txt"
+# item24 重开后按名字切回主会话用（见那一段）。
+MAIN_SESSION = "走查主会话"
+# 回复途中被取消的那两轮：思考正文截在哪看取消落在哪一刻，不能拿来验「点开是全文」。
+CANCELLED_PROMPTS = ("取消我", "再取消一次")
 # 思考正文。要够长——item06 得趁"还在想"的时候点开，看它会不会跟着刷新；
 # 默认那句 35 个字，0.02s 一块地喂完不到三百毫秒，根本来不及点。
 LONG_REASONING = (
@@ -1112,10 +1118,16 @@ def main():
 
         # 8. 点击展开（两层）：`Worked for …` 点开是时间线，时间线里那一项
         #    再点开才是思考全文；各点一次收回去。
+        #    点的是最后一个**正常跑完**的那一轮：被取消的那两轮排在它后面，它们
+        #    的思考截在哪一个字看 Esc 落在哪一刻，全文验不出来（09-24 偶发红）。
         screen = render(bytes(sink))
         head = None
+        prompt = ""
         for index, line in enumerate(screen):
-            if is_fold_summary(line):
+            stripped = line.strip()
+            if stripped.startswith(BAR) and stripped[1:].strip():
+                prompt = stripped[1:].strip()
+            if is_fold_summary(line) and prompt not in CANCELLED_PROMPTS:
                 head = index
         if head is not None:
             click(master, sink, 3, head)
@@ -1606,6 +1618,13 @@ def main():
             os.write(master, b"\x7f")
         settle(master, sink)
 
+        # item24 重开之后要切回这一条：先起个独一份的名字，切回时按名字找。
+        os.write(master, f"/rename {MAIN_SESSION}".encode())
+        drain_until(master, sink, f"/rename {MAIN_SESSION}", 3.0)
+        os.write(master, b"\r")
+        drain_until(master, sink, "已重命名", 5.0)
+        settle(master, sink)
+
         # 12. Ctrl+D 退出，终端要还回来
         os.write(master, b"\x04")
         drain(master, 2.0, sink)
@@ -1621,8 +1640,10 @@ def main():
         again = bytearray()
         reset_view()
         # 09-20 起 `miyu` 启动开的是**新会话**（用户拍板），所以重开之后屏幕
-        # 上什么都没有——要验回放就得先用 `/session` 切回刚才那条。
-        # 「刚才那条」= 列表里第一条不叫「新会话」的（新开的那条还没命名）。
+        # 上什么都没有——要验回放就得先用 `/session` 切回刚才那条。按名字切，
+        # 不走选择器：跑满一整套之后，重开的选择器偶发按第一个 j 就收掉、没切成
+        # （09-24，单独复现不出来；选择器本身由 session_picker.py 验），item01/24
+        # 跟着随机红。
         #
         # 等大厅**真的画出来**再敲，不能只等「安静 1 秒」：退出后马上重开，新进程
         # 要 0.7–1.5 秒才吐第一个字节，那一秒的安静里它还没进 raw 模式，敲进去的
@@ -1631,15 +1652,8 @@ def main():
         deadline = time.time() + 20.0
         while time.time() < deadline and not lobby(render(bytes(again))):
             settle(master, again, quiet=0.2, timeout=1.0)
-        os.write(master, b"/session\r")
-        settle(master, again, quiet=0.8, timeout=20.0)
-        for _ in range(12):
-            rows = render(bytes(again))
-            picked = next((line for line in rows if "›" in line and " · " in line), "")
-            if picked and "新会话" not in picked and "New session" not in picked:
-                break
-            os.write(master, b"j")
-            settle(master, again, quiet=0.25, timeout=5.0)
+        os.write(master, f"/session {MAIN_SESSION}".encode())
+        drain_until(master, again, f"/session {MAIN_SESSION}", 3.0)
         os.write(master, b"\r")
         # 重开要先连 daemon 再查库回放，中间可能安静好几秒：等到正文真出现。
         deadline = time.time() + 60.0
