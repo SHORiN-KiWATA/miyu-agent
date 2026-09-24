@@ -24,6 +24,33 @@ use crate::agent::*;
 /// by using this prefix (reply_processor's long-reply conversion notice).
 pub(in crate::agent) const STANDING_ADVISORY_PREFIX: &str = "[SystemInfo:";
 
+/// 状态快照类的回合尾巴块:内容是「此刻的状态」(网页会话的 artifact 清单)。和对话里
+/// **最近一份**同名快照逐字节相同就不再重发——模型眼前最近那份就是现状。比最近一份而不是
+/// 任意一份:清单 A → B → A 时历史里确实有 A,但模型最近看到的是 B,A 必须重发。
+/// 压缩把旧快照折进摘要后看不见了,自然会再发一次。
+pub(in crate::agent) const STATE_SNAPSHOT_TAGS: &[&str] = &[crate::tools::ARTIFACT_WORKSPACE_TAG];
+
+/// 请求里最近一份以 `tag` 开头的快照块(整块,到收尾标签为止)。块可能和别的尾巴块拼在同一条
+/// user 消息里,所以在正文里按标签找,不要求它在消息开头。
+pub(in crate::agent) fn latest_visible_snapshot<'a>(
+    messages: &'a [ChatMessage],
+    tag: &str,
+) -> Option<&'a str> {
+    let close = format!("</{}", tag.trim_start_matches('<'));
+    messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "user")
+        .find_map(|message| {
+            let Some(ChatContent::Text(text)) = message.content.as_ref() else {
+                return None;
+            };
+            let start = text.rfind(tag)?;
+            let end = start + text[start..].find(close.as_str())? + close.len();
+            Some(&text[start..end])
+        })
+}
+
 /// True when `block`'s exact text already appears inside a user-role message
 /// of the request being built (a fossilized turn tail replayed from an earlier
 /// turn). Stops standing notices from re-fossilizing identical bytes every

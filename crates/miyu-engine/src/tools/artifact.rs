@@ -9,6 +9,31 @@ use std::path::{Component, Path};
 
 pub(super) const MAX_ARTIFACT_BYTES: usize = 20 * 1024 * 1024;
 
+/// 网页会话系统侧的 artifact 用法(每请求组装、不化石,AGENTS §1.4)。点名的工具必须在网页
+/// 会话的工具面上真实存在:08-22 工具面统一删掉 create_artifact / read_artifact 之后,这里照旧
+/// 让模型调它们,一个月没人发现(守卫:`webui_artifact_prompts_name_only_registered_tools`)。
+pub const WEBUI_ARTIFACT_POLICY: &str = "<artifact-policy>\n\
+You are working in the Miyu WebUI and have artifact presentation tools.\n\
+- When the user explicitly asks for a report, document, web page, table, data file, standalone code file, or another downloadable deliverable, you must create or present an artifact.\n\
+- For text deliverables you write yourself, prefer the artifact tool. The file name must carry the correct extension.\n\
+- For files already produced by commands or other tools, call present_artifact.\n\
+- The latest <artifact-workspace> block lists this session's artifact files. Do not glob the managed directory or guess ~/.miyu paths.\n\
+- To update an existing artifact, read it first with read and the path artifact:<name>. Then make targeted edits with the artifact tool and the bare file name. Do not rewrite the whole file unless the user explicitly asks for a full rewrite.\n\
+- Publish only after the content is complete and self-checked. Do not publish ordinary project source edits, config changes, test fixtures, or short answers as artifacts.\n\
+- The artifact is part of the answer. After publishing succeeds, tell the user briefly in text.\n\
+</artifact-policy>";
+
+/// 网页会话回合尾巴里 artifact 清单块的开头标签。它同时是回合尾巴去重的钥匙
+/// (`agent::STATE_SNAPSHOT_TAGS`):清单与对话里最近一份相同就不再重发。所以块只在
+/// 这里拼,宿主只管调用——标签两处各写一份,改了一处去重就悄悄失效。
+pub const ARTIFACT_WORKSPACE_TAG: &str = "<artifact-workspace>";
+
+/// 网页会话每轮附在回合尾巴里的 artifact 清单块。清单随 artifact 增删而变,所以走尾巴。
+/// 块里只陈述清单这个事实:尾巴会化石回放,用法写在 system 侧的 `WEBUI_ARTIFACT_POLICY`。
+pub fn webui_artifact_workspace_block(manifest: &str) -> String {
+    format!("{ARTIFACT_WORKSPACE_TAG}\n{manifest}\n</artifact-workspace>")
+}
+
 /// artifact 库根:成员回合落在自己家里(`home/<user>/artifacts`),与 KB 的
 /// `kb_root_for` 同一套口径——`MiyuPaths::artifacts_dir()` 是 admin_owned,永远指
 /// 管理员的家,成员用它就会去读写管理员的 artifacts(09-11 实测:成员读
@@ -170,6 +195,37 @@ fn expand_path(value: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 网页会话的 artifact 提示词只点名网页会话工具面上真有的工具。snake_case 的词都当
+    /// 工具名查;`artifact`、`read` 这类单词名另外点名核对。
+    #[test]
+    fn webui_artifact_prompts_name_only_registered_tools() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = super::super::tests::test_paths(temp.path());
+        let config = miyu_base::config::AppConfig::default();
+        let mut registry = super::super::build_tool_registry(
+            &config,
+            &paths,
+            miyu_base::config::PersonaLane::Active,
+            false,
+        )
+        .unwrap();
+        super::super::register_webui_artifact_tools(&mut registry, &config, &paths, "sess_test");
+        let prompts = format!(
+            "{WEBUI_ARTIFACT_POLICY}\n{}",
+            webui_artifact_workspace_block("(no managed artifacts yet)")
+        );
+        let named = prompts
+            .split(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+            .filter(|word| word.contains('_') && !word.starts_with('_') && !word.ends_with('_'))
+            .chain(["artifact", "read"]);
+        for name in named {
+            assert!(
+                registry.contains(name),
+                "prompt names a missing tool: {name}"
+            );
+        }
+    }
 
     #[test]
     fn managed_artifact_is_private_and_published() {

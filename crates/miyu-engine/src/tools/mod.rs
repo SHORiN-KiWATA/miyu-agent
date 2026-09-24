@@ -311,6 +311,8 @@ pub fn webui_artifact_manifest(
     artifact::managed_manifest(&artifact::artifacts_root(config, paths), session_id)
 }
 
+pub use artifact::{webui_artifact_workspace_block, ARTIFACT_WORKSPACE_TAG, WEBUI_ARTIFACT_POLICY};
+
 pub fn rescope_platform_memory_tools(
     registry: &mut ToolRegistry,
     config: &AppConfig,

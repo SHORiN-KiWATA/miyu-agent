@@ -607,3 +607,37 @@ fn between_round_messages_are_kept_verbatim_except_media() {
         serde_json::from_value(json!({"assistant_content": "", "calls": []})).unwrap();
     assert!(legacy.after.is_empty() && !legacy.interleaved);
 }
+
+fn artifact_block(manifest: &str) -> String {
+    crate::tools::webui_artifact_workspace_block(manifest)
+}
+
+/// 网页会话每一轮都在回合尾巴里附一份 artifact 清单。清单没变、对话里最近一份就是它时不再
+/// 重发——不然每轮都往上下文里多塞一份一模一样的清单,全是没命中的新内容,还一份份化石下去。
+/// 比的是「最近一份」:清单 A → B → A 时,模型眼前最近的是 B,A 必须重发。
+#[tokio::test]
+async fn an_unchanged_artifact_manifest_is_not_sent_again() {
+    let h = harness().await;
+    let a = artifact_block("(no managed artifacts yet)");
+    let b = artifact_block("Managed artifact files in this session:\n- report.md (120 bytes)");
+    miyu_base::workspace::with_workspace(h.paths.root_dir.clone(), async {
+        for (index, block) in [&a, &a, &b, &a].into_iter().enumerate() {
+            h.script(vec![final_step("done")]);
+            let mut agent = h.agent();
+            agent.set_turn_system_context(vec![block.clone()]);
+            Box::pin(h.turn(&mut agent, &format!("question {index}"))).await;
+        }
+    })
+    .await;
+    let seen = h
+        .bodies()
+        .iter()
+        .map(|body| (copies(body, &a), copies(body, &b)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        seen,
+        [(1, 0), (1, 0), (1, 1), (2, 1)],
+        "(A 的份数, B 的份数) 逐条请求"
+    );
+    h.server.abort();
+}

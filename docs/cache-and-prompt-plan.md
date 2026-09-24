@@ -110,7 +110,7 @@ runtime tail                             [E] <runtime now/cwd>（分钟级，决
 
 **2a 动态 system 分层 + sidecar**
 1. 独立迁移加 nullable `model_context_json`；start_turn 前 typed structs 一次组装冻结；redo/崩溃恢复读原 sidecar 不重查记忆/平台状态；老行 NULL 走旧 render；association/diary 只读 raw_content（C10）。
-2. QQ/Web 静态 policy 留冻结 msg[0]；动态实例按 trusted/untrusted 拆分入 [E] 区（§三）；`<artifact-workspace>` 清单 → 尾部瞬时块。
+2. QQ/Web 静态 policy 留冻结 msg[0]；动态实例按 trusted/untrusted 拆分入 [E] 区（§三）；`<artifact-workspace>` 清单 → 尾部瞬时块。（09-24 C3：与请求里最近一份逐字节相同时不发，见 `STATE_SNAPSHOT_TAGS`。）
 3. 联想记忆：不再 insert(1)；查询基于 raw；结果入当前轮 sidecar 尾部（带过时前言）；同步修 B1 replay_start；mode!=Chat 门控保留。
 4. persona/identity 热编辑：当前 turn 冻结、下一 turn 原子切换 generation + 一次性 `<memory-update>` 注入；进程内 generation cache（key = persona+identity+audience+mode+tools_digest+model_override）；探针类（locale/MCP tools-list/脚本扫描）跨进程磁盘快照、瞬态失败不覆盖成功观测（R4；MCP 执行时仍实时鉴权——快照只保展示 schema，A19）。
 5. SHELL/TERM 并入静态区；now 保持分钟级永不进 msg[0]（决策 5）。

@@ -401,22 +401,9 @@ async fn run_turn_task_inner(
                 });
             // v7 Phase 2.1: the manifest changes whenever artifacts change, so
             // it rides the turn tail; only the static policy stays in the
-            // system prompt.
-            turn_system_context.push(format!(
-                "<artifact-workspace>\n{manifest}\nUse read_artifact and apply_artifact_patch with bare artifact file names to work on existing artifacts; do not glob the managed directory or guess ~/.miyu paths.\n</artifact-workspace>"
-            ));
-            runtime_system_context.push(
-                "<artifact-policy>\n\
-                You are working in the Miyu WebUI and have artifact presentation tools.\n\
-                - When the user explicitly asks for a report, document, web page, table, data file, standalone code file, or another downloadable deliverable, you must create or present an artifact.\n\
-                - For text deliverables you write yourself, prefer create_artifact; filename must carry the correct extension.\n\
-                - For files already produced by commands or other tools, call present_artifact.\n\
-                - To update an existing artifact, read_artifact first, then apply_artifact_patch for targeted edits; patch paths use the bare artifact file name. Do not overwrite the whole file with create_artifact unless the user explicitly asks for a full rewrite.\n\
-                - Publish only after the content is complete and self-checked. Do not publish ordinary project source edits, config changes, test fixtures, or short answers as artifacts.\n\
-                - The artifact is part of the answer; after publishing succeeds, tell the user briefly in text.\n\
-                </artifact-policy>"
-                    .to_string(),
-            );
+            // system prompt. 清单没变时引擎不再重发(见 `webui_artifact_workspace_block`)。
+            turn_system_context.push(tools::webui_artifact_workspace_block(&manifest));
+            runtime_system_context.push(tools::WEBUI_ARTIFACT_POLICY.to_string());
         }
         // 宿主追加指令进 system 侧(每请求新组装、不化石,AGENTS.md §1.4);
         // 宿主每回合传同一段时前缀逐字节稳定。
