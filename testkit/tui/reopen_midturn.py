@@ -65,6 +65,10 @@ def main():
         tui2, master2 = h.spawn_tui()
         second = tui2
         sink2 = bytearray()
+        # 换了 TUI 进程：虚拟屏从零开始。不清的话 `render` 只在新流比旧流短时才重建，
+        # 大厅四秒的动画一过旧流长度，新字节就接着画在第一个进程的残影上，下面找
+        # 那句话可能找到的是残影（run.py `render`）。
+        h.reset_view()
         h.drain(master2, 4.0, sink2)
         os.write(master2, b"\x15/new\r")
         h.drain(master2, 3.0, sink2)

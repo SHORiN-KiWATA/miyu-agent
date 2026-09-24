@@ -39,6 +39,10 @@ def main():
         MIYU_TUI_PORT=str(free_port()),
         STUB_PORT=str(free_port()),
         OUT=os.environ.get("OUT") or str(Path.home() / ".cache" / "miyu-question-body"),
+        # The checks below read the English tab labels ("Review", not 「确认」). Pin the
+        # interface language so a Chinese shell locale does not flip them. It must be
+        # set before `import round26`: the harness copies the environment on import.
+        MIYU_LANG="en",
     )
     import round26 as q
 

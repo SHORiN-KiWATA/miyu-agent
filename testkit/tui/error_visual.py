@@ -3,7 +3,8 @@
 
 起一个只会回 429 的假供应商，配成两个端点的池，让 TUI 真跑一轮撞上去，看屏上
 那段报错长什么样：以前是一行英文 + 原始 JSON（`upstream returned HTTP 429` 把
-分类结论整个丢了），现在该是「一句结论 + 每个端点一行 + 一句该怎么办」。
+分类结论整个丢了），现在该是「一句结论 + 每个端点一行」。末尾原来还有一句
+「→ 等冷却结束，或换一个供应商」，09-20 用户点名去掉了（c3474af5），这里反过来验它不在。
 
 跑法：
 
@@ -134,7 +135,16 @@ def main():
         report["说清了是限流/额度"] = "被限流或额度用完" in text
         report["两个端点都列出来了"] = "brokeA" in text and "brokeB" in text
         report["说了冷却多久"] = "暂停 10 分钟" in text
-        report["给了下一步"] = "换一个供应商" in text
+        # 报错那一段：从「错误」那行起，到空行或输入框的竖条为止。
+        start = next((i for i, line in enumerate(screen) if "错误" in line), None)
+        block = []
+        for line in screen[start:] if start is not None else []:
+            if not line.strip() or line.lstrip().startswith(h.BAR):
+                break
+            block.append(line)
+        report["不再多一句该怎么办"] = bool(block) and not any(
+            line.lstrip().startswith("→") or "换一个供应商" in line for line in block
+        )
         report["留了请求 id 备查"] = "llm_" in text
         report["留了状态码备查"] = "429" in text
         report["不再是英文模板"] = "no LLM provider/model endpoint succeeded" not in text

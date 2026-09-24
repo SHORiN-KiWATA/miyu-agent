@@ -97,14 +97,39 @@ def check_live(report):
         m = LINE.search(raw)
         report["live_line_dim"] = bool(m) and "\x1b[2m" in raw[max(0, m.start() - 40):m.start()]
 
-        # 重开 TUI：回放的那一轮也带这一行
+        # 重开 TUI：回放的那一轮也带这一行。
+        #
+        # 09-20 起 `miyu` 启动开的是新会话（05e57350），重开之后是空大厅，得用
+        # `/session` 切回刚才那条才有回放（做法同 run.py item24）。换了 TUI 进程
+        # 要 `reset_view()`：不清的话虚拟屏上还是第一个进程的残影，这一条以前一直
+        # 红，看的就是那片残影。
         tui.send_signal(2)
         time.sleep(0.3)
         os.write(master, b"\x04")
         r.stop(tui)
         tui2, master2 = h.spawn_tui()
         sink2 = bytearray()
-        h.drain(master2, 3.0, sink2)
+        h.reset_view()
+        # 等大厅真的画出来再敲：新进程头一秒还没进 raw 模式（run.py item24）。
+        deadline = time.time() + 20.0
+        while time.time() < deadline and not any("Tab" in l for l in h.render(bytes(sink2))):
+            h.settle(master2, sink2, quiet=0.2, timeout=1.0)
+        os.write(master2, b"/session\r")
+        # 「刚才那条」= 列表里第一条不叫「新会话」的（新开的那条还没命名）。
+        for _ in range(12):
+            deadline = time.time() + 10.0
+            picked = ""
+            while time.time() < deadline and not picked:
+                h.drain(master2, 0.2, sink2)
+                picked = next(
+                    (l for l in h.render(bytes(sink2)) if "›" in l and " · " in l), ""
+                )
+            if picked and "新会话" not in picked and "New session" not in picked:
+                break
+            os.write(master2, b"j")
+            h.settle(master2, sink2, quiet=0.25, timeout=1.0)
+        os.write(master2, b"\r")
+        h.drain_until(master2, sink2, FIRST, 30.0)
         h.settle(master2, sink2, quiet=1.0, timeout=20)
         screen2 = h.render(bytes(sink2))
         r.save("mixed-replay", screen2)
