@@ -6051,12 +6051,15 @@ body[data-color-scheme="matugen"] .tool-card.is-command {
   color: inherit;
   font-variant-numeric: tabular-nums;
 }
-/* 窄屏:累计/速度可省,模型和上下文优先(#2 手机端要能看到模型)。 */
+/* 窄屏:累计/速度可省,模型和上下文优先(#2 手机端要能看到模型)。
+   模型名很长时,右边的上下文与「用时」(09-24)会被挤出屏幕:这时让模型那块收窄、名字
+   在自己里面省略,但至少留 96px——整个缩成「▾」正是 #2 的毛病。 */
 @media (max-width: 640px) {
   .composer-cumulative,
   .composer-speed { display: none; }
   .composer-info { gap: 8px; }
-  .composer-info .model-button { max-width: 60vw; }
+  .composer-info .model-menu-wrap { flex: 0 1 auto; min-width: 96px; max-width: 60vw; }
+  .composer-info .model-button { max-width: 100%; }
 }
 
 .attachment-tray {
