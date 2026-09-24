@@ -97,6 +97,31 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
     assert!(!frame.contains('⚙'));
 }
 
+/// 混合模型池时回放要补回每轮末尾那行「本次供应商 / 模型」（BUG-05），而且挂在
+/// 回复后面。这件事以前只有 `mixed_endpoint` 走查兜着。
+#[test]
+fn replayed_turns_keep_the_mixed_pool_endpoint_line() {
+    let config = AppConfig::default();
+    let answered = miyu_core::state::TurnReplay {
+        display_content: "第一句走查".to_string(),
+        assistant_content: "回放里的回复".to_string(),
+        assistant_provider_id: Some("stub".to_string()),
+        assistant_model: Some("stub-b".to_string()),
+        ..Default::default()
+    };
+    let line = crate::cli::model_cmds::mixed_model_endpoint_frame("stub", "stub-b", None);
+
+    let frame =
+        session_replay_frame(&[answered.clone()], PersonaLane::Active, &config, 80, true).unwrap();
+    let frame = String::from_utf8_lossy(&frame);
+    let reply_at = frame.find("回放里的回复").expect("reply replayed");
+    let line_at = frame.find(&line).expect("endpoint line replayed");
+    assert!(reply_at < line_at, "endpoint line comes after the reply");
+
+    let frame = session_replay_frame(&[answered], PersonaLane::Active, &config, 80, false).unwrap();
+    assert!(!String::from_utf8_lossy(&frame).contains("stub / stub-b"));
+}
+
 #[test]
 fn pop_menu_footer_has_controls_but_no_position_counter() {
     let help = strip_terminal_control_sequences(&pop_menu_help_line(120));
