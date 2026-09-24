@@ -142,6 +142,10 @@ impl StreamRenderer {
         self.reanchor_wait_timer();
         self.end_subagent_stream_line()?;
         if is_subagent_tool(name) {
+            // 回放没有派出去时那条标记，会话 id 从结果里取。
+            if let Some(session) = miyu_engine::tools::subagent_session_of_output(output) {
+                self.subagent_session(name, &session);
+            }
             self.finish_subagent_log(name);
         }
         let status = if ok { "ok" } else { "err" };
@@ -580,6 +584,11 @@ impl StreamRenderer {
         //
         // 咽掉而不是逐个认领：标记的词汇表在 `tools::subagent::protocol::MARKERS`，
         // 将来加一个新的，最坏情况是面板少显示点东西，而不是把 JSON 甩到用户脸上。
+        if let Some(session) = message.strip_prefix(miyu_engine::tools::SUBAGENT_SESSION_MARKER) {
+            // 子会话一建好就报：时间线上这一行点下去切进它（会话项目第 3 段）。
+            self.subagent_session(name, session);
+            return Ok(());
+        }
         if miyu_engine::tools::is_subagent_marker(message) {
             return Ok(());
         }

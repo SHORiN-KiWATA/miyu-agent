@@ -157,11 +157,7 @@ impl RemoteRepl {
     /// 输入框竖条、banner、footer 一并换过去——不然会话已经跑在 dev 人格上，
     /// 屏幕上还是普通模式的样子（初诊 §五 ③）。老 daemon 不报 `mode` 就留在原车道。
     pub(super) async fn switch_to_session(&mut self, state: &ipc::SessionState) -> Result<()> {
-        let lane = match state.mode.as_str() {
-            "dev" => PersonaLane::Dev,
-            "normal" => PersonaLane::Active,
-            _ => self.mode,
-        };
+        let lane = self.lane_of(state);
         if lane != self.mode {
             // 先换色再切：切换的回执行和输入框竖条都按新模式画（和 Tab 换车道一样）。
             self.live_repl.set_mode(lane);
@@ -182,8 +178,17 @@ impl RemoteRepl {
         // 任务条/目标提示都按**这个 REPL 的会话**过滤，换了会话要跟着换，
         // 否则状态行上还挂着上一条会话的东西。
         self.jobs_shared.set_repl_session(&self.active_session_id);
-        self.follow_active_run_here().await?;
+        self.follow_pending = true;
         Ok(())
+    }
+
+    /// 这条会话的车道：模式钉在会话上。老 daemon 不报 `mode` 就留在原车道。
+    pub(super) fn lane_of(&self, state: &ipc::SessionState) -> PersonaLane {
+        match state.mode.as_str() {
+            "dev" => PersonaLane::Dev,
+            "normal" => PersonaLane::Active,
+            _ => self.mode,
+        }
     }
 
     /// 切进这条会话之后：它要是有**正在跑**的回合，就从头挂上去跟着看。
@@ -215,6 +220,9 @@ impl RemoteRepl {
         else {
             return Ok(());
         };
+        // 空闲循环也会认领「同一会话里别人起的轮」：记下来，免得它看完之后又被认领、
+        // 从头再画一遍（切进正跑着的子会话最容易撞上）。
+        self.jobs_feed.mark_followed(&run_id);
         // `Box::pin`：`follow_run_with_commands` 会走回这里，async fn 的自递归
         // 要装箱才编得过。
         self.follow_depth += 1;

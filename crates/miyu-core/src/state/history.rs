@@ -167,6 +167,11 @@ impl StateStore {
         self.conv_db.running_turn_replay(turn_id)
     }
 
+    /// 这一轮是不是主会话派给子代理的任务，见 `ConversationDb::turn_from_parent`。
+    pub fn turn_from_parent(&self, turn_id: &str) -> Result<bool> {
+        self.conv_db.turn_from_parent(turn_id)
+    }
+
     /// 会话里用户说的第一句，见 `ConversationDb::first_user_content`。
     pub fn first_user_content(&self) -> Result<Option<String>> {
         self.conv_db.first_user_content(&self.session())

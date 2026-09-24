@@ -135,6 +135,9 @@ pub(in crate::web) async fn handle_session_command(
                         "turn_count": overview.turn_count,
                         "context_tokens": overview.context_tokens,
                         "active_run_id": manager.run_in_session(&record.session_id),
+                        "job_id": miyu_engine::tools::subagent::background_job_of(
+                            &record.session_id,
+                        ),
                         "created_at": record.created_at,
                         "updated_at": record.updated_at,
                     })

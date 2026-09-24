@@ -41,6 +41,54 @@ pub(in crate::cli) enum UsagePlacement {
     Fullscreen { below: bool },
 }
 
+/// footer 左端模式标签那一段要叠的会话级状态。不放进 `ReplFooterStatus`：那份每次
+/// `set_footer` 整份覆盖，会话级的东西放进去每次覆盖都得记着带回来（`goal` 就是这么
+/// 漏过的）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::cli) struct FooterBadges {
+    /// 这个会话开着只读模式（09-23，Tab 切换）：顶替模式那几个字。
+    pub(in crate::cli) readonly: bool,
+    /// 切进子代理会话几层了（会话项目第 3 段）：模式标签后面跟「子代理 ↳N」。
+    pub(in crate::cli) visit_depth: usize,
+}
+
+impl From<bool> for FooterBadges {
+    /// 只知道只读开关的地方（大厅、直连模式）：不在子代理会话里。
+    fn from(readonly: bool) -> Self {
+        Self {
+            readonly,
+            visit_depth: 0,
+        }
+    }
+}
+
+/// 模式标签那一段。`colored` 为假时是纯文本，量宽用。
+///
+/// 只读开着时直接顶替模式那几个字（用户 09-23：「普通 · 只读」太长，车道看输入框竖条
+/// 的颜色就知道）。窄屏时模式标签最后才裁，它和访问层数一样一直看得见。
+fn footer_mode_segment(mode: PersonaLane, badges: FooterBadges, colored: bool) -> String {
+    let label = if badges.readonly {
+        t("read-only", "只读")
+    } else {
+        mode.label()
+    };
+    let mut segment = match (colored, badges.readonly) {
+        (false, _) => label.to_string(),
+        (true, true) => format!("{}{label}\x1b[0m", readonly_label_style()),
+        (true, false) => colored_footer_mode_label(mode),
+    };
+    if badges.visit_depth > 0 {
+        let visit = format!("{} ↳{}", t("subagent", "子代理"), badges.visit_depth);
+        segment.push_str(" · ");
+        if colored {
+            segment.push_str(&format!("{}{visit}\x1b[0m", lane_accent_style(mode)));
+        } else {
+            segment.push_str(&visit);
+        }
+    }
+    segment
+}
+
 /// 量一行放不放得下时给声波和计时留的宽：三个空格 + 五柱声波 + 空格 + `59m 59s`。
 const RUNNING_ALLOWANCE: usize = 3 + 5 + 1 + 7;
 /// 同一行里左右两段之间至少空这么宽，挨得再近就像一整串了。
@@ -53,18 +101,14 @@ const USAGE_GAP: usize = 3;
 /// 模型名、思考档位要整个留得下，用量也要整串（带速度和累计）。
 pub(in crate::cli) fn usage_fits_on_footer_line(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     cols: usize,
 ) -> bool {
     let bar = footer_display_width(&input_prompt_bar(mode));
-    let label = if readonly {
-        t("read-only", "只读")
-    } else {
-        mode.label()
-    };
+    let label = footer_mode_segment(mode, badges.into(), false);
     let essential = footer_display_width(&repl_footer_left_parts(
-        label,
+        &label,
         &footer.model,
         None,
         footer.thinking.as_deref().unwrap_or_default(),
@@ -348,12 +392,10 @@ impl ReplFooterStatus {
     }
 }
 
-/// `readonly`:这个会话开着只读模式(09-23,Tab 切换),模式标签后面跟一段「只读」。
-/// 它不放在 `ReplFooterStatus` 里:那份是被 `set_footer` 整份覆盖的,会话级的开关
-/// 放进去每次覆盖都得记着带回来(`goal` 就是这么漏过的)。
+/// `badges`:只读、切进子代理会话几层(见 [`FooterBadges`])。
 pub(in crate::cli) fn repl_footer_line(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     cols: usize,
     usage: UsagePlacement,
@@ -374,7 +416,7 @@ pub(in crate::cli) fn repl_footer_line(
     };
     let right_width = footer_display_width(&right);
     let left_budget = cols.saturating_sub(bar_width.saturating_add(right_width).saturating_add(1));
-    let left = repl_footer_left(mode, readonly, footer, left_budget);
+    let left = repl_footer_left(mode, badges, footer, left_budget);
     let gap = cols
         .saturating_sub(
             bar_width
@@ -441,10 +483,11 @@ fn usage_text_fitting(footer: &ReplFooterStatus, width: usize, reserve: usize) -
 
 pub(in crate::cli) fn repl_footer_left(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     width: usize,
 ) -> String {
+    let badges = badges.into();
     let thinking = footer.thinking.as_deref().unwrap_or_default();
     let colored_thinking = (!thinking.is_empty()).then(|| primary_footer_text(thinking));
     let colored_thinking = colored_thinking.as_deref().unwrap_or_default();
@@ -464,17 +507,7 @@ pub(in crate::cli) fn repl_footer_left(
         None => text,
     };
     let provider = format!("\x1b[2m{}\x1b[0m", footer.provider);
-    // 只读开着时直接顶替模式那几个字(用户 09-23:「普通 · 只读」太长,车道看
-    // 输入框竖条的颜色就知道)。窄屏时模式标签最后才裁,它同样一直看得见。
-    let mode = if readonly {
-        format!(
-            "{}{}\x1b[0m",
-            readonly_label_style(),
-            t("read-only", "只读")
-        )
-    } else {
-        colored_footer_mode_label(mode)
-    };
+    let mode = footer_mode_segment(mode, badges, true);
     let full = with_wave(repl_footer_left_parts(
         &mode,
         &footer.model,

@@ -99,6 +99,20 @@ impl ReplHistoryEntry {
 /// turn uses, so tool blocks and prose come out identical — and re-wrapped for
 /// the terminal's *current* width, which a saved byte transcript could not do.
 /// Turns older than the transcript column fall back to prompt + final reply.
+/// 主会话派给子代理的任务，也就是子会话的第一轮（会话项目第 3 段）。它不是这个会话里
+/// 谁敲的话，画成和跨会话消息同一种块：一行抬头，底下几行预览，点开看全文。回放和
+/// 切进子会话时挂上它正在跑的第一轮，都走这里。
+pub(super) fn write_parent_task(frame: &mut Vec<u8>, body: &str, preview: usize) -> Result<()> {
+    frame.push(b'\n');
+    render::timeline::write_cross_session_message(
+        frame,
+        t("task from the main session", "来自主会话的任务"),
+        body,
+        preview,
+    )?;
+    Ok(())
+}
+
 pub(super) fn session_replay_frame(
     replays: &[miyu_core::state::TurnReplay],
     mode: PersonaLane,
@@ -116,6 +130,12 @@ pub(super) fn session_replay_frame(
         if replay.display_content.starts_with("[目标续轮]") {
             // 目标续轮什么都不画——实时渲染也不打表头。一个长任务几十轮，
             // 每轮一行只会把真正的输出挤散。
+        } else if replay.from_parent {
+            write_parent_task(
+                &mut frame,
+                &replay.display_content,
+                config.display.cross_session_preview_lines,
+            )?;
         } else if let Some(message) =
             miyu_core::state::parse_cross_session_message(&replay.display_content)
         {

@@ -10,6 +10,7 @@
 
 // 活动区还用着一批留在 cli::mod 的东西（footer 结构、队列渲染、job 条）。
 mod frame;
+mod job_strip;
 mod queue;
 pub(in crate::cli) mod screen;
 mod update;
@@ -187,8 +188,17 @@ pub(in crate::cli) struct LiveReplTail {
     /// 后台状态行在屏幕上的起始行与行数。全屏下点它要能对上是哪一个任务。
     pub(in crate::cli) job_strip_start: u16,
     pub(in crate::cli) job_strip_rows: u16,
-    /// 鼠标正悬在任务条的哪一条上(`jobs` 的下标),那一行画成不 dim。
+    /// 鼠标正悬在任务条的哪一条上(`strip_rows` 的下标),那一行画成不 dim。
     pub(in crate::cli) job_hover: Option<usize>,
+    /// 任务条上此刻列着的会话行（排在后台任务前面，见 `repl::strip`）。
+    pub(in crate::cli) strip_sessions: Vec<crate::cli::repl::strip::StripSession>,
+    /// 正在访问的子会话是从哪儿切进来的，一层一行（会话项目第 3 段）。栈顶是任务条
+    /// 第一行「↑ 主会话」回去的地方，层数画在 footer 上。真正换会话（`/new`
+    /// `/session` …）时清空。
+    pub(in crate::cli) visits: Vec<crate::cli::repl::strip::ParentRow>,
+    /// 点了任务条上的会话行：切进那条子会话，或者回去。事件层做不了换会话，攒在这儿
+    /// 由空闲循环或回合循环取走（`take_strip_action`）。
+    pub(in crate::cli) pending_strip_action: Option<crate::cli::repl::strip::StripAction>,
     /// 最后一次鼠标移动落在哪、什么时候。
     ///
     /// 指针移出窗口时终端**什么都不发**——09-22 实测（`testkit/tui/
@@ -635,6 +645,9 @@ impl LiveReplTail {
             job_strip_start: 0,
             job_strip_rows: 0,
             job_hover: None,
+            strip_sessions: Vec::new(),
+            visits: Vec::new(),
+            pending_strip_action: None,
             last_mouse_move: None,
             pending_stop_job: None,
             input_cursor: (0, 0),
@@ -747,6 +760,14 @@ impl LiveReplTail {
         self.editor.readonly = readonly;
         if let Some(banner) = &mut self.banner {
             banner.set_readonly(readonly);
+        }
+    }
+
+    /// footer 模式标签那一段要叠的：只读、切进子代理会话几层。
+    pub(in crate::cli) fn footer_badges(&self) -> crate::cli::footer::FooterBadges {
+        crate::cli::footer::FooterBadges {
+            readonly: self.editor.readonly,
+            visit_depth: self.visits.len(),
         }
     }
 
@@ -870,7 +891,7 @@ impl LiveReplTail {
         }
         let line = crate::cli::footer::repl_footer_line(
             self.editor.mode,
-            self.editor.readonly,
+            self.footer_badges(),
             &self.footer,
             usize::from(cols),
             self.usage_placement,
@@ -909,27 +930,6 @@ impl LiveReplTail {
         Ok(())
     }
 
-    /// Replaces the footer and redraws the live editor immediately when it is
-    /// already on screen. Without the redraw, token/context updates remain
-    /// invisible until the next input event causes the editor to render.
-    /// Update the background-command strip; returns true when a redraw is
-    /// needed (content changed, or spinners/timers must advance).
-    /// 已经下过"停"的任务：状态行里先别再显示它。
-    ///
-    /// 停完就把状态行清空是对的（那才是事实），但守护进程那边的任务快照是
-    /// **一秒轮询一次**的——停完紧接着来的那一次轮询往往还带着它，于是状态行
-    /// 消失一瞬间又冒出来，闪一下（用户实测）。压住它几秒，等快照追上来。
-    ///
-    /// 第一版是"轮询里没有了就解除压制"，看着合理，其实当场自废：停完紧跟着的
-    /// 那一句 `set_jobs(空)` 就是一次"轮询里没有"，压制表立刻被清空，下一次真
-    /// 轮询把它原样带了回来。所以只能按**时间**放，不能按"这一份列表里有没有"。
-    pub(in crate::cli) fn suppress_jobs<'a>(&mut self, ids: impl Iterator<Item = &'a str>) {
-        let now = std::time::Instant::now();
-        for id in ids {
-            self.suppressed_jobs.insert(id.to_string(), now);
-        }
-    }
-
     /// 这一轮里跑着的前台子代理此刻烧了多少——先记在 Σ 上。
     ///
     /// 它的审计会话是边跑边写的，但**回合跑着的时候客户端不会去重读 Σ**
@@ -943,105 +943,9 @@ impl LiveReplTail {
         self.footer.update_live_extra_tokens(tokens)
     }
 
-    pub(in crate::cli) fn set_jobs(
-        &mut self,
-        jobs: Vec<miyu_engine::tools::jobs::JobOverview>,
-    ) -> bool {
-        let jobs: Vec<miyu_engine::tools::jobs::JobOverview> = if self.suppressed_jobs.is_empty() {
-            jobs
-        } else {
-            let now = std::time::Instant::now();
-            self.suppressed_jobs
-                .retain(|_, at| now.duration_since(*at) < SUPPRESS_JOB_FOR);
-            jobs.into_iter()
-                .filter(|job| !self.suppressed_jobs.contains_key(&job.job_id))
-                .collect()
-        };
-        // 后台子代理**不**在这儿往 Σ 上加：它的审计会话是边跑边写的，守护进程
-        // 算出来的会话累计里已经有了，再加一遍就是算两遍。前台那一路才需要补
-        // （见 `set_live_turn_tokens`）——回合跑着的时候客户端不会去重读 Σ。
-        let changed = self.jobs.len() != jobs.len()
-            || self
-                .jobs
-                .iter()
-                .zip(jobs.iter())
-                .any(|(a, b)| a.job_id != b.job_id || a.status != b.status);
-        self.jobs = jobs;
-        self.refresh_job_overlay_title();
-        changed
-    }
-
-    /// 面板开着哪个任务，就把那个任务此刻的抬头推给它。
-    fn refresh_job_overlay_title(&mut self) {
-        let Some(job_id) = self
-            .screen
-            .as_ref()
-            .and_then(screen::Screen::overlay_job_id)
-        else {
-            return;
-        };
-        let Some(job) = self.jobs.iter().find(|job| job.job_id == job_id) else {
-            return;
-        };
-        let title = screen::job_panel_title(job);
-        if let Some(screen) = &mut self.screen {
-            screen.refresh_overlay_title(&title);
-        }
-    }
-
-    /// Lightweight spinner/timer repaint of the job strip only — no full
-    /// tail redraw, so it can run at animation frequency without flicker.
-    /// 状态行转轮此刻该画哪一帧（80ms 一帧，按时间算）。
-    pub(in crate::cli) fn job_spinner_frame(&self) -> usize {
-        (self.job_spinner_started.elapsed().as_millis() / 80) as usize
-    }
-
-    pub(in crate::cli) fn tick_job_strip(&mut self) -> Result<()> {
-        if !self.rendered || self.jobs.is_empty() {
-            return Ok(());
-        }
-        // 详情面板开着时整屏归它。这时候还往活动区那几行写，两个画笔会在同一
-        // 块地方来回抢，屏幕上就是输入框疯狂抖动。
-        if self
-            .screen
-            .as_ref()
-            .is_some_and(screen::Screen::overlay_open)
-        {
-            return Ok(());
-        }
-        self.job_spinner = self.job_spinner_frame();
-        let (cols, _) = terminal::size().unwrap_or((80, 24));
-        let lines = background_job_lines(
-            &self.jobs,
-            self.job_spinner,
-            usize::from(cols),
-            self.job_hover,
-        );
-        let rows = lines.len().min(u16::MAX as usize) as u16;
-        if rows > self.tail_rows {
-            return Ok(());
-        }
-        let start = self
-            .tail_start
-            .saturating_add(self.tail_rows)
-            .saturating_sub(rows);
-        let input_cursor = self.input_cursor;
-        // Lines are padded to the full terminal width, so plain overwrites
-        // suffice — no Clear, no intermediate blank state. The synchronized
-        // block keeps the cursor hop invisible over slow links (SSH).
-        synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
-            let mut stdout = term_out();
-            let mut row = start;
-            for line in &lines {
-                queue!(stdout, MoveTo(0, row), Print(line))?;
-                row = row.saturating_add(1);
-            }
-            queue!(stdout, MoveTo(input_cursor.0, input_cursor.1))?;
-            stdout.flush()?;
-            Ok(())
-        })
-    }
-
+    /// Replaces the footer and redraws the live editor immediately when it is
+    /// already on screen. Without the redraw, token/context updates remain
+    /// invisible until the next input event causes the editor to render.
     pub(in crate::cli) fn refresh_footer(&mut self, footer: ReplFooterStatus) -> Result<()> {
         self.set_footer(footer);
         if self.rendered {
@@ -1124,7 +1028,7 @@ impl LiveReplTail {
         }
         let line = crate::cli::footer::repl_footer_line(
             self.editor.mode,
-            self.editor.readonly,
+            self.footer_badges(),
             &self.footer,
             usize::from(cols),
             self.usage_placement,
@@ -1139,9 +1043,6 @@ impl LiveReplTail {
         })
     }
 }
-
-/// 下过"停"之后压住状态行多久。守护进程的任务快照一秒轮询一次，留出几轮的余量。
-const SUPPRESS_JOB_FOR: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(in crate::cli) struct LiveRawMode {
     pub(in crate::cli) restore_terminal_on_drop: bool,

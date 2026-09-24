@@ -20,6 +20,7 @@ mod sandbox_view;
 mod shared;
 mod slash_commands;
 mod static_timeline;
+mod strip_sessions;
 mod tui_ansi;
 mod tui_blocks;
 mod tui_live_anchor;

@@ -325,6 +325,17 @@ impl LiveReplTail {
         self.apply_output_frame(&frame)
     }
 
+    /// 挂到子会话正在跑的第一轮上：开头那句是主会话派的任务，不是谁敲的话。
+    pub(in crate::cli) fn show_parent_task(
+        &mut self,
+        body: &str,
+        preview_lines: usize,
+    ) -> Result<()> {
+        let mut frame = Vec::new();
+        crate::cli::history_replay::write_parent_task(&mut frame, body, preview_lines)?;
+        self.apply_output_frame(&frame)
+    }
+
     /// 这批里还有要画成气泡的吗。没有的话就别为它收尾时间线。
     pub(in crate::cli) fn has_queued(&self, prompt_ids: &[String]) -> bool {
         let ids = prompt_ids.iter().collect::<std::collections::HashSet<_>>();

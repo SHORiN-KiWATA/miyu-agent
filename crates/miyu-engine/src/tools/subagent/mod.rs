@@ -43,6 +43,16 @@ fn background_children() -> &'static Mutex<HashMap<String, String>> {
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 这个子会话是哪个后台任务的镜像（后台子代理才有）。任务条按它把子会话那一行和
+/// 同一件事的后台任务行合成一行（会话项目第 3 段）。
+pub fn background_job_of(session_id: &str) -> Option<String> {
+    background_children()
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(job_id, child)| (child == session_id).then(|| job_id.clone()))
+}
+
 fn resolve_child_session(id: &str) -> String {
     background_children()
         .lock()
@@ -572,6 +582,23 @@ fn format_child_outcome(
             Ok(output)
         }
     }
+}
+
+/// 子代理工具结果里的子会话 id：前台跑完是 `subagent <状态> (tier …, session <id>): …`
+/// 那一行，追话排进去了是 JSON 的 `session_id`。后台刚派出去时子会话还没建，结果里没有，
+/// 返回 `None`。回放没有派出去时报的那条标记，界面靠它把时间线上那一行链到子会话
+/// （会话项目第 3 段）。形状由 `format_child_outcome` 定，两边一起改。
+pub fn subagent_session_of_output(output: &str) -> Option<String> {
+    let output = output.trim_start();
+    let id = if output.starts_with('{') {
+        let value: Value = serde_json::from_str(output).ok()?;
+        value.get("session_id")?.as_str()?.to_string()
+    } else {
+        let head = output.lines().next()?.strip_prefix("subagent ")?;
+        let (_, rest) = head.split_once(", session ")?;
+        rest.split(')').next()?.trim().to_string()
+    };
+    (!id.is_empty()).then_some(id)
 }
 
 /// 一次子代理运行的结果。

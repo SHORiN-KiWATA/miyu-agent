@@ -72,6 +72,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
     };
     let typed = miyu_core::state::TurnReplay {
         seq: 0,
@@ -83,6 +84,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
     };
 
     let frame = session_replay_frame(&[wake], PersonaLane::Active, &config, 80, false).unwrap();
@@ -546,6 +548,9 @@ fn spinner_does_not_resume_tail_during_external_output() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_sessions: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -600,6 +605,9 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_sessions: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -832,7 +840,13 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
         metric_tokens: None,
     };
     let row = |metric: Option<&str>| {
-        let lines = crate::cli::repl::jobs::background_job_lines(&[job(metric)], 0, 60, None);
+        let job = job(metric);
+        let lines = crate::cli::repl::strip::strip_lines(
+            &[crate::cli::repl::strip::StripRow::Job(&job)],
+            0,
+            60,
+            None,
+        );
         strip_terminal_control_sequences(&lines[1])
             .trim_end()
             .to_string()

@@ -176,8 +176,8 @@ impl LiveReplTail {
             clipped.extend(queue_lines.split_off(queue_lines.len().saturating_sub(keep)));
             queue_lines = clipped;
         }
-        let job_lines = background_job_lines(
-            &self.jobs,
+        let job_lines = crate::cli::repl::strip::strip_lines(
+            &self.strip_rows(),
             self.job_spinner_frame(),
             usize::from(cols),
             self.job_hover,
@@ -395,7 +395,7 @@ impl LiveReplTail {
             crate::cli::footer::UsagePlacement::Fullscreen {
                 below: !crate::cli::footer::usage_fits_on_footer_line(
                     self.editor.mode,
-                    self.editor.readonly,
+                    self.footer_badges(),
                     &self.footer,
                     usize::from(cols),
                 ),
@@ -409,7 +409,7 @@ impl LiveReplTail {
             &mut rendered_rows,
             &mut drawn_input,
             self.editor.mode,
-            self.editor.readonly,
+            self.footer_badges(),
             &self.editor.input,
             self.editor.cursor,
             self.editor.raw_pasted_lines,

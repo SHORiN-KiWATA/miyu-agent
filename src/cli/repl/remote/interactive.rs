@@ -119,6 +119,7 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
         jobs_shared,
         jobs_feed,
         follow_depth: 0,
+        follow_pending: false,
         lane_context: Default::default(),
     };
     let outcome = repl.run().await;
@@ -142,6 +143,9 @@ pub(super) struct RemoteRepl {
     pub(super) cumulative_tokens: TurnTokens,
     /// 「换会话后挂上它正在跑的那一轮」嵌了几层（见 `follow_active_run_here`）。
     pub(super) follow_depth: u8,
+    /// 刚换过会话，它正在跑的那一轮还没挂上（会话项目第 3 段）。主循环回到顶上时挂，
+    /// 不在换会话的地方就地挂：回合中点任务条来回切，就地挂会一层套一层。
+    pub(super) follow_pending: bool,
     pub(super) footer: ReplFooterStatus,
     pub(super) live_repl: LiveReplTail,
     pub(super) jobs_shared: std::sync::Arc<SharedJobsFeed>,
@@ -163,6 +167,10 @@ impl RemoteRepl {
         loop {
             // Keep the poll thread's session filter in step with /new & /session.
             self.jobs_shared.set_repl_session(&self.active_session_id);
+            // 跟着看的中途又换了会话（切进子会话、回去），换过去那条的轮接着挂。
+            while std::mem::take(&mut self.follow_pending) {
+                self.follow_active_run_here().await?;
+            }
             // Σ：空闲时轮询只改界面上那份（上次显式刷新之后才开读的，见
             // `footer_generation`），这儿不收回来就被下面的整份覆盖盖回旧值，下一次
             // 轮询才又改回来——屏上先回到老数再加上去（用户 09-23）。放在追 footer
@@ -275,6 +283,10 @@ impl RemoteRepl {
                     self.toggle_lobby_lane(next)?;
                     continue;
                 }
+                LiveReplOutcome::Strip(action) => {
+                    self.perform_strip_action(action).await?;
+                    continue;
+                }
             };
             self.mode = next_mode;
             let input = input.trim();
@@ -291,6 +303,8 @@ impl RemoteRepl {
                 slash_command,
                 Some(
                     ReplSlashCommand::Session
+                        | ReplSlashCommand::Subagent
+                        | ReplSlashCommand::Back
                         | ReplSlashCommand::Dev
                         | ReplSlashCommand::Normal
                         | ReplSlashCommand::Exit
@@ -409,6 +423,7 @@ impl RemoteRepl {
                 self.switch_to_session(&state).await?;
                 Ok(LoopStep::Continue)
             }
+            SuspendedAction::Strip(action) => self.perform_strip_action(action).await,
         }
     }
 
@@ -445,6 +460,8 @@ impl RemoteRepl {
             ReplSlashCommand::History => self.cmd_history().await?,
             ReplSlashCommand::New => self.cmd_new(command_args).await?,
             ReplSlashCommand::Session => self.cmd_session(command_args).await?,
+            ReplSlashCommand::Subagent => self.cmd_subagent().await?,
+            ReplSlashCommand::Back => self.cmd_back().await?,
             ReplSlashCommand::Dev => self.cmd_lane(PersonaLane::Dev, command_args).await?,
             ReplSlashCommand::Normal => self.cmd_lane(PersonaLane::Active, command_args).await?,
             ReplSlashCommand::Rename => self.cmd_rename(command_args).await?,

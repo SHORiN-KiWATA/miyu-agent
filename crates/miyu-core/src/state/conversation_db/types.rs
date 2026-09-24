@@ -636,4 +636,8 @@ pub struct TurnReplay {
     /// 这一轮被中断了（Ctrl+C／断线）。回放时照画它说到一半的话，尾巴上那段给
     /// 模型看的 `<system-reminder>` 去掉，末尾标一行「已中断」。
     pub interrupted: bool,
+    /// 主会话派给子代理的任务（子代理会话的第一轮）。回放时画成「来自主会话的任务」
+    /// 那一块，不是用户气泡。老 daemon 补过来的没有这一项，当 false。
+    #[serde(default)]
+    pub from_parent: bool,
 }

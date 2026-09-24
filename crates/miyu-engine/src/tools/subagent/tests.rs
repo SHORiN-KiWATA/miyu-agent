@@ -345,3 +345,51 @@ fn every_marker_writes_a_tag_from_the_list() {
         .collect();
     assert!(missing.is_empty(), "清单里这些标签没人写: {missing:?}");
 }
+
+/// 界面从子代理的结果里认出子会话（会话项目第 3 段）：回放时时间线上那一行靠它链到
+/// 子会话。认的就是 `format_child_outcome` 写出来的那几种形状。
+#[test]
+fn the_child_session_is_read_back_from_the_tool_output() {
+    let finished = |state: &str| {
+        format_child_outcome(
+            "查日志",
+            ModelTier::Standard,
+            miyu_base::host_ports::ChildOutcome::Finished(miyu_base::host_ports::ChildTaskResult {
+                session_id: "sess_child1".to_string(),
+                state: state.to_string(),
+                final_text: "查完了 (session 在正文里也不算)".to_string(),
+                turns: 1,
+                total_tokens: 10,
+                provider_id: None,
+                model: None,
+            }),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        subagent_session_of_output(&finished("done")).as_deref(),
+        Some("sess_child1")
+    );
+    assert_eq!(
+        subagent_session_of_output(&finished("interrupted")).as_deref(),
+        Some("sess_child1")
+    );
+    let queued = format_child_outcome(
+        "查日志",
+        ModelTier::Standard,
+        miyu_base::host_ports::ChildOutcome::Queued {
+            session_id: "sess_child2".to_string(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        subagent_session_of_output(&queued).as_deref(),
+        Some("sess_child2")
+    );
+    // 后台刚派出去：结果里只有任务 id，子会话还没建。
+    assert_eq!(
+        subagent_session_of_output(r#"{"ok":true,"kind":"background_subagent","job_id":"a1b2c3"}"#),
+        None
+    );
+    assert_eq!(subagent_session_of_output("some other tool output"), None);
+}

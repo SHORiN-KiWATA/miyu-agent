@@ -197,6 +197,9 @@ pub(in crate::cli) fn read_live_repl_input(
             if let Some(job_id) = live.pending_stop_job.take() {
                 return Ok(LiveReplOutcome::StopJob { job_id });
             }
+            if let Some(action) = live.take_strip_action() {
+                return Ok(LiveReplOutcome::Strip(action));
+            }
             if live.set_jobs(jobs_feed.current()) || cumulative_changed || lane_counted {
                 synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
             } else {
@@ -449,8 +452,8 @@ pub(in crate::cli) fn read_repl_input(
             rendered_rows,
             &mut Vec::new(),
             mode,
-            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切。
-            false,
+            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切,也没有子代理会话。
+            crate::cli::footer::FooterBadges::default(),
             input,
             cursor,
             raw_pasted_lines,
@@ -933,8 +936,8 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     // 输入区不在正文缓冲里，不记下来就没法知道某一格上是什么字。
     drawn: &mut Vec<(u16, String)>,
     mode: PersonaLane,
-    // 只读模式开着(09-23):状态行模式标签后面跟「只读」。
-    readonly: bool,
+    // 只读模式开着(09-23)、切进子代理会话几层(会话项目第 3 段):叠在状态行模式标签上。
+    badges: crate::cli::footer::FooterBadges,
     input: &str,
     cursor: usize,
     raw_pasted_lines: usize,
@@ -1038,7 +1041,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
         queue!(
             stdout,
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
-            Print(repl_footer_line(mode, readonly, footer, cols, usage))
+            Print(repl_footer_line(mode, badges, footer, cols, usage))
         )?;
         if show_hint {
             row_offset = row_offset.saturating_add(1);

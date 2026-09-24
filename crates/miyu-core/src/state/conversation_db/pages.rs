@@ -27,6 +27,19 @@ pub struct ReplayPage {
     pub older: Option<i64>,
 }
 
+/// 这一轮是不是主会话派给子代理的任务：子代理会话的第一轮（会话项目第 3 段）。
+///
+/// 按会话种类和先后判，不按内容：用户切进子会话自己敲的话照旧是用户气泡。第一轮被
+/// 撤销（隐藏）了也不往后顺延，后面那轮不是任务。
+fn from_parent_sql() -> String {
+    format!(
+        "(SELECT kind FROM sessions WHERE sessions.session_id = turns.session_id) = '{kind}'
+         AND turns.seq = (SELECT min(earliest.seq) FROM turns AS earliest
+                           WHERE earliest.session_id = turns.session_id)",
+        kind = crate::state::SUBAGENT_SESSION_KIND,
+    )
+}
+
 fn tokens_before_locked(conn: &Connection, session_id: &str, seq: i64) -> Result<TurnTokens> {
     let (total, prompt, cache_read) = conn.query_row(
         "SELECT COALESCE(SUM(token_total), 0), COALESCE(SUM(token_prompt), 0),
@@ -151,7 +164,8 @@ impl ConversationDb {
                     assistant_reasoning,
                     status = 'interrupted',
                     assistant_provider_id, assistant_model,
-                    turn_id, seq
+                    turn_id, seq,
+                    ({from_parent})
                FROM turns
               WHERE session_id = ?1 AND hidden = 0 AND is_summary = 0
                 AND status IN ('completed', 'interrupted')
@@ -159,6 +173,7 @@ impl ConversationDb {
               ORDER BY seq DESC
               LIMIT ?3",
             synthetic = crate::state::synthetic_user_content_sql("user_content"),
+            from_parent = from_parent_sql(),
         ))?;
         let mut rows = stmt
             .query_map(
@@ -180,6 +195,7 @@ impl ConversationDb {
                             interrupted: row.get::<_, i64>(5)? != 0,
                             assistant_provider_id: row.get::<_, Option<String>>(6)?,
                             assistant_model: row.get::<_, Option<String>>(7)?,
+                            from_parent: row.get::<_, i64>(10)? != 0,
                         },
                     ))
                 },
@@ -215,9 +231,10 @@ impl ConversationDb {
             .query_row(
                 &format!(
                     "SELECT seq, display_content, ({synthetic}),
-                            assistant_provider_id, assistant_model
+                            assistant_provider_id, assistant_model, ({from_parent})
                        FROM turns WHERE turn_id = ?1",
                     synthetic = crate::state::synthetic_user_content_sql("user_content"),
+                    from_parent = from_parent_sql(),
                 ),
                 params![turn_id],
                 |row| {
@@ -227,11 +244,12 @@ impl ConversationDb {
                         row.get::<_, i64>(2)? != 0,
                         row.get::<_, Option<String>>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)? != 0,
                     ))
                 },
             )
             .optional()?;
-        let Some((seq, display_content, is_synthetic, provider, model)) = row else {
+        let Some((seq, display_content, is_synthetic, provider, model, from_parent)) = row else {
             return Ok(None);
         };
         Ok(Some(TurnReplay {
@@ -241,8 +259,26 @@ impl ConversationDb {
             is_synthetic,
             assistant_provider_id: provider,
             assistant_model: model,
+            from_parent,
             ..TurnReplay::default()
         }))
+    }
+
+    /// 这一轮是不是主会话派给子代理的任务（见 `from_parent_sql`）。挂到子会话正在跑的
+    /// 第一轮上时，终端靠它把开头那句画成任务，而不是用户说的话。
+    pub fn turn_from_parent(&self, turn_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                &format!(
+                    "SELECT ({from_parent}) FROM turns WHERE turn_id = ?1",
+                    from_parent = from_parent_sql(),
+                ),
+                params![turn_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some_and(|flag| flag != 0))
     }
 
     /// 这个会话里用户说过的话（每轮开头那句，加上中途追加的），按先后排。口径

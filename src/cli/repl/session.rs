@@ -214,6 +214,9 @@ pub(in crate::cli) enum SuspendedAction {
     /// 动 footer / 历史 / 车道，只有 `RemoteRepl` 做得了。换走之后这一轮不再
     /// 跟——它在 daemon 里继续跑，属于原来那条会话。
     SwitchSession(ipc::SessionState),
+    /// 回合跑着时点了任务条上的会话行（会话项目第 3 段）：切进子代理会话、或者回去，
+    /// 和 `/session` 挑了别的会话一样要 `RemoteRepl` 来做，换走之后这一轮不再跟。
+    Strip(crate::cli::repl::strip::StripAction),
 }
 
 impl std::fmt::Display for RemoteTurnSuspended {
@@ -416,7 +419,56 @@ pub(in crate::cli) fn redraw_after_undo(
     replay_recent_turns(config, mode, &store, live_repl)
 }
 
+/// 真正换会话：换画面，再把车道指针指过去。之前切进过的子会话都不算了，任务条上那行
+/// 「↑ 主会话」和 footer 上的层数跟着清掉。
+#[allow(clippy::too_many_arguments)]
 pub(in crate::cli) async fn apply_repl_session_switch(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    mode: PersonaLane,
+    state: &ipc::SessionState,
+    active_session_id: &mut String,
+    history: &mut Vec<ReplHistoryEntry>,
+    live_repl: &mut LiveReplTail,
+    footer: &mut ReplFooterStatus,
+    cumulative_tokens: &mut TurnTokens,
+) -> Result<()> {
+    live_repl.visits.clear();
+    present_session(
+        paths,
+        config,
+        mode,
+        state,
+        active_session_id,
+        history,
+        live_repl,
+        footer,
+        cumulative_tokens,
+    )
+    .await?;
+    // Every REPL session change funnels through here, so this is the one place
+    // the REPL lane needs to be remembered. Best effort: losing the write only
+    // means the next REPL starts on the terminal session.
+    let _ = await_in_lobby(
+        live_repl,
+        send_ipc_admin(
+            paths,
+            IpcCommand::SetReplSession {
+                target: miyu_core::ipc::SessionRef::Id {
+                    id: state.session_id.clone(),
+                },
+            },
+        ),
+    )
+    .await;
+    Ok(())
+}
+
+/// 把这个 REPL 换到 `state` 这条会话上：任务条、历史、只读、画布、回放、排队、footer。
+/// 不动车道指针——切进子代理会话（会话项目第 3 段）只走这一半，`SetReplSession` 本来
+/// 也拒子会话。
+#[allow(clippy::too_many_arguments)]
+pub(in crate::cli) async fn present_session(
     paths: &MiyuPaths,
     config: &AppConfig,
     mode: PersonaLane,
@@ -449,8 +501,9 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     live_repl.editor.cursor = 0;
     // 只读是会话自己的开关(09-23),换到哪个会话就显示哪个会话的。
     live_repl.set_readonly(state.sandbox_readonly);
-    // 每一次换会话都经过这里:空会话挂 banner、Tab 可换车道,非空就钉死。
-    let empty = session_is_empty(paths, &state.session_id);
+    // 每一次换会话都经过这里:空会话挂 banner、Tab 可换车道,非空就钉死。子代理会话
+    // 从来不是大厅：刚建好、第一轮还没落行的那一瞬也不是。
+    let empty = live_repl.visits.is_empty() && session_is_empty(paths, &state.session_id);
     live_repl.set_session_empty(config, paths, empty);
     // 全屏：换会话就换画布。上一个会话的正文整个丢掉，目标会话最近几轮回放到
     // 屏顶——新会话就是一张空画布（大厅），切回旧会话能看到它的对话（用户实测：
@@ -488,21 +541,6 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     footer.update_thinking_variant(thinking_summary.as_deref());
     footer.update_context_window(state.context_window, state.context_window_assumed);
     live_repl.refresh_footer(footer.clone())?;
-    // Every REPL session change funnels through here, so this is the one place
-    // the REPL lane needs to be remembered. Best effort: losing the write only
-    // means the next REPL starts on the terminal session.
-    let _ = await_in_lobby(
-        live_repl,
-        send_ipc_admin(
-            paths,
-            IpcCommand::SetReplSession {
-                target: miyu_core::ipc::SessionRef::Id {
-                    id: state.session_id.clone(),
-                },
-            },
-        ),
-    )
-    .await;
     Ok(())
 }
 

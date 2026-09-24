@@ -341,6 +341,23 @@ pub(in crate::cli) async fn follow_wake_run(
                     if live.handle_screen_event(&event)? {
                         // 浮层里按了 x：跟着别处起的回合时也当场停（见 `job_stop`）。
                         stop_pending_job(paths, jobs_feed, live).await?;
+                        // 点了任务条上的会话行（会话项目第 3 段）：这一轮留在 daemon 里
+                        // 接着跑，人切走。和 `/session` 面板挑了别的会话同一条路。
+                        if let Some(action) = live.take_strip_action() {
+                            renderer.finish()?;
+                            live.stop_footer_spinner()?;
+                            live.apply_renderer_frame(&mut renderer)?;
+                            return Err(anyhow::Error::new(
+                                crate::cli::repl::session::RemoteTurnSuspended {
+                                    action: crate::cli::repl::session::SuspendedAction::Strip(
+                                        action,
+                                    ),
+                                    run_id: run_id.to_string(),
+                                    last_event_id,
+                                    session_id: session_id.to_string(),
+                                },
+                            ));
+                        }
                         continue;
                     }
                     match live.editor.handle_event(event, paths, true)? {
@@ -449,6 +466,10 @@ pub(in crate::cli) async fn follow_wake_run(
                     } else if let Some(attempt) = miyu_core::state::service_restart_attempt(&said) {
                         // daemon 重启后接着跑的这一轮（09-24）：一行提示，不是谁说的话。
                         live.show_restart_notice(attempt)?;
+                    } else if turn_from_parent(paths, turn_id.as_deref()) {
+                        // 切进子会话时它正跑着第一轮：开头那句是主会话派的任务（会话项目
+                        // 第 3 段），和回放画成同一块。
+                        live.show_parent_task(&said, config.display.cross_session_preview_lines)?;
                     } else if !said.trim().is_empty() {
                         let cols = crate::cli::terminal_cols();
                         let mut echo = submitted_echo_lines(live.mode(), &said, cols).join("\r\n");
@@ -762,6 +783,13 @@ pub(in crate::cli) async fn follow_wake_run(
         rendered.insert(turn_id);
     }
     Ok(())
+}
+
+/// 这一轮是不是主会话派给子代理的任务（子会话的第一轮）。读不到库就当不是。
+fn turn_from_parent(paths: &MiyuPaths, turn_id: Option<&str>) -> bool {
+    turn_id.is_some_and(|turn_id| {
+        StateStore::new(paths).is_ok_and(|store| store.turn_from_parent(turn_id).unwrap_or(false))
+    })
 }
 
 /// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。

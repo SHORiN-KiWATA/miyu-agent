@@ -732,6 +732,8 @@ enum LiveReplOutcome {
     SwitchMode(PersonaLane),
     /// Tab(非空会话)/ Shift+Tab:切只读模式(09-23)。
     ToggleReadonly,
+    /// 点了任务条上的会话行：切进那条子代理会话，或者回去（会话项目第 3 段）。
+    Strip(crate::cli::repl::strip::StripAction),
 }
 
 fn repl_history_is_clean(

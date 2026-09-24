@@ -182,6 +182,9 @@ fn trim_subagent(log: &mut SubagentLog) {
 #[derive(Default)]
 pub(crate) struct SubagentLog {
     pub(crate) id: Option<u64>,
+    /// 它的会话（09-18 起子代理是一条会话）。有了它，点时间线上这一行就切进那条
+    /// 会话（会话项目第 3 段），面板那块登记时一并挂上。
+    session: Option<String>,
     /// 最近一次统计（工具次数 / 词元估算）。挂在面板标题上。
     stats: Option<String>,
     /// 同一份量的短标（`≈3.1K`）。挂在**时间线那一行**上——不点开就想知道
@@ -490,8 +493,24 @@ impl StreamRenderer {
                 let id = blocks::register_overlay(title, lines);
                 if let Some(log) = self.subagent_logs.get_mut(name) {
                     log.id = id;
+                    if let (Some(id), Some(session)) = (id, log.session.as_deref()) {
+                        blocks::link_session(id, session);
+                    }
                 }
             }
+        }
+    }
+
+    /// 这个子代理的会话 id 到了：派出去时的标记（实时），或者结果里带的（回放）。
+    pub(crate) fn subagent_session(&mut self, name: &str, session_id: &str) {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return;
+        }
+        let log = self.subagent_logs.entry(name.to_string()).or_default();
+        log.session = Some(session_id.to_string());
+        if let Some(id) = log.id {
+            blocks::link_session(id, session_id);
         }
     }
 

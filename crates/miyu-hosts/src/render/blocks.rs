@@ -43,6 +43,9 @@ struct Entry {
     /// 时默认开不开"是渲染器决定的——登记处本来就是两侧共用的那张表，正好当
     /// 通道。用户 09-19：点开过的行，想完／跑完都不该被自动收回去。
     user_open: bool,
+    /// 这一块讲的是哪条会话：子代理（09-18 起它是一条会话）。点它就切进那条会话看，
+    /// 不再开覆盖层（会话项目第 3 段）。
+    session: Option<String>,
 }
 
 fn registry() -> &'static Mutex<HashMap<u64, Entry>> {
@@ -111,6 +114,7 @@ fn insert_entry(lines: Vec<String>, overlay: bool, title: String) -> Option<u64>
             version: 0,
             touched: touch(),
             user_open: false,
+            session: None,
         },
     );
     evict(&mut map);
@@ -154,6 +158,21 @@ pub fn update(id: u64, title: String, lines: Vec<String>) {
         entry.touched = touch();
     }
     evict(&mut map);
+}
+
+/// 这一块讲的是 `session_id` 那条会话（子代理的会话）。
+pub fn link_session(id: u64, session_id: &str) {
+    let Ok(mut map) = registry().lock() else {
+        return;
+    };
+    if let Some(entry) = map.get_mut(&id) {
+        entry.session = Some(session_id.to_string());
+    }
+}
+
+/// 点这一块要切进的会话（见 [`link_session`]）。
+pub fn linked_session(id: u64) -> Option<String> {
+    registry().lock().ok()?.get(&id)?.session.clone()
 }
 
 /// 覆盖层的标题。

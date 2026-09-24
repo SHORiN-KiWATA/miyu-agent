@@ -199,3 +199,51 @@ fn a_running_turn_is_rebuilt_from_its_journal() {
     assert!(matches!(&replay.entries[3], ReplayEntry::Text { text } if text == "说到一半"));
     assert!(store.running_turn_replay("absent").unwrap().is_none());
 }
+
+/// 子代理会话的第一轮是主会话派的任务，回放和挂上跑着的那一轮都要认得出来；之后的轮、
+/// 普通会话的第一轮都不是（会话项目第 3 段）。
+#[test]
+fn the_first_turn_of_a_subagent_session_is_the_task_from_its_parent() {
+    let (_temp, store) = test_store();
+    completed_turns(&store, 1);
+    let parent = store.session_id().to_string();
+    let child = store
+        .create_subagent_session("miyu", "查日志", &parent, "", 1, None, false)
+        .unwrap();
+    let child_store = store.pinned(&child.session_id);
+    child_store
+        .start_turn("task", "去查一下日志", std::process::id())
+        .unwrap();
+    assert!(
+        child_store
+            .running_turn_replay("task")
+            .unwrap()
+            .expect("回合在库里")
+            .from_parent
+    );
+    assert!(child_store.turn_from_parent("task").unwrap());
+    child_store.complete_turn("task", "查完了", None).unwrap();
+    child_store
+        .start_turn("typed", "再看看别的", std::process::id())
+        .unwrap();
+    child_store.complete_turn("typed", "好", None).unwrap();
+
+    let flags = child_store
+        .replay_page(None, 10)
+        .unwrap()
+        .turns
+        .iter()
+        .map(|turn| (turn.display_content.clone(), turn.from_parent))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        flags,
+        [
+            ("去查一下日志".to_string(), true),
+            ("再看看别的".to_string(), false)
+        ]
+    );
+    assert!(!child_store.turn_from_parent("typed").unwrap());
+    assert!(!store.replay_page(None, 10).unwrap().turns[0].from_parent);
+    assert!(!store.turn_from_parent("t1").unwrap());
+    assert!(!store.turn_from_parent("absent").unwrap());
+}

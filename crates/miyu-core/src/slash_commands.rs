@@ -41,6 +41,8 @@ pub fn take_repl_flag<'a>(args: &'a str, flag: &str) -> (&'a str, bool) {
 pub enum ReplSlashCommand {
     New,
     Session,
+    Subagent,
+    Back,
     Dev,
     Normal,
     Rename,
@@ -152,6 +154,26 @@ pub const REPL_COMMAND_TABLE: &[ReplCommandSpec] = &[
         arg_hint: "[name|index]",
         help_en: "list sessions, or switch to one (Ctrl+D deletes in the picker)",
         help_zh: "列出会话，或切换到指定会话（菜单内 Ctrl+D 删除）",
+        web: false,
+    },
+    // 子代理是会话（09-18 会话化）：`/session` 只列主会话，子会话从这两条进出（会话
+    // 项目第 3 段）。网页有自己的侧栏入口。
+    ReplCommandSpec {
+        name: "/subagent",
+        aliases: &[],
+        command: ReplSlashCommand::Subagent,
+        arg_hint: "",
+        help_en: "list the subagents this session started and step into one",
+        help_zh: "列出这条会话派出的子代理，挑一个切进去看、接着聊",
+        web: false,
+    },
+    ReplCommandSpec {
+        name: "/back",
+        aliases: &[],
+        command: ReplSlashCommand::Back,
+        arg_hint: "",
+        help_en: "leave the subagent session for the one you came from",
+        help_zh: "从子代理会话回到切进来之前那条会话",
         web: false,
     },
     ReplCommandSpec {
@@ -505,8 +527,9 @@ pub fn during_turn(command: ReplSlashCommand, args: &str) -> DuringTurn {
         Models | Session if bare => DuringTurn::Panel,
 
         // ── 分离 → 执行 → 挂回来 ──
-        // 换会话的：换走之后这一轮就不该再跟了，它在 daemon 里继续跑。
-        New | Dev | Normal | Session => DuringTurn::Detach,
+        // 换会话的：换走之后这一轮就不该再跟了，它在 daemon 里继续跑。进出子代理会话
+        // 也是换会话。
+        New | Dev | Normal | Session | Subagent | Back => DuringTurn::Detach,
         // 要占屏的面板；`/effort <档位>` 带参数不弹面板，但仍走同一条路。
         Effort | Models | Persona | Config => DuringTurn::Detach,
         // 长文（超过 2 行就落回正文缓冲，回合中写缓冲会写坏正在开的块）。

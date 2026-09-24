@@ -229,6 +229,25 @@ async fn run_remote_chat_inner(
     // 最后看到的事件号。回合中执行斜杠命令走「分离 → 执行 → 挂回来」，挂回来
     // 时从它之后接着看，已经看过的那半截不会再来一遍（09-20）。
     let mut last_event_id = 0u64;
+    // 点了任务条上的会话行、或者时间线上子代理那一行（会话项目第 3 段）：这一轮留在
+    // daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一条路。鼠标事件在
+    // 下面那一批里就抽干了，走不到按键那条路，两处都要看一眼。
+    macro_rules! suspend_for_strip {
+        ($live_tail:ident) => {
+            if let Some(action) = $live_tail.take_strip_action() {
+                renderer.finish()?;
+                $live_tail.stop_footer_spinner()?;
+                $live_tail.apply_renderer_frame(&mut renderer)?;
+                handoff_raw!();
+                return Err(anyhow::Error::new(RemoteTurnSuspended {
+                    action: SuspendedAction::Strip(action),
+                    run_id: run_id.clone(),
+                    last_event_id,
+                    session_id: turn_session_id.clone(),
+                }));
+            }
+        };
+    }
     // 攒着还没打的图（非全屏那条路）。见 `tool.image` / `tool.finished`。
     let mut deferred_images: Vec<(serde_json::Value, Option<String>)> = Vec::new();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(33));
@@ -268,6 +287,7 @@ async fn run_remote_chat_inner(
                         if matches!(next, Event::Mouse(_)) {
                             if let Some(live_tail) = live.as_deref_mut() {
                                 live_tail.handle_screen_event(&next)?;
+                                suspend_for_strip!(live_tail);
                             }
                             continue;
                         }
@@ -430,6 +450,7 @@ async fn run_remote_chat_inner(
                         if let Some(feed) = jobs_feed {
                             stop_pending_job(paths, feed, live_tail).await?;
                         }
+                        suspend_for_strip!(live_tail);
                         continue;
                     }
                     match live_tail.editor.handle_event(event, paths, true)? {
