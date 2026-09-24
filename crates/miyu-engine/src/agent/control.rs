@@ -16,22 +16,44 @@ pub(in crate::agent) const MAX_QUESTION_ROUNDS_PER_TURN: usize = 8;
 /// 掉回基线,本轮烧掉的全部消失(09-22 实测)。累计器本身是 `chat_with_tools`
 /// 的栈上局部态,打断时随栈销毁,守卫够不着;所以每次请求入账后往这里同步
 /// 一份,守卫 Drop 时照它记账。
+///
+/// 顺带记最后一次请求结束时的上下文占用:「本会话用量」工具在回合中途被调时,
+/// 库里还只有上一轮的数,footer 显示的却是这一次请求的(09-24)。
 #[derive(Clone, Default)]
-pub(in crate::agent) struct TurnUsageMirror(Arc<Mutex<TurnTokens>>);
+pub(in crate::agent) struct TurnUsageMirror(Arc<Mutex<LiveTurnUsage>>);
+
+#[derive(Clone, Copy, Default)]
+struct LiveTurnUsage {
+    tokens: TurnTokens,
+    context: Option<u64>,
+}
 
 impl TurnUsageMirror {
     pub(in crate::agent) fn set(&self, tokens: TurnTokens) {
         if let Ok(mut slot) = self.0.lock() {
-            *slot = tokens;
+            slot.tokens = tokens;
+        }
+    }
+
+    pub(in crate::agent) fn set_context(&self, tokens: u64) {
+        if let Ok(mut slot) = self.0.lock() {
+            slot.context = Some(tokens);
         }
     }
 
     pub(in crate::agent) fn reset(&self) {
-        self.set(TurnTokens::default());
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = LiveTurnUsage::default();
+        }
     }
 
     pub(in crate::agent) fn get(&self) -> TurnTokens {
-        self.0.lock().map(|slot| *slot).unwrap_or_default()
+        self.0.lock().map(|slot| slot.tokens).unwrap_or_default()
+    }
+
+    /// 这一轮最后一次请求结束时的上下文占用;这一轮还没发过请求就是 None。
+    pub(in crate::agent) fn context(&self) -> Option<u64> {
+        self.0.lock().ok().and_then(|slot| slot.context)
     }
 }
 

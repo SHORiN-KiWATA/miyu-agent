@@ -68,18 +68,18 @@ pub fn format_session_usage(usage: &SessionUsage) -> String {
             lines.push(format!("- 当前上下文 **{}**{of}{share}", fmt(tokens)));
         }
         // 刚开新会话、刚压缩完、上一轮被打断：供应商还没报过占用。
-        None => lines.push("- 当前上下文：还没有实测数（这一轮跑完才有）".to_string()),
+        None => lines.push("- 当前上下文：还没有实测数".to_string()),
     }
     if usage.spent.total > 0 {
         let hit = (usage.spent.prompt > 0)
             .then(|| usage.spent.cache_read as f64 / usage.spent.prompt as f64 * 100.0)
             .unwrap_or(0.0);
         lines.push(format!(
-            "- 这个会话累计 **{}**（含派出去的子代理）· 缓存命中率 **{hit:.0}%**",
+            "- 这个会话累计 **{}**（含这一轮到目前为止、含派出去的子代理）· 缓存命中率 **{hit:.0}%**",
             fmt(usage.spent.total)
         ));
     } else {
-        lines.push("- 这个会话累计：还没有落账的用量".to_string());
+        lines.push("- 这个会话累计：还没有用量".to_string());
     }
     lines.push(format!("- 已经聊了 **{}** 轮", usage.turns));
     lines.join("\n")

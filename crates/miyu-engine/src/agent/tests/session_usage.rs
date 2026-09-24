@@ -110,3 +110,35 @@ fn a_restricted_turn_does_not_leak_the_late_registered_usage_tool() {
     );
     assert!(left.iter().all(|name| name == "read"), "{left:?}");
 }
+
+/// 回合中途问(它只会在回合中途被调):这一轮已经发出去的请求要算进累计,上下文要是
+/// 这一次请求的——和 footer 同一个数。退回修复前(只读库里落了账的)这条会红:头一轮
+/// 问,累计是 0,还说「还没有落账的用量」(用户 09-24)。
+#[tokio::test]
+async fn the_session_usage_tool_counts_the_turn_in_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let agent = agent_with(PersonaLane::Active, AppConfig::default(), &paths);
+    agent.runtime.turn_usage.set(TurnTokens {
+        total: 4_321,
+        prompt: 4_000,
+        cache_read: 3_000,
+    });
+    agent.runtime.turn_usage.set_context(4_100);
+    let output = {
+        let registry = agent.tools.lock().unwrap();
+        registry
+            .call("query_session_token_usage", "{}")
+            .await
+            .unwrap()
+    };
+    assert!(!output.contains("还没有"), "{output}");
+    assert!(
+        output.contains("这个会话累计 **"),
+        "spent must include the turn so far: {output}"
+    );
+    assert!(
+        output.contains("当前上下文 **"),
+        "context must be this turn's latest request: {output}"
+    );
+}

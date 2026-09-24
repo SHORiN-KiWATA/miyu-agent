@@ -164,7 +164,8 @@ impl Agent {
         // 复用的 Agent 也照样问得出当前那条（用户 09-22 提议走工具，不往提示词
         // 里塞常驻字段）。
         let mut tools = tools;
-        bind_session_usage(&mut tools, &state, &client, &config);
+        let turn_usage = TurnUsageMirror::default();
+        bind_session_usage(&mut tools, &state, &client, &config, &turn_usage);
         Ok(Self {
             state,
             client,
@@ -210,7 +211,7 @@ impl Agent {
             },
             runtime: TurnRuntime {
                 persona_reminder: None,
-                turn_usage: TurnUsageMirror::default(),
+                turn_usage,
                 last_request_snapshot: None,
                 pending_remote_tool_calls: std::sync::Mutex::new(Vec::new()),
                 last_request_endpoint: None,
@@ -671,17 +672,26 @@ fn bind_session_usage(
     state: &StateStore,
     client: &OpenAiCompatibleClient,
     config: &miyu_base::config::AppConfig,
+    turn_usage: &TurnUsageMirror,
 ) {
     let state = state.clone();
     let window_config = config.clone();
     let window_client = client.clone();
+    let live = turn_usage.clone();
     let session: crate::tools::usage_query::SessionUsageFn = Arc::new(move || {
         // 窗口跟着当前端点走，和 footer 上那个数同一个来源。
         let context_window = window_client.context_window(&window_config).ok().flatten();
+        // 回合中途被调（它只会在回合中途被调）：库里的数都要等这一轮跑完才落账，
+        // 照库读就少了这一轮——头一轮问，累计是 0（09-24）。和 footer 一个算法：
+        // 已落账的 + 这一轮到目前为止的；上下文取这一轮最后一次请求的。
+        let mut spent = state.session_cumulative_token_totals().unwrap_or_default();
+        spent.add(live.get());
         Some(crate::tools::usage_query::SessionUsage {
-            context_tokens: state.latest_context_end_tokens().ok().flatten(),
+            context_tokens: live
+                .context()
+                .or_else(|| state.latest_context_end_tokens().ok().flatten()),
             context_window,
-            spent: state.session_cumulative_token_totals().unwrap_or_default(),
+            spent,
             turns: state
                 .load_visible_turns()
                 .map(|turns| turns.len())

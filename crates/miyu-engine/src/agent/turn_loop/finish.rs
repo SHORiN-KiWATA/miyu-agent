@@ -74,6 +74,10 @@ impl Agent {
             // 打断记账的依据:累计器本身是这个函数的栈上局部态,打断时随栈没了,
             // 回合守卫够不着。每次请求入账后往共享镜像同步一份。
             self.runtime.turn_usage.set(turn_tokens);
+            // 与 footer 同一个口径:这次请求结束时的上下文 = prompt + completion。
+            self.runtime
+                .turn_usage
+                .set_context(round.prompt_tokens.saturating_add(round.completion_tokens));
             // 会话实时累计 = 已落库(往轮 + 已完成子代理子会话)+ 本回合至今。
             // session_cumulative_token_totals 不含当前回合(回合末才 add_usage),所以
             // 这里补上 turn_tokens;子代理跑完那一刻它的子会话行已记好,下一个主回合
