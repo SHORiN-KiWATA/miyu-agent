@@ -13,6 +13,7 @@ mod pages;
 mod platform;
 mod queue;
 mod redo;
+mod replay_text;
 mod restart;
 mod session_state;
 mod sessions;

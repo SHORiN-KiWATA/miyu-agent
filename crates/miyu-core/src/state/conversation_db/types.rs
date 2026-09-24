@@ -13,12 +13,15 @@ pub(crate) const PENDING_PLACEHOLDER: &str = "<system-reminder>上一轮prompt�
 pub(crate) const INTERRUPTED_TEXT: &str =
     "<system-reminder>上一轮prompt已被中断，除非用户重新要求否则不要处理上一轮的prompt</system-reminder>";
 
-/// Budget for a finished turn's display transcript. Generous enough for a
-/// normal turn's prose plus a handful of tool blocks, small enough that a
-/// session's worth of them stays cheap to load.
+/// Budget for the tool and thinking entries of a finished turn's display
+/// transcript: enough for a handful of tool blocks, small enough that a page
+/// of turns stays cheap to load. Prose does not count against it and is kept
+/// whole (a long reply used to replay cut at 2048 chars, 09-25).
 pub(crate) const REPLAY_JOURNAL_MAX_CHARS: usize = 8 * 1024;
 
-/// Per-entry clamp so one runaway tool result cannot eat the whole budget.
+/// Per-entry clamp for tool arguments and output, so one runaway tool result
+/// cannot eat the whole budget. Before 09-25 it clamped prose too; snapshots
+/// from then are healed on read (`heal_clipped_reply`).
 pub(crate) const REPLAY_ENTRY_MAX_CHARS: usize = 2 * 1024;
 
 /// 思考正文进回放时的上限。比别的条目紧：一轮可能想好几段，而整份流水账只有

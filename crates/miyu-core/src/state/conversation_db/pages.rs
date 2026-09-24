@@ -216,7 +216,10 @@ impl ConversationDb {
         }
         let mut turns = rows
             .into_iter()
-            .map(|(_, _, replay)| replay)
+            .map(|(_, _, mut replay)| {
+                heal_clipped_reply(&mut replay);
+                replay
+            })
             .collect::<Vec<_>>();
         turns.reverse();
         Ok(ReplayPage { turns, older })
