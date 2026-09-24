@@ -379,7 +379,7 @@ background_opacity 0.92
         .iter()
         .position(|block| block.kind == BlockKind::Code)
         .expect("fenced block should use the code layout");
-    let columns = plan_columns(&layouts, &config).unwrap();
+    let columns = plan_balanced_columns(&layouts, &config).unwrap();
     let placement = columns
         .iter()
         .flat_map(|column| &column.placements)
@@ -432,7 +432,6 @@ background_opacity 0.92
 fn extreme_config_values_are_clamped_and_missing_fonts_fall_back() {
     let config = RenderConfig {
         theme: "unknown".to_string(),
-        max_height: 1,
         font_size: 0,
         code_font_size: u32::MAX,
         padding: u32::MAX,
@@ -440,13 +439,10 @@ fn extreme_config_values_are_clamped_and_missing_fonts_fall_back() {
         title_font: "/definitely/missing/title.ttf".to_string(),
         code_font: "/definitely/missing/code.ttf".to_string(),
         emoji_font: "/definitely/missing/emoji.ttf".to_string(),
+        ..RenderConfig::default()
     };
     let pages = render("fallback 中文 😀", &config).unwrap();
     assert_eq!(pages.len(), 1);
-    assert_eq!(
-        NormalizedConfig::new(&config).max_height,
-        MIN_CONFIGURED_HEIGHT
-    );
     assert_eq!(pages[0].height, MIN_RENDERED_HEIGHT);
     assert!(!pages[0].png.is_empty());
 }
@@ -497,7 +493,6 @@ fn documents_over_the_pixel_budget_fail_instead_of_truncating() {
     }
     markdown.push_str("```\n");
     let config = RenderConfig {
-        max_height: MIN_CONFIGURED_HEIGHT,
         font_size: 56,
         code_font_size: 52,
         padding: 160,

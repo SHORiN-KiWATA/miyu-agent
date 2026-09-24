@@ -3039,16 +3039,6 @@
           default: "paper",
         },
         {
-          key: "max_height",
-          label: t("长图最大高度"),
-          kind: "number",
-          integer: true,
-          min: 1000,
-          max: 5000,
-          unit: "px",
-          default: 2600,
-        },
-        {
           key: "font_size",
           label: t("正文字号"),
           kind: "number",

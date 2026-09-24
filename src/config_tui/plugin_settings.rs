@@ -20,7 +20,6 @@ pub(in crate::config_tui) struct ReplyProcessorSettingsForm {
     pub(in crate::config_tui) followup_mention: bool,
     pub(in crate::config_tui) strip_period: bool,
     pub(in crate::config_tui) theme: String,
-    pub(in crate::config_tui) max_height: u32,
     pub(in crate::config_tui) font_size: u32,
     pub(in crate::config_tui) code_font_size: u32,
     pub(in crate::config_tui) padding: u32,
@@ -43,7 +42,6 @@ impl Default for ReplyProcessorSettingsForm {
             followup_mention: true,
             strip_period: true,
             theme: "paper".to_string(),
-            max_height: 2600,
             font_size: 36,
             code_font_size: 30,
             padding: 64,
@@ -663,100 +661,104 @@ pub(in crate::config_tui) fn apply_reply_processor_values(
     Ok(())
 }
 
+/// 回复处理表单的各行；顺序就是 `parse_reply_processor_fields` 取字段的下标。
+pub(in crate::config_tui) fn reply_processor_fields(
+    plugin_enabled: bool,
+    settings: &ReplyProcessorSettingsForm,
+) -> Vec<Field> {
+    let mode_choices = vec![
+        reply_processor_mode_label("image"),
+        reply_processor_mode_label("forward"),
+    ];
+    vec![
+        Field::boolean(t("Plugin enabled", "启用插件"), plugin_enabled),
+        Field::boolean(
+            t("Enabled for new conversations", "新会话默认启用"),
+            settings.default_enabled,
+        ),
+        Field::new(
+            t("Long reply threshold (characters)", "长回复阈值（字符）"),
+            settings.threshold.to_string(),
+        ),
+        Field::new(
+            t("Long reply processing mode", "长回复处理模式"),
+            reply_processor_mode_label(&settings.mode),
+        )
+        .choices_owned(mode_choices)
+        .raw_choice_labels(),
+        Field::boolean(
+            t("Mention sender after forwarding", "转发后艾特发起者"),
+            settings.followup_mention,
+        ),
+        Field::boolean(
+            t("Strip trailing Chinese period", "移除末尾中文句号"),
+            settings.strip_period,
+        ),
+        Field::new(t("Image theme", "长图主题"), settings.theme.clone())
+            .choices(&["paper", "light", "dark"]),
+        Field::new(
+            t("Body font size", "正文字号"),
+            settings.font_size.to_string(),
+        ),
+        Field::new(
+            t("Code font size", "代码字号"),
+            settings.code_font_size.to_string(),
+        ),
+        Field::new(t("Image padding", "长图边距"), settings.padding.to_string()),
+        Field::boolean(
+            t("Add image context notice", "注入长图上下文提示"),
+            settings.context_notice,
+        ),
+        Field::new(
+            t("Context notice TTL (hours)", "上下文提示保留小时"),
+            settings.ttl_hours.to_string(),
+        ),
+        Field::new(
+            t("Maximum context records", "上下文提示最大条数"),
+            settings.max_records.to_string(),
+        ),
+        Field::boolean(
+            t("Intercept send-message tool", "接管发送消息工具"),
+            settings.send_tool_intercept,
+        ),
+        Field::new(
+            t(
+                "Body font file path (empty = bundled default)",
+                "正文字体文件路径（空 = 内置默认字体）",
+            ),
+            settings.font.clone(),
+        ),
+        Field::new(
+            t(
+                "Title font file path (empty = body font)",
+                "标题字体文件路径（空 = 跟随正文字体）",
+            ),
+            settings.title_font.clone(),
+        ),
+        Field::new(
+            t(
+                "Code font file path (empty = bundled default)",
+                "代码字体文件路径（空 = 内置默认字体）",
+            ),
+            settings.code_font.clone(),
+        ),
+        Field::new(
+            t(
+                "Emoji font file path (empty = bundled default)",
+                "Emoji 字体文件路径（空 = 内置默认字体）",
+            ),
+            settings.emoji_font.clone(),
+        ),
+    ]
+}
+
 pub(in crate::config_tui) fn edit_reply_processor(
     ui: &mut Ui,
     config: &mut AppConfig,
 ) -> Result<()> {
     let (mut plugin_enabled, mut settings) = reply_processor_values(config)?;
     loop {
-        let mode_choices = vec![
-            reply_processor_mode_label("image"),
-            reply_processor_mode_label("forward"),
-        ];
-        let mut fields = vec![
-            Field::boolean(t("Plugin enabled", "启用插件"), plugin_enabled),
-            Field::boolean(
-                t("Enabled for new conversations", "新会话默认启用"),
-                settings.default_enabled,
-            ),
-            Field::new(
-                t("Long reply threshold (characters)", "长回复阈值（字符）"),
-                settings.threshold.to_string(),
-            ),
-            Field::new(
-                t("Long reply processing mode", "长回复处理模式"),
-                reply_processor_mode_label(&settings.mode),
-            )
-            .choices_owned(mode_choices)
-            .raw_choice_labels(),
-            Field::boolean(
-                t("Mention sender after forwarding", "转发后艾特发起者"),
-                settings.followup_mention,
-            ),
-            Field::boolean(
-                t("Strip trailing Chinese period", "移除末尾中文句号"),
-                settings.strip_period,
-            ),
-            Field::new(t("Image theme", "长图主题"), settings.theme.clone())
-                .choices(&["paper", "light", "dark"]),
-            Field::new(
-                t("Image maximum height", "长图最大高度"),
-                settings.max_height.to_string(),
-            ),
-            Field::new(
-                t("Body font size", "正文字号"),
-                settings.font_size.to_string(),
-            ),
-            Field::new(
-                t("Code font size", "代码字号"),
-                settings.code_font_size.to_string(),
-            ),
-            Field::new(t("Image padding", "长图边距"), settings.padding.to_string()),
-            Field::boolean(
-                t("Add image context notice", "注入长图上下文提示"),
-                settings.context_notice,
-            ),
-            Field::new(
-                t("Context notice TTL (hours)", "上下文提示保留小时"),
-                settings.ttl_hours.to_string(),
-            ),
-            Field::new(
-                t("Maximum context records", "上下文提示最大条数"),
-                settings.max_records.to_string(),
-            ),
-            Field::boolean(
-                t("Intercept send-message tool", "接管发送消息工具"),
-                settings.send_tool_intercept,
-            ),
-            Field::new(
-                t(
-                    "Body font file path (empty = bundled default)",
-                    "正文字体文件路径（空 = 内置默认字体）",
-                ),
-                settings.font.clone(),
-            ),
-            Field::new(
-                t(
-                    "Title font file path (empty = body font)",
-                    "标题字体文件路径（空 = 跟随正文字体）",
-                ),
-                settings.title_font.clone(),
-            ),
-            Field::new(
-                t(
-                    "Code font file path (empty = bundled default)",
-                    "代码字体文件路径（空 = 内置默认字体）",
-                ),
-                settings.code_font.clone(),
-            ),
-            Field::new(
-                t(
-                    "Emoji font file path (empty = bundled default)",
-                    "Emoji 字体文件路径（空 = 内置默认字体）",
-                ),
-                settings.emoji_font.clone(),
-            ),
-        ];
+        let mut fields = reply_processor_fields(plugin_enabled, &settings);
         run_form_without_buttons(ui, t(" REPLY PROCESSOR ", " 回复处理 "), &mut fields)?;
         plugin_enabled = parse_bool_field(&fields[0].value)?;
         settings = match parse_reply_processor_fields(&fields) {
@@ -786,18 +788,17 @@ pub(in crate::config_tui) fn parse_reply_processor_fields(
         followup_mention: bool_at(4)?,
         strip_period: bool_at(5)?,
         theme: fields[6].value.trim().to_string(),
-        max_height: parse_reply_processor_value(fields, 7, t("maximum height", "最大高度"))?,
-        font_size: parse_reply_processor_value(fields, 8, t("font size", "字号"))?,
-        code_font_size: parse_reply_processor_value(fields, 9, t("code font size", "代码字号"))?,
-        padding: parse_reply_processor_value(fields, 10, t("padding", "边距"))?,
-        context_notice: bool_at(11)?,
-        ttl_hours: parse_reply_processor_value(fields, 12, "TTL")?,
-        max_records: parse_reply_processor_value(fields, 13, t("maximum records", "最大条数"))?,
-        send_tool_intercept: bool_at(14)?,
-        font: fields[15].value.trim().to_string(),
-        title_font: fields[16].value.trim().to_string(),
-        code_font: fields[17].value.trim().to_string(),
-        emoji_font: fields[18].value.trim().to_string(),
+        font_size: parse_reply_processor_value(fields, 7, t("font size", "字号"))?,
+        code_font_size: parse_reply_processor_value(fields, 8, t("code font size", "代码字号"))?,
+        padding: parse_reply_processor_value(fields, 9, t("padding", "边距"))?,
+        context_notice: bool_at(10)?,
+        ttl_hours: parse_reply_processor_value(fields, 11, "TTL")?,
+        max_records: parse_reply_processor_value(fields, 12, t("maximum records", "最大条数"))?,
+        send_tool_intercept: bool_at(13)?,
+        font: fields[14].value.trim().to_string(),
+        title_font: fields[15].value.trim().to_string(),
+        code_font: fields[16].value.trim().to_string(),
+        emoji_font: fields[17].value.trim().to_string(),
     };
     validate_reply_processor_settings(&settings)?;
     Ok(settings)
@@ -856,13 +857,6 @@ pub(in crate::config_tui) fn validate_reply_processor_settings(
         return Err(t(
             "Theme must be paper, light, or dark.",
             "主题必须是 paper、light 或 dark。",
-        )
-        .to_string());
-    }
-    if !(1000..=5000).contains(&settings.max_height) {
-        return Err(t(
-            "Image maximum height must be between 1000 and 5000.",
-            "长图最大高度必须在 1000 到 5000 之间。",
         )
         .to_string());
     }

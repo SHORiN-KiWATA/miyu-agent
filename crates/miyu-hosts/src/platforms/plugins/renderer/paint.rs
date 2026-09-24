@@ -14,8 +14,6 @@ pub(in crate::platforms::plugins::renderer) const MAX_PAGE_PNG_BYTES: usize = 20
 
 pub(in crate::platforms::plugins::renderer) const MAX_TOTAL_PNG_BYTES: usize = 48 * 1024 * 1024;
 
-pub(in crate::platforms::plugins::renderer) const MIN_CONFIGURED_HEIGHT: u32 = 1000;
-
 pub(in crate::platforms::plugins::renderer) const MIN_RENDERED_HEIGHT: u32 = 360;
 
 pub(in crate::platforms::plugins::renderer) const MAX_PAGE_HEIGHT: u32 = 5000;
@@ -146,7 +144,7 @@ pub(in crate::platforms::plugins::renderer) fn render_pages(
         .unwrap_or(0);
     let height = content_height
         .saturating_add(config.padding.saturating_mul(2))
-        .clamp(MIN_RENDERED_HEIGHT, config.max_height);
+        .clamp(MIN_RENDERED_HEIGHT, MAX_PAGE_HEIGHT);
     validate_page_dimensions(width, height)?;
     let pixels = u64::from(width) * u64::from(height);
     checked_total_page_pixels(0, pixels)?;

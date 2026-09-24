@@ -53,7 +53,6 @@ fn renderer_fonts_dir_from(candidates: &[PathBuf]) -> Result<PathBuf> {
 #[derive(Clone)]
 pub(in crate::platforms::plugins::renderer) struct NormalizedConfig {
     pub(in crate::platforms::plugins::renderer) theme: String,
-    pub(in crate::platforms::plugins::renderer) max_height: u32,
     pub(in crate::platforms::plugins::renderer) font_size: u32,
     pub(in crate::platforms::plugins::renderer) code_font_size: u32,
     pub(in crate::platforms::plugins::renderer) padding: u32,
@@ -67,9 +66,6 @@ impl NormalizedConfig {
     pub fn new(config: &RenderConfig) -> Self {
         Self {
             theme: config.theme.trim().to_ascii_lowercase(),
-            max_height: config
-                .max_height
-                .clamp(MIN_CONFIGURED_HEIGHT, MAX_PAGE_HEIGHT),
             font_size: config.font_size.clamp(14, 56),
             code_font_size: config.code_font_size.clamp(12, 52),
             padding: config.padding.clamp(24, 160),

@@ -45,7 +45,6 @@ pub(crate) struct ReplyProcessorConfig {
     pub(crate) followup_mention: bool,
     pub(crate) strip_period: bool,
     pub(crate) theme: String,
-    pub(crate) max_height: u32,
     pub(crate) font_size: u32,
     pub(crate) code_font_size: u32,
     pub(crate) padding: u32,
@@ -68,7 +67,6 @@ impl Default for ReplyProcessorConfig {
             followup_mention: true,
             strip_period: true,
             theme: "paper".to_string(),
-            max_height: 2600,
             font_size: 36,
             code_font_size: 30,
             padding: 64,
@@ -106,13 +104,6 @@ impl ReplyProcessorConfig {
             _ => "paper",
         }
         .to_string();
-        config.max_height = usize_setting(
-            settings,
-            "max_height",
-            config.max_height as usize,
-            1000,
-            5000,
-        ) as u32;
         config.font_size =
             usize_setting(settings, "font_size", config.font_size as usize, 24, 56) as u32;
         config.code_font_size = usize_setting(
@@ -140,7 +131,6 @@ impl ReplyProcessorConfig {
     pub(crate) fn render_config(&self) -> RenderConfig {
         RenderConfig {
             theme: self.theme.clone(),
-            max_height: self.max_height,
             font_size: self.font_size,
             code_font_size: self.code_font_size,
             padding: self.padding,
@@ -148,6 +138,7 @@ impl ReplyProcessorConfig {
             title_font: self.title_font.clone(),
             code_font: self.code_font.clone(),
             emoji_font: self.emoji_font.clone(),
+            ..RenderConfig::default()
         }
     }
 }

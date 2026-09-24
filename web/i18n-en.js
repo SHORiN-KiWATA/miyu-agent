@@ -2461,7 +2461,6 @@ window.MIYU_I18N_EN = Object.freeze({
   "长回复转图片或合并转发,以及字体/主题": "Convert long replies to images or merged forwards, plus fonts and themes",
   "长回复阈值(字符)": "Long reply threshold (characters)",
   "长图主题": "Image theme",
-  "长图最大高度": "Image maximum height",
   "长图边距": "Image padding",
   "长期": "Long-term",
   "问题 1": "Question 1",

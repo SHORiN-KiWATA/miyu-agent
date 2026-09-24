@@ -4,8 +4,9 @@ use crate::config_tui::{
     apply_plugin_fields, apply_real_context_values, apply_reply_processor_values,
     embedding_model_label, field_display_value, group_join_approval_group_label,
     group_join_approval_values, parse_real_context_identity_lines, parse_real_context_string_lines,
-    plugin_fields, real_context_values, reply_processor_mode_label, reply_processor_mode_value,
-    reply_processor_values, t, upsert_group_join_approval_group, validate_reply_processor_settings,
+    parse_reply_processor_fields, plugin_fields, real_context_values, reply_processor_fields,
+    reply_processor_mode_label, reply_processor_mode_value, reply_processor_values, t,
+    upsert_group_join_approval_group, validate_reply_processor_settings,
     ReplyProcessorSettingsForm, REPLY_PROCESSOR_PLUGIN_ID,
 };
 use miyu_base::config::{
@@ -72,7 +73,6 @@ fn reply_processor_defaults_match_platform_contract() {
     assert!(settings.followup_mention);
     assert!(settings.strip_period);
     assert_eq!(settings.theme, "paper");
-    assert_eq!(settings.max_height, 2600);
     assert_eq!(settings.font_size, 36);
     assert_eq!(settings.code_font_size, 30);
     assert_eq!(settings.padding, 64);
@@ -137,19 +137,39 @@ fn reply_processor_settings_use_generic_map_and_preserve_unknown_keys() {
     assert_eq!(reparsed, settings);
 }
 
+/// 表单各行和解析下标对得上（09-24 删掉「长图最大高度」，后面的下标整体前移
+/// 一位）：每项填一个不同的值，拼成表单再解析回来必须原样一致。
+#[test]
+fn reply_processor_form_round_trips_every_field() {
+    let settings = ReplyProcessorSettingsForm {
+        default_enabled: false,
+        threshold: 321,
+        mode: "forward".to_string(),
+        followup_mention: false,
+        strip_period: true,
+        theme: "dark".to_string(),
+        font_size: 40,
+        code_font_size: 28,
+        padding: 80,
+        context_notice: false,
+        ttl_hours: 12,
+        max_records: 5,
+        send_tool_intercept: true,
+        font: "/fonts/body.ttf".to_string(),
+        title_font: "/fonts/title.ttf".to_string(),
+        code_font: "/fonts/code.ttf".to_string(),
+        emoji_font: "/fonts/emoji.ttf".to_string(),
+    };
+    let fields = reply_processor_fields(true, &settings);
+    assert_eq!(parse_reply_processor_fields(&fields).unwrap(), settings);
+}
+
 #[test]
 fn reply_processor_range_validation_rejects_unsafe_render_settings() {
     assert!(validate_reply_processor_settings(&ReplyProcessorSettingsForm::default()).is_ok());
     assert!(
         validate_reply_processor_settings(&ReplyProcessorSettingsForm {
             threshold: 0,
-            ..ReplyProcessorSettingsForm::default()
-        })
-        .is_err()
-    );
-    assert!(
-        validate_reply_processor_settings(&ReplyProcessorSettingsForm {
-            max_height: 999,
             ..ReplyProcessorSettingsForm::default()
         })
         .is_err()

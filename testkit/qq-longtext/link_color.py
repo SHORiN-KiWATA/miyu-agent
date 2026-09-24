@@ -59,7 +59,7 @@ def read_u32(stream):
 
 def render(binary, home, markdown, theme):
     """起一个渲染子进程渲一张图，返回 PIL 图像。"""
-    config = {"theme": theme, "max_height": 2600, "font_size": 36, "code_font_size": 30,
+    config = {"theme": theme, "font_size": 36, "code_font_size": 30,
               "padding": 64, "font": "", "title_font": "", "code_font": "", "emoji_font": ""}
     payload = json.dumps({"markdown": markdown, "config": config}).encode()
     env = dict(os.environ, MIYU_HOME=str(home), MIYU_INTERNAL_RENDERER_WORKER="1")

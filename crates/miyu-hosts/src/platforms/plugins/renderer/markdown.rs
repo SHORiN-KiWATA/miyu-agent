@@ -188,6 +188,15 @@ pub(in crate::platforms::plugins::renderer) struct MarkdownCollector {
     /// 与上面一一对应的可见文字，用来判断「标题本身就是网址」。
     pub(in crate::platforms::plugins::renderer) link_texts: Vec<String>,
     pub(in crate::platforms::plugins::renderer) strike_depth: usize,
+    /// `<b>`、`<i>` 这类 HTML 标签带来的样式（见 `html.rs`）。
+    pub(in crate::platforms::plugins::renderer) html_style: HtmlStyle,
+    /// 上一段 HTML 停在注释中间（注释可以跨行）。
+    pub(in crate::platforms::plugins::renderer) html_comment: bool,
+    /// 当前 HTML 块已经画过字：下一行有字就先换行。
+    pub(in crate::platforms::plugins::renderer) html_block_has_text: bool,
+    /// `<br>` 欠下的换行，等下一段字落下时才补：格子或段落末尾的 `<br>` 在浏览器里
+    /// 不会多出空行，这里也不该。
+    pub(in crate::platforms::plugins::renderer) html_pending_breaks: usize,
 }
 
 /// `[标题](链接)` 和 `![alt](图片地址)` 画成图之后地址会整个消失——图里点不了
@@ -274,6 +283,8 @@ impl MarkdownCollector {
             // 并成空格，可终端、WebUI、QQ 短回复都是一行一行显示的——同一段话
             // 一长到被转成图就挤成一坨，提示词要求「每个来源一行」的那几行
             // 也首尾相接。
+            // 紧跟在 `<br>` 后面的换行不再算一次（`甲<br>` 换行 `乙` 是一行一个）。
+            Event::SoftBreak | Event::HardBreak if self.html_pending_breaks > 0 => {}
             Event::SoftBreak => self.push_text("\n", self.style()),
             Event::HardBreak => self.push_text("\n", self.style()),
             Event::Rule => {
@@ -286,8 +297,44 @@ impl MarkdownCollector {
             Event::FootnoteReference(label) => {
                 self.push_text(&format!("[{label}]"), self.style());
             }
-            Event::Html(text) | Event::InlineHtml(text) => {
-                self.push_text(&text, self.style());
+            Event::Html(text) => self.html(&text, true),
+            Event::InlineHtml(text) => self.html(&text, false),
+        }
+    }
+
+    /// 夹在 Markdown 里的 HTML：`<br>` 换行、格式标签转样式、其余只留字（用户
+    /// 09-24）。`block` 是 HTML 块，pulldown-cmark 一行交一段，行与行之间的换行
+    /// 由这里补。
+    fn html(&mut self, raw: &str, block: bool) {
+        if block {
+            // 一个事件里是一行还是几行都按行来，免得依赖解析器怎么切。
+            for line in raw.lines() {
+                self.html_line(line.trim(), true);
+            }
+        } else {
+            self.html_line(raw, false);
+        }
+    }
+
+    fn html_line(&mut self, raw: &str, block: bool) {
+        let mut line_has_text = false;
+        for piece in scan(raw, &mut self.html_comment) {
+            match piece {
+                HtmlPiece::Text(text) => {
+                    if block && !line_has_text {
+                        if self.html_block_has_text {
+                            self.push_text("\n", self.style());
+                        }
+                        self.html_block_has_text = true;
+                        line_has_text = true;
+                    }
+                    self.push_text(&text, self.style());
+                }
+                HtmlPiece::LineBreak => {
+                    self.html_pending_breaks = self.html_pending_breaks.saturating_add(1);
+                }
+                HtmlPiece::Open(format) => self.html_style.apply(format, true),
+                HtmlPiece::Close(format) => self.html_style.apply(format, false),
             }
         }
     }
@@ -367,6 +414,10 @@ impl MarkdownCollector {
                 self.link_urls.push(dest_url.to_string());
                 self.link_texts.push(String::new());
             }
+            Tag::HtmlBlock => {
+                self.finish_current();
+                self.html_block_has_text = false;
+            }
             _ => {}
         }
     }
@@ -428,6 +479,13 @@ impl MarkdownCollector {
                 if let Some(table) = self.table.as_mut() {
                     table.finish_cell();
                 }
+                self.html_style = HtmlStyle::default();
+                self.html_pending_breaks = 0;
+            }
+            // HTML 块自成一块；没收口的注释也到此为止。
+            TagEnd::HtmlBlock => {
+                self.finish_current();
+                self.html_comment = false;
             }
             TagEnd::Strong => self.strong_depth = self.strong_depth.saturating_sub(1),
             TagEnd::Emphasis => self.emphasis_depth = self.emphasis_depth.saturating_sub(1),
@@ -495,6 +553,17 @@ impl MarkdownCollector {
         text: &str,
         style: InlineStyle,
     ) {
+        if text.is_empty() {
+            return;
+        }
+        if self.html_pending_breaks > 0 {
+            let breaks = "\n".repeat(std::mem::take(&mut self.html_pending_breaks));
+            self.push_raw(&breaks, style);
+        }
+        self.push_raw(text, style);
+    }
+
+    fn push_raw(&mut self, text: &str, style: InlineStyle) {
         if let Some(shown) = self.link_texts.last_mut() {
             shown.push_str(text);
         }
@@ -526,11 +595,11 @@ impl MarkdownCollector {
 
     pub(in crate::platforms::plugins::renderer) fn style(&self) -> InlineStyle {
         InlineStyle {
-            bold: self.strong_depth > 0 || self.table_header,
-            italic: self.emphasis_depth > 0,
-            code: self.code_block,
+            bold: self.strong_depth > 0 || self.html_style.bold > 0 || self.table_header,
+            italic: self.emphasis_depth > 0 || self.html_style.italic > 0,
+            code: self.code_block || self.html_style.code > 0,
             link: false,
-            muted: self.strike_depth > 0,
+            muted: self.strike_depth > 0 || self.html_style.strike > 0,
         }
     }
 
@@ -550,6 +619,9 @@ impl MarkdownCollector {
     }
 
     pub(in crate::platforms::plugins::renderer) fn finish_current(&mut self) {
+        // 没闭合的 `<b>` 只染到块尾，块尾欠着的 `<br>` 换行也不补了。
+        self.html_style = HtmlStyle::default();
+        self.html_pending_breaks = 0;
         let Some(block) = self.current.take() else {
             return;
         };

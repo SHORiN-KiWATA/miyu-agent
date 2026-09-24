@@ -96,7 +96,6 @@ pub(crate) fn validate_reply_processor_plugin_config(
     }
     for (key, min, max) in [
         ("threshold", 1_u64, 100_000_u64),
-        ("max_height", 1_000, 5_000),
         ("font_size", 24, 56),
         ("code_font_size", 20, 46),
         ("padding", 36, 120),

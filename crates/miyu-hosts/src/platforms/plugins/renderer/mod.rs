@@ -1,11 +1,15 @@
+mod columns;
 mod fonts;
+mod html;
 mod layout;
 mod links;
 mod markdown;
 mod paint;
 mod table_width;
 mod worker;
+use columns::*;
 use fonts::*;
+use html::*;
 use layout::*;
 use links::*;
 use markdown::*;
@@ -43,10 +47,12 @@ use unicode_segmentation::UnicodeSegmentation;
 /// 取值留出上下边距还有富余。
 pub(in crate::platforms::plugins) const MAX_DIAGRAM_HEIGHT: u32 = 2200;
 
+/// daemon 发给渲染子进程的配置。缺了的字段回落默认值：换了二进制、daemon 还没重启时，
+/// 拉起来的子进程是磁盘上那一份，版本不一定和 daemon 相同。
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub(crate) struct RenderConfig {
     pub(crate) theme: String,
-    pub(crate) max_height: u32,
     pub(crate) font_size: u32,
     pub(crate) code_font_size: u32,
     pub(crate) padding: u32,
@@ -54,13 +60,16 @@ pub(crate) struct RenderConfig {
     pub(crate) title_font: String,
     pub(crate) code_font: String,
     pub(crate) emoji_font: String,
+    /// 只为旧版渲染子进程保留：它的 `RenderConfig` 缺这个字段就拒收整个请求。本版不读，
+    /// 尺寸全自动（用户 09-24 删掉「长图最大高度」）。
+    #[serde(rename = "max_height")]
+    pub(crate) legacy_max_height: u32,
 }
 
 impl Default for RenderConfig {
     fn default() -> Self {
         Self {
             theme: "paper".to_string(),
-            max_height: 2600,
             font_size: 36,
             code_font_size: 30,
             padding: 64,
@@ -68,6 +77,7 @@ impl Default for RenderConfig {
             title_font: String::new(),
             code_font: String::new(),
             emoji_font: String::new(),
+            legacy_max_height: MAX_PAGE_HEIGHT,
         }
     }
 }

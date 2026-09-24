@@ -50,22 +50,9 @@ fn code_block_uses_remaining_column_space_before_continuing() {
     }
     markdown.push_str("```\n");
 
-    let config = NormalizedConfig::new(&RenderConfig {
-        max_height: MIN_CONFIGURED_HEIGHT,
-        ..RenderConfig::default()
-    });
-    let mut renderer = RendererState::new().unwrap();
-    let fonts = renderer.resolve_config_fonts(&config, false).unwrap();
-    let layouts = layout_blocks(
-        &mut renderer.font_system,
-        collect_blocks(&markdown),
-        &config,
-        Palette::for_theme("paper"),
-        &fonts,
-    )
-    .unwrap();
+    let layouts = layouts_for(&markdown);
     assert_eq!(layouts.len(), 2);
-    let columns = plan_balanced_columns(&layouts, &config).unwrap();
+    let columns = plan_columns_with_height(&layouts, SHORT_COLUMN).unwrap();
     let placement = columns[0]
         .placements
         .iter()
@@ -82,22 +69,9 @@ fn table_continuation_repeats_header_and_never_splits_rows() {
     for row in 0..24 {
         markdown.push_str(&format!("| row {row} | {row} |\n"));
     }
-    let config = NormalizedConfig::new(&RenderConfig {
-        max_height: MIN_CONFIGURED_HEIGHT,
-        ..RenderConfig::default()
-    });
-    let mut renderer = RendererState::new().unwrap();
-    let fonts = renderer.resolve_config_fonts(&config, false).unwrap();
-    let layouts = layout_blocks(
-        &mut renderer.font_system,
-        collect_blocks(&markdown),
-        &config,
-        Palette::for_theme("paper"),
-        &fonts,
-    )
-    .unwrap();
+    let layouts = layouts_for(&markdown);
     let table = layouts[0].table.as_ref().unwrap();
-    let columns = plan_balanced_columns(&layouts, &config).unwrap();
+    let columns = plan_columns_with_height(&layouts, SHORT_COLUMN).unwrap();
     assert!(columns.len() > 1);
     for column in columns.iter().skip(1) {
         let header = column.placements.first().expect("repeated table header");
@@ -206,58 +180,31 @@ fn rendered_table_has_grid_header_and_zebra_backgrounds() {
     );
 }
 
+/// 长宽都跟着内容量走（用户 09-24）：短文单栏；长文往右也往下长，接近方图。
+/// 以前高度被可配的上限（默认 2600）卡住，长文只能一栏栏往横里加。
 #[test]
-fn long_content_grows_one_image_past_three_columns() {
-    let mut markdown = String::from("```text\n");
-    for line in 0..70 {
-        markdown.push_str(&format!("line {line:02}: rendered column content\n"));
-    }
-    markdown.push_str("```\n");
-    let config = RenderConfig {
-        max_height: MIN_CONFIGURED_HEIGHT,
-        ..RenderConfig::default()
-    };
-    let pages = render(&markdown, &config).unwrap();
-    assert_eq!(pages.len(), 1);
-    let page = &pages[0];
-    let old_three_column_width = config.padding * 2 + COLUMN_WIDTH * 3 + COLUMN_GAP * 2;
-    assert!(page.width > old_three_column_width);
-    assert!((MIN_RENDERED_HEIGHT..=MIN_CONFIGURED_HEIGHT).contains(&page.height));
-    // Balancing shares the trailing partial column across all columns, so
-    // the finished image no longer stays pinned at the full page height.
-    assert!(page.height < NormalizedConfig::new(&config).max_height);
-    assert!(u64::from(page.width) * u64::from(page.height) <= MAX_PAGE_PIXELS);
-}
+fn image_size_follows_the_content_in_both_directions() {
+    let config = RenderConfig::default();
+    let single_column = config.padding * 2 + COLUMN_WIDTH;
+    let short = &render(&code_markdown(10), &config).unwrap()[0];
+    assert_eq!(short.width, single_column);
 
-fn code_layouts_for_balancing(lines: u32) -> (NormalizedConfig, Vec<LayoutBlock>) {
-    let mut markdown = String::from("```text\n");
-    for line in 0..lines {
-        markdown.push_str(&format!("line {line:02}: rendered column content\n"));
-    }
-    markdown.push_str("```\n");
-    let config = NormalizedConfig::new(&RenderConfig {
-        max_height: MIN_CONFIGURED_HEIGHT,
-        ..RenderConfig::default()
-    });
-    let mut renderer = RendererState::new().unwrap();
-    let fonts = renderer.resolve_config_fonts(&config, false).unwrap();
-    let layouts = layout_blocks(
-        &mut renderer.font_system,
-        collect_blocks(&markdown),
-        &config,
-        Palette::for_theme("paper"),
-        &fonts,
-    )
-    .unwrap();
-    (config, layouts)
+    let pages = render(&code_markdown(300), &config).unwrap();
+    assert_eq!(pages.len(), 1);
+    let long = &pages[0];
+    assert!(long.width > single_column);
+    assert!(long.height > 2600, "height {} still capped", long.height);
+    assert!(long.height <= MAX_PAGE_HEIGHT);
+    let aspect = long.width as f32 / long.height as f32;
+    assert!((0.75..=1.5).contains(&aspect), "aspect {aspect}");
+    assert!(u64::from(long.width) * u64::from(long.height) <= MAX_PAGE_PIXELS);
 }
 
 #[test]
 fn balanced_columns_have_similar_used_heights() {
-    let (config, layouts) = code_layouts_for_balancing(70);
-    let usable_height = config.max_height - config.padding * 2;
-    let greedy = plan_columns(&layouts, &config).unwrap();
-    let balanced = plan_balanced_columns(&layouts, &config).unwrap();
+    let layouts = layouts_for(&code_markdown(70));
+    let greedy = plan_columns_with_height(&layouts, SHORT_COLUMN).unwrap();
+    let balanced = balanced_plan_for_count(&layouts, greedy.len(), 128, SHORT_COLUMN).unwrap();
     assert!(balanced.len() > 1);
     let heights = |columns: &[ColumnPlan]| {
         let min = columns.iter().map(|c| c.used_height).min().unwrap();
@@ -266,27 +213,26 @@ fn balanced_columns_have_similar_used_heights() {
     };
     let (greedy_min, greedy_max) = heights(&greedy);
     let (balanced_min, balanced_max) = heights(&balanced);
-    assert!(balanced_max - balanced_min < usable_height * 30 / 100);
+    assert!(balanced_max - balanced_min < SHORT_COLUMN * 30 / 100);
     assert!(balanced_max - balanced_min < greedy_max - greedy_min);
 }
 
 #[test]
 fn balancing_removes_trailing_sliver_column_and_shrinks_height() {
-    let (config, layouts) = code_layouts_for_balancing(60);
-    let usable_height = config.max_height - config.padding * 2;
-    let greedy = plan_columns(&layouts, &config).unwrap();
+    let layouts = layouts_for(&code_markdown(60));
+    let greedy = plan_columns_with_height(&layouts, SHORT_COLUMN).unwrap();
     let sliver = greedy.last().unwrap().used_height;
     assert!(
-        sliver < usable_height / 4,
+        sliver < SHORT_COLUMN / 4,
         "test premise: greedy leaves a nearly empty last column, got {sliver}"
     );
-    let balanced = plan_balanced_columns(&layouts, &config).unwrap();
+    let balanced = balanced_plan_for_count(&layouts, greedy.len(), 128, SHORT_COLUMN).unwrap();
     assert!(balanced.len() > 1);
     let min = balanced.iter().map(|c| c.used_height).min().unwrap();
     let max = balanced.iter().map(|c| c.used_height).max().unwrap();
     assert!(min * 2 >= max, "no column holds under half of the tallest");
     assert!(
-        max + config.padding * 2 < config.max_height,
-        "balanced image should shrink below the full page height"
+        max < SHORT_COLUMN,
+        "balanced columns should shrink below the full column height"
     );
 }
