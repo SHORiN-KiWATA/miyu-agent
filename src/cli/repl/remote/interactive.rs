@@ -79,34 +79,8 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
     // screen yet (`rendered == false`), so `apply_output_frame` writes the
     // frame raw and re-reads the cursor — no layout budget applies and the
     // frame can be arbitrarily long.
-    if config.display.repl_replay_turns > 0 {
-        let replay_store = StateStore::new(paths)?.pinned(&active_session_id);
-        match replay_store.session_replay(config.display.repl_replay_turns) {
-            Ok(replays) if !replays.is_empty() => {
-                // 全屏下按正文区的宽度排，不是整屏：左右各两列边距，按整屏排出来
-                // 的东西会比可视区宽、被缓冲硬折一次。
-                let (cols, _) = terminal::size().unwrap_or((80, 24));
-                let cols = crate::cli::content_viewport()
-                    .map(|(cols, _)| cols)
-                    .unwrap_or(cols);
-                // 混合模型池的「本次供应商 / 模型」按会话的池判(BUG-05)。
-                let endpoint_line = show_mixed_model_endpoint(
-                    &crate::cli::model_cmds::session_scoped_config(&replay_store, &config),
-                    true,
-                );
-                let frame = session_replay_frame(
-                    &replays,
-                    mode,
-                    &config,
-                    usize::from(cols.max(1)),
-                    endpoint_line,
-                )?;
-                live_repl.apply_output_frame(&frame)?;
-            }
-            Ok(_) => {}
-            Err(error) => tracing::debug!(error = %error, "session replay unavailable"),
-        }
-    }
+    let replay_store = StateStore::new(paths)?.pinned(&active_session_id);
+    crate::cli::repl::session::replay_recent_turns(&config, mode, &replay_store, &mut live_repl)?;
 
     // 这条会话钉的模型被供应商下架了：daemon 已经退回全局池并把覆盖清掉，得说
     // 一声——不说的话 footer 上的模型悄悄换了人，看着像自己乱跳。放在回放之后，

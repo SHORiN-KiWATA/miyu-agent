@@ -356,9 +356,6 @@ impl AppConfig {
             "pop" | "compact" => {}
             value => bail!("context.on_overflow must be 'pop' or 'compact', got: {value}"),
         }
-        if self.display.repl_replay_turns > MAX_REPL_REPLAY_TURNS {
-            bail!("display.repl_replay_turns must be between 0 and {MAX_REPL_REPLAY_TURNS}");
-        }
         if self.display.command_output_lines > MAX_COMMAND_OUTPUT_LINES {
             bail!("display.command_output_lines must be between 0 and {MAX_COMMAND_OUTPUT_LINES}");
         }

@@ -159,6 +159,11 @@ impl StateStore {
             .load_turn_page(&self.session(), before_seq, limit)
     }
 
+    /// 会话里用户说的第一句，见 `ConversationDb::first_user_content`。
+    pub fn first_user_content(&self) -> Result<Option<String>> {
+        self.conv_db.first_user_content(&self.session())
+    }
+
     /// 这个会话里用户说过的话，上键历史用，见 `ConversationDb::user_inputs`。
     pub fn user_inputs(&self) -> Result<Vec<String>> {
         self.conv_db.user_inputs(&self.session())

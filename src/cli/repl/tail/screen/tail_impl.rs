@@ -417,6 +417,10 @@ impl super::super::LiveReplTail {
                 screen.scroll_overlay(delta);
             } else {
                 screen.scroll_by(delta);
+                // 翻到顶了，更早的还在库里：往前补一页（会话项目第 2 段）。
+                if delta < 0 {
+                    screen.load_older_at_top();
+                }
             }
         }
         self.repaint_screen()

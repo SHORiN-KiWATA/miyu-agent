@@ -159,10 +159,6 @@ pub(crate) fn default_cross_session_preview_lines() -> usize {
     10
 }
 
-pub(crate) fn default_repl_replay_turns() -> usize {
-    3
-}
-
 pub(crate) fn default_mixed_model_endpoint_display() -> String {
     "interactive".to_string()
 }

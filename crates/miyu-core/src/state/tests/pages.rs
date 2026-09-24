@@ -123,3 +123,40 @@ fn user_inputs_match_the_user_entries_of_the_conversation() {
     assert_eq!(expected, ["q1", "q2", "q3", "追加一句"]);
     assert_eq!(store.user_inputs().unwrap(), expected);
 }
+
+/// 按页取时网页从 `tokens_before` 接着算每轮的「累计」：它得是这一页之前所有回合
+/// 的合计，最早那页是 0。
+#[test]
+fn a_turn_page_carries_the_usage_of_everything_before_it() {
+    let (_temp, store) = test_store();
+    for index in 1..=5_u64 {
+        let turn_id = format!("t{index}");
+        store
+            .start_turn(&turn_id, &format!("q{index}"), std::process::id())
+            .unwrap();
+        store
+            .complete_turn_with_usage_and_model(
+                &turn_id,
+                &format!("a{index}"),
+                None,
+                None,
+                None,
+                crate::llm::TurnTokens {
+                    total: index * 100,
+                    prompt: index * 10,
+                    cache_read: index,
+                },
+                false,
+            )
+            .unwrap();
+    }
+
+    let newest = store.turn_page(None, 2).unwrap();
+    assert_eq!(newest.tokens_before.total, 100 + 200 + 300);
+    assert_eq!(newest.tokens_before.prompt, 10 + 20 + 30);
+    assert_eq!(newest.tokens_before.cache_read, 1 + 2 + 3);
+    let oldest = store.turn_page(Some(2), 2).unwrap();
+    assert_eq!(oldest.turns.len(), 1);
+    assert_eq!(oldest.tokens_before.total, 0);
+    assert_eq!(store.first_user_content().unwrap().as_deref(), Some("q1"));
+}

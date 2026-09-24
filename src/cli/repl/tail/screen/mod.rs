@@ -21,6 +21,8 @@ pub(in crate::cli) mod ansi;
 pub(in crate::cli) mod cells;
 mod draw;
 pub(in crate::cli) mod expand;
+mod older;
+pub(in crate::cli) use older::{OlderPageLoader, OlderPages};
 pub(in crate::cli) mod overlay;
 mod question_panel;
 pub(in crate::cli) mod select;
@@ -188,6 +190,8 @@ pub(in crate::cli) struct Screen {
     toast: Option<toast::Toast>,
     /// Ctrl+L 顶上去的那一屏：视口至少能滚到这一行。
     floor: usize,
+    /// 回放没画到的更早那部分，往上翻到顶时再补。见 `older`。
+    older: Option<OlderPages>,
     /// 每一屏幕行上一帧画的是什么（行号 + 版本 + 装饰）。见 `row_key`。
     row_keys: Vec<Option<(usize, u64, u64)>>,
     /// 斜杠命令候选（浮在输入框上方）。空 = 不显示。
@@ -310,6 +314,7 @@ impl Screen {
             input_dragging: false,
             toast: None,
             floor: 0,
+            older: None,
             row_keys: Vec::new(),
             command_hint: Vec::new(),
             hint_dismissed: false,
@@ -647,6 +652,8 @@ impl Screen {
     /// 这里是 `/reset`、`/new` 回到大厅——旧对话已经不属于这个会话了，留着的话
     /// 下一句话会接在它后面、出现在屏底而不是屏顶（09-14 用户实测）。
     pub(in crate::cli) fn wipe_transcript(&mut self) {
+        // 上一条会话还没画的更早部分跟着一起丢：换了会话再往上翻，不能补出别的会话来。
+        self.older = None;
         self.term = Term::default();
         self.term.set_cols(usize::from(self.cols));
         self.scroll = 0;

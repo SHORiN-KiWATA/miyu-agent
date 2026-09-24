@@ -68,7 +68,12 @@ pub(in crate::web) struct BootstrapResponse {
     pub(in crate::web) active_run_id: Option<String>,
     pub(in crate::web) running_turn_id: Option<String>,
     pub(in crate::web) external_queue_available: bool,
+    /// 当前会话最近一页回合（会话项目第 2 段起按页给）；往前翻的游标与用量合计见
+    /// `sessions::SafeTurnPage`。
     pub(in crate::web) turns: Vec<SafeTurn>,
+    pub(in crate::web) older: Option<i64>,
+    pub(in crate::web) tokens_before: TokenBase,
+    pub(in crate::web) first_user_content: Option<String>,
     pub(in crate::web) queued_prompts: Vec<SafeQueuedPrompt>,
     pub(in crate::web) models: Vec<SafeModel>,
     pub(in crate::web) display: WebDisplayConfig,

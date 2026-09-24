@@ -329,8 +329,9 @@ pub(in crate::cli) fn session_is_empty(paths: &MiyuPaths, session_id: &str) -> b
     StateStore::new(paths).is_ok_and(|store| store.session_is_empty(session_id))
 }
 
-/// 全屏：把这条会话最近几轮（`display.repl_replay_turns`）按当前宽度重画到正文
-/// 顶上。换会话、撤销之后都走它——画布已经擦过了，屏上只该有库里现在还有的东西。
+/// 回放这条会话最近一屏，按当前宽度重画到正文顶上。全屏往上翻到顶会再往前补，
+/// 见 `replay_screen_page`。启动、换会话、撤销之后都走它：画布已经擦过了，屏上
+/// 只该有库里现在还有的东西。
 pub(in crate::cli) fn replay_recent_turns(
     config: &AppConfig,
     mode: PersonaLane,
@@ -339,31 +340,45 @@ pub(in crate::cli) fn replay_recent_turns(
 ) -> Result<()> {
     // 换到这条会话：上一条会话那一轮的用时不再挂在输入框旁边（09-24）。
     live_repl.clear_turn_clock();
-    if config.display.repl_replay_turns == 0 {
-        return Ok(());
-    }
-    match store.session_replay(config.display.repl_replay_turns) {
-        Ok(replays) if !replays.is_empty() => {
-            let (cols, _) = terminal::size().unwrap_or((80, 24));
-            let cols = crate::cli::content_viewport()
-                .map(|(cols, _)| cols)
-                .unwrap_or(cols);
-            let endpoint_line = crate::cli::model_cmds::show_mixed_model_endpoint(
-                &crate::cli::model_cmds::session_scoped_config(store, config),
-                true,
-            );
-            let frame = session_replay_frame(
-                &replays,
-                mode,
-                config,
-                usize::from(cols.max(1)),
-                endpoint_line,
-            )?;
-            live_repl.apply_output_frame(&frame)?;
+    // 混合模型池的「本次供应商 / 模型」按会话的池判（BUG-05）。
+    let endpoint_line = crate::cli::model_cmds::show_mixed_model_endpoint(
+        &crate::cli::model_cmds::session_scoped_config(store, config),
+        true,
+    );
+    let page = crate::cli::history_replay::replay_screen_page(
+        store,
+        None,
+        mode,
+        config,
+        crate::cli::history_replay::replay_viewport(),
+        endpoint_line,
+    );
+    let older = match page {
+        Ok(Some(page)) => {
+            live_repl.apply_output_frame(&page.frame)?;
+            page.older
         }
-        Ok(_) => {}
-        Err(error) => tracing::debug!(error = %error, "session replay unavailable"),
-    }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(error = %error, "session replay unavailable");
+            None
+        }
+    };
+    // 全屏往上翻到顶再往前补；取页的时候按那一刻的正文区排。
+    let (store, config) = (store.clone(), config.clone());
+    let loader: crate::cli::repl::tail::screen::OlderPageLoader = Box::new(move |before| {
+        crate::cli::history_replay::replay_screen_page(
+            &store,
+            Some(before),
+            mode,
+            &config,
+            crate::cli::history_replay::replay_viewport(),
+            endpoint_line,
+        )
+    });
+    live_repl.set_older_pages(
+        older.map(|before| crate::cli::repl::tail::screen::OlderPages::new(before, loader)),
+    );
     Ok(())
 }
 

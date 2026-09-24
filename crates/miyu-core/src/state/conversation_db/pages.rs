@@ -14,6 +14,9 @@ pub struct TurnPage {
     pub turns: Vec<Turn>,
     /// 更早的回合还有：下一页把它当 `before_seq` 往前取。
     pub older: Option<i64>,
+    /// 这一页之前那些回合的用量合计（口径同这一页：摘要轮不算，隐藏的照算）。
+    /// 网页每轮显示「会话到这一轮为止累计多少」，只拿到一页时从这里起算。
+    pub tokens_before: TurnTokens,
 }
 
 /// 一页回放快照，按时间从旧到新。
@@ -22,6 +25,28 @@ pub struct ReplayPage {
     pub turns: Vec<TurnReplay>,
     /// 更早的回合还有：下一页把它当 `before_seq` 往前取。
     pub older: Option<i64>,
+}
+
+fn tokens_before_locked(conn: &Connection, session_id: &str, seq: i64) -> Result<TurnTokens> {
+    let (total, prompt, cache_read) = conn.query_row(
+        "SELECT COALESCE(SUM(token_total), 0), COALESCE(SUM(token_prompt), 0),
+                COALESCE(SUM(token_cache_read), 0)
+           FROM turns
+          WHERE session_id = ?1 AND is_summary = 0 AND seq < ?2",
+        params![session_id, seq],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    Ok(TurnTokens {
+        total: total.max(0) as u64,
+        prompt: prompt.max(0) as u64,
+        cache_read: cache_read.max(0) as u64,
+    })
 }
 
 /// 按「seq 从新到旧」取的行，多取了一条。多出来的那条说明更早的还有：把它
@@ -66,7 +91,32 @@ impl ConversationDb {
         let older = page_cursor(&mut turns, limit, |turn| turn.seq);
         turns.reverse();
         attach_turn_children_locked(&conn, &mut turns)?;
-        Ok(TurnPage { turns, older })
+        let tokens_before = match turns.first() {
+            Some(first) => tokens_before_locked(&conn, session_id, first.seq)?,
+            None => TurnTokens::default(),
+        };
+        Ok(TurnPage {
+            turns,
+            older,
+            tokens_before,
+        })
+    }
+
+    /// 会话里用户说的第一句（摘要轮不算）。网页拿它当对话标题，按页取的时候第一轮
+    /// 不一定在手上。
+    pub fn first_user_content(&self, session_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT user_content FROM turns
+                  WHERE session_id = ?1 AND is_summary = 0
+                  ORDER BY seq ASC
+                  LIMIT 1",
+                params![session_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
     }
 
     /// Display transcripts of the last `limit` visible turns of a session,
@@ -118,6 +168,7 @@ impl ConversationDb {
                         row.get::<_, i64>(9)?,
                         row.get::<_, Option<String>>(8)?,
                         TurnReplay {
+                            seq: row.get(9)?,
                             display_content: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
                             assistant_content: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                             entries: row

@@ -35,6 +35,7 @@ impl Screen {
             input_dragging: false,
             toast: None,
             floor: 0,
+            older: None,
             row_keys: Vec::new(),
             command_hint: Vec::new(),
             hint_dismissed: false,

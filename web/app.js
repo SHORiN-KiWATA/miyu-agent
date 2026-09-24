@@ -417,6 +417,11 @@
     replayResyncCount: 0,
     replayResyncAt: 0,
     turns: [],
+    // 按页取回合（会话项目第 2 段）：往前翻的游标、前面那些回合的用量合计、会话第一句。
+    turnsOlder: null,
+    turnsBase: null,
+    firstUserContent: "",
+    loadingOlderTurns: false,
     queuedPrompts: [],
     models: [],
     persona: {
@@ -2401,7 +2406,7 @@
     const snippet = firstLine(liveContent || assistant || lastFollowup?.content || lastTurn?.user_content || "");
     const timestamp = liveContent ? live?.startedAt : lastTurn?.assistant_timestamp || lastFollowup?.submitted_at || lastTurn?.user_timestamp;
     return {
-      title: firstLine(firstTurn?.user_content) || t("当前对话"),
+      title: firstLine(state.firstUserContent || firstTurn?.user_content) || t("当前对话"),
       snippet: snippet || (lastTurn?.status === "running" ? t("正在回复") : t("对话已开始")),
       timestamp
     };
@@ -2918,7 +2923,7 @@
       elements.conversationStage?.classList.add("is-switching");
     }
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${TURN_PAGE_SIZE}`);
       const payload = await response.json();
       if (generation !== state.viewLoadGeneration) return;
       applySessionView(payload);
@@ -2992,6 +2997,7 @@
     state.turns = Array.isArray(payload?.turns)
       ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
       : [];
+    applyTurnPageMeta(payload);
     state.queuedPrompts = Array.isArray(payload?.queued_prompts) ? payload.queued_prompts : [];
     state.redoCandidate = payload?.redo_candidate && typeof payload.redo_candidate === "object"
       ? payload.redo_candidate
@@ -3011,6 +3017,72 @@
     updateConversationChrome();
     updateControlState();
     scheduleViewSync();
+    fillViewWithOlderTurns();
+  }
+
+  // 按页取回合带回来的三样（会话项目第 2 段）。整段取（老接口）时都是空的：
+  // 没有更早的、从零累计、标题用第一轮。
+  function applyTurnPageMeta(payload) {
+    const older = payload?.older;
+    state.turnsOlder = Number.isFinite(older) ? older : null;
+    const base = payload?.tokens_before;
+    state.turnsBase = base && typeof base === "object"
+      ? { total: asFiniteNumber(base.total), prompt: asFiniteNumber(base.prompt), cached: asFiniteNumber(base.cache_read) }
+      : null;
+    state.firstUserContent = typeof payload?.first_user_content === "string" ? payload.first_user_content : "";
+  }
+
+  // 往上翻到顶再补更早的一页。补进来之后按离底部的距离把滚动位置拉回原处，
+  // 看到的内容不动。
+  async function loadOlderTurns() {
+    const sessionId = state.viewSessionId;
+    const before = state.turnsOlder;
+    if (!sessionId || before === null || state.loadingOlderTurns || state.viewLoading) return;
+    state.loadingOlderTurns = true;
+    try {
+      const response = await apiRequest(
+        `/api/sessions/${encodeURIComponent(sessionId)}/turns?before=${encodeURIComponent(before)}&limit=${TURN_PAGE_SIZE}`
+      );
+      const payload = await response.json();
+      if (state.viewSessionId !== sessionId || state.turnsOlder !== before) return;
+      const older = Array.isArray(payload?.turns)
+        ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
+        : [];
+      const known = new Set(state.turns.map((turn) => String(turn?.id)));
+      state.turns = older.filter((turn) => !known.has(String(turn?.id))).concat(state.turns);
+      applyTurnPageMeta(payload);
+      const scroller = elements.chatScroll;
+      const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+      renderConversation();
+      state.programmaticScroll = true;
+      scroller.scrollTop = scroller.scrollHeight - fromBottom;
+    } catch (error) {
+      if (error.status === 401) showBlockedState(true);
+    } finally {
+      state.loadingOlderTurns = false;
+    }
+    fillViewWithOlderTurns();
+  }
+
+  // 一页铺不满对话区就没法往上滚，也就永远等不到「翻到顶」：还有更早的就接着补。
+  function fillViewWithOlderTurns() {
+    const scroller = elements.chatScroll;
+    if (state.turnsOlder === null || !scroller) return;
+    if (scroller.scrollHeight <= scroller.clientHeight) loadOlderTurns();
+  }
+
+  // 运行中每秒同步只取最近一页：往上翻补进来的更早几页留着，按这一页最早那轮的
+  // 序号切开，前面的旧页接上这一页。
+  function mergeLatestTurnPage(current, page, payload) {
+    if (!page.length) {
+      applyTurnPageMeta(payload);
+      return page;
+    }
+    const first = asFiniteNumber(page[0]?.seq);
+    const kept = current.filter((turn) => asFiniteNumber(turn?.seq) < first);
+    // 更早的那几页已经在手上：游标和累计基数还是它们的，只有全靠这一页时才换。
+    if (!kept.length) applyTurnPageMeta(payload);
+    return kept.concat(page);
   }
 
   function findUnclaimedRunningTurn() {
@@ -7375,9 +7447,10 @@
     // 每条回合的「累计」=会话里到它为止的顺序求和(与 run.completed 里 daemon 报的口径一致)
     state.cumulativeByTurn = new Map();
     {
-      let total = 0;
-      let prompt = 0;
-      let cached = 0;
+      // 按页取时手上只有最近几页：从前面那些回合的合计接着算。
+      let total = state.turnsBase?.total || 0;
+      let prompt = state.turnsBase?.prompt || 0;
+      let cached = state.turnsBase?.cached || 0;
       for (const turn of state.turns) {
         total += asFiniteNumber(turn?.token_total);
         prompt += asFiniteNumber(turn?.token_prompt);
@@ -10722,7 +10795,7 @@
       return;
     }
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${TURN_PAGE_SIZE}`);
       const payload = await response.json();
       if (state.viewSessionId !== sessionId || state.viewLoading) return;
       const runs = (Array.isArray(payload?.runs) ? payload.runs : []).filter((run) => run?.run_id);
@@ -10733,7 +10806,11 @@
         : null;
       if (state.liveRuns.size === 0) {
         const nextTurns = Array.isArray(payload?.turns)
-          ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
+          ? mergeLatestTurnPage(
+            state.turns,
+            payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq)),
+            payload
+          )
           : state.turns;
         const turnsChanged = JSON.stringify(nextTurns) !== JSON.stringify(state.turns);
         const nextCandidate = payload?.redo_candidate && typeof payload.redo_candidate === "object"
@@ -10783,7 +10860,8 @@
     }
     const sessionId = state.viewSessionId;
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      // 正在跑的那一轮总在最近几轮里，不用整段拉。
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=5`);
       const payload = await response.json();
       if (state.viewSessionId !== sessionId || state.liveRuns.get(live.runId) !== live || live.userRendered) return;
       const turn = Array.isArray(payload?.turns) ? payload.turns.find((item) => String(item?.id) === String(turnId)) : null;
@@ -11170,6 +11248,9 @@
   }
 
   const VIEW_SESSION_KEY = "miyu.web.viewSession";
+  // 一次取多少轮：首屏、切会话、运行中每秒同步都只要最近这一页，往上翻到顶再补
+  //（会话项目第 2 段；以前每次都整段拉，最重的会话一次约 3 MB）。
+  const TURN_PAGE_SIZE = 30;
 
   /// 页面加载后该打开哪个会话。
   ///
@@ -11259,7 +11340,10 @@
         queued_prompts: snapshot?.queued_prompts,
         running_turn_id: snapshot?.running_turn_id,
         runs: allRuns.filter((run) => String(run.session_id) === String(state.currentSessionId)),
-        redo_candidate: snapshot?.redo_candidate
+        redo_candidate: snapshot?.redo_candidate,
+        older: snapshot?.older,
+        tokens_before: snapshot?.tokens_before,
+        first_user_content: snapshot?.first_user_content
       });
       if (state.liveRuns.size === 0) {
         state.lastEventId = state.latestEventId;
@@ -13768,6 +13852,8 @@
       }
       state.nearBottom = isNearBottom();
       if (programmatic) return;
+      // 翻到顶了，更早的还在库里：往前补一页（会话项目第 2 段）。
+      if (elements.chatScroll.scrollTop < 200) loadOlderTurns();
       if (!state.followOutput && isAtBottom()) {
         state.followOutput = true;
         elements.jumpBottomButton.hidden = true;

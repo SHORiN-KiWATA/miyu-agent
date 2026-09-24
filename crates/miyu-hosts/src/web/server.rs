@@ -933,39 +933,9 @@ pub(in crate::web) async fn bootstrap(
         .is_none()
         .then_some(running_target.as_ref())
         .flatten();
-    let mut assets_by_turn = HashMap::<String, Vec<ImageAsset>>::new();
-    for asset in store.load_image_assets().map_err(ApiError::internal)? {
-        assets_by_turn
-            .entry(asset.turn_id.clone())
-            .or_default()
-            .push(asset);
-    }
-    let mut artifacts_by_turn = HashMap::<String, Vec<ArtifactAsset>>::new();
-    for artifact in store.load_artifact_assets().map_err(ApiError::internal)? {
-        artifacts_by_turn
-            .entry(artifact.turn_id.clone())
-            .or_default()
-            .push(artifact);
-    }
-    let generation_by_turn = store
-        .load_turn_generation(&current_session)
+    // 首屏只给最近一页，往上翻到顶再补（会话项目第 2 段）。
+    let page = safe_turn_page(&store, &current_session, None, Some(WEB_TURN_PAGE))
         .map_err(ApiError::internal)?;
-    let turns = store
-        .load_turns()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .filter(|turn| !turn.is_summary)
-        .map(|turn| {
-            let assets = assets_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let artifacts = artifacts_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let mut safe = SafeTurn::from_turn(turn, assets, artifacts);
-            if let Some((tokens, millis)) = generation_by_turn.get(&safe.id) {
-                safe.generation_tokens = *tokens;
-                safe.generation_ms = *millis;
-            }
-            safe
-        })
-        .collect();
     let usage = state
         .state_store
         .usage_snapshot()
@@ -1011,7 +981,10 @@ pub(in crate::web) async fn bootstrap(
         active_run_id,
         running_turn_id,
         external_queue_available,
-        turns,
+        turns: page.turns,
+        older: page.older,
+        tokens_before: page.tokens_before,
+        first_user_content: page.first_user_content,
         queued_prompts,
         models: safe_models(&config),
         display: web_display_config(&config),

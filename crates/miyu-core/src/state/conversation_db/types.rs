@@ -615,6 +615,9 @@ pub struct PlatformMemeRefCount {
 /// for turns predating the transcript column, just the final reply.
 #[derive(Clone, Debug, Default)]
 pub struct TurnReplay {
+    /// 这一轮在会话里的序号。往前翻页时拿它当游标（`session_replay_page` 的
+    /// `before_seq`）。
+    pub seq: i64,
     /// What the user saw as the prompt — or, for a wake turn, the
     /// `[后台任务完成] …` headline.
     pub display_content: String,

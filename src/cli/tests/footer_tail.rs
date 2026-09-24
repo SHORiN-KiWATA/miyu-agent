@@ -63,6 +63,7 @@ fn live_frame_uses_the_gap_only_for_a_terminating_newline() {
 fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
     let config = AppConfig::default();
     let wake = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "[后台任务完成] 子代理完成 82bea3 · 后台测试A".to_string(),
         assistant_content: "跑完了。".to_string(),
         entries: Vec::new(),
@@ -73,6 +74,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_model: None,
     };
     let typed = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "帮我改一下 README".to_string(),
         assistant_content: "改好了。".to_string(),
         entries: Vec::new(),
@@ -103,6 +105,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
 fn replayed_turns_keep_the_mixed_pool_endpoint_line() {
     let config = AppConfig::default();
     let answered = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "第一句走查".to_string(),
         assistant_content: "回放里的回复".to_string(),
         assistant_provider_id: Some("stub".to_string()),

@@ -94,14 +94,8 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
             parse_mixed_endpoint_display(&config.display.mixed_model_endpoint_display),
         )
         .choices(&["off", "interactive", "all"]),
-        // Appended rather than inserted: the read-back below is positional.
-        Field::new(
-            t(
-                "Turns replayed when reopening the TUI",
-                "重开 TUI 回放的轮数",
-            ),
-            config.display.repl_replay_turns.to_string(),
-        ),
+        // 「重开 TUI 回放的轮数」09-24 删掉了(会话项目第 2 段:全屏整段回放、
+        // 非全屏印最近一屏),后面的索引一并前移。
         Field::boolean(
             t("Block dangerous commands", "高危命令拦截"),
             config.tools.block_dangerous_commands,
@@ -143,7 +137,7 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     // 提到第一行,后面的索引一并重排,见下面逐行对应)。
     debug_assert_eq!(
         fields.len(),
-        20,
+        19,
         "global settings fields changed: update the positional read-back below"
     );
     run_form_without_buttons(ui, t(" GLOBAL SETTINGS ", " 全局设置 "), &mut fields)?;
@@ -171,21 +165,16 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     config.display.readable_tool_names = parse_bool_field(&fields[11].value)?;
     config.display.show_token_usage = parse_bool_field(&fields[12].value)?;
     config.display.mixed_model_endpoint_display = parse_mixed_endpoint_display(&fields[13].value);
-    config.display.repl_replay_turns = fields[14]
-        .value
-        .trim()
-        .parse::<usize>()?
-        .min(MAX_REPL_REPLAY_TURNS);
-    config.tools.block_dangerous_commands = parse_bool_field(&fields[15].value)?;
-    config.display.fold_timeline = parse_bool_field(&fields[16].value)?;
-    config.terminal_session_mode = if fields[17].value.trim().eq_ignore_ascii_case("dev") {
+    config.tools.block_dangerous_commands = parse_bool_field(&fields[14].value)?;
+    config.display.fold_timeline = parse_bool_field(&fields[15].value)?;
+    config.terminal_session_mode = if fields[16].value.trim().eq_ignore_ascii_case("dev") {
         "dev"
     } else {
         "normal"
     }
     .to_string();
-    config.tools.sandbox.default_enabled = parse_bool_field(&fields[18].value)?;
-    config.display.cross_session_preview_lines = fields[19]
+    config.tools.sandbox.default_enabled = parse_bool_field(&fields[17].value)?;
+    config.display.cross_session_preview_lines = fields[18]
         .value
         .trim()
         .parse::<usize>()?
