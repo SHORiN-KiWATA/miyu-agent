@@ -159,6 +159,14 @@ impl StateStore {
             .load_turn_page(&self.session(), before_seq, limit)
     }
 
+    /// 跑着的那一轮已经流出去的部分，见 `ConversationDb::running_turn_replay`。
+    pub fn running_turn_replay(
+        &self,
+        turn_id: &str,
+    ) -> Result<Option<conversation_db::TurnReplay>> {
+        self.conv_db.running_turn_replay(turn_id)
+    }
+
     /// 会话里用户说的第一句，见 `ConversationDb::first_user_content`。
     pub fn first_user_content(&self) -> Result<Option<String>> {
         self.conv_db.first_user_content(&self.session())

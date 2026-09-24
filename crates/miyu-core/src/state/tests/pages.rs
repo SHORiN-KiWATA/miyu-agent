@@ -160,3 +160,42 @@ fn a_turn_page_carries_the_usage_of_everything_before_it() {
     assert_eq!(oldest.tokens_before.total, 0);
     assert_eq!(store.first_user_content().unwrap().as_deref(), Some("q1"));
 }
+
+/// 跑着的那一轮：流水里已经有的话和工具按先后收回来。事件环追不回这一轮开头时，
+/// daemon 拿它补给挂上来的终端（会话项目第 3 段）。
+#[test]
+fn a_running_turn_is_rebuilt_from_its_journal() {
+    let (_temp, store) = test_store();
+    store
+        .start_turn("live", "帮我查一下", std::process::id())
+        .unwrap();
+    let journal =
+        |kind: &str, call: Option<&str>, name: Option<&str>, text: &str, ok: Option<bool>| {
+            store
+                .append_turn_journal_event("live", 0, 0, kind, call, name, Some(text), None, ok)
+                .unwrap();
+        };
+    journal("assistant_content", None, None, "先看看", None);
+    journal(
+        "tool_call",
+        Some("c1"),
+        Some("read"),
+        "{\"path\":\"a\"}",
+        None,
+    );
+    journal("tool_result", Some("c1"), None, "内容", Some(true));
+    journal("assistant_content", None, None, "说到一半", None);
+
+    let replay = store
+        .running_turn_replay("live")
+        .unwrap()
+        .expect("回合在库里");
+    assert_eq!(replay.display_content, "帮我查一下");
+    assert!(matches!(&replay.entries[0], ReplayEntry::Text { text } if text == "先看看"));
+    assert!(matches!(&replay.entries[1], ReplayEntry::ToolCall { name, .. } if name == "read"));
+    assert!(
+        matches!(&replay.entries[2], ReplayEntry::ToolResult { name, ok: true, .. } if name == "read")
+    );
+    assert!(matches!(&replay.entries[3], ReplayEntry::Text { text } if text == "说到一半"));
+    assert!(store.running_turn_replay("absent").unwrap().is_none());
+}

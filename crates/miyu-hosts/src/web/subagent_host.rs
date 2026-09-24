@@ -404,7 +404,9 @@ async fn run_child_turn(
                 job_wake: false,
                 turn_origin: origin.clone(),
                 job_wake_label: None,
-                first_event_id: None,
+                // 切进子会话的终端要从头补这一轮（会话项目第 3 段）；订阅起点就是
+                // 上面入队前取的那个号。
+                first_event_id: Some(events_after),
             },
         );
     }

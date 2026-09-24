@@ -30,6 +30,7 @@ mod cross_session;
 mod dashboards;
 mod dto;
 mod event_map;
+mod follow_catchup;
 mod goal_driver;
 mod link_preview;
 mod member_persona;

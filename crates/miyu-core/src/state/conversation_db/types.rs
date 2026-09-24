@@ -613,7 +613,8 @@ pub struct PlatformMemeRefCount {
 
 /// One replayable turn: the prompt echo plus either its ordered transcript or,
 /// for turns predating the transcript column, just the final reply.
-#[derive(Clone, Debug, Default)]
+/// 可序列化：跑着的那一轮由 daemon 经 IPC 补给挂上来的终端（`turn.catchup`）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TurnReplay {
     /// 这一轮在会话里的序号。往前翻页时拿它当游标（`session_replay_page` 的
     /// `before_seq`）。

@@ -206,6 +206,45 @@ impl ConversationDb {
         Ok(ReplayPage { turns, older })
     }
 
+    /// 一轮还在跑时，已经流出去的那部分：用户那句、说到一半的话、做过的工具。
+    /// 从落库的流水里收（流水先落库再显示，见 `TurnJournalSink`）。挂上来的终端
+    /// 用它补：事件环追不回这一轮开头的时候（会话项目第 3 段）。
+    pub fn running_turn_replay(&self, turn_id: &str) -> Result<Option<TurnReplay>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                &format!(
+                    "SELECT seq, display_content, ({synthetic}),
+                            assistant_provider_id, assistant_model
+                       FROM turns WHERE turn_id = ?1",
+                    synthetic = crate::state::synthetic_user_content_sql("user_content"),
+                ),
+                params![turn_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        row.get::<_, i64>(2)? != 0,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((seq, display_content, is_synthetic, provider, model)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(TurnReplay {
+            seq,
+            display_content,
+            entries: replay_entries_from_journal(&conn, turn_id)?,
+            is_synthetic,
+            assistant_provider_id: provider,
+            assistant_model: model,
+            ..TurnReplay::default()
+        }))
+    }
+
     /// 这个会话里用户说过的话（每轮开头那句，加上中途追加的），按先后排。口径
     /// 同 `load_conversation` 里 role=user 的那几条，但不把整轮读出来。
     pub fn user_inputs(&self, session_id: &str) -> Result<Vec<String>> {

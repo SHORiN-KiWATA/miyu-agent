@@ -331,6 +331,15 @@ pub(in crate::web) async fn follow_run(
             }
         };
         if record.kind == "resync_required" {
+            // 事件环追不回这一轮的开头：回合还在跑，就从库里的流水补到现在，再接实时。
+            if let Some((resume_at, catchup)) =
+                follow_catchup::catch_up_from_journal(state, &run_id)
+            {
+                ipc::send(stream, &catchup).await?;
+                subscription = state.events.subscribe_after(resume_at);
+                last_id = resume_at;
+                continue;
+            }
             ipc::send(
                 stream,
                 &IpcFrame::error("Miyu core event history was exhausted"),

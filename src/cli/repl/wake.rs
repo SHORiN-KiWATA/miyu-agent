@@ -473,6 +473,31 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                 }
             }
+            // 事件环追不回这一轮的开头时，daemon 从库里的流水补一份到现在为止的样子
+            //（会话项目第 3 段）。按回放那一套画出来，之后的实时事件接着往下写。
+            "turn.catchup" => {
+                turn_id = Some(ipc_text(&data, "turn_id").to_string());
+                let replay = data
+                    .get("replay")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                if let Some(replay) = replay {
+                    let (cols, _) = crate::cli::history_replay::replay_viewport();
+                    let frame = crate::cli::history_replay::session_replay_frame(
+                        std::slice::from_ref(&replay),
+                        live.mode(),
+                        &config,
+                        cols,
+                        false,
+                    )?;
+                    live.apply_output_frame(&frame)?;
+                }
+                if !waiting_started {
+                    renderer.start_waiting()?;
+                    live.apply_renderer_frame(&mut renderer)?;
+                    waiting_started = true;
+                }
+            }
             "assistant.delta" => handle_live_agent_event(
                 live,
                 &mut renderer,
