@@ -69,12 +69,8 @@ impl AppConfig {
         if !paths.config_file.exists() {
             Self::default().save(paths)?;
         }
-        // Dev 模式提示词:一行、可编辑、不混淆(与 Miyu 人格提示词的内嵌
-        // 不可编辑形成对照)。缺失时写默认;用户改成什么都以文件为准。
-        let dev_prompt = paths.config_dir.join(DEV_PROMPT_FILE);
-        if !dev_prompt.exists() {
-            std::fs::write(&dev_prompt, format!("{DEFAULT_DEV_SYSTEM_PROMPT}\n"))?;
-        }
+        // Dev 模式提示词(`dev-prompt.md`)09-24 起默认为空,不再预先生成:
+        // 用户在 `miyu config` 里写了才有这个文件。
         Ok(())
     }
 

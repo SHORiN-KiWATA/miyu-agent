@@ -681,7 +681,7 @@ async fn spawn_background(
 /// dev 子代理的系统提示词。
 ///
 /// 第一段是用户自己的 dev 提示词(`dev-prompt.md`,与 dev 会话读同一份),
-/// 改它对子代理同时生效。第二段是主体也在用的主机环境块——子代理没有
+/// 改它对子代理同时生效;09-24 起默认为空,没写就从环境块开始。第二段是主体也在用的主机环境块——子代理没有
 /// 每轮瞬态尾巴,工作目录只能从这里知道,否则第一步永远浪费在 `pwd` 上。
 /// 沙盒说明同理(09-23 起不在环境块里了):子代理起跑时抓的那份策略整趟不变,
 /// 放这里就是常量。末尾是那句交付约定。
@@ -690,8 +690,10 @@ async fn spawn_background(
 /// 之间前缀缓存照样命中。
 fn build_dev_system_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
     let mut prompt = config.dev_system_prompt(paths)?;
-    prompt.push_str("\n\n");
-    prompt.push_str(&crate::agent::prompt::host_environment_for(config, paths));
+    crate::agent::prompt::push_block(
+        &mut prompt,
+        &crate::agent::prompt::host_environment_for(config, paths),
+    );
     prompt.push_str(&format!(
         "\n<runtime cwd=\"{}\"/>",
         miyu_base::host_info::xml_attr_escape(

@@ -59,7 +59,10 @@ pub const MAX_CROSS_SESSION_PREVIEW_LINES: usize = 200;
 pub const DEV_PROMPT_FILE: &str = "dev-prompt.md";
 /// Dev 模式内置默认提示词。dsh 极简变体同款措辞——贴近编码 RL 训练分布
 /// 是它强的主因(08-15 与用户讨论定稿,修正了社区传言的拼写错误)。
-pub const DEFAULT_DEV_SYSTEM_PROMPT: &str = "You are a helpful software engineer assistant.";
+/// 09-24 之前初始化时自动写进 `dev-prompt.md` 的那行默认角色句。开发模式提示词
+/// 现在默认为空(用户:「让开发模式的提示词为空,但是还是可以修改的」);老文件里
+/// 恰好是这一行、从没改过的,读到当没写。
+pub const LEGACY_DEV_SYSTEM_PROMPT: &str = "You are a helpful software engineer assistant.";
 /// Replay redraws whole turns, so a large value floods the screen on startup.
 pub const MAX_REPL_REPLAY_TURNS: usize = 20;
 pub const CURRENT_CONFIG_VERSION: u32 = 6;

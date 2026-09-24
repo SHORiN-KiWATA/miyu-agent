@@ -94,6 +94,15 @@ pub(in crate::agent) const STYLE_LOCK: &str = "\n\n<style-lock>Stay in character
 
 /// `dev`:dev 人格面(风格锁/LaTeX/语音协议一概不带,极简原则);`voice`:语音
 /// 子系统快照(`config::subsystems`),只影响属主分支末尾的 `<voice-protocol>`。
+/// 段与段之间空一行;开头那段前面不空。开发模式提示词 09-24 起默认为空,
+/// 环境块就是第一段——不这样处理的话,发出去的系统提示词以两个换行开头。
+pub(crate) fn push_block(prompt: &mut String, block: &str) {
+    if !prompt.is_empty() {
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(block);
+}
+
 pub(in crate::agent) fn with_host_environment(
     mut system_prompt: String,
     audience: PromptAudience,
@@ -107,8 +116,7 @@ pub(in crate::agent) fn with_host_environment(
         // WebUI 回合(External 但不是平台回合,与档案注入同一判据):也带主机环境块
         // ——成员的沙盒回合尤其需要它(09-11);QQ 等平台回合仍不带。
         if !platform_turn {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&host_environment_for(config, paths));
+            push_block(&mut system_prompt, &host_environment_for(config, paths));
         }
         // 风格锁与受众无关(09-10 分层架构阶段 2):它守的是「工具循环后别切
         // 播报腔」,QQ 群里同样需要。此前它只是顺手放进了属主分支,等于让
@@ -123,8 +131,7 @@ pub(in crate::agent) fn with_host_environment(
     if audience != PromptAudience::Owner {
         return system_prompt;
     }
-    system_prompt.push_str("\n\n");
-    system_prompt.push_str(&host_environment_for(config, paths));
+    push_block(&mut system_prompt, &host_environment_for(config, paths));
     // 渲染能力说明(仅 owner 会话):终端与 WebUI 都支持 LaTeX。
     // 不放人格提示词里——QQ 等平台的排版能力不同,不该看到这段。
     // dev 也不带:极简原则,编码任务用不上排版说明(验收 08-16 解剖)。

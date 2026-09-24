@@ -193,14 +193,21 @@ fn dev_system_prompt_carries_the_dev_prompt_host_block_and_contract() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let config = AppConfig::default();
+    // 09-24 起开发模式提示词默认为空:没写就从环境块开始,开头不空行。
     let prompt = build_dev_system_prompt(&config, &paths).unwrap();
-    assert!(
-        prompt.starts_with(miyu_base::config::DEFAULT_DEV_SYSTEM_PROMPT),
-        "{prompt}"
-    );
-    assert!(prompt.contains("<host-environment"), "{prompt}");
+    assert!(prompt.starts_with("<host-environment"), "{prompt}");
     assert!(prompt.contains("<runtime cwd="), "{prompt}");
     assert!(prompt.ends_with(SUBAGENT_DEV_CONTRACT), "{prompt}");
+
+    // 用户写了就放在最前面,和环境块之间空一行。
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    let dev_prompt = paths.config_dir.join(miyu_base::config::DEV_PROMPT_FILE);
+    std::fs::write(&dev_prompt, "你是资深前端工程师\n").unwrap();
+    let prompt = build_dev_system_prompt(&config, &paths).unwrap();
+    assert!(
+        prompt.starts_with("你是资深前端工程师\n\n<host-environment"),
+        "{prompt}"
+    );
 }
 
 /// 同一个会话里连开两个 dev 子代理,系统提示词必须逐字节相同——不然

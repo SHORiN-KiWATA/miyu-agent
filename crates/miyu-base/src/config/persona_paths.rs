@@ -8,14 +8,17 @@
 use crate::config::*;
 
 impl AppConfig {
-    /// Dev 模式系统提示词:读 `config/dev-prompt.md`,缺失或清空回退内置
-    /// 默认一行(极简原则 + 贴近训练分布的措辞,见 08-15 实验记录)。
+    /// Dev 模式系统提示词:读 `config/dev-prompt.md`,默认为空(09-24 起没有内置
+    /// 角色句,用户自己写什么就发什么)。文件缺失、为空,或恰好是老版本自动写进去的
+    /// 那行默认([`LEGACY_DEV_SYSTEM_PROMPT`]),都当没写。
     pub fn dev_system_prompt(&self, paths: &MiyuPaths) -> Result<String> {
         let path = paths.config_dir.join(DEV_PROMPT_FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(content) if !content.trim().is_empty() => Ok(content.trim().to_string()),
-            _ => Ok(DEFAULT_DEV_SYSTEM_PROMPT.to_string()),
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = content.trim();
+        if content == LEGACY_DEV_SYSTEM_PROMPT {
+            return Ok(String::new());
         }
+        Ok(content.to_string())
     }
 
     pub fn system_prompt(&self, paths: &MiyuPaths) -> Result<String> {

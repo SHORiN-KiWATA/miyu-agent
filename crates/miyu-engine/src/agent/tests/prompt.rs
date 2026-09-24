@@ -579,9 +579,11 @@ fn dev_mode_uses_one_line_prompt_and_skips_persona_family() {
     let messages = agent.chat_messages("current", "新消息").unwrap().0;
     assert_eq!(messages[0].role, "system");
     let system = chat_message_text(&messages[0]).unwrap();
+    // 09-24 起开发模式没有内置角色句:没写 dev-prompt.md 就从环境块开始,开头不空行。
     assert!(
-        system.contains(miyu_base::config::DEFAULT_DEV_SYSTEM_PROMPT),
-        "dev 系统提示词应为内置默认一行: {system}"
+        system.starts_with("<host-environment")
+            && !system.contains(miyu_base::config::LEGACY_DEV_SYSTEM_PROMPT),
+        "dev 系统提示词不该带内置角色句: {system}"
     );
     assert!(!system.contains("<current-user-profile>"), "dev 无用户身份");
     // 09-09:记忆整套退场,连 `<associative-memory>` 前言都不该出现。

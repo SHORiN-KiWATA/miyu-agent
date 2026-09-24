@@ -302,3 +302,45 @@ fn notification_sound_defaults_to_on() {
     assert!(notifications.enabled);
     assert!(notifications.sound_file.is_empty());
 }
+
+/// 09-24 开发模式提示词默认为空、照样能改(用户:「让开发模式的提示词为空,但是还是
+/// 可以修改的」)。初始化不再生成 dev-prompt.md;老版本自动写进去的那行默认当没写。
+#[test]
+fn the_dev_prompt_is_empty_unless_the_user_wrote_one() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let paths = crate::paths::MiyuPaths {
+        root_dir: root.to_path_buf(),
+        config_dir: root.join("config"),
+        config_file: root.join("config/config.jsonc"),
+        skills_dir: root.join("config/skills"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        pictures_dir: root.join("pictures"),
+        fish_hook_file: root.join("config/fish/conf.d/miyu.fish"),
+        bash_hook_file: root.join("config/shell/bash-hook.sh"),
+        zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
+        scripts_dir: root.join("config/scripts"),
+        system_scripts_dir: root.join("system-scripts"),
+    };
+    let config = AppConfig::default();
+    AppConfig::init_files(&paths).unwrap();
+    let file = paths.config_dir.join(DEV_PROMPT_FILE);
+    assert!(!file.exists(), "初始化不该再生成 dev-prompt.md");
+    assert_eq!(config.dev_system_prompt(&paths).unwrap(), "");
+
+    for (content, expected) in [
+        ("", ""),
+        ("  \n", ""),
+        (format!("{LEGACY_DEV_SYSTEM_PROMPT}\n").as_str(), ""),
+        ("  你是资深前端工程师\n", "你是资深前端工程师"),
+    ] {
+        std::fs::write(&file, content).unwrap();
+        assert_eq!(
+            config.dev_system_prompt(&paths).unwrap(),
+            expected,
+            "{content:?}"
+        );
+    }
+}

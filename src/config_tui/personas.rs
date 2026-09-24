@@ -171,35 +171,33 @@ fn edit_active_persona_prompt(
     Ok(())
 }
 
-/// 开发模式的「AI 提示词」:编辑 config/dev-prompt.md 一个文件。清空
-/// 保存=删文件,运行时回退内置默认一行;记忆按保留人格 "dev" 落库,
-/// 与这份提示词的内容完全解耦——怎么改都不会切库。
+/// 开发模式的「AI 提示词」:编辑 config/dev-prompt.md 一个文件。09-24 起默认为空
+/// (没有内置角色句),清空保存=删文件;记忆按保留人格 "dev" 落库,与这份提示词的
+/// 内容完全解耦——怎么改都不会切库。
 pub(in crate::config_tui) fn edit_dev_prompt(
     ui: &mut Ui,
     paths: &MiyuPaths,
     pending: &mut PendingWrites,
 ) -> Result<()> {
+    // 老版本自动写进去的那行默认,运行时当没写,这里也显示成空(同一个口径)。
     let current = pending.dev_prompt(paths);
-    let prefill = if current.trim().is_empty() {
-        miyu_base::config::DEFAULT_DEV_SYSTEM_PROMPT.to_string()
-    } else {
-        current.trim_end().to_string()
-    };
+    let current = match current.trim() {
+        miyu_base::config::LEGACY_DEV_SYSTEM_PROMPT => "",
+        other => other,
+    }
+    .to_string();
     let mut fields = vec![Field::textarea(
-        t(
-            "AI prompt (empty = built-in default)",
-            "AI 提示词(清空=恢复内置默认)",
-        ),
-        prefill,
+        t("AI prompt (empty = none)", "AI 提示词(留空=不加)"),
+        current.clone(),
     )];
     // 不摆「保存 / 返回」两个按钮：这一屏只有一个字段，编辑完退出就写
     // （用户 2026-09-20）。它是独立文件（`dev-prompt.md`），跟不了设置界面
     // 「退出时一起保存」那条路——那条只管 config.jsonc。
     run_form_without_buttons(ui, t(" DEV MODE ", " 开发模式 "), &mut fields)?;
-    // 写在内存里，跟配置一起走「保存并退出」。内容和内置默认一模一样就当没改，
-    // 免得一进一出就凭空多出一个文件。
+    // 写在内存里，跟配置一起走「保存并退出」。没改就不记，免得一进一出就凭空
+    // 动一次文件。
     let value = fields[0].value.trim();
-    if value != miyu_base::config::DEFAULT_DEV_SYSTEM_PROMPT.trim() || !current.trim().is_empty() {
+    if value != current {
         pending.set_dev_prompt(value.to_string());
     }
     Ok(())
