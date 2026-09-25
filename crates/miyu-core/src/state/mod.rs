@@ -5,7 +5,6 @@ mod history;
 mod shared_files;
 pub use conversation_db::interrupted_prefix;
 pub use conversation_db::SharedFile;
-pub use conversation_db::SkillCatalogSnapshot;
 mod conversation_db;
 mod cross_session;
 pub use cross_session::*;

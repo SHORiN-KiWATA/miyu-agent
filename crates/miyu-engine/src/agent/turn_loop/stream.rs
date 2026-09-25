@@ -74,6 +74,8 @@ impl Agent {
         on_event(AgentEvent::TurnStarted {
             turn_id: turn_id.clone(),
         })?;
+        // 技能目录随回合尾巴发(指令源):先按指纹刷一次,尾巴里的才是此刻的目录。
+        self.refresh_tool_catalogs().await;
         let (mut messages, user_index) = self.chat_messages(&turn_id, &input)?;
         // 按显式下标把占位用户消息换成带附件的成品;瞬态尾巴保持原位。
         if let Some(user) = messages.get_mut(user_index) {

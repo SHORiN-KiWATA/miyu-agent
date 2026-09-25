@@ -106,6 +106,14 @@ fn request_shape_probe() {
         let paths = test_paths(temp.path());
         let mut config = AppConfig::default();
         config.voice.enabled = voice;
+        // 一件全局技能:技能目录非空,才看得出它落在哪(09-25 起在回合尾巴里)。
+        let skill = paths.skills_dir.join("probe-skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: probe-skill\ndescription: Probe skill for the request shape.\n---\n\nBody.\n",
+        )
+        .unwrap();
         let state = StateStore::new(&paths).unwrap();
         state.init_files().unwrap();
         state.start_turn("turn_1", "第一问", 1).unwrap();

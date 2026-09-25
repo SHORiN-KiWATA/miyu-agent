@@ -5,14 +5,20 @@ use miyu_base::paths::MiyuPaths;
 use miyu_core::skills::{self, SkillEntry, SkillScope};
 use serde_json::{json, Value};
 
+/// 技能目录块的开头，也是指令源认「最近一份」的凭据（`agent::instruction_source`）。
+pub(crate) const AVAILABLE_SKILLS_TAG: &str = "<available-skills";
+
+/// 模型最近看到的目录里还有技能、现在一件都没了时补的那一句。
+pub(crate) const NO_SKILLS_NOTICE: &str = "<available-skills/>";
+
 pub fn register_skills(
     registry: &mut ToolRegistry,
     config: &AppConfig,
     paths: &MiyuPaths,
 ) -> Result<()> {
     let (entries, fingerprint) = stable_catalog(config, paths)?;
-    register_load_skill(registry, config.clone(), paths.clone(), &entries);
-    registry.set_skill_catalog_fingerprint(fingerprint);
+    register_load_skill(registry, config.clone(), paths.clone());
+    registry.set_skill_catalog(fingerprint, catalog_block(&entries));
     Ok(())
 }
 
@@ -37,14 +43,10 @@ pub(crate) fn prepare_skill_refresh(
     }))
 }
 
-pub(crate) fn apply_skill_refresh(
-    registry: &mut ToolRegistry,
-    config: &AppConfig,
-    paths: &MiyuPaths,
-    snapshot: SkillCatalogSnapshot,
-) {
-    register_load_skill(registry, config.clone(), paths.clone(), &snapshot.entries);
-    registry.set_skill_catalog_fingerprint(snapshot.fingerprint);
+/// 目录换新。`load_skill` 的描述是常量（09-25），不用重新注册：它加载时读的是盘上
+/// 此刻的技能。
+pub(crate) fn apply_skill_refresh(registry: &mut ToolRegistry, snapshot: SkillCatalogSnapshot) {
+    registry.set_skill_catalog(snapshot.fingerprint, catalog_block(&snapshot.entries));
 }
 
 fn stable_catalog(config: &AppConfig, paths: &MiyuPaths) -> Result<(Vec<SkillEntry>, [u8; 32])> {
@@ -65,7 +67,7 @@ pub fn register_authoring(registry: &mut ToolRegistry, config: AppConfig, paths:
     registry.register(
         ToolSpec::new(
             "manage_skill",
-            "Author Miyu skills. action=create opens a hidden draft for a new skill; action=update copies an existing skill into an isolated draft; edit only the returned draft with apply_patch, then action=publish validates and atomically publishes it (create drafts never overwrite; update drafts fail if the live skill changed meanwhile). action=delete permanently removes a user skill; action=list_drafts lists retained drafts (drafts untouched for 30 days are pruned first). Scripts inside a skill stay resources and are never registered as tools.",
+            "Author Miyu skills. action=create opens a hidden draft for a new skill; action=update copies an existing skill into an isolated draft; change only the returned draft with the edit tool, then action=publish validates and atomically publishes it (create drafts never overwrite; update drafts fail if the live skill changed meanwhile). action=delete permanently removes a user skill; action=list_drafts lists retained drafts (drafts untouched for 30 days are pruned first). Scripts inside a skill stay resources and are never registered as tools.",
             json!({
                 "type": "object",
                 "properties": {
@@ -128,24 +130,13 @@ pub fn register_authoring(registry: &mut ToolRegistry, config: AppConfig, paths:
     );
 }
 
-fn register_load_skill(
-    registry: &mut ToolRegistry,
-    config: AppConfig,
-    paths: MiyuPaths,
-    entries: &[SkillEntry],
-) {
-    // 第一行必须自洽:stub 模式只保留它,原来那句"必须匹配下方列出的可用
-    // 技能之一"指向一份 stub 里根本不存在的清单(清单在完整契约里,要经
-    // load_tools 取)。清单相关的话统一放进第二段,它只随完整契约出现。
-    let description = format!(
-        "{}\n\n{}\n\n{}",
-        "Load a specialized skill's full instructions and resources into the conversation.",
-        "The skill name must match one of the available skills listed below. Use this tool before applying a skill or using any scripts/resources from that skill. Skill allowed-tools metadata never grants Miyu permissions.",
-        available_skills_xml(entries),
-    );
+fn register_load_skill(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths) {
+    // 描述是常量，真相源是 `descriptions/load_skill.json`（这里只是占位）。技能目录
+    // 09-25 起不拼进来：目录一变 tools 的字节就变，所有在线会话下一轮整段缓存作废
+    // （B13）。目录改由回合尾巴发，变了就再发一份。
     registry.register(ToolSpec::new(
         "load_skill",
-        description,
+        "Load a specialized skill's full instructions and resources into the conversation.",
         json!({
             "type": "object",
             "properties": {
@@ -247,7 +238,7 @@ fn create_skill(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result<St
         "ok": true,
         "state": "draft",
         "draft": draft,
-        "next": "Edit only the returned draft with apply_patch, then call publish_skill with draft_id."
+        "next": "Change only the returned draft with the edit tool, then call manage_skill with action=publish and this draft_id."
     }))?)
 }
 
@@ -260,7 +251,7 @@ fn update_skill(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result<St
         "ok": true,
         "state": "draft",
         "draft": draft,
-        "next": "Edit only the returned draft with apply_patch, then call publish_skill with draft_id."
+        "next": "Change only the returned draft with the edit tool, then call manage_skill with action=publish and this draft_id."
     }))?)
 }
 
@@ -271,7 +262,7 @@ fn publish_skill(args: Value, paths: &MiyuPaths) -> Result<String> {
         "ok": true,
         "state": "published",
         "skill": published,
-        "catalog_refresh": "next tool round",
+        "catalog_refresh": "next turn",
     }))?)
 }
 
@@ -284,7 +275,7 @@ fn delete_skill(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result<St
         "ok": true,
         "state": "deleted",
         "skill": deleted,
-        "catalog_refresh": "next tool round",
+        "catalog_refresh": "next turn",
     }))?)
 }
 
@@ -302,8 +293,8 @@ fn required_string(args: &Value, key: &str) -> Result<String> {
 
 /// 清单里每条技能摘要的长度上限（字符）。
 ///
-/// 这份清单常驻 tools 数组、随技能数线性增长，而摘要只需要够模型判断
-/// 「该不该加载这一件」——完整说明本来就在 SKILL.md 里，加载之后才该看到。
+/// 这份清单随技能数线性增长（09-25 前常驻 tools 数组，现在随回合尾巴发），而摘要只需要
+/// 够模型判断「该不该加载这一件」——完整说明本来就在 SKILL.md 里，加载之后才该看到。
 /// 上限是兜底：技能作者自己就该把 frontmatter 的 description 写短（见
 /// skill-creator）。截断只在超限时发生，同一份技能目录下字节恒定。
 const SKILL_SUMMARY_LIMIT: usize = 120;
@@ -320,12 +311,16 @@ fn clip_skill_summary(summary: &str) -> String {
     clipped
 }
 
-fn available_skills_xml(entries: &[SkillEntry]) -> String {
+/// 回合尾巴里的技能目录块；没有技能是 `None`。同一份目录两次生成逐字节相等——
+/// 「变了才发」靠逐字节比对上一份。
+fn catalog_block(entries: &[SkillEntry]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
     let items = entries
         .iter()
         .map(|entry| {
-            // 08-21 文风批:条目单行化——五行 XML 壳对每技能是纯结构开销,
-            // QQ 会话随 load_skill 描述每请求常驻。
+            // 08-21 文风批:条目单行化——五行 XML 壳对每技能是纯结构开销。
             format!(
                 "  <skill name=\"{}\" source=\"{}\">{}</skill>",
                 xml_escape(&entry.metadata.name),
@@ -335,7 +330,9 @@ fn available_skills_xml(entries: &[SkillEntry]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!("<available_skills>\n{items}\n</available_skills>")
+    Some(format!(
+        "{AVAILABLE_SKILLS_TAG}>\n{items}\n</available-skills>"
+    ))
 }
 
 fn xml_escape(text: &str) -> String {
@@ -370,16 +367,26 @@ mod tests {
     }
 
     #[test]
-    fn load_skill_description_includes_builtin_creator() {
+    fn skill_catalog_includes_builtin_creator() {
         let temp = tempfile::tempdir().unwrap();
         crate::tools::tests::install_bundled_skills(temp.path());
         let paths = test_paths(temp.path());
         let config = AppConfig::default();
         let mut registry = ToolRegistry::new();
         register_skills(&mut registry, &config, &paths).unwrap();
-        let description = &registry.get("load_skill").unwrap().description;
-        assert!(description.contains("name=\"skill-creator\""));
-        assert!(description.contains("source=\"built_in\""));
+        let catalog = registry.skill_catalog().unwrap();
+        assert!(catalog.contains("name=\"skill-creator\""));
+        assert!(catalog.contains("source=\"built_in\""));
+    }
+
+    #[test]
+    fn an_empty_catalog_has_no_block() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let mut registry = ToolRegistry::new();
+        register_skills(&mut registry, &AppConfig::default(), &paths).unwrap();
+        assert!(registry.contains("load_skill"));
+        assert_eq!(registry.skill_catalog(), None);
     }
 
     #[test]
@@ -419,14 +426,14 @@ mod tests {
         );
     }
 
-    /// 技能清单只存在于 `load_skill` 的描述里，所以这个工具必须常驻——它一旦
-    /// 懒加载，stub 模式只留描述第一行，清单被整段砍掉，模型**看不到任何技能
-    /// 名**，只能瞎猜。实测过一次：模型连试 gaming / linux-game-compat /
-    /// linux-gaming 三个名字，真名是 linux-game-compatibility，一个没蒙对，
-    /// 一轮烧掉 208k token 去找一个一直都在的内置技能。（那个技能 09-23 已删，
-    /// 由 game_compat 脚本独自承担能力；这条教训本身与技能在不在无关。）
+    /// 模型得看得到技能名。清单原来只在 `load_skill` 的描述里，这个工具一懒加载，
+    /// stub 模式只留描述第一行，清单被整段砍掉，模型只能瞎猜：实测连试 gaming /
+    /// linux-game-compat / linux-gaming 三个名字，真名是 linux-game-compatibility，
+    /// 一轮烧掉 208k token 去找一个一直都在的内置技能。09-25 起清单在回合尾巴里
+    /// （`agent::instruction_source::SkillsSource`，读的就是注册表里这一份），描述是常量；
+    /// 工具照旧常驻，stub 模式下不必先绕一轮 load_tools 取契约。
     #[test]
-    fn load_skill_is_always_loaded_so_its_catalog_is_visible() {
+    fn load_skill_is_always_loaded_and_the_catalog_names_every_skill() {
         let temp = tempfile::tempdir().unwrap();
         // 技能 09-23 起读盘:内置技能得先摆进隔离资源树,清单里才有 skill-creator。
         crate::tools::tests::install_bundled_skills(temp.path());
@@ -435,21 +442,20 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_skills(&mut registry, &config, &paths).unwrap();
         let load_skill = registry.get("load_skill").unwrap();
-        assert!(load_skill.always_loaded, "懒加载会把技能清单砍掉");
-        // 清单确实在描述里,而且 stub 模式下会原样发出去。
-        assert!(
-            load_skill.description.contains("<available_skills>"),
-            "描述里没有清单,常驻也没意义"
-        );
-        let stub = registry
-            .stub_definitions()
-            .into_iter()
-            .find(|definition| definition.function.name == "load_skill")
-            .expect("load_skill 应当在 stub 目录里");
-        assert!(
-            stub.function.description.contains("name=\"skill-creator\""),
-            "stub 里看不到技能名——模型只能猜"
-        );
+        assert!(load_skill.always_loaded);
+        let catalog = registry.skill_catalog().expect("有技能就有清单");
+        assert!(catalog.starts_with(AVAILABLE_SKILLS_TAG), "{catalog}");
+        assert!(catalog.contains("name=\"skill-creator\""), "{catalog}");
+        // 描述在 full 与 stub 两档都是同一份常量,不带清单。
+        for stub in [false, true] {
+            let definition = registry
+                .request_definitions(stub)
+                .into_iter()
+                .find(|definition| definition.function.name == "load_skill")
+                .expect("load_skill 两档都在");
+            assert_eq!(definition.function.description, load_skill.description);
+            assert!(!definition.function.description.contains("skill-creator"));
+        }
         assert_eq!(
             load_skill.load_policy,
             super::super::tool_descriptions::LoadPolicy::Summary

@@ -1,6 +1,6 @@
 //! 指令源（09-25，opencode 调研 3.2 第 3 条）：模型得知道「此刻是什么样」的事，每件一个源
-//! ——时间与工作目录（`<runtime>`）、沙盒（`<sandbox>`）、场所递进来的状态快照
-//! （网页会话的 `<artifact-workspace>`）。
+//! ——时间与工作目录（`<runtime>`）、沙盒（`<sandbox>`）、技能目录（`<available-skills>`）、
+//! 场所递进来的状态快照（网页会话的 `<artifact-workspace>`）。
 //!
 //! 规矩只写一遍（[`project`]）：跟请求里最近一份逐字节比，一样就不发，变了发新的整份；
 //! 此刻没有了、模型最近看到的还是有，由源自己给那一句「没了」。发出去的块跟着这一轮的
@@ -108,6 +108,30 @@ impl InstructionSource for SandboxSource {
     }
 }
 
+/// `<available-skills>`：`load_skill` 能加载哪些技能。
+///
+/// 09-25 前拼在 `load_skill` 的描述里：技能一增删改，tools 的字节就变，所有在线会话下一轮
+/// 整段缓存作废（B13）。现在描述是常量，目录随回合尾巴发，变了再发一整份；一件技能都
+/// 不剩了补一句空目录。
+pub(in crate::agent) struct SkillsSource {
+    /// 注册表里此刻的目录块（`tools::skills`），没有技能是 None。
+    pub catalog: Option<String>,
+}
+
+impl InstructionSource for SkillsSource {
+    fn tag(&self) -> &'static str {
+        tools::AVAILABLE_SKILLS_TAG
+    }
+
+    fn current(&self) -> Option<String> {
+        self.catalog.clone()
+    }
+
+    fn gone(&self) -> Option<String> {
+        Some(tools::NO_SKILLS_NOTICE.to_string())
+    }
+}
+
 /// 状态快照类的回合尾巴块:内容是「此刻的状态」(网页会话的 artifact 清单)。和对话里
 /// **最近一份**同名快照逐字节相同就不再重发——模型眼前最近那份就是现状。比最近一份而不是
 /// 任意一份:清单 A → B → A 时历史里确实有 A,但模型最近看到的是 B,A 必须重发。
@@ -177,6 +201,17 @@ impl Agent {
             && SandboxSource::applies(self.core.prompt_audience, platform)
         {
             sources.push(Box::new(SandboxSource));
+        }
+        // 技能目录只跟着 load_skill 走：这一轮的工具面里没有它（工具关着、子代理会话、
+        // 单轮白名单没放行）就不发。
+        if self.core.tools_enabled {
+            let mut tools = self.tools.lock().unwrap();
+            self.enforce_turn_restrictions(&mut tools);
+            if tools.contains("load_skill") {
+                sources.push(Box::new(SkillsSource {
+                    catalog: tools.skill_catalog().map(str::to_string),
+                }));
+            }
         }
         sources
     }

@@ -48,6 +48,8 @@
   `normal-owner-voice` 脸与 09-16 之前的 owner 字节逐字相同,`normal-owner`(语音关)只少那一段。
 - 技能(09-24 起是插件):`apply_skill_refresh` 以 `config.skills.enabled` + 注册表里有没有
   `load_skill` 为判据,没有直接看插件位;`load_skill` 只在 `skills_enabled` 为真时注册,结果等价。
+  技能目录 09-25 起不在 `load_skill` 描述里,由回合尾巴的指令源 `<available-skills>` 发
+  (`agent/instruction_source.rs::SkillsSource`,判据同样是这一轮的工具面里有没有 `load_skill`)。
 - (已解决 09-16)`persona_reminder` / `emotion` 两个开关进了 `feature_catalog`:引导页与成员人格页能勾,
   机器侧没开(`prompt.persona_reminder` 关、QQ 没开)就不摆。
 

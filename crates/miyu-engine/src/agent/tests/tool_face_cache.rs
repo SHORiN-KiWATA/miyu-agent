@@ -4,7 +4,7 @@
 //! - B5：到了工具轮数上限，最后那一轮原来一个工具都不带——偏偏是上下文最大的
 //!   时候整段重算。改成照带工具、`tool_choice: none`。
 //! - B13：`load_skill` 的完整描述里拼着技能目录，技能一增删改，在线会话下一轮
-//!   的 tools 就变了。改成按会话冻结，压缩之后才换成当时的目录。
+//!   的 tools 就变了。09-25 起描述是常量，目录改由回合尾巴的指令源发。
 
 use super::shared::*;
 use crate::agent::*;
@@ -83,13 +83,14 @@ async fn the_last_round_at_the_tool_limit_keeps_the_tool_list() {
     assert_eq!(requests[1]["tool_choice"], "none");
 }
 
-fn load_skill_with(catalog: &str) -> ToolSpec {
-    ToolSpec::new(
-        "load_skill",
-        format!("Load a specialized skill.\n\n<available_skills>{catalog}</available_skills>"),
-        empty_parameters(),
-        |_| async { Ok("loaded".to_string()) },
+fn write_skill(paths: &MiyuPaths, name: &str) {
+    let dir = paths.skills_dir.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: The {name} skill.\n---\n\nBody.\n"),
     )
+    .unwrap();
 }
 
 fn load_skill_description(request: &serde_json::Value) -> String {
@@ -105,23 +106,37 @@ fn load_skill_description(request: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// 请求里出现过的技能目录块，按先后。
+fn catalog_blocks(request: &serde_json::Value) -> Vec<String> {
+    request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .filter_map(|message| message["content"].as_str())
+        .filter(|text| text.starts_with("<available-skills"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// 退回 B13 的「按会话冻结在描述里」：第一条断言就红（描述里拼着目录），中途新增的技能
+/// 也要等到压缩之后才看得到。
 #[tokio::test]
-async fn a_skill_catalog_change_waits_for_the_next_compaction() {
+async fn the_skill_catalog_rides_the_turn_tail_and_the_tools_never_change() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
     let mut config = queue_test_config(base_url);
     config.tools.enabled = true;
-    // 技能热刷新读的是盘上的技能目录；这里自己挂一个假的 load_skill，再手动换
-    // 它的描述，模拟「会话进行中有人发布了新技能」。
-    config.skills.enabled = false;
-    let server = tokio::spawn(serve(listener, vec![TEXT_SSE, TEXT_SSE, TEXT_SSE]));
+    config.skills.enabled = true;
+    write_skill(&paths, "alpha");
+    let server = tokio::spawn(serve(listener, vec![TEXT_SSE; 5]));
 
     let state = StateStore::new(&paths).unwrap();
     state.init_files().unwrap();
-    let mut tools = ToolRegistry::new();
-    tools.register(load_skill_with("alpha"));
+    let tools =
+        crate::tools::build_tool_registry(&config, &paths, PersonaLane::Active, true).unwrap();
     let provider = config.provider(None).unwrap().clone();
     let client = OpenAiCompatibleClient::new(&provider, &config, &paths).unwrap();
     let mut agent = Agent::new(
@@ -135,22 +150,20 @@ async fn a_skill_catalog_change_waits_for_the_next_compaction() {
     .unwrap();
 
     agent.chat_stream("first", |_| Ok(())).await.unwrap();
-    agent
-        .tools
-        .lock()
-        .unwrap()
-        .register(load_skill_with("alpha, beta"));
+    // 会话进行中有人发布了一件新技能。
+    write_skill(&paths, "beta");
     agent.chat_stream("second", |_| Ok(())).await.unwrap();
-
-    // 压缩之后前缀本来就断了一次，这时换成当时的目录。
-    let visible = state.load_visible_turns().unwrap();
-    let ids = visible
+    agent.chat_stream("third", |_| Ok(())).await.unwrap();
+    // 压缩把带着目录的几轮全折进摘要。
+    let ids = state
+        .load_visible_turns()
+        .unwrap()
         .iter()
         .map(|turn| turn.turn_id.clone())
         .collect::<Vec<_>>();
     state
         .replace_visible_with_summary(
-            &ids[..1],
+            &ids,
             &ids,
             "## Task Goal\nKeep chatting.",
             miyu_core::llm::TurnTokens::default(),
@@ -159,18 +172,58 @@ async fn a_skill_catalog_change_waits_for_the_next_compaction() {
             None,
         )
         .unwrap();
-    agent.chat_stream("third", |_| Ok(())).await.unwrap();
+    agent.chat_stream("fourth", |_| Ok(())).await.unwrap();
+    // 技能一件都不剩了。
+    std::fs::remove_dir_all(paths.skills_dir.join("alpha")).unwrap();
+    std::fs::remove_dir_all(paths.skills_dir.join("beta")).unwrap();
+    agent.chat_stream("fifth", |_| Ok(())).await.unwrap();
 
     let requests = server.await.unwrap();
-    let first = load_skill_description(&requests[0]);
-    assert!(first.contains("alpha"), "{first}");
-    assert_eq!(
-        load_skill_description(&requests[1]),
-        first,
-        "a catalog change mid-session must not change the tools bytes"
-    );
+    let description = load_skill_description(&requests[0]);
     assert!(
-        load_skill_description(&requests[2]).contains("beta"),
-        "after a compaction the session sees the current catalog"
+        description.contains("<available-skills>") && !description.contains("alpha"),
+        "the load_skill description is a constant: {description}"
+    );
+    for request in &requests[1..] {
+        assert_eq!(
+            request["tools"], requests[0]["tools"],
+            "the tools bytes never change"
+        );
+    }
+
+    let first = catalog_blocks(&requests[0]);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(first[0].contains("name=\"alpha\""), "{first:?}");
+
+    let second = catalog_blocks(&requests[1]);
+    assert_eq!(
+        second.len(),
+        2,
+        "a changed catalog is sent again: {second:?}"
+    );
+    assert_eq!(second[0], first[0], "the old copy replays as a fossil");
+    assert!(
+        second[1].contains("name=\"alpha\"") && second[1].contains("name=\"beta\""),
+        "{second:?}"
+    );
+
+    assert_eq!(
+        catalog_blocks(&requests[2]),
+        second,
+        "an unchanged catalog is not repeated"
+    );
+
+    let after_compaction = catalog_blocks(&requests[3]);
+    assert_eq!(
+        after_compaction,
+        vec![second[1].clone()],
+        "the folded copies are gone, so the current catalog is sent again"
+    );
+
+    let emptied = catalog_blocks(&requests[4]);
+    assert_eq!(
+        emptied.last().map(String::as_str),
+        Some(crate::tools::NO_SKILLS_NOTICE),
+        "{emptied:?}"
     );
 }

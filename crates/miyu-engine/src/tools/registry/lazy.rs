@@ -106,9 +106,9 @@ pub(crate) const SUMMARY_MAX_CHARS: usize = 60;
 
 /// Catalog entries carry a bounded one-line summary instead of the full tool
 /// description. This keeps the loader catalog small and byte-stable: without
-/// the bound, `load_skill`'s description (which embeds the whole skills
-/// catalog) was nested wholesale into the loader XML and re-rendered on every
-/// skills rescan.
+/// the bound, `load_skill`'s description (which embedded the whole skills
+/// catalog until 09-25) was nested wholesale into the loader XML and
+/// re-rendered on every skills rescan.
 pub(crate) fn load_target_summary(description: &str) -> String {
     let first_line = description
         .lines()

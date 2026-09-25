@@ -81,7 +81,9 @@ pub use scripts::{
     scripts_dashboard_disable, scripts_dashboard_enable, scripts_dashboard_overview,
     scripts_dashboard_register, scripts_dashboard_source,
 };
-pub(crate) use skills::{apply_skill_refresh, prepare_skill_refresh};
+pub(crate) use skills::{
+    apply_skill_refresh, prepare_skill_refresh, AVAILABLE_SKILLS_TAG, NO_SKILLS_NOTICE,
+};
 pub use web::search_for_webui;
 
 /// 把「一串字符串」参数收成 Vec，容忍模型真会传的几种形状。

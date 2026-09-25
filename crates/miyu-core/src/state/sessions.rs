@@ -9,19 +9,6 @@
 use crate::state::*;
 
 impl StateStore {
-    /// 本会话冻结的技能目录（09-24 B13，见 `conversation_db::skill_catalog`）。
-    pub fn skill_catalog_snapshot(&self) -> Result<Option<crate::state::SkillCatalogSnapshot>> {
-        self.conv_db.skill_catalog_snapshot(&self.session())
-    }
-
-    pub fn set_skill_catalog_snapshot(
-        &self,
-        snapshot: &crate::state::SkillCatalogSnapshot,
-    ) -> Result<()> {
-        self.conv_db
-            .set_skill_catalog_snapshot(&self.session(), snapshot)
-    }
-
     pub(crate) fn session(&self) -> Arc<str> {
         self.session_id.read().unwrap().clone()
     }

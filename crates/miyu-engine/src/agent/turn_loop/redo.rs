@@ -62,6 +62,7 @@ impl Agent {
             turn_id: candidate.turn_id.clone(),
         })?;
 
+        self.refresh_tool_catalogs().await;
         let (mut messages, redo_user_index) = self.chat_messages(&candidate.turn_id, "")?;
         // 按下标摘下 [占位用户, 瞬态尾巴...]:重放輸入接回后尾巴原样跟上,
         // 保持"瞬态永远在用户消息之后"。
