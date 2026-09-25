@@ -2247,6 +2247,10 @@ window.MiyuSettings = (() => {
           row(t("参数"), stringList(draft.args, (value) => { draft.args = value; }, { placeholder: t("一个参数"), mono: true }), { block: true, hint: t("每行一个，按启动顺序。") }),
           row(t("环境变量"), kvTable(draft.env, (value) => { draft.env = value; }, { keyPlaceholder: "NAME", valuePlaceholder: "value" }), { block: true }),
           row(t("超时秒数"), numberInput({ label: t("超时"), min: 1, max: 600, integer: true }, draft.timeout_seconds ?? 30, (value) => { draft.timeout_seconds = value; })),
+          /* 三个字段取默认值时不写进配置（与后端 skip_serializing_if 一致）：老配置保存后一个字节不变。 */
+          row(t("沙盒"), selectInput([{ value: "inherit", label: t("跟会话一样") }, { value: "none", label: t("不关（只对属主会话生效）") }], draft.sandbox || "inherit", (value) => { if (value === "inherit") delete draft.sandbox; else draft.sandbox = value; }, t("沙盒")), { hint: t("服务器进程关进调用它的会话的沙盒；成员会话永远关着。") }),
+          row(t("额外可写目录"), stringList(draft.sandbox_writable || [], (value) => { if (value.length) draft.sandbox_writable = value; else delete draft.sandbox_writable; }, { placeholder: "~/.cache/ms-playwright", mono: true }), { block: true, hint: t("在会话沙盒之上再放行可写的目录，比如浏览器缓存。") }),
+          row(t("保持运行"), toggle(draft.persistent !== false, (value) => { if (value) delete draft.persistent; else draft.persistent = false; }), { hint: t("同一会话里连续调用复用同一个进程，有状态的服务器能记住上一步。") }),
           row(t("启用"), toggle(draft.enabled !== false, (value) => { draft.enabled = value; }))
         ]));
       },
