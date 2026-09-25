@@ -119,7 +119,8 @@ fn down_stays_with_the_editor_while_browsing_history_or_mid_input() {
     assert_eq!(live.strip_focus, Some(0));
 }
 
-/// 任务条上：回车是点它；Esc、打字都回输入框，打的字照常交给编辑器。
+/// 任务条上：回车是点它，光标留在任务条上（用户 09-26：原来每切一次会话就回到输入框）；
+/// Esc、打字都回输入框，打的字照常交给编辑器。
 #[test]
 fn enter_activates_and_other_keys_leave_the_strip() {
     let mut live = detached_tail();
@@ -131,10 +132,15 @@ fn enter_activates_and_other_keys_leave_the_strip() {
     live.set_jobs(jobs(1));
     assert!(press(&mut live, KeyCode::Down));
     assert!(press(&mut live, KeyCode::Enter));
-    assert_eq!(live.take_strip_action(), Some(StripAction::Back));
-    assert_eq!(live.strip_focus, None);
+    assert_eq!(
+        live.take_strip_action(),
+        Some(StripAction::Go {
+            session_id: "root".into(),
+            path: Vec::new()
+        })
+    );
+    assert_eq!(live.strip_focus, Some(0), "回车之后光标还在任务条上");
 
-    assert!(press(&mut live, KeyCode::Down));
     assert!(press(&mut live, KeyCode::Esc));
     assert_eq!(live.strip_focus, None);
 
@@ -200,4 +206,80 @@ fn the_command_list_follows_the_pick() {
     let plain = command_hint_lines("/", 120, None);
     assert!(strip_terminal_control_sequences(&plain[0]).starts_with(names[0]));
     assert!(!plain.iter().any(|line| line.contains("\x1b[35m")));
+}
+
+/// 在任务条上回车切了会话：切完光标停在切过去的那一条（它在新的树上换了位置也跟过去）；回到了
+/// 主会话（那儿没有主会话那一行）就停在刚才待着的那一条（用户 09-26）。
+#[test]
+fn the_focus_follows_the_session_it_switched_to() {
+    use crate::cli::repl::strip_tree::{strip_items, StripScope};
+    let row = |id: &str| SubagentRow {
+        session_id: id.into(),
+        title: id.into(),
+        state: "running".into(),
+        dev: false,
+        job_id: None,
+        running_descendants: 0,
+    };
+    let root = ParentRow {
+        session_id: "root".into(),
+        title: "主会话".into(),
+        root: true,
+    };
+    let children: std::collections::HashMap<String, Vec<SubagentRow>> = [
+        ("root".to_string(), vec![row("c1"), row("c2")]),
+        ("c2".to_string(), vec![row("g1")]),
+    ]
+    .into_iter()
+    .collect();
+    let mut live = detached_tail();
+    live.visits.push(root.clone());
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("c1"),
+            path: &live.visits,
+            children: Some(&children),
+        },
+        &[],
+    );
+    // 在 c1 里：主会话、c1（●）、c2。↓ 三下停在 c2，回车切过去。
+    assert!(press(&mut live, KeyCode::Down));
+    assert!(press(&mut live, KeyCode::Down));
+    assert!(press(&mut live, KeyCode::Down));
+    assert_eq!(live.strip_focus, Some(2));
+    assert!(press(&mut live, KeyCode::Enter));
+    assert!(matches!(
+        live.take_strip_action(),
+        Some(StripAction::Go { session_id, .. }) if session_id == "c2"
+    ));
+    // 切过去之后 c2 展开、g1 挂在它下面：光标跟着 c2。
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("c2"),
+            path: &live.visits,
+            children: Some(&children),
+        },
+        &[],
+    );
+    live.apply_strip_refocus();
+    assert_eq!(live.strip_focus, Some(2));
+    assert!(live.strip_items[2].is_current());
+
+    // 回主会话：顶层没有主会话那一行，光标停在刚才待着的 c2 上。
+    live.strip_focus = Some(0);
+    assert!(press(&mut live, KeyCode::Enter));
+    live.visits.clear();
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("root"),
+            path: &[],
+            children: Some(&children),
+        },
+        &[],
+    );
+    live.apply_strip_refocus();
+    let focused = live
+        .strip_focus
+        .and_then(|index| live.strip_items[index].session_id());
+    assert_eq!(focused, Some("c2"));
 }

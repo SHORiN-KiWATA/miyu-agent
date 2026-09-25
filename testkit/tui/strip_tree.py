@@ -6,6 +6,8 @@
   （转轮），孙代理不在第一层；
 - 点进子代理：`○ 主会话` 钉在最上面，子代理这一行实心 `●`，两个孙代理用 `├`/`└` 挂在它下面，
   主会话自己的命令还在第一层；
+- 方向键停到孙代理那一行回车切进去：还是同一棵树（主会话、子代理、两个孙代理），只是实心圆挪到
+  孙代理上，光标还停在它那一行（用户 09-26）；↑ 回车回子代理，光标跟着停在子代理那一行；
 - 在子代理里按 Ctrl+C：它这一轮连同两个孙代理一起停（用户 09-26：原来孙代理没停下），孙代理
   从任务条上撤掉、库里记成被打断；主会话的命令不受影响；
 - 回主会话，还能接着打字（终端在 raw 里）；
@@ -71,6 +73,27 @@ def tree_ready(screen):
     )
 
 
+def focused(screen):
+    """方向键停着的那一行（行首 `›`）。"""
+    return next((line for line in strip(screen) if line.startswith("›")), None)
+
+
+def focus_on(master, sink, text, key, tries=8):
+    """按 `key` 一格格挪，直到光标停在带 `text` 的那一行。"""
+    for _ in range(tries):
+        row = focused(now(sink))
+        if row is not None and text in row:
+            return True
+        os.write(master, key)
+        h.settle(master, sink, quiet=0.3, timeout=2.0)
+    row = focused(now(sink))
+    return row is not None and text in row
+
+
+def current_is(text):
+    return lambda s: (row_with(s, text) or "").lstrip("› ").lstrip("├└│ ").startswith("●")
+
+
 def sigma(screen):
     """footer 上的 Σ（`Σ900`、`Σ1.3k`），读不到是 None。"""
     for line in reversed(screen):
@@ -130,6 +153,36 @@ def main():
         first, second = (row_with(inside, name).lstrip() for name in GRANDCHILDREN)
         report["inside_twigs"] = first.startswith("├ ○") and second.startswith("└ ○")
         report["inside_main_command_on_level_one"] = row_with(inside, COMMAND) is not None
+
+        # 方向键进任务条，停到孙代理一那一行，回车切进去。
+        os.write(master, b"\x1b[B")
+        h.settle(master, sink, quiet=0.3, timeout=2.0)
+        report["keys_reach_grandchild_row"] = focus_on(master, sink, GRANDCHILDREN[0], b"\x1b[B")
+        os.write(master, b"\r")
+        deeper = r.wait_screen(master, sink, current_is(GRANDCHILDREN[0]), 15.0)
+        h.settle(master, sink, quiet=1.0, timeout=5.0)
+        deeper = now(sink)
+        r.save("tree-grandchild", deeper)
+        report["grandchild_is_current"] = current_is(GRANDCHILDREN[0])(deeper)
+        rows = strip(deeper)
+        report["grandchild_keeps_the_same_tree"] = (
+            bool(rows)
+            and rows[0].lstrip("› ").startswith("○ 主会话")
+            and (row_with(deeper, CHILD) or "").lstrip("› ").startswith("○")
+            and all(row_with(deeper, name) is not None for name in GRANDCHILDREN)
+        )
+        report["focus_stays_on_the_grandchild"] = GRANDCHILDREN[0] in (focused(deeper) or "")
+        # ↑ 回到子代理那一行，回车切回去：光标跟着停在子代理那一行。
+        report["keys_reach_child_row"] = focus_on(master, sink, CHILD, b"\x1b[A")
+        os.write(master, b"\r")
+        back_up = r.wait_screen(master, sink, current_is(CHILD), 15.0)
+        h.settle(master, sink, quiet=1.0, timeout=5.0)
+        r.save("tree-child-again", now(sink))
+        report["back_to_child_by_keys"] = back_up is not None
+        report["focus_follows_back_to_child"] = CHILD in (focused(now(sink)) or "")
+        # 光标还在任务条上：Esc 回输入框，接下来的 Ctrl+C 交给回合。
+        os.write(master, b"\x1b")
+        h.settle(master, sink, quiet=0.5, timeout=3.0)
 
         before = sigma(now(sink))
         report["_sigma_before_stop"] = before

@@ -27,6 +27,7 @@ fn lobby_tail(banner: Option<BannerScene>) -> LiveReplTail {
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,
+        strip_refocus: None,
         strip_scroll: 0,
         command_pick: None,
         turn_panel: None,

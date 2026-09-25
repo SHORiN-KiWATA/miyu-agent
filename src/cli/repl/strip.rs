@@ -3,8 +3,9 @@
 //! 09-26 照 Claude Code 改成一棵树（用户拍板）：
 //! - 没在访问：这条会话自己的子代理（空心 `○`，名下还在跑的收成「开发中（+3）」）和它自己的
 //!   后台命令（转轮）；
-//! - 在子代理会话里：第一行 `○ 主会话` 钉在顶上，点它回去；下面是父会话自己的子代理——正在看
-//!   的这条实心 `●`、展开，它的子代理和后台命令用 `├`/`└` 挂在下面——和父会话自己的后台命令。
+//! - 在子代理会话里：树根一直是主会话，`○ 主会话` 钉在顶上；从主会话到正在看的这条，路上经过的
+//!   每一层都展开（名下的用 `├`/`└` 挂在下面），正在看的这条实心 `●`，别的折起来。切到孙代理还是
+//!   同一棵树，只是实心圆挪过去（用户 09-26）。
 //!
 //! 行怎么排在 `strip_tree`；这里是行本身（点它做什么、画成什么样）和露出来哪几行。后台子代理
 //! 另有一个镜像任务（停它、完成唤醒都走任务那一套）：同一件事只列会话这一行，右边的量和用时从
@@ -36,59 +37,60 @@ impl SubagentRow {
     }
 }
 
-/// 正在访问子会话时，回去是哪一条。
+/// 访问栈的一层：切进子代理会话一路经过的会话，栈底是车道上那条（主会话）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::cli) struct ParentRow {
     pub(in crate::cli) session_id: String,
     pub(in crate::cli) title: String,
-    /// 回去就是车道上的那条会话（不是又一层子会话）：那一行叫「主会话」。
+    /// 车道上的那条会话（栈底）。
     pub(in crate::cli) root: bool,
-}
-
-/// 行在树上挂在哪一层。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::cli) enum Branch {
-    /// 第一层。
-    #[default]
-    Top,
-    /// 挂在正在看的那条下面：`├`，最后一条画 `└`。
-    Under { last: bool },
 }
 
 /// 一条子代理会话行和正在看的会话是什么关系。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::cli) enum Place {
-    /// 正在看的会话名下的（点它往下切一层）。
-    Child,
-    /// 父会话名下的另一条（点它横着切过去，访问栈不压新层）。
-    Sibling,
-    /// 就是正在看的这条。
+    /// 就是正在看的这条：实心 `●`，名下的挂在它下面。
     Current,
+    /// 从主会话到正在看的这条、路上经过的：空心，也展开。
+    Path,
+    /// 别的：空心，折起来，名下还在跑的写成「（+N）」。
+    Other,
 }
 
 /// 任务条上排好序的一行（`strip_tree::strip_items` 排的）。
 #[derive(Clone, Debug)]
 pub(in crate::cli) enum StripItem {
-    /// 回去的那条（访问栈顶），钉在顶上。
-    Parent(ParentRow),
-    /// 一条子代理会话。`mirror` 是后台子代理的镜像任务，量和用时从它来。
+    /// 车道上那条会话（主会话）：在子代理会话里时钉在顶上，点它回去。
+    Root(ParentRow),
+    /// 一条子代理会话。`depth` 是第几层（主会话名下的是 0），`twig` 是画在行首的树枝；`path`
+    /// 是切过去之后的访问栈（从主会话往下到它的父会话）；`mirror` 是后台子代理的镜像任务，
+    /// 量和用时从它来。
     Agent {
         row: SubagentRow,
         place: Place,
-        branch: Branch,
+        depth: usize,
+        twig: String,
+        path: Vec<ParentRow>,
         mirror: Option<JobOverview>,
     },
     /// 一条后台命令（或者还没对上会话行的后台子代理任务）。
-    Job { job: JobOverview, branch: Branch },
+    Job {
+        job: JobOverview,
+        depth: usize,
+        twig: String,
+    },
 }
 
 /// 点任务条上的会话行（或者在那一行上回车）要做的事。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::cli) enum StripAction {
+    /// 切进这条会话名下的子代理会话，访问栈压一层（时间线上点子代理那一步）。
     Visit(String),
-    /// 横着切到兄弟：访问栈不压新层，`/back` 照旧回父会话。
-    VisitSibling(String),
-    Back,
+    /// 切到树上的这条会话，访问栈换成 `path`：任务条上往下、往上、横着切都走这儿。
+    Go {
+        session_id: String,
+        path: Vec<ParentRow>,
+    },
     /// 点的就是正在看的这条。
     Stay,
 }
@@ -97,20 +99,36 @@ impl StripItem {
     /// 会话行点下去做什么；后台命令行是 `None`（点开日志面板，由活动区管）。
     pub(in crate::cli) fn action(&self) -> Option<StripAction> {
         match self {
-            Self::Parent(_) => Some(StripAction::Back),
-            Self::Agent { row, place, .. } => Some(match place {
-                Place::Current => StripAction::Stay,
-                Place::Sibling => StripAction::VisitSibling(row.session_id.clone()),
-                Place::Child => StripAction::Visit(row.session_id.clone()),
+            Self::Root(root) => Some(StripAction::Go {
+                session_id: root.session_id.clone(),
+                path: Vec::new(),
+            }),
+            Self::Agent {
+                place: Place::Current,
+                ..
+            } => Some(StripAction::Stay),
+            Self::Agent { row, path, .. } => Some(StripAction::Go {
+                session_id: row.session_id.clone(),
+                path: path.clone(),
             }),
             Self::Job { .. } => None,
         }
     }
 
-    pub(in crate::cli) fn branch(&self) -> Branch {
+    /// 这一行是哪条会话（后台命令行不是）。
+    pub(in crate::cli) fn session_id(&self) -> Option<&str> {
         match self {
-            Self::Parent(_) => Branch::Top,
-            Self::Agent { branch, .. } | Self::Job { branch, .. } => *branch,
+            Self::Root(root) => Some(&root.session_id),
+            Self::Agent { row, .. } => Some(&row.session_id),
+            Self::Job { .. } => None,
+        }
+    }
+
+    /// 第几层：主会话那一行和它名下的是 0，再往下一层加一。
+    pub(in crate::cli) fn depth(&self) -> usize {
+        match self {
+            Self::Root(_) => 0,
+            Self::Agent { depth, .. } | Self::Job { depth, .. } => *depth,
         }
     }
 
@@ -129,21 +147,23 @@ impl StripItem {
         match self {
             Self::Job { job, .. } => Some(job),
             Self::Agent { mirror, .. } => mirror.as_ref(),
-            Self::Parent(_) => None,
+            Self::Root(_) => None,
         }
     }
 
     /// 行的样子由哪些东西决定：这一串变了才要整个重画活动区，转轮和用时另有补帧。
     pub(in crate::cli) fn shape(&self) -> String {
         match self {
-            Self::Parent(parent) => format!("parent|{}|{}", parent.session_id, parent.title),
+            Self::Root(root) => format!("root|{}|{}", root.session_id, root.title),
             Self::Agent {
                 row,
                 place,
-                branch,
+                depth,
+                twig,
                 mirror,
+                ..
             } => format!(
-                "agent|{}|{}|{}|{}|{}|{place:?}|{branch:?}|{}",
+                "agent|{}|{}|{}|{}|{}|{place:?}|{depth}|{twig}|{}",
                 row.session_id,
                 row.title,
                 row.state,
@@ -151,8 +171,11 @@ impl StripItem {
                 row.running_descendants,
                 mirror.as_ref().map(|job| job.status.as_str()).unwrap_or("")
             ),
-            Self::Job { job, branch } => {
-                format!("job|{}|{}|{}|{branch:?}", job.job_id, job.status, job.title)
+            Self::Job { job, depth, twig } => {
+                format!(
+                    "job|{}|{}|{}|{depth}|{twig}",
+                    job.job_id, job.status, job.title
+                )
             }
         }
     }
@@ -169,8 +192,7 @@ impl StripItem {
             },
             Self::Agent { row, .. } if row.dev => miyu_base::i18n::text("dev", "开发中"),
             Self::Agent { .. } => miyu_base::i18n::text("agent", "子代理"),
-            Self::Parent(parent) if parent.root => miyu_base::i18n::text("main", "主会话"),
-            Self::Parent(_) => miyu_base::i18n::text("back", "上一层"),
+            Self::Root(_) => miyu_base::i18n::text("main", "主会话"),
         }
     }
 
@@ -180,7 +202,7 @@ impl StripItem {
         let word = self.kind_word();
         match self {
             Self::Agent { row, place, .. }
-                if *place != Place::Current && row.running_descendants > 0 =>
+                if *place == Place::Other && row.running_descendants > 0 =>
             {
                 if miyu_base::i18n::is_zh() {
                     format!("{word}（+{}）", row.running_descendants)
@@ -200,7 +222,7 @@ impl StripItem {
                 place: Place::Current,
                 ..
             } => '●',
-            Self::Parent(_) | Self::Agent { .. } => '○',
+            Self::Root(_) | Self::Agent { .. } => '○',
             Self::Job { job, .. } if job.kind == "subagent" || job.kind == "dev" => '○',
             Self::Job { .. } => JOB_SPINNER_FRAMES[spinner_phase % JOB_SPINNER_FRAMES.len()],
         }
@@ -208,10 +230,9 @@ impl StripItem {
 
     /// 行首到 kind 那一栏：挂在下面的先画树枝。
     fn head(&self, spinner_phase: usize) -> String {
-        let twig = match self.branch() {
-            Branch::Top => "",
-            Branch::Under { last: false } => "├ ",
-            Branch::Under { last: true } => "└ ",
+        let twig = match self {
+            Self::Agent { twig, .. } | Self::Job { twig, .. } => twig.as_str(),
+            Self::Root(_) => "",
         };
         format!("{twig}{} {}", self.marker(spinner_phase), self.kind_label())
     }
@@ -230,7 +251,7 @@ impl StripItem {
                 ),
                 _ => row.title.clone(),
             },
-            Self::Parent(parent) => parent.title.clone(),
+            Self::Root(root) => root.title.clone(),
         }
     }
 

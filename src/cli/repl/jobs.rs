@@ -172,16 +172,16 @@ pub(in crate::cli) struct BackgroundReport {
     pub(in crate::cli) reply: String,
 }
 
-/// 任务条那棵树上的任务：正在看的会话和父会话自己的，以及它们名下的（树根是它们的），
-/// 没挂会话的老任务也留着。任务条第一层只列会话自己的，后代的收进「（+N）」，但切进去那一
-/// 下就要展开——手里先留着，不等下一轮轮询。
+/// 任务条那棵树上的任务：正在看的会话和访问路径上各条会话自己的，以及它们名下的（树根是
+/// 它们的），没挂会话的老任务也留着。任务条第一层只列会话自己的，后代的收进「（+N）」，但切进去
+/// 那一下就要展开——手里先留着，不等下一轮轮询。
 pub(in crate::cli) fn retain_tree_jobs(
     jobs: &mut Vec<miyu_engine::tools::jobs::JobOverview>,
     current: &str,
-    parent: Option<&str>,
+    path: &[String],
 ) {
     let in_tree = |session: Option<&str>| {
-        session.is_some_and(|session| session == current || Some(session) == parent)
+        session.is_some_and(|session| session == current || path.iter().any(|at| at == session))
     };
     jobs.retain(|job| {
         job.session_id.is_none()
@@ -227,11 +227,7 @@ impl SharedJobsFeed {
         }
         *current = Some(session.to_string());
         *visit_path = path.to_vec();
-        retain_tree_jobs(
-            &mut self.jobs.lock().unwrap(),
-            session,
-            path.last().map(String::as_str),
-        );
+        retain_tree_jobs(&mut self.jobs.lock().unwrap(), session, path);
         // 子代理表只留访问路径上的和这一条的：再往回退都用得上，别的用不上了。
         self.children
             .lock()
@@ -268,33 +264,26 @@ impl SharedJobsFeed {
         let session = self.repl_session.lock().unwrap();
         let path = self.visit_path.lock().unwrap();
         match session.as_deref() {
-            Some(session) => retain_tree_jobs(&mut jobs, session, path.last().map(String::as_str)),
+            Some(session) => retain_tree_jobs(&mut jobs, session, &path),
             None => jobs.clear(),
         }
         *self.jobs.lock().unwrap() = jobs.clone();
         jobs
     }
 
-    /// 任务条此刻该列的行（`strip_tree`），会话和子代理表从这儿取。
+    /// 任务条此刻该列的行（`strip_tree`），会话和各层的子代理表从这儿取。`visits` 是访问栈。
     pub(in crate::cli) fn strip_items(
         &self,
-        parent: Option<&super::strip::ParentRow>,
+        visits: &[super::strip::ParentRow],
         jobs: &[miyu_engine::tools::jobs::JobOverview],
     ) -> Vec<super::strip::StripItem> {
         let current = self.repl_session.lock().unwrap().clone();
         let children = self.children.lock().unwrap();
-        let rows_of = |session: Option<&str>| {
-            session
-                .and_then(|session| children.get(session))
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-        };
         super::strip_tree::strip_items(
             &super::strip_tree::StripScope {
                 current: current.as_deref(),
-                parent,
-                parent_children: rows_of(parent.map(|parent| parent.session_id.as_str())),
-                children: rows_of(current.as_deref()),
+                path: visits,
+                children: Some(&children),
             },
             jobs,
         )
@@ -546,10 +535,10 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                     *feed.goal.lock().unwrap() = goal;
                 }
                 // 这条会话名下的子代理会话：任务条列它们，点进去看（会话项目第 3 段）；在子会话
-                // 里还要父会话名下的（兄弟，09-25）。超时、出错就留着上一份，不清空——清了任务
-                // 条会闪。
-                let parent = feed.visit_path.lock().unwrap().last().cloned();
-                for owner in std::iter::once(session).chain(parent.as_deref()) {
+                // 里还要访问路径上每一层名下的（树从主会话画起，09-26）。超时、出错就留着上一份，
+                // 不清空——清了任务条会闪。
+                let path = feed.visit_path.lock().unwrap().clone();
+                for owner in std::iter::once(session).chain(path.iter().map(String::as_str)) {
                     let rows = runtime.block_on(async {
                         tokio::time::timeout(
                             std::time::Duration::from_millis(500),

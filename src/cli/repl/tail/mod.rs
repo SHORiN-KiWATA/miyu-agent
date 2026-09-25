@@ -211,6 +211,9 @@ pub(in crate::cli) struct LiveReplTail {
     /// 方向键停在任务条的哪一条上（`strip_rows` 的下标）。`None` = 在输入框里。
     /// 见 `navigate`。
     pub(in crate::cli) strip_focus: Option<usize>,
+    /// 在任务条上回车切会话之后光标该停哪条：切过去的那条会话，找不到就停刚才待着的那条
+    /// （`apply_strip_refocus`，09-26）。
+    pub(in crate::cli) strip_refocus: Option<(String, Option<String>)>,
     /// 用方向键挪的时候，任务条滚动那一截从第几条露起（最多露 5 条，钉住的不算）。没在挪
     /// 的时候不看它，停在露出正在看的那条的地方（`strip_view`）。
     pub(in crate::cli) strip_scroll: usize,
@@ -677,6 +680,7 @@ impl LiveReplTail {
             visits: Vec::new(),
             pending_strip_action: None,
             strip_focus: None,
+            strip_refocus: None,
             strip_scroll: 0,
             command_pick: None,
             turn_panel: None,

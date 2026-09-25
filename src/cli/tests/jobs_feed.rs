@@ -101,7 +101,7 @@ fn going_back_keeps_the_parents_rows_and_jobs() {
 
     feed.set_scope("root", &[]);
     assert_eq!(ids(&feed.jobs.lock().unwrap()), ["rootcmd", "c1cmd"]);
-    let items = feed.strip_items(None, &feed.jobs.lock().unwrap().clone());
+    let items = feed.strip_items(&[], &feed.jobs.lock().unwrap().clone());
     assert_eq!(items.len(), 3, "{items:#?}");
     assert!(
         !feed.children.lock().unwrap().contains_key("c1"),
@@ -109,40 +109,40 @@ fn going_back_keeps_the_parents_rows_and_jobs() {
     );
 }
 
-/// 任务条从轮询那份取：正在看的这条挂在回去那一行下面，它名下的挂在它下面，兄弟跟在后面。
+/// 任务条从轮询那份取：主会话那一行在最上面，正在看的这条挂在它下面，它名下的再往下挂一层，
+/// 兄弟跟在后面。
 #[test]
 fn the_feed_nests_the_current_sessions_children_under_it() {
-    use crate::cli::repl::strip::{Branch, Place, StripItem};
+    use crate::cli::repl::strip::{Place, StripItem};
     let feed = SharedJobsFeed::default();
     feed.set_scope("c1", &["root".to_string()]);
     feed.publish_children("root", vec![row("c1"), row("c2")]);
     feed.publish_children("c1", vec![row("g1")]);
     feed.publish_children("elsewhere", vec![row("x")]);
 
-    let way_back = parent_row();
-    let items = feed.strip_items(Some(&way_back), &[]);
-    let shape: Vec<(String, Branch)> = items
+    let items = feed.strip_items(&[parent_row()], &[]);
+    let shape: Vec<(String, usize)> = items
         .iter()
         .map(|item| match item {
-            StripItem::Parent(parent) => (format!("parent:{}", parent.session_id), item.branch()),
+            StripItem::Root(root) => (format!("root:{}", root.session_id), item.depth()),
             StripItem::Agent { row, place, .. } => {
                 let tag = if *place == Place::Current {
                     "current"
                 } else {
                     "agent"
                 };
-                (format!("{tag}:{}", row.session_id), item.branch())
+                (format!("{tag}:{}", row.session_id), item.depth())
             }
-            StripItem::Job { job, .. } => (format!("job:{}", job.job_id), item.branch()),
+            StripItem::Job { job, .. } => (format!("job:{}", job.job_id), item.depth()),
         })
         .collect();
     assert_eq!(
         shape,
         [
-            ("parent:root".to_string(), Branch::Top),
-            ("current:c1".to_string(), Branch::Top),
-            ("agent:g1".to_string(), Branch::Under { last: true }),
-            ("agent:c2".to_string(), Branch::Top),
+            ("root:root".to_string(), 0),
+            ("current:c1".to_string(), 0),
+            ("agent:g1".to_string(), 1),
+            ("agent:c2".to_string(), 0),
         ]
     );
     assert!(

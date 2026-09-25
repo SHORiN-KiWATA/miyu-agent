@@ -24,14 +24,15 @@ struct TreeRow {
 }
 
 impl RemoteRepl {
-    /// 任务条上点了会话行。
+    /// 任务条上点了会话行（或者时间线上点了子代理那一步）。
     pub(super) async fn perform_strip_action(&mut self, action: StripAction) -> Result<LoopStep> {
         match action {
             StripAction::Visit(session_id) => self.visit_session(Vec::new(), &session_id).await?,
-            StripAction::VisitSibling(session_id) => self.visit_sibling(&session_id).await?,
-            StripAction::Back => self.leave_visit().await?,
+            StripAction::Go { session_id, path } => self.go_to(path, &session_id).await?,
             StripAction::Stay => {}
         }
+        // 在任务条上回车切的：光标停到切过去的那一条（切不过去也收掉这次记下的）。
+        self.live_repl.apply_strip_refocus();
         Ok(LoopStep::Continue)
     }
 
@@ -96,14 +97,22 @@ impl RemoteRepl {
         self.present_visit(&state).await
     }
 
-    /// 横着切到兄弟（任务条上父会话下面那几行，09-25）：访问栈不压新层，`/back` 照旧回父会话。
-    async fn visit_sibling(&mut self, target: &str) -> Result<()> {
+    /// 切到任务条那棵树上的任意一条（往下、往上、横着，09-26）：访问栈直接换成它的那一串祖先，
+    /// `/back` 照旧一层层退。`path` 为空就是回主会话。
+    async fn go_to(&mut self, mut path: Vec<ParentRow>, target: &str) -> Result<()> {
         if target == self.active_session_id {
             return Ok(());
         }
         let Some(state) = self.visitable_state(target).await? else {
             return Ok(());
         };
+        for (index, row) in path.iter_mut().enumerate() {
+            row.root = index == 0;
+            if row.title.is_empty() {
+                row.title = session_title(&self.paths, &row.session_id);
+            }
+        }
+        self.live_repl.visits = path;
         self.present_visit(&state).await
     }
 
@@ -167,19 +176,20 @@ impl RemoteRepl {
         Ok(())
     }
 
-    /// 切进切出之后，这一段树上的子代理表当场拉一份（正在看的这条和父会话的）：轮询一秒一次，
-    /// 等它的话，挂在正在看的这条下面的孙代理要晚一拍才出来（用户 09-25：进去看不到孙代理）。
-    /// 还在攒帧（`present_visit`），任务条补上这几行和切换画面是同一帧。
+    /// 切进切出之后，这一段树上的子代理表当场拉一份（正在看的这条和访问路径上每一层的）：轮询
+    /// 一秒一次，等它的话，挂在正在看的这条下面的孙代理要晚一拍才出来（用户 09-25：进去看不到
+    /// 孙代理）。还在攒帧（`present_visit`），任务条补上这几行和切换画面是同一帧。
     async fn refresh_strip_children(&mut self) -> Result<()> {
         let Some(feed) = crate::cli::repl::jobs::feed() else {
             return Ok(());
         };
-        let parent = self
+        let path: Vec<String> = self
             .live_repl
             .visits
-            .last()
-            .map(|parent| parent.session_id.clone());
-        for owner in std::iter::once(self.active_session_id.clone()).chain(parent) {
+            .iter()
+            .map(|visit| visit.session_id.clone())
+            .collect();
+        for owner in std::iter::once(self.active_session_id.clone()).chain(path) {
             let rows = tokio::time::timeout(
                 Duration::from_millis(500),
                 crate::cli::repl::strip::fetch_subagent_rows(&self.paths, &owner),

@@ -3,7 +3,8 @@
 //! - 命令候选开着时，↑↓ 在候选里挑，回车 / Tab 用挑中的那一条；
 //! - 否则光标在输入框最后一行、又没在翻上键历史时，↓ 进任务条。任务条上 ↑↓ 挪，露不下
 //!   的跟着滚（最多露 5 条，底下「↓ 还有 x 个」）；在最上面一条再按 ↑ 回输入框；回车
-//!   就是点它；Esc 回输入框；打字也回输入框，字照常进去。
+//!   就是点它，光标留在任务条上（切了会话就停在切过去的那条）；Esc 回输入框；打字也回
+//!   输入框，字照常进去。
 //!
 //! 编辑器不知道候选面板有没有被 Esc 收掉、底下有没有任务条，所以这一层在活动区上，
 //! 排在编辑器前面。
@@ -170,8 +171,14 @@ impl LiveReplTail {
                 }
                 Navigated::Done
             }
+            // 回车是点它。光标留在任务条上（用户 09-26：原来每切一次会话就回到输入框）：切了会话
+            // 的话，切完停在切过去的那一条，见 `apply_strip_refocus`。
             KeyCode::Enter if plain => {
-                self.leave_strip();
+                self.strip_refocus = self
+                    .strip_rows()
+                    .get(focus)
+                    .and_then(crate::cli::repl::strip::StripItem::session_id)
+                    .map(|target| (target.to_string(), self.current_strip_session()));
                 self.activate_strip_row(focus)?;
                 Navigated::Done
             }

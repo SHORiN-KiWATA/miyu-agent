@@ -47,10 +47,10 @@ impl LiveReplTail {
         // 算出来的会话累计里已经有了，再加一遍就是算两遍。前台那一路才需要补
         // （见 `set_live_turn_tokens`）——回合跑着的时候客户端不会去重读 Σ。
         let items = match crate::cli::repl::jobs::feed() {
-            Some(feed) => feed.strip_items(self.visits.last(), &jobs),
+            Some(feed) => feed.strip_items(&self.visits, &jobs),
             None => strip_tree::strip_items(
                 &strip_tree::StripScope {
-                    parent: self.visits.last(),
+                    path: &self.visits,
                     ..Default::default()
                 },
                 &jobs,
@@ -92,23 +92,50 @@ impl LiveReplTail {
     /// 这条会话名下还有后台的活（Ctrl+C 的第三级先停它们）：没在访问时任务条上的每一行都是
     /// 它的；在子代理会话里是挂在它下面的那几行。
     pub(in crate::cli) fn has_background_work(&self) -> bool {
-        let items = self.strip_rows();
-        match strip_tree::pinned_rows(items) {
-            0 => !items.is_empty(),
-            _ => items.iter().any(|item| item.branch() != strip::Branch::Top),
-        }
+        !strip_tree::current_session_rows(self.strip_rows()).is_empty()
     }
 
     /// 上面那些活对应的后台任务号（停完先压住，见 `suppress_jobs`）。
     pub(in crate::cli) fn background_job_ids(&self) -> Vec<String> {
         let items = self.strip_rows();
-        let visiting = strip_tree::pinned_rows(items) > 0;
-        items
-            .iter()
-            .filter(|item| !visiting || item.branch() != strip::Branch::Top)
-            .filter_map(StripItem::job)
+        strip_tree::current_session_rows(items)
+            .into_iter()
+            .filter_map(|index| items[index].job())
             .map(|job| job.job_id.clone())
             .collect()
+    }
+
+    /// 在任务条上回车切了会话：切完之后光标还停在任务条上，停在切过去的那一条（用户 09-26：
+    /// 原来每切一次就回到输入框）。它不在任务条上了（回到了主会话，那儿没有主会话那一行）就停在
+    /// 刚才待着的那一条。没有要停的就不动。
+    pub(in crate::cli) fn apply_strip_refocus(&mut self) {
+        let Some((target, fallback)) = self.strip_refocus.take() else {
+            return;
+        };
+        let items = self.strip_rows();
+        let Some(index) = [Some(target), fallback]
+            .iter()
+            .flatten()
+            .find_map(|id| items.iter().position(|item| item.session_id() == Some(id)))
+        else {
+            return;
+        };
+        let home = StripView {
+            scroll: strip_tree::home_scroll(items),
+            pinned: strip_tree::pinned_rows(items),
+            ..StripView::default()
+        };
+        self.strip_scroll = home.scroll_to_show(index, items.len());
+        self.strip_focus = Some(index);
+    }
+
+    /// 正在看的这条会话在任务条上那一行（子代理会话里才有）。
+    pub(in crate::cli) fn current_strip_session(&self) -> Option<String> {
+        self.strip_rows()
+            .iter()
+            .find(|item| item.is_current())
+            .and_then(StripItem::session_id)
+            .map(str::to_string)
     }
 
     /// 行数变了（任务跑完、子代理收工）：方向键停的那条、露出来的那一截跟着收回来。

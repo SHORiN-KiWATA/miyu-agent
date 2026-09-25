@@ -552,6 +552,7 @@ fn spinner_does_not_resume_tail_during_external_output() {
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,
+        strip_refocus: None,
         strip_scroll: 0,
         command_pick: None,
         turn_panel: None,
@@ -616,6 +617,7 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,
+        strip_refocus: None,
         strip_scroll: 0,
         command_pick: None,
         turn_panel: None,
@@ -872,7 +874,8 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
         let lines = crate::cli::repl::strip::strip_lines(
             &[crate::cli::repl::strip::StripItem::Job {
                 job,
-                branch: Default::default(),
+                depth: 0,
+                twig: String::new(),
             }],
             0,
             60,

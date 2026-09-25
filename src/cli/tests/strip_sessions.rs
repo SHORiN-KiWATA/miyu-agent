@@ -1,5 +1,5 @@
-//! 任务条上的会话行与切进子代理会话（会话项目第 3 段）。真机走查见
-//! `testkit/tui/subagent_visit.py`。
+//! 任务条上的会话行与切进子代理会话（会话项目第 3 段；09-26 改成从主会话画起的树）。真机
+//! 走查见 `testkit/tui/subagent_visit.py`、`testkit/tui/strip_tree.py`。
 
 use super::shared::detached_tail;
 use crate::cli::footer::FooterBadges;
@@ -9,6 +9,7 @@ use crate::cli::repl::strip_tree::{home_scroll, strip_items, StripScope};
 use crate::cli::*;
 use miyu_base::i18n::text;
 use miyu_engine::tools::jobs::JobOverview;
+use std::collections::HashMap;
 
 fn job_in(id: &str, kind: &str, session: &str, metric: Option<&str>) -> JobOverview {
     JobOverview {
@@ -40,12 +41,27 @@ fn agent_row(id: &str, state: &str, job_id: Option<&str>, below: u64) -> Subagen
     }
 }
 
-fn parent() -> ParentRow {
+fn root() -> ParentRow {
     ParentRow {
         session_id: "root".into(),
         title: "修登录页".into(),
         root: true,
     }
+}
+
+fn step(id: &str) -> ParentRow {
+    ParentRow {
+        session_id: id.into(),
+        title: format!("查{id}"),
+        root: false,
+    }
+}
+
+fn tree(entries: &[(&str, Vec<SubagentRow>)]) -> HashMap<String, Vec<SubagentRow>> {
+    entries
+        .iter()
+        .map(|(owner, rows)| (owner.to_string(), rows.clone()))
+        .collect()
 }
 
 fn plain(lines: Vec<String>) -> Vec<String> {
@@ -63,6 +79,14 @@ fn draw(items: &[StripItem], view: StripView) -> Vec<String> {
     plain(strip_lines(items, 0, 80, view))
 }
 
+fn home(items: &[StripItem]) -> StripView {
+    StripView {
+        pinned: crate::cli::repl::strip_tree::pinned_rows(items),
+        scroll: home_scroll(items),
+        ..StripView::default()
+    }
+}
+
 fn plus(n: u64) -> String {
     if miyu_base::i18n::is_zh() {
         format!("（+{n}）")
@@ -71,16 +95,27 @@ fn plus(n: u64) -> String {
     }
 }
 
+/// 会话行按树上的顺序是哪几条、哪条是正在看的。
+fn sessions(items: &[StripItem]) -> Vec<(String, bool)> {
+    items
+        .iter()
+        .filter_map(|item| Some((item.session_id()?.to_string(), item.is_current())))
+        .collect()
+}
+
 /// 主会话里（没在访问）：第一层只列它自己的子代理和命令。子代理空心 `○`，名下还在跑的收成
 /// 「（+N）」（用户 09-25：`开发中（+3）`）；后台命令照旧转轮；后台子代理的镜像任务不单列，量
 /// 和用时挂到会话那一行上；后代的命令不在第一层（原来挂个 `↳` 列出来），跑完的子代理不列。
 #[test]
 fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
-    let children = vec![
-        agent_row("c1", "running", Some("j1"), 3),
-        agent_row("c2", "waiting", None, 0),
-        agent_row("done", "done", None, 0),
-    ];
+    let children = tree(&[(
+        "root",
+        vec![
+            agent_row("c1", "running", Some("j1"), 3),
+            agent_row("c2", "waiting", None, 0),
+            agent_row("done", "done", None, 0),
+        ],
+    )]);
     let jobs = vec![
         job_in("j1", "subagent", "root", Some("≈3.1K")),
         job_in("cmd1", "command", "root", None),
@@ -89,7 +124,7 @@ fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
     let items = strip_items(
         &StripScope {
             current: Some("root"),
-            children: &children,
+            children: Some(&children),
             ..Default::default()
         },
         &jobs,
@@ -134,42 +169,52 @@ fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
         title_col(&lines[2]),
         "带（+N）的那行和别的行标题竖着对齐: {lines:#?}"
     );
+    // 点进去：访问栈就是主会话这一层（标题由切的那一头补）。原来这里是空的，切进去之后它被当成
+    // 主会话，任务条上没有「主会话」那一行、footer 也没有层数（09-26 走查）。
+    assert_eq!(
+        items[0].action(),
+        Some(StripAction::Go {
+            session_id: "c1".into(),
+            path: vec![ParentRow {
+                session_id: "root".into(),
+                title: String::new(),
+                root: true,
+            }],
+        })
+    );
 }
 
-/// 在子代理会话里（用户 09-26 照 Claude Code 定的样子）：`○ 主会话` 在最上面；父会话的子代理
-/// 里正在看的这条实心 `●`、不挂（+N），它名下的子代理和命令用 `├`/`└` 挂在它下面；别的兄弟
-/// 空心、挂（+N）；父会话自己的命令列在第一层。
+/// 在子代理会话里（用户 09-26 照 Claude Code 定的样子）：`○ 主会话` 在最上面；主会话的子代理
+/// 里正在看的这条实心 `●`、不挂（+N），它名下的子代理和命令用 `├`/`└` 挂在它下面；别的空心、
+/// 挂（+N）；主会话自己的命令列在第一层。点哪条就切到哪条，访问栈跟着换成它的那一串祖先。
 #[test]
-fn inside_a_subagent_the_current_one_is_expanded_under_the_way_back() {
-    let siblings = vec![
-        agent_row("c1", "running", None, 2),
-        agent_row("c2", "running", Some("jc2"), 0),
-        agent_row("c3", "running", None, 1),
-    ];
-    let children = vec![agent_row("g1", "running", None, 1)];
+fn inside_a_subagent_the_tree_starts_at_the_main_session() {
+    let children = tree(&[
+        (
+            "root",
+            vec![
+                agent_row("c1", "running", None, 2),
+                agent_row("c2", "running", Some("jc2"), 0),
+                agent_row("c3", "running", None, 1),
+            ],
+        ),
+        ("c2", vec![agent_row("g1", "running", None, 1)]),
+    ]);
     let jobs = vec![
         job_in("jc2", "subagent", "root", None),
         job_in("gcmd", "command", "c2", None),
         job_in("rootcmd", "command", "root", None),
     ];
-    let way_back = parent();
+    let path = [root()];
     let items = strip_items(
         &StripScope {
             current: Some("c2"),
-            parent: Some(&way_back),
-            parent_children: &siblings,
-            children: &children,
+            path: &path,
+            children: Some(&children),
         },
         &jobs,
     );
-    let lines = draw(
-        &items,
-        StripView {
-            pinned: 1,
-            scroll: home_scroll(&items),
-            ..StripView::default()
-        },
-    );
+    let lines = draw(&items, home(&items));
     let spinner = JOB_SPINNER_FRAMES[0];
 
     assert!(
@@ -201,50 +246,139 @@ fn inside_a_subagent_the_current_one_is_expanded_under_the_way_back() {
         "五行露不下，底下说还有几个: {lines:#?}"
     );
     assert_eq!(items.len(), 7, "c3 和主会话自己的命令在下面: {items:#?}");
-    assert!(
-        matches!(&items[6], StripItem::Job { job, branch: Branch::Top } if job.job_id == "rootcmd")
-    );
+    assert!(matches!(&items[6], StripItem::Job { job, depth: 0, .. } if job.job_id == "rootcmd"));
 
-    assert_eq!(items[0].action(), Some(StripAction::Back));
-    assert_eq!(
-        items[1].action(),
-        Some(StripAction::VisitSibling("c1".into()))
-    );
+    let go = |id: &str, path: Vec<ParentRow>| {
+        Some(StripAction::Go {
+            session_id: id.into(),
+            path,
+        })
+    };
+    assert_eq!(items[0].action(), go("root", Vec::new()));
+    assert_eq!(items[1].action(), go("c1", vec![root()]));
     assert_eq!(items[2].action(), Some(StripAction::Stay));
-    assert_eq!(items[3].action(), Some(StripAction::Visit("g1".into())));
+    assert_eq!(items[3].action(), go("g1", vec![root(), step("c2")]));
     assert_eq!(items[4].action(), None, "命令行点开的是日志面板");
 }
 
-/// 露不下时：回去的那一行钉在顶上，下面那一截停在露出正在看的这条和挂在它下面的地方
-/// （用户 09-26 拍板），兄弟的顺序不变。
+/// 切到孙代理还是同一棵树：从主会话画起，路上的子代理照样展开，只是实心圆挪到孙代理上（用户
+/// 09-26：原来树根跟着父会话走，切到孙代理只剩「上一层」和它自己）。孙代理自己的命令挂在它下面，
+/// 父辈那一列的竖线接着画。
 #[test]
-fn the_way_back_stays_pinned_while_the_rest_scrolls_to_the_current_one() {
-    let siblings = vec![
-        agent_row("c1", "running", None, 0),
-        agent_row("c2", "running", None, 0),
-        agent_row("c3", "running", None, 0),
-        agent_row("c4", "running", None, 0),
-        agent_row("c5", "running", None, 0),
-    ];
-    let children = vec![
-        agent_row("g1", "running", None, 0),
-        agent_row("g2", "running", None, 0),
-    ];
-    let way_back = parent();
-    let items = strip_items(
+fn switching_to_a_grandchild_keeps_the_same_tree() {
+    let children = tree(&[
+        (
+            "root",
+            vec![
+                agent_row("c1", "running", None, 0),
+                agent_row("c2", "running", None, 2),
+                agent_row("c3", "running", None, 0),
+            ],
+        ),
+        (
+            "c2",
+            vec![
+                agent_row("g1", "running", None, 0),
+                agent_row("g2", "running", None, 0),
+            ],
+        ),
+    ]);
+    let in_child = [root()];
+    let at_child = strip_items(
         &StripScope {
-            current: Some("c4"),
-            parent: Some(&way_back),
-            parent_children: &siblings,
-            children: &children,
+            current: Some("c2"),
+            path: &in_child,
+            children: Some(&children),
         },
         &[],
     );
-    let view = StripView {
-        pinned: 1,
-        scroll: home_scroll(&items),
-        ..StripView::default()
+    let in_grandchild = [root(), step("c2")];
+    let at_grandchild = strip_items(
+        &StripScope {
+            current: Some("g1"),
+            path: &in_grandchild,
+            children: Some(&children),
+        },
+        &[],
+    );
+
+    let rows = |items: &[StripItem]| {
+        sessions(items)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
     };
+    assert_eq!(rows(&at_child), rows(&at_grandchild), "{at_grandchild:#?}");
+    let current = |items: &[StripItem]| {
+        sessions(items)
+            .into_iter()
+            .find(|(_, current)| *current)
+            .map(|(id, _)| id)
+    };
+    assert_eq!(current(&at_child).as_deref(), Some("c2"));
+    assert_eq!(current(&at_grandchild).as_deref(), Some("g1"));
+    let lines = draw(&at_grandchild, home(&at_grandchild));
+    let line = |id: &str| {
+        lines
+            .iter()
+            .find(|line| line.contains(&format!("查{id}")))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(
+        line("c2").starts_with("  ○ ") && !line("c2").contains("（+"),
+        "{lines:#?}"
+    );
+    assert!(line("g1").starts_with("  ├ ● "), "{lines:#?}");
+    assert!(line("g2").starts_with("  └ ○ "), "{lines:#?}");
+
+    let with_command = strip_items(
+        &StripScope {
+            current: Some("g1"),
+            path: &in_grandchild,
+            children: Some(&children),
+        },
+        &[job_in("gcmd", "command", "g1", None)],
+    );
+    let lines = draw(&with_command, home(&with_command));
+    let spinner = JOB_SPINNER_FRAMES[0];
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with(&format!("  │ └ {spinner} ")) && line.contains("gcmd")),
+        "孙代理的命令挂在它下面，c2 那一列的竖线接着画: {lines:#?}"
+    );
+}
+
+/// 露不下时：主会话那一行钉在顶上，下面那一截停在露出正在看的这条和挂在它下面的地方
+/// （用户 09-26 拍板），兄弟的顺序不变。
+#[test]
+fn the_way_back_stays_pinned_while_the_rest_scrolls_to_the_current_one() {
+    let children = tree(&[
+        (
+            "root",
+            (1..=5)
+                .map(|n| agent_row(&format!("c{n}"), "running", None, 0))
+                .collect(),
+        ),
+        (
+            "c4",
+            vec![
+                agent_row("g1", "running", None, 0),
+                agent_row("g2", "running", None, 0),
+            ],
+        ),
+    ]);
+    let path = [root()];
+    let items = strip_items(
+        &StripScope {
+            current: Some("c4"),
+            path: &path,
+            children: Some(&children),
+        },
+        &[],
+    );
+    let view = home(&items);
     let lines = draw(&items, view);
 
     assert_eq!(view.visible(items.len()), vec![0, 3, 4, 5, 6], "{lines:#?}");
@@ -274,22 +408,27 @@ fn the_way_back_stays_pinned_while_the_rest_scrolls_to_the_current_one() {
 #[test]
 fn clicks_land_on_the_rows_that_are_showing() {
     let mut live = detached_tail();
-    live.visits.push(parent());
-    live.strip_items = strip_items(
-        &StripScope {
-            current: Some("c4"),
-            parent: live.visits.last(),
-            parent_children: &[
-                agent_row("c1", "running", None, 0),
-                agent_row("c2", "running", None, 0),
-                agent_row("c3", "running", None, 0),
-                agent_row("c4", "running", None, 0),
-                agent_row("c5", "running", None, 0),
-            ],
-            children: &[
+    live.visits.push(root());
+    let children = tree(&[
+        (
+            "root",
+            (1..=5)
+                .map(|n| agent_row(&format!("c{n}"), "running", None, 0))
+                .collect(),
+        ),
+        (
+            "c4",
+            vec![
                 agent_row("g1", "running", None, 0),
                 agent_row("g2", "running", None, 0),
             ],
+        ),
+    ]);
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("c4"),
+            path: &live.visits,
+            children: Some(&children),
         },
         &[job_in("cmd1", "command", "root", None)],
     );
@@ -297,22 +436,34 @@ fn clicks_land_on_the_rows_that_are_showing() {
     live.job_strip_rows = 7;
 
     assert_eq!(live.strip_index_at(20), None);
-    assert_eq!(live.strip_index_at(21), Some(0), "钉住的回去那一行");
+    assert_eq!(live.strip_index_at(21), Some(0), "钉住的主会话那一行");
     assert_eq!(live.strip_index_at(22), Some(3), "滚动那一截从 c3 露起");
     assert_eq!(live.strip_index_at(25), Some(6));
     assert_eq!(live.strip_index_at(26), None, "「↓ 还有」那一行");
 
     assert!(live.activate_strip_row(0).unwrap());
-    assert_eq!(live.take_strip_action(), Some(StripAction::Back));
+    assert_eq!(
+        live.take_strip_action(),
+        Some(StripAction::Go {
+            session_id: "root".into(),
+            path: Vec::new()
+        })
+    );
     assert!(live.activate_strip_row(3).unwrap());
     assert_eq!(
         live.take_strip_action(),
-        Some(StripAction::VisitSibling("c3".into()))
+        Some(StripAction::Go {
+            session_id: "c3".into(),
+            path: vec![root()]
+        })
     );
     assert!(live.activate_strip_row(5).unwrap());
     assert_eq!(
         live.take_strip_action(),
-        Some(StripAction::Visit("g1".into()))
+        Some(StripAction::Go {
+            session_id: "g1".into(),
+            path: vec![root(), step("c4")]
+        })
     );
     let last = live.strip_items.len() - 1;
     assert!(
@@ -323,13 +474,15 @@ fn clicks_land_on_the_rows_that_are_showing() {
 }
 
 /// Ctrl+C 第三级认的「这条会话名下的后台活」：没在访问时是任务条上的每一行；在子代理会话
-/// 里只是挂在它下面的那几行——父会话自己的命令不算，停完也只压这几条。
+/// 里只是挂在它下面的那几行——主会话自己的命令不算，停完也只压这几条。
 #[test]
 fn background_work_is_what_hangs_under_the_current_session() {
     let mut live = detached_tail();
+    let top = tree(&[]);
     live.strip_items = strip_items(
         &StripScope {
             current: Some("root"),
+            children: Some(&top),
             ..Default::default()
         },
         &[job_in("rootcmd", "command", "root", None)],
@@ -337,8 +490,8 @@ fn background_work_is_what_hangs_under_the_current_session() {
     assert!(live.has_background_work());
     assert_eq!(live.background_job_ids(), ["rootcmd"]);
 
-    live.visits.push(parent());
-    let siblings = [agent_row("c1", "running", Some("jc1"), 0)];
+    live.visits.push(root());
+    let children = tree(&[("root", vec![agent_row("c1", "running", Some("jc1"), 0)])]);
     let jobs = [
         job_in("jc1", "subagent", "root", None),
         job_in("rootcmd", "command", "root", None),
@@ -346,15 +499,14 @@ fn background_work_is_what_hangs_under_the_current_session() {
     live.strip_items = strip_items(
         &StripScope {
             current: Some("c1"),
-            parent: live.visits.last(),
-            parent_children: &siblings,
-            children: &[],
+            path: &live.visits,
+            children: Some(&children),
         },
         &jobs,
     );
     assert!(
         !live.has_background_work(),
-        "父会话的命令不是它的: {:#?}",
+        "主会话的命令不是它的: {:#?}",
         live.strip_items
     );
     assert!(live.background_job_ids().is_empty());
@@ -367,9 +519,8 @@ fn background_work_is_what_hangs_under_the_current_session() {
     live.strip_items = strip_items(
         &StripScope {
             current: Some("c1"),
-            parent: live.visits.last(),
-            parent_children: &siblings,
-            children: &[],
+            path: &live.visits,
+            children: Some(&children),
         },
         &jobs,
     );
@@ -377,16 +528,16 @@ fn background_work_is_what_hangs_under_the_current_session() {
     assert_eq!(live.background_job_ids(), ["own"]);
 }
 
-/// 切进子会话之后，任务条第一行就是回去的路；多了一行要整个重画活动区。
+/// 切进子会话之后，任务条第一行就是主会话那一行；多了一行要整个重画活动区。
 #[test]
 fn visiting_puts_the_way_back_on_the_strip() {
     let mut live = detached_tail();
     assert!(!live.set_jobs(Vec::new()));
-    live.visits.push(parent());
+    live.visits.push(root());
     assert!(live.set_jobs(Vec::new()), "多了一行，活动区要整个重画");
     assert!(matches!(
         live.strip_items.as_slice(),
-        [StripItem::Parent(row)] if row.session_id == "root"
+        [StripItem::Root(row)] if row.session_id == "root"
     ));
     assert!(!live.set_jobs(Vec::new()), "没变就不重画");
     live.visits.clear();
