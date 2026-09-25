@@ -14,6 +14,10 @@ PORT = int(os.environ.get("STUB_PORT", "18498"))
 MODE = os.environ.get("MODE", "seq")
 DELAY = float(os.environ.get("STUB_CHUNK_SLEEP", "0.3"))
 REASON = ["用户问", "当前模型", "，", "按人格", "不直接说。"]
+# 摘要请求(压缩模板第一句出现在请求里)不看 MODE,回一份照模板 `## ` 标题写的摘要:
+# 09-25 起不照模板写的摘要不落库,回普通正文的话压缩会报错。
+SUMMARY_MARK = "context summarization assistant"
+SUMMARY_REPLY = "## Task Goal\n走查用的摘要。\n\n## Current Work\n(none)"
 TEXT = ["问我的模型的话", "那还是不说，", "这", "有什么好讲的。", "要是", "你问的是 pi", "，", "我翻了你本机", "`", "~/.pi/", "agent/settings.json`", "。"]
 
 
@@ -56,6 +60,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
         self.end_headers()
+        if SUMMARY_MARK in json.dumps(body.get("messages", []), ensure_ascii=False):
+            self._sse({"content": SUMMARY_REPLY})
+            self._finish()
+            return
         if MODE == "job":
             # 后台任务剧本:用户说「起一个」→ 调 run_command(background)→ 工具结果回来
             # 短答 → 任务完成后 daemon 自己起唤醒回合(提示里带任务结果)→ 长答。

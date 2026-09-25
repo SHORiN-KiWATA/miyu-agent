@@ -36,7 +36,8 @@ class Handler(BaseHTTPRequestHandler):
         is_compact = "context summarization assistant" in body
         if is_compact:
             time.sleep(COMPACT_SECS)
-            text = "## Standing Facts & Constraints\\n- stub summary"
+            # 真换行、两个模板标题：09-25 起不照模板写的摘要不落库。
+            text = "## Standing Facts & Constraints\n- stub summary\n\n## Task Goal\n- stub"
         else:
             text = "ok"
         payload = sse(text)

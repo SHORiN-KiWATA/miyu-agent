@@ -223,6 +223,13 @@ QQ 群聊文字历史（独立历史）：**也走 LLM 摘要**（用户已定�
 | 三条中转线上 `<read-files>`/`<modified-files>` 恒空、回灌恒空（活库 42 个 remote 轮 footprint 0/42，agy 那 21 轮里真有 `view_file`×4、`write_to_file`×4） | 中转线的每次工具调用（原生工具与 `mcp__miyu__*` 桥工具都一样）走 `RemoteToolStarted/Finished` 折成 `remote: true` 轮；footprint 只在本地执行分支采集，`replay_rounds` 又按回放契约过滤 remote 轮——两个采集器都看不见。bda27508 认 `edit`/`patchText` 只救了直连线 | `record_remote_tool_chunk` 在 Finished 且 ok 时用 Started 存的名字+参数算 footprint 合进 `turns.tool_footprint`；`tool_call_paths` 认三线原生名（claude `Read`/`Edit`/`Write`/`MultiEdit`/`NotebookEdit` 的 `file_path`、agy `view_file`/`write_to_file` 的 `path`、codex `file_change` 折出的 `edit`+`paths`）；回灌候选 = 回放视图（近因序）+ 折叠区落库 footprint，跳过集加尾巴 footprint 的 read。`replay_rounds` 的 remote 过滤不动 |
 | claude-code 线两套压缩抢跑 | `--autocompact` 透传 Miyu 窗口，但 Miyu 0.8 线（168k→134,400）比 claude 的 W−33k 线（135,000）早 600 tok，Miyu 一压哈希链断、CLI 会话重开，claude 自压缩从没跑过；压缩请求 scope=compact 在中转线恒 ephemeral 不续传，fork 结构上不存在（09-09「fork 未交付」的真因） | 不再传 `--autocompact`（用户裁定「别固定上限，别设置就行」）；codex 也不加 `model_auto_compact_token_limit`。CLI 各自默认的自压缩仍在，只要 Miyu `context_window` 不大于 CLI 真实窗口，Miyu 先到 |
 
+**第四批（2026-09-25，opencode v2 调研 3.2 第 1、2 条；结果记录 `docs/plan/2026-09-25-压缩两处小改.md`）**：
+
+| 项 | 实现 |
+|---|---|
+| ① 摘要结构校验 | 两条路径原来都只判空：fork 请求带着完整人格 system，模型顺着对话聊下去的那段正文会当摘要落库。现在要求至少命中模板的两个 `## ` 标题（标题从当前生效的模板读，`MIYU_COMPACT_PROMPT_FILE` 换底稿跟着换，底稿不足两个标题不校验）。不合格逐级降：fork 同前缀追加一句纠正再要一次 → 隔离路径（自带一次重试）→ 机械兜底，手动 `/compact` 报错。模板不动。`src/agent/compact_structure.rs` |
+| ② 隔离路径补工具流 | `turns_to_text` 原来只拼用户、助手、思考和 `tool_reports`（早就几乎为空），`tool_flow` 整段缺席——fork 失败、关缓存复用、溢出兜底这三种情况下压一次，命令输出和报错全丢。现在每个工具轮写正文、思考、`[Tool call: 名字 {键名} (N keys)]` 与截到 2000 字的 `[Tool result: …]`；参数值不进摘要器（防注入第 2 条）；按活体顺序记了轮间消息的 flow 把插话放回原位，注入的上下文块与 goal 通知不写成用户发言；中转线的 remote 轮照旧不进（与 fork 前缀同口径）。`src/agent/compact_transcript.rs` |
+
 ## 五、决策点（全部已定，2026-08-06）
 
 1. **摘要注入角色**：✅ 改 user 角色 + `<conversation-checkpoint>` 包裹 + "历史非指令"标注。

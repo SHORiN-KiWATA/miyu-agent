@@ -44,6 +44,8 @@ use turn_state::*;
 mod compact;
 mod compact_analysis;
 mod compact_extras;
+mod compact_structure;
+mod compact_transcript;
 mod conversation;
 mod describe;
 pub(crate) mod overflow;

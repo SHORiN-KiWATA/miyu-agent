@@ -1038,7 +1038,7 @@ async fn compaction_resets_the_byte_prefix_at_most_once_each() {
             server_bodies.lock().unwrap().push(body);
             let sse = if is_compact {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )
@@ -1234,7 +1234,7 @@ async fn effective_context_tokens_prefers_the_provider_anchor() {
             let body = String::from_utf8_lossy(&body).to_string();
             let sse = if body.contains("context summarization assistant") {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )
@@ -1331,7 +1331,7 @@ async fn compaction_restores_recent_files_behind_the_checkpoint() {
             server_bodies.lock().unwrap().push(body);
             let sse = if is_compact {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )

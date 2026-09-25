@@ -19,6 +19,11 @@ REPLY = os.environ.get(
     "STUB_REPLY",
     "好的,收到。这是一段用于走查的回复,分块吐出来好让 footer 量得出每秒 token。",
 )
+# 摘要请求（压缩模板的第一句在系统提示里，fork 摘要则在追加的那条 user 消息里）回一份
+# 照模板写的摘要，不走阶段表。09-25 起不照模板 `## ` 标题写的摘要不落库，回普通正文的话
+# `/compact` 会报错。
+SUMMARY_MARK = b"context summarization assistant"
+SUMMARY_REPLY = "## Task Goal\n走查用的摘要。\n\n## Current Work\n(none)"
 # 置 STUB_SUBAGENT_REPLY 让子代理的最终回复和主线分开:默认两边吐同一段 REPLY,
 # 切进子会话看的时候就分不清画面上那段是子代理自己说的、还是主回合串进来的(09-25)。
 SUBAGENT_REPLY = os.environ.get("STUB_SUBAGENT_REPLY")
@@ -151,7 +156,10 @@ class Handler(BaseHTTPRequestHandler):
             SUBAGENT_MARK.encode() in body and MAIN_MARK.encode() not in body
         )
         inside_bg_subagent = inside_subagent and b"BGSUB-SENT" in body
-        if inside_subagent:
+        is_summary = SUMMARY_MARK in body
+        if is_summary:
+            stage = None
+        elif inside_subagent:
             rounds = SUBAGENT_BG_ROUNDS if inside_bg_subagent else 1
             stage = "tool" if done < rounds else None
         elif wants_bg_subagent:
@@ -342,6 +350,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "finish_reason": None}]})
                 time.sleep(CHUNK_SLEEP)
         reply = SUBAGENT_REPLY if (SUBAGENT_REPLY and inside_subagent) else REPLY
+        if is_summary:
+            reply = SUMMARY_REPLY
         for start in range(0, len(reply), CHUNK_CHARS):
             self._sse({"choices": [{"index": 0,
                                     "delta": {"content": reply[start:start + CHUNK_CHARS]},
