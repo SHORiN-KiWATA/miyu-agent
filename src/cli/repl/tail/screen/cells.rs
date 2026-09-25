@@ -105,7 +105,8 @@ fn render_cells(cells: &[Cell]) -> String {
 /// 把屏幕第 `y` 行从 `old` 改成 `new` 要写的字节。两边都从第 0 列画起；一样就是空串。
 ///
 /// 只写变了的段：每段先定位（同一行里第二段起用只改列的 `ESC[列G`），再按新版的
-/// 样式写字；新版比旧版短就把尾巴擦掉。写完样式复位，不留给下一笔。
+/// 样式写字；新版比旧版短，只在旧版有字的格子上补空格（不擦行尾，见 `cell_patch`）。
+/// 写完样式复位，不留给下一笔。
 pub(in crate::cli) fn patch_row(old: &[AnsiSpan], new: &[AnsiSpan], y: u16) -> String {
     aligned_patch(old, new, y).unwrap_or_else(|| cell_patch(old, new, y))
 }
@@ -176,11 +177,26 @@ fn emit_run(out: &mut String, new: &[AnsiSpan], run: Option<(usize, usize, usize
     out.push_str(&spans_to_ansi(&new[start..end]));
 }
 
+/// 行尾之外的格子：默认样式的空格（行尾的空白本来就被 `trim_end_spans` 去掉了）。
+const BLANK: Cell<'static> = Cell {
+    ch: ' ',
+    marks: "",
+    style: Style::new(),
+    link: None,
+};
+
 /// 逐格比对：片段对不齐时的通用做法。
+///
+/// 两行比到较长的那一行为止，行尾之外按空格算：新版短了，只在旧版有字的格子上补空格；
+/// 新版长了，也只写新版有字的格子。**新旧两版都是空白的格子永不写、永不擦。**以前短了
+/// 用 `ESC[K` 擦行尾、长了把旧行尾之后整段当成「变了」重写，大厅里叠在星空行上的输入框
+/// 和面板就被连着擦掉，同一帧里再压回去——不支持同步输出的终端上是一闪（09-25）。
 fn cell_patch(old: &[AnsiSpan], new: &[AnsiSpan], y: u16) -> String {
     let old = cells(old);
-    let new = cells(new);
-    let same = |x: usize| old.get(x) == new.get(x);
+    let mut new = cells(new);
+    let width = old.len().max(new.len());
+    new.resize(width, BLANK);
+    let same = |x: usize| old.get(x).copied().unwrap_or(BLANK) == new[x];
     let mut out = String::new();
     let mut x = 0;
     while x < new.len() {
@@ -215,14 +231,6 @@ fn cell_patch(old: &[AnsiSpan], new: &[AnsiSpan], y: u16) -> String {
         }
         out.push_str(&render_cells(&new[start..end]));
         x = end;
-    }
-    if old.len() > new.len() {
-        if out.is_empty() {
-            let _ = write!(out, "\x1b[{};{}H", y + 1, new.len() + 1);
-        } else {
-            let _ = write!(out, "\x1b[{}G", new.len() + 1);
-        }
-        out.push_str("\x1b[0m\x1b[K");
     }
     out
 }
@@ -278,7 +286,12 @@ mod tests {
         paint(&mut patched, old);
         patched.feed(on_row_zero(&patch).as_bytes());
         paint(&mut fresh, new);
-        assert_eq!(patched.row_spans(0), fresh.row_spans(0), "patch {patch:?}");
+        // 补丁不擦行尾，旧版多出来的格子补成空格：行尾的空白去掉再比。
+        assert_eq!(
+            trim_end_spans(patched.row_spans(0)),
+            trim_end_spans(fresh.row_spans(0)),
+            "patch {patch:?}"
+        );
     }
 
     #[test]
@@ -316,12 +329,42 @@ mod tests {
     }
 
     #[test]
-    fn a_shorter_row_erases_its_old_tail() {
+    fn a_shorter_row_blanks_only_the_cells_it_lost() {
         let old = vec![span("abcdef", Some(Color::Red))];
         let new = vec![span("abc", Some(Color::Red))];
         let patch = patch_row(&old, &new, 0);
-        assert!(patch.ends_with("\x1b[0m\x1b[K"), "{patch:?}");
+        assert!(
+            patch.starts_with("\x1b[1;4H"),
+            "从丢掉的第一格起：{patch:?}"
+        );
+        assert!(!patch.contains("\x1b[K"), "不擦行尾：{patch:?}");
         assert_patch_lands(&old, &new);
+    }
+
+    /// 大厅的输入框、面板叠在星空行上，星空行在那几列留白：两版都是空白的格子一格都
+    /// 不能碰，不管新版比旧版短（以前擦行尾）还是长（以前把旧行尾之后整段重写）。
+    #[test]
+    fn cells_blank_in_both_rows_are_never_written() {
+        let star = |text: &str| span(text, Some(Color::Blue));
+        // 右边那颗星灭了：只在第 31 列补一个空格。
+        let old = vec![
+            span("  ", None),
+            star("+"),
+            span(&" ".repeat(27), None),
+            star("✦"),
+        ];
+        let new = vec![span("  ", None), star("+")];
+        let patch = patch_row(&old, &new, 0);
+        assert_eq!(
+            patch,
+            format!("\x1b[1;31H{}", spans_to_ansi(&[span(" ", None)]))
+        );
+        assert_patch_lands(&old, &new);
+        // 右边亮了一颗：只写那一格，中间的空白不重写。
+        let patch = patch_row(&new, &old, 0);
+        assert!(patch.starts_with("\x1b[1;31H"), "{patch:?}");
+        assert!(!patch.contains("   "), "中间的空白不该写：{patch:?}");
+        assert_patch_lands(&new, &old);
     }
 
     #[test]
@@ -402,7 +445,7 @@ mod tests {
         assert_eq!(aligned_patch(&old, &new, 0), None);
         assert!(!patch_row(&old, &new, 0).contains("MI"), "只重写变了的那格");
         assert_patch_lands(&old, &new);
-        // 短了一截：尾巴要靠逐格那条路擦。
+        // 短了一截：尾巴由逐格那条路补空格。
         let old = vec![span("abc", None)];
         let new = vec![span("ab", None)];
         assert_eq!(aligned_patch(&old, &new, 0), None);

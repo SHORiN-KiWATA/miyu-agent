@@ -14,6 +14,7 @@ mod input_editing;
 mod jobs_feed;
 mod lobby_anim;
 mod lobby_layout;
+mod lobby_regions;
 mod pop_menu;
 mod sandbox_view;
 mod shared;
