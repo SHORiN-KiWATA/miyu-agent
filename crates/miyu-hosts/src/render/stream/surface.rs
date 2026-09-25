@@ -27,8 +27,8 @@
 //! |---|---|---|---|---|---|
 //! | S0 Plain | 是 | – | 否 | 只有正文 | `--plain` |
 //! | S1 Pipe | 否 | 否 | 否 | 老的一行摘要 `~ 工具×1 ok` | stdout 接管道 |
-//! | **S3 Static** | 否 | 是 | 否 | 静态时间线：每步落 scrollback、无块、无 `Worked for` | shellhook／单次 `miyu "…"`／inline REPL／唤醒跟进／daemon 回写 |
-//! | **S4 Full** | 否 | 是 | 是 | 可展开时间线 + `Worked for` 收缩 | 全屏 TUI |
+//! | **S3 Static** | 否 | 是 | 否 | 静态时间线：每步落 scrollback、无块、无收缩行 | shellhook／单次 `miyu "…"`／inline REPL／唤醒跟进／daemon 回写 |
+//! | **S4 Full** | 否 | 是 | 是 | 可展开时间线 + 收缩行 | 全屏 TUI |
 //!
 //! **这张表里再没有「档位」这一列了。** 原来有两个多出来的面：S2 Cards（非全屏 +
 //! `tool_calls=full` → 旧工具卡片、整条时间线消失）和 S5（全屏 + `tool_calls=full`
@@ -66,7 +66,7 @@ pub struct SurfaceCaps {
     pub expandable: bool,
     /// 步跑完立刻落 scrollback（而不是攒在活动区里等收段）。
     pub commit_immediately: bool,
-    /// 段末写 `Worked for …` 收缩行。
+    /// 段末写收缩行（`› 运行了 N 次命令 · …`）。
     pub fold: bool,
     /// 详情放哪。
     pub detail: DetailPlacement,

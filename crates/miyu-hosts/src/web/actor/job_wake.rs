@@ -93,6 +93,16 @@ pub(in crate::web) async fn handle_job_completion(
         has_origin_tty = completion.origin_tty.is_some(),
         "background job finished"
     );
+    // 停的是一个后台子代理（任务条上按 x、主会话里 Ctrl+C 停后台、模型自己停）：它这一轮和它
+    // 名下的一起停。不然后台孙代理照跑，第一层又看不见它，跑完还把停掉的子代理叫醒再跑一轮
+    // （09-26 审查）。
+    if completion.is_subagent && completion.state_label == "stopped" {
+        if let Some(child) = miyu_engine::tools::subagent::child_session_of_job(&completion.job_id)
+        {
+            stop_session_runs(&state, &child, Duration::from_secs(5)).await;
+            stop_subagent_subtree(&state, &child).await;
+        }
+    }
     if !completion.wake_requested {
         // The model stopped this command itself; clean the strips quietly.
         tools::jobs::acknowledge(&completion.job_id);
@@ -460,20 +470,25 @@ pub(in crate::web) fn origin_tty_writer(
     }
 }
 
-pub(in crate::web) async fn wake_local_session_for_job(
-    state: &DaemonState,
-    session_id: Arc<str>,
+/// 唤醒模型的那条「用户消息」：任务的几项事实，加上结果段。本地会话还带日志路径（QQ 那边
+/// 没有这台机器上的路径可看）。
+///
+/// 结果直接附在唤醒里，不再让模型「先去查一次再汇报」：子代理给完整结论（它就是交付物），
+/// 命令给日志尾部；剩下的它自己判断——只给事实和日志路径，不给动作指示。
+///
+/// 开头标签是「这一轮是合成的」的唯一判据（回放、上键历史都认它），别改成别的。结果段在
+/// 终端上点开看（`miyu_core::state::job_report_result` 拆，09-26），结尾句与收尾标签用同一份
+/// 常量。
+pub(in crate::web) fn job_report_content(
     completion: &tools::jobs::JobCompletion,
-    command_short: &str,
-) -> Option<JobWakeRun> {
+    command: &str,
+    with_log: bool,
+) -> String {
     let noun = if completion.is_subagent {
         "后台子代理"
     } else {
         "后台命令"
     };
-    // 结果直接附在唤醒里,不再让模型「先去查一次再汇报」。子代理给完整结论
-    // (它就是交付物),命令给日志尾部;剩下的自己判断——只给事实和日志路径,
-    // 不给动作指示。
     let result_block = tools::jobs::completion_result(
         &completion.log_path,
         completion.is_subagent,
@@ -481,21 +496,31 @@ pub(in crate::web) async fn wake_local_session_for_job(
     )
     .map(|(label, body)| format!("- {label}:\n{body}\n"))
     .unwrap_or_default();
-    // 开头标签是「这一轮是合成的」的唯一判据（回放、上键历史都认它），别改成别的。
-    let tag = miyu_core::state::BACKGROUND_JOB_REPORT_TAG;
-    let content = format!(
-        "{tag}{noun}「{}」已执行完毕：\n\
-         - job_id: {}\n- 任务: {}\n- 状态: {}（运行 {} 秒）\n\
-         - 日志: {}\n{result_block}\
-         这是系统自动触发的跟进，不是用户消息。\
-         </background-job-report>",
-        completion.title,
-        completion.job_id,
-        command_short,
-        completion.state_label,
-        completion.runtime_seconds,
-        completion.log_path.display(),
-    );
+    let log = if with_log {
+        format!("- 日志: {}\n", completion.log_path.display())
+    } else {
+        String::new()
+    };
+    format!(
+        "{tag}{noun}「{title}」已执行完毕：\n- job_id: {job_id}\n- 任务: {command}\n\
+         - 状态: {state}（运行 {seconds} 秒）\n{log}{result_block}{trailer}{close}",
+        tag = miyu_core::state::BACKGROUND_JOB_REPORT_TAG,
+        title = completion.title,
+        job_id = completion.job_id,
+        state = completion.state_label,
+        seconds = completion.runtime_seconds,
+        trailer = miyu_core::state::JOB_REPORT_TRAILER,
+        close = miyu_core::state::BACKGROUND_JOB_REPORT_CLOSE_TAG,
+    )
+}
+
+pub(in crate::web) async fn wake_local_session_for_job(
+    state: &DaemonState,
+    session_id: Arc<str>,
+    completion: &tools::jobs::JobCompletion,
+    command_short: &str,
+) -> Option<JobWakeRun> {
+    let content = job_report_content(completion, command_short, true);
     // 前缀 `[后台任务完成]` 是前端解析合成轮的判据(见 app.js 的
     // isSyntheticTurnContent),逐字保留;前缀之后是给人看的,跟界面语言走
     // (2026-09-23 WebUI 双语)。
@@ -562,32 +587,8 @@ pub(in crate::web) async fn wake_platform_session_for_job(
         tracing::debug!(job_id = %completion.job_id, "job wake skipped: no platform binding");
         return;
     };
-    let noun = if completion.is_subagent {
-        "后台子代理"
-    } else {
-        "后台命令"
-    };
-    // 与本地唤醒同款:结果直接附在唤醒里(子代理给完整结论,命令给日志尾部),
-    // 只给事实,不再指示模型「先去查一次再汇报」。
-    let result_block = tools::jobs::completion_result(
-        &completion.log_path,
-        completion.is_subagent,
-        completion.exit_code == Some(0),
-    )
-    .map(|(label, body)| format!("- {label}:\n{body}\n"))
-    .unwrap_or_default();
-    // 开头标签是「这一轮是合成的」的唯一判据（回放、上键历史都认它），别改成别的。
-    let tag = miyu_core::state::BACKGROUND_JOB_REPORT_TAG;
-    let content = format!(
-        "{tag}{noun}「{}」已执行完毕：\n- job_id: {}\n- 任务: {}\n- 状态: {}（运行 {} 秒）\n\
-         {result_block}这是系统自动触发的跟进，不是用户消息。\
-         </background-job-report>",
-        completion.title,
-        completion.job_id,
-        completion.command.chars().take(200).collect::<String>(),
-        completion.state_label,
-        completion.runtime_seconds
-    );
+    let command = completion.command.chars().take(200).collect::<String>();
+    let content = job_report_content(completion, &command, false);
     if let Err(error) = crate::platforms::onebot::wake_conversation_for_job(
         state,
         &binding.key.account_id,

@@ -47,6 +47,35 @@ pub fn format_seconds(elapsed: Duration) -> String {
     }
 }
 
+/// 中文的时分秒：`12 秒` / `3 分 14 秒` / `1 小时 2 分 5 秒`（09-26 收尾行改中文）。不补零——
+/// `3 分 04 秒` 念着别扭。
+pub fn format_hms_zh(elapsed: Duration) -> String {
+    let total = elapsed.as_secs();
+    let (hours, minutes, seconds) = (total / 3_600, total % 3_600 / 60, total % 60);
+    if hours > 0 {
+        format!("{hours} 小时 {minutes} 分 {seconds} 秒")
+    } else if minutes > 0 {
+        format!("{minutes} 分 {seconds} 秒")
+    } else {
+        format!("{seconds} 秒")
+    }
+}
+
+/// [`format_seconds`] 的中文版：`不到 1 秒` / `2.5 秒` / `12 秒` / `1 分 5 秒`。
+pub fn format_seconds_zh(elapsed: Duration) -> String {
+    if elapsed < Duration::from_secs(1) {
+        return "不到 1 秒".to_string();
+    }
+    let secs = elapsed.as_secs_f64();
+    if secs < 10.0 {
+        format!("{secs:.1} 秒")
+    } else if secs < 60.0 {
+        format!("{secs:.0} 秒")
+    } else {
+        format_hms_zh(elapsed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +90,20 @@ mod tests {
         assert_eq!(format_hms(Duration::from_secs(90_061)), "25h 01m 01s");
         assert_eq!(format_seconds(Duration::from_secs(7_503)), "2h 05m 03s");
         assert_eq!(format_seconds(Duration::from_millis(9_900)), "9.9s");
+    }
+
+    #[test]
+    fn chinese_durations_read_like_speech() {
+        assert_eq!(format_hms_zh(Duration::from_secs(12)), "12 秒");
+        assert_eq!(format_hms_zh(Duration::from_secs(194)), "3 分 14 秒");
+        assert_eq!(format_hms_zh(Duration::from_secs(65)), "1 分 5 秒");
+        assert_eq!(
+            format_hms_zh(Duration::from_secs(3_725)),
+            "1 小时 2 分 5 秒"
+        );
+        assert_eq!(format_seconds_zh(Duration::from_millis(400)), "不到 1 秒");
+        assert_eq!(format_seconds_zh(Duration::from_millis(2_450)), "2.5 秒");
+        assert_eq!(format_seconds_zh(Duration::from_millis(12_400)), "12 秒");
+        assert_eq!(format_seconds_zh(Duration::from_secs(75)), "1 分 15 秒");
     }
 }

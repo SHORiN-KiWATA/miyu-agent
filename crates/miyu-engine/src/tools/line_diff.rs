@@ -33,6 +33,10 @@ impl<'a> EditLine<'a> {
 /// 重写了，再往上就整段替换。
 const MAX_EDIT_DISTANCE: usize = 2_000;
 
+/// 一次比对最多走多少步（大约是「两边行数之和 × 改动行数」）。几万行的大文件被大段改写时，
+/// 改动上限跟着往下收，编辑工具不会卡在算 diff 上（09-26 审查）。
+const MAX_WORK: usize = 20_000_000;
+
 /// `before` 到 `after` 的逐行改动，按行序排好（没动的行也在里面，拼 hunk 用）。
 pub(crate) fn diff_lines<'a>(before: &'a [String], after: &'a [String]) -> Vec<EditLine<'a>> {
     let prefix = before
@@ -74,7 +78,8 @@ fn replace_all<'a>(old: &'a [String], new: &'a [String]) -> Vec<EditLine<'a>> {
 /// 删一行（向右）还是加一行（向下）。
 fn myers<'a>(old: &'a [String], new: &'a [String]) -> Option<Vec<EditLine<'a>>> {
     let (n, m) = (old.len() as isize, new.len() as isize);
-    let limit = (old.len() + new.len()).min(MAX_EDIT_DISTANCE) as isize;
+    let total = old.len() + new.len();
+    let limit = total.min(MAX_EDIT_DISTANCE).min(MAX_WORK / total.max(1)) as isize;
     let offset = limit + 1;
     let mut frontier = vec![0isize; (2 * offset + 1) as usize];
     let at = |k: isize| (offset + k) as usize;

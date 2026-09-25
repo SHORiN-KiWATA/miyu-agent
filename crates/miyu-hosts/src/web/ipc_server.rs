@@ -230,12 +230,11 @@ async fn dispatch_ipc_connection(
             .await?;
         }
         IpcCommand::StopSessionJobs { session_id } => {
-            // 子代理会话里闲着按 Ctrl+C（有后台活时那一级）：连它名下的一起停（09-26）。
-            let stopped = if is_subagent_session(&state, &session_id) {
-                stop_subagent_subtree(&state, &session_id).await
-            } else {
-                tools::jobs::stop_session_jobs(&session_id).await
-            };
+            // 闲着按 Ctrl+C（有后台活时那一级）、删会话之前：连它名下各层子代理一起停（09-26）。
+            // 主会话也按整棵树停——原来只停它自己名下的任务，靠停子代理的镜像任务顺带停那一支；
+            // 可子代理被打断过、又在它自己的会话里接着聊起了新的孙代理，镜像任务早收了，任务条上
+            // 还列着它，Ctrl+C 却一个都停不到（用户 09-26）。
+            let stopped = stop_subagent_subtree(&state, &session_id).await;
             state
                 .events
                 .publish("job.acknowledged", json!({ "session_id": session_id }));

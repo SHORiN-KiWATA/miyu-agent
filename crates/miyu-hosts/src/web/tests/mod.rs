@@ -8,6 +8,7 @@ mod events_questions;
 mod follow_catchup;
 mod http;
 mod ipc_bridge;
+mod job_report;
 mod live_turn;
 mod restart_resume;
 mod session;

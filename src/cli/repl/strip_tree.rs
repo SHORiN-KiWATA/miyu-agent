@@ -52,15 +52,33 @@ pub(in crate::cli) fn strip_items(scope: &StripScope<'_>, jobs: &[JobOverview]) 
                 .into_iter()
                 .collect();
             builder.level(scope.current, 0, "", &[], &here, true);
+            // 有子代理在跑，主会话那一行就在最上面（用户 09-26：不用等切进子代理才出现）。
+            let agents = builder
+                .items
+                .iter()
+                .any(|item| matches!(item, StripItem::Agent { .. }));
+            if let (true, Some(root)) = (agents, here.first()) {
+                builder.items.insert(
+                    0,
+                    StripItem::Root {
+                        row: root.clone(),
+                        current: true,
+                    },
+                );
+            }
         }
         Some(root) => {
-            builder.items.push(StripItem::Root(root.clone()));
+            let root = root.clone();
+            builder.items.push(StripItem::Root {
+                row: root.clone(),
+                current: false,
+            });
             builder.level(
                 Some(&root.session_id),
                 0,
                 "",
                 &chain,
-                std::slice::from_ref(root),
+                std::slice::from_ref(&root),
                 true,
             );
         }
@@ -80,9 +98,9 @@ pub(in crate::cli) fn home_scroll(items: &[StripItem]) -> usize {
     pinned.max(current.min((current + nested + 1).saturating_sub(slots)))
 }
 
-/// 顶上钉住不滚的几条：在子代理会话里，主会话那一行（用户 09-26）。
+/// 顶上钉住不滚的几条：主会话那一行（用户 09-26）。
 pub(in crate::cli) fn pinned_rows(items: &[StripItem]) -> usize {
-    usize::from(matches!(items.first(), Some(StripItem::Root(_))))
+    usize::from(matches!(items.first(), Some(StripItem::Root { .. })))
 }
 
 /// 正在看的这条会话自己名下的那几行（它的子代理、它的命令）的下标。没在访问（没有标着
@@ -94,11 +112,11 @@ pub(in crate::cli) fn current_session_rows(items: &[StripItem]) -> Vec<usize> {
     }
 }
 
-/// 挂在第 `at` 行下面的那一串（比它深的，连着的）。
+/// 挂在第 `at` 行下面的那一串（比它深的，连着的）。主会话那一行比它名下的第一层还高一层。
 fn own_rows(items: &[StripItem], at: usize) -> Vec<usize> {
-    let depth = items[at].depth();
+    let level = items[at].level();
     (at + 1..items.len())
-        .take_while(|&index| items[index].depth() > depth)
+        .take_while(|&index| items[index].level() > level)
         .collect()
 }
 
@@ -239,6 +257,9 @@ fn placeholder_row(session_id: &str, path: &[ParentRow]) -> SubagentRow {
         dev: false,
         job_id: None,
         running_descendants: 0,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
     }
 }
 

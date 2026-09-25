@@ -71,6 +71,9 @@ fn row(id: &str) -> crate::cli::repl::strip::SubagentRow {
         dev: false,
         job_id: None,
         running_descendants: 0,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
     }
 }
 
@@ -102,7 +105,11 @@ fn going_back_keeps_the_parents_rows_and_jobs() {
     feed.set_scope("root", &[]);
     assert_eq!(ids(&feed.jobs.lock().unwrap()), ["rootcmd", "c1cmd"]);
     let items = feed.strip_items(&[], &feed.jobs.lock().unwrap().clone());
-    assert_eq!(items.len(), 3, "{items:#?}");
+    assert_eq!(
+        items.len(),
+        4,
+        "主会话那一行、两个子代理、主会话的命令: {items:#?}"
+    );
     assert!(
         !feed.children.lock().unwrap().contains_key("c1"),
         "访问路径以外的子代理表不留"
@@ -124,7 +131,9 @@ fn the_feed_nests_the_current_sessions_children_under_it() {
     let shape: Vec<(String, usize)> = items
         .iter()
         .map(|item| match item {
-            StripItem::Root(root) => (format!("root:{}", root.session_id), item.depth()),
+            StripItem::Root { row: root, .. } => {
+                (format!("root:{}", root.session_id), item.depth())
+            }
             StripItem::Agent { row, place, .. } => {
                 let tag = if *place == Place::Current {
                     "current"

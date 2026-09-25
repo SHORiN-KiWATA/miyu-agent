@@ -5,6 +5,7 @@
 
 use crate::cli::repl::editor::*;
 use crate::cli::repl::tail::*;
+use crate::cli::repl::turn_end::show_turn_end;
 use crate::cli::*;
 
 /// 收口:这一轮不管怎么结束,footer 的声波都得熄。
@@ -151,6 +152,8 @@ async fn run_remote_chat_inner(
         herdr::TurnGuard::begin_transient(&turn_session_id)
     };
     let mut turn_id: Option<String> = None;
+    // 最近一次请求是哪个模型答的：被打断的轮收尾那行 `✻` 写它（run.cancelled 里没有）。
+    let mut round_model = String::new();
 
     let config = AppConfig::load_or_default(paths)?;
     let reasoning_mode = if show_reasoning == Some(false) {
@@ -937,7 +940,8 @@ async fn run_remote_chat_inner(
                     // `Worked for …`，底下报一行「命令完成 …」，再空一行接着
                     // 说（用户 09-21 看过实际效果定的版式）。原来它被画成粉色
                     // 用户气泡、还带着内部抬头 `[后台任务完成]`。
-                    let notices = live.take_queued_notices(&prompt_ids);
+                    let mut notices = live.take_queued_notices(&prompt_ids);
+                    fill_job_reports(paths, &mut notices);
                     let visible = live.has_queued(&prompt_ids);
                     if !notices.is_empty() || visible {
                         renderer.prepare_for_external_output()?;
@@ -1006,6 +1010,11 @@ async fn run_remote_chat_inner(
             // 不到就只能等 run.completed 的权威数字,footer 因此整轮不动。
             // WebUI 没这问题:它自己解 SSE。
             "chat.round_usage" => {
+                // 被打断的轮收尾时写哪个模型：run.cancelled 里没有，记最近一次请求的。
+                let model = ipc_text(&data, "model");
+                if !model.is_empty() {
+                    round_model = model.to_string();
+                }
                 if let Some(live) = live.as_deref_mut() {
                     // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
                     live.cache_breaks = ipc_u64(&data, "cache_breaks");
@@ -1085,10 +1094,20 @@ async fn run_remote_chat_inner(
                 }
                 renderer.finish()?;
                 if let Some(live) = live.as_deref_mut() {
+                    // 收尾那行 `✻ … 中断` 要这一轮的计时，熄波浪之前取。
+                    let elapsed = live.turn_elapsed();
                     // 提前 return 的取消路径也要熄波浪:漏掉它,输入框贴着
                     // 终端底部取消时最后一帧波浪就留在屏上(08-20 实测)。
                     live.stop_footer_spinner()?;
                     live.apply_renderer_frame(&mut renderer)?;
+                    show_turn_end(
+                        paths,
+                        live,
+                        turn_id.as_deref(),
+                        Some(round_model.as_str()),
+                        elapsed,
+                        true,
+                    )?;
                 }
                 handoff_raw!();
                 return Err(anyhow::Error::new(RemoteTurnCancelled {
@@ -1158,11 +1177,21 @@ async fn run_remote_chat_inner(
         )
     });
     if let Some(live) = live {
+        // 收尾那行 `✻` 要这一轮的计时，熄波浪之前取。
+        let elapsed = live.turn_elapsed();
         live.stop_footer_spinner()?;
         live.apply_renderer_frame(&mut renderer)?;
         if let Some((provider, model)) = &endpoint {
             live.apply_output_frame(mixed_model_endpoint_frame(provider, model, None).as_bytes())?;
         }
+        show_turn_end(
+            paths,
+            live,
+            turn_id.as_deref(),
+            completion.get("model").and_then(serde_json::Value::as_str),
+            elapsed,
+            false,
+        )?;
         if let Some(raw) = raw.as_mut() {
             raw.handoff();
             live.raw_mode_handoff = true;

@@ -642,6 +642,24 @@ pub struct PlatformMemeRefCount {
     pub last_seen_at: String,
 }
 
+/// daemon 替会话起、终端没挂上就跑完的那一轮（后台任务报告、跨会话消息、重启续跑），
+/// REPL 闲着时从库里补印。
+#[derive(Clone, Debug, Default)]
+pub struct BackgroundReportRow {
+    pub seq: i64,
+    pub turn_id: String,
+    /// 给人看的那一行（`[后台任务完成] …`、跨会话消息的外壳……）。
+    pub display_content: String,
+    pub reply: String,
+    /// 后台任务报告附的结果段，铃铛那一行点开看（09-26）。
+    pub job_report: Option<crate::state::JobReportResult>,
+    /// 收尾那行 `✻` 要的：谁答的、起止时刻、是不是被打断（报错的轮不画）。
+    pub assistant_model: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub status: String,
+}
+
 /// One replayable turn: the prompt echo plus either its ordered transcript or,
 /// for turns predating the transcript column, just the final reply.
 /// 可序列化：跑着的那一轮由 daemon 经 IPC 补给挂上来的终端（`turn.catchup`）。
@@ -671,4 +689,17 @@ pub struct TurnReplay {
     /// 那一块，不是用户气泡。老 daemon 补过来的没有这一项，当 false。
     #[serde(default)]
     pub from_parent: bool,
+    /// 后台任务唤醒的那一轮：唤醒里附的结果段（子代理结论、失败原因、命令输出结尾）。
+    /// 铃铛那一行点开看的就是它（09-26）。
+    #[serde(default)]
+    pub job_report: Option<crate::state::JobReportResult>,
+    /// 这一轮开始、结束的时刻（RFC 3339）。收尾那行「✻ 模型 · 处理了多久 · 几点完成」
+    /// 从它们算（09-26）；还在跑的那一轮没有结束时刻，不画收尾行。
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    /// 收尾行的动词按它挑（同一轮每次画都是同一个词）。
+    #[serde(default)]
+    pub turn_id: String,
 }

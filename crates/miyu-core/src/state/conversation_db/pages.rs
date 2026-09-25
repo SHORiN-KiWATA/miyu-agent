@@ -40,6 +40,15 @@ fn from_parent_sql() -> String {
     )
 }
 
+/// 后台任务唤醒那一轮的原文（拆结果段用）；别的轮不取，用户贴的长文不必跟着读出来。
+fn job_report_sql() -> String {
+    let tag = crate::state::BACKGROUND_JOB_REPORT_TAG;
+    format!(
+        "CASE WHEN substr(user_content, 1, {}) = '{tag}' THEN user_content END",
+        tag.chars().count()
+    )
+}
+
 fn tokens_before_locked(conn: &Connection, session_id: &str, seq: i64) -> Result<TurnTokens> {
     let (total, prompt, cache_read) = conn.query_row(
         "SELECT COALESCE(SUM(token_total), 0), COALESCE(SUM(token_prompt), 0),
@@ -165,7 +174,9 @@ impl ConversationDb {
                     status = 'interrupted',
                     assistant_provider_id, assistant_model,
                     turn_id, seq,
-                    ({from_parent})
+                    ({from_parent}),
+                    ({job_report}),
+                    user_timestamp, assistant_timestamp
                FROM turns
               WHERE session_id = ?1 AND hidden = 0 AND is_summary = 0
                 AND status IN ('completed', 'interrupted')
@@ -174,6 +185,7 @@ impl ConversationDb {
               LIMIT ?3",
             synthetic = crate::state::synthetic_user_content_sql("user_content"),
             from_parent = from_parent_sql(),
+            job_report = job_report_sql(),
         ))?;
         let mut rows = stmt
             .query_map(
@@ -196,6 +208,13 @@ impl ConversationDb {
                             assistant_provider_id: row.get::<_, Option<String>>(6)?,
                             assistant_model: row.get::<_, Option<String>>(7)?,
                             from_parent: row.get::<_, i64>(10)? != 0,
+                            job_report: row
+                                .get::<_, Option<String>>(11)?
+                                .as_deref()
+                                .and_then(crate::state::job_report_result),
+                            started_at: row.get::<_, Option<String>>(12)?,
+                            finished_at: row.get::<_, Option<String>>(13)?,
+                            turn_id: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
                         },
                     ))
                 },
@@ -234,10 +253,12 @@ impl ConversationDb {
             .query_row(
                 &format!(
                     "SELECT seq, display_content, ({synthetic}),
-                            assistant_provider_id, assistant_model, ({from_parent})
+                            assistant_provider_id, assistant_model, ({from_parent}),
+                            ({job_report}), user_timestamp
                        FROM turns WHERE turn_id = ?1",
                     synthetic = crate::state::synthetic_user_content_sql("user_content"),
                     from_parent = from_parent_sql(),
+                    job_report = job_report_sql(),
                 ),
                 params![turn_id],
                 |row| {
@@ -248,11 +269,23 @@ impl ConversationDb {
                         row.get::<_, Option<String>>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, i64>(5)? != 0,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((seq, display_content, is_synthetic, provider, model, from_parent)) = row else {
+        let Some((
+            seq,
+            display_content,
+            is_synthetic,
+            provider,
+            model,
+            from_parent,
+            report,
+            started,
+        )) = row
+        else {
             return Ok(None);
         };
         Ok(Some(TurnReplay {
@@ -263,6 +296,9 @@ impl ConversationDb {
             assistant_provider_id: provider,
             assistant_model: model,
             from_parent,
+            job_report: report.as_deref().and_then(crate::state::job_report_result),
+            started_at: started,
+            turn_id: turn_id.to_string(),
             ..TurnReplay::default()
         }))
     }
@@ -282,6 +318,24 @@ impl ConversationDb {
             )
             .optional()?
             .is_some_and(|flag| flag != 0))
+    }
+
+    /// 后台任务唤醒那一轮附的结果段（见 `job_report_result`）。终端挂到刚起的唤醒轮上时，
+    /// 铃铛那一行点开要看它（09-26）。
+    pub fn turn_job_report(&self, turn_id: &str) -> Result<Option<crate::state::JobReportResult>> {
+        let conn = self.conn.lock().unwrap();
+        let content = conn
+            .query_row(
+                &format!(
+                    "SELECT ({job_report}) FROM turns WHERE turn_id = ?1",
+                    job_report = job_report_sql(),
+                ),
+                params![turn_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(content.as_deref().and_then(crate::state::job_report_result))
     }
 
     /// 这个会话里用户说过的话（每轮开头那句，加上中途追加的），按先后排。口径

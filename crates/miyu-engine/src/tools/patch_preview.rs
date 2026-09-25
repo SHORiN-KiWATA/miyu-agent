@@ -150,37 +150,39 @@ fn diff_hunks(edits: &[EditLine<'_>]) -> Vec<DiffHunk> {
         ranges.push((start, end));
     }
 
+    // 每一块的起始行号按顺序往下推，不再每块都从文件头数一遍（改动分散的大文件原来是
+    // 块数 × 行数）。
+    let mut walked = 0usize;
+    let (mut old_line, mut new_line) = (1usize, 1usize);
     ranges
         .into_iter()
         .map(|(start, end)| {
-            let (old_start, new_start) = line_numbers_at(edits, start);
+            for edit in &edits[walked..start] {
+                advance(edit, &mut old_line, &mut new_line);
+            }
+            walked = start;
             let (old_count, new_count) = line_counts(&edits[start..end]);
             DiffHunk {
                 start,
                 end,
-                old_start,
+                old_start: old_line,
                 old_count,
-                new_start,
+                new_start: new_line,
                 new_count,
             }
         })
         .collect()
 }
 
-fn line_numbers_at(edits: &[EditLine<'_>], index: usize) -> (usize, usize) {
-    let mut old_line = 1usize;
-    let mut new_line = 1usize;
-    for edit in &edits[..index] {
-        match edit {
-            EditLine::Context(_) => {
-                old_line += 1;
-                new_line += 1;
-            }
-            EditLine::Delete(_) => old_line += 1,
-            EditLine::Insert(_) => new_line += 1,
+fn advance(edit: &EditLine<'_>, old_line: &mut usize, new_line: &mut usize) {
+    match edit {
+        EditLine::Context(_) => {
+            *old_line += 1;
+            *new_line += 1;
         }
+        EditLine::Delete(_) => *old_line += 1,
+        EditLine::Insert(_) => *new_line += 1,
     }
-    (old_line, new_line)
 }
 
 fn line_counts(edits: &[EditLine<'_>]) -> (usize, usize) {
@@ -237,6 +239,18 @@ mod tests {
         let diff = unified_diff("big.html", &before, &after);
         assert_eq!(crate::tools::diff_stat(&diff), Some((1, 1)), "{diff}");
         assert_eq!(diff.matches("@@ ").count(), 1, "{diff}");
+    }
+
+    /// 两块离得远：第二块的行号接着第一块往下数（行号按顺序推，不再每块从头数）。
+    #[test]
+    fn hunk_headers_count_lines_across_earlier_hunks() {
+        let before: String = (1..=100).map(|index| format!("{index}\n")).collect();
+        let after = before
+            .replace("\n10\n", "\nten\n")
+            .replace("\n80\n", "\neighty\n\nextra\n");
+        let diff = unified_diff("n.txt", &before, &after);
+        assert!(diff.contains("@@ -7,7 +7,7 @@"), "{diff}");
+        assert!(diff.contains("@@ -77,7 +77,9 @@"), "{diff}");
     }
 
     #[test]

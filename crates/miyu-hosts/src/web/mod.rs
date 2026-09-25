@@ -48,6 +48,7 @@ mod session_cmds;
 mod session_effort;
 mod sessions;
 mod shared_files;
+mod subagent_activity;
 mod subagent_host;
 mod subagent_tree;
 #[cfg(test)]
@@ -100,6 +101,7 @@ use session_cmds::*;
 use session_effort::*;
 use sessions::*;
 use shared_files::*;
+use subagent_activity::*;
 use subagent_host::*;
 use subagent_tree::*;
 use tty::*;
@@ -176,6 +178,8 @@ const LINKCARDS_JS: &str = include_str!("../../../../web/linkcards.js");
 const TODOS_JS: &str = include_str!("../../../../web/todos.js");
 // 跨会话消息(09-23):在线登记心跳与消息外壳的显示。
 const CROSS_SESSION_JS: &str = include_str!("../../../../web/crosssession.js");
+// 回复末尾那行 ✻(09-26):与终端 `turn_end.rs` 同一套词表和写法。
+const TURN_END_JS: &str = include_str!("../../../../web/turnend.js");
 // 子代理的会话(会话项目第 4 段):卡片点进子会话、子会话里回主会话。
 const SUBAGENTS_JS: &str = include_str!("../../../../web/subagents.js");
 // 侧栏会话批量删除(09-24):选择模式与操作栏。

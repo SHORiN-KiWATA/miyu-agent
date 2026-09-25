@@ -4,7 +4,7 @@
 //! 成「<1ms」，回合中回到主会话时子代理那一步的秒数从补发那一刻重算（13s 变 1.4s）。daemon
 //! 现在给每个事件记下发生的时刻，终端喂事件之前把它设成渲染器的事件时钟。
 
-use super::timeline::{timeline_renderer, with_blocks};
+use super::timeline::{block_id_in, timeline_renderer, with_blocks};
 use std::time::{Duration, Instant};
 
 fn stats<'a>(
@@ -20,8 +20,7 @@ fn stats<'a>(
 }
 
 /// 补发时调用和结果是一口气喂进来的：跑完那一步报的是两个事件的时刻之差，不是「<1ms」。
-/// 时钟停在最后那个事件上（终端就是这么喂的：一个事件设一次，不清），收起那一行的
-/// 「Worked for」也按它算，不按补发完的这一刻。
+/// 时钟停在最后那个事件上（终端就是这么喂的：一个事件设一次，不清）。
 fn replayed_frame(name: &str, arguments: &str) -> String {
     with_blocks(|| {
         let mut renderer = timeline_renderer();
@@ -33,8 +32,19 @@ fn replayed_frame(name: &str, arguments: &str) -> String {
         renderer.set_event_clock(Some(sent + Duration::from_secs(2)));
         renderer.write_tool_result(name, true, "done").unwrap();
         renderer.finish().unwrap();
-        String::from_utf8_lossy(&renderer.take_output_frame()).to_string()
+        with_expanded(String::from_utf8_lossy(&renderer.take_output_frame()).to_string())
     })
+}
+
+/// 帧，连同它挂着的块点开之后的样子：收缩行上不挂耗时（09-26），每一步自己的秒数在块里。
+fn with_expanded(frame: String) -> String {
+    let expanded: Vec<String> = frame
+        .lines()
+        .filter_map(block_id_in)
+        .filter_map(crate::render::blocks::get)
+        .flatten()
+        .collect();
+    format!("{frame}\n{}", expanded.join("\n"))
 }
 
 #[test]
@@ -111,7 +121,7 @@ fn a_replayed_thought_keeps_its_own_duration() {
             .write_tool_result("run_command", true, "out")
             .unwrap();
         renderer.finish().unwrap();
-        String::from_utf8_lossy(&renderer.take_output_frame()).to_string()
+        with_expanded(String::from_utf8_lossy(&renderer.take_output_frame()).to_string())
     });
     assert!(
         frame.contains("3.0s") && !frame.contains("30s"),

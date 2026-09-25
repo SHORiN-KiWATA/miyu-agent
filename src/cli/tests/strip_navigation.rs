@@ -208,6 +208,70 @@ fn the_command_list_follows_the_pick() {
     assert!(!plain.iter().any(|line| line.contains("\x1b[35m")));
 }
 
+/// 主会话里顶上那行「● 主会话」回车什么也不做：从输入框按 ↓ 进来直接落到第一个子代理，↓ 回车
+/// 还是进它（09-26 加这一行之前的手感）；再按 ↑ 才停到主会话那一行上。在子代理会话里，顶上
+/// 那行「○ 主会话」是回去的路，↓ 进来照旧先停在它上面。
+#[test]
+fn down_from_the_input_skips_the_main_row_it_is_already_on() {
+    use crate::cli::repl::strip_tree::{strip_items, StripScope};
+    let row = |id: &str| SubagentRow {
+        session_id: id.into(),
+        title: id.into(),
+        state: "running".into(),
+        dev: false,
+        job_id: None,
+        running_descendants: 0,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
+    };
+    let children: std::collections::HashMap<String, Vec<SubagentRow>> =
+        [("root".to_string(), vec![row("c1"), row("c2")])]
+            .into_iter()
+            .collect();
+    let mut live = detached_tail();
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("root"),
+            path: &[],
+            children: Some(&children),
+        },
+        &[],
+    );
+    assert!(matches!(
+        live.strip_items[0],
+        crate::cli::repl::strip::StripItem::Root { current: true, .. }
+    ));
+    assert!(press(&mut live, KeyCode::Down));
+    assert_eq!(live.strip_focus, Some(1), "落在第一个子代理上");
+    assert!(press(&mut live, KeyCode::Enter));
+    assert!(matches!(
+        live.take_strip_action(),
+        Some(StripAction::Go { session_id, .. }) if session_id == "c1"
+    ));
+    live.strip_focus = Some(1);
+    assert!(press(&mut live, KeyCode::Up));
+    assert_eq!(live.strip_focus, Some(0), "↑ 停到主会话那一行");
+
+    let root = ParentRow {
+        session_id: "root".into(),
+        title: "主会话".into(),
+        root: true,
+    };
+    live.strip_focus = None;
+    live.visits.push(root);
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("c1"),
+            path: &live.visits,
+            children: Some(&children),
+        },
+        &[],
+    );
+    assert!(press(&mut live, KeyCode::Down));
+    assert_eq!(live.strip_focus, Some(0), "子代理会话里先停在回去的那一行");
+}
+
 /// 在任务条上回车切了会话：切完光标停在切过去的那一条（它在新的树上换了位置也跟过去）；回到了
 /// 主会话（那儿没有主会话那一行）就停在刚才待着的那一条（用户 09-26）。
 #[test]
@@ -220,6 +284,9 @@ fn the_focus_follows_the_session_it_switched_to() {
         dev: false,
         job_id: None,
         running_descendants: 0,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
     };
     let root = ParentRow {
         session_id: "root".into(),
@@ -265,7 +332,7 @@ fn the_focus_follows_the_session_it_switched_to() {
     assert_eq!(live.strip_focus, Some(2));
     assert!(live.strip_items[2].is_current());
 
-    // 回主会话：顶层没有主会话那一行，光标停在刚才待着的 c2 上。
+    // 回主会话：有子代理在跑，顶层最上面就是主会话那一行（09-26），光标停在它上面。
     live.strip_focus = Some(0);
     assert!(press(&mut live, KeyCode::Enter));
     live.visits.clear();
@@ -281,5 +348,19 @@ fn the_focus_follows_the_session_it_switched_to() {
     let focused = live
         .strip_focus
         .and_then(|index| live.strip_items[index].session_id());
-    assert_eq!(focused, Some("c2"));
+    assert_eq!(focused, Some("root"));
+
+    // 顶层没有主会话那一行（没有子代理在跑）时，停在刚才待着的那一条上；它也不在了就不动。
+    live.strip_focus = Some(0);
+    live.strip_refocus = Some(("root".into(), Some("gone".into())));
+    live.strip_items = strip_items(
+        &StripScope {
+            current: Some("root"),
+            path: &[],
+            children: None,
+        },
+        &[],
+    );
+    live.apply_strip_refocus();
+    assert_eq!(live.strip_focus, Some(0));
 }

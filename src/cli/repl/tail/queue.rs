@@ -182,6 +182,17 @@ impl LiveReplTail {
                     },
                     miyu_core::state::service_restart_headline(attempt)
                 ),
+                // 后台任务报告：全屏下铃铛那一行点得开，看唤醒附的结果段（09-26）。
+                None if fullscreen => {
+                    let mut block = Vec::new();
+                    render::timeline::write_job_report_notice(
+                        &mut block,
+                        &job_wake_headline(&report.headline),
+                        report.job_report.as_ref(),
+                    )?;
+                    self.apply_output_frame(&block)?;
+                    String::new()
+                }
                 None => format!(
                     "\x1b[2m{glyph} {}\x1b[0m\r\n\r\n",
                     job_wake_headline(&report.headline)
@@ -193,6 +204,19 @@ impl LiveReplTail {
             text.push_str("\r\n");
         }
         text.push_str("\r\n");
+        // 回复末尾那行 `✻`（09-26），和实时收尾、回放一个样子。
+        if let Some(end) = &report.turn_end {
+            text.push_str(&render::timeline::turn_end_styled(
+                &render::timeline::TurnEnd {
+                    turn_id: &report.turn_id,
+                    model: end.model.as_deref(),
+                    elapsed: end.elapsed,
+                    finished_at: end.finished_at,
+                    interrupted: end.interrupted,
+                },
+            ));
+            text.push_str("\r\n\r\n");
+        }
         // 全屏：这段也是正文，一样缩进、一样自己折行。不然后台任务的汇报
         // 贴着第 0 列，整屏只有它不在装订边上。
         if fullscreen {
@@ -213,14 +237,20 @@ impl LiveReplTail {
     ///
     /// 位置是**收尾行之后**：这一轮先收成 `Worked for …`，再报「这件事完成了」，
     /// 然后空一行接着说（用户 09-21 看过实际效果后定的版式）。和 REPL 空闲时
-    /// 那条报告（`show_background_report`）长相一致，只是不带正文。
-    pub(in crate::cli) fn show_job_wake_notice(&mut self, headline: &str) -> Result<()> {
-        let glyph = if render::blocks::enabled() {
-            render::timeline::glyph_notice()
-        } else {
-            "⚙"
-        };
-        self.show_notice_line(glyph, headline)
+    /// 那条报告（`show_background_report`）长相一致，只是不带正文。全屏下点得开，
+    /// 看唤醒附的结果段（09-26）。
+    pub(in crate::cli) fn show_job_wake_notice(
+        &mut self,
+        headline: &str,
+        report: Option<&miyu_core::state::JobReportResult>,
+    ) -> Result<()> {
+        if !render::blocks::enabled() {
+            return self.show_notice_line("⚙", headline);
+        }
+        let mut block = Vec::new();
+        render::timeline::write_job_report_notice(&mut block, headline, report)?;
+        // 同 `show_notice_line`：全屏下 `apply_output_frame` 自己就把画面接回去了。
+        self.apply_output_frame(&block)
     }
 
     /// daemon 重启打断了上一轮、新 daemon 替这个会话接着跑（09-24）：一行暗色提示，
@@ -296,7 +326,13 @@ impl LiveReplTail {
                 return false;
             }
             if is_job_wake_headline(display) {
-                notices.push(QueuedNotice::JobReport(job_wake_headline(display)));
+                // 从库里重载的排队消息带着原文，当场拆得出结果段；事件送来的只有给人看的
+                // 那一行，调用方再按 `prompt_id` 去库里补（`fill_job_reports`）。
+                notices.push(QueuedNotice::JobReport {
+                    prompt_id: prompt.prompt_id.clone(),
+                    headline: job_wake_headline(display),
+                    report: miyu_core::state::job_report_result(&prompt.content),
+                });
                 return false;
             }
             true
@@ -311,7 +347,9 @@ impl LiveReplTail {
         preview_lines: usize,
     ) -> Result<()> {
         match notice {
-            QueuedNotice::JobReport(headline) => self.show_job_wake_notice(headline),
+            QueuedNotice::JobReport {
+                headline, report, ..
+            } => self.show_job_wake_notice(headline, report.as_ref()),
             QueuedNotice::CrossSession(message) => {
                 self.show_cross_session_message(message, preview_lines)
             }
@@ -431,10 +469,38 @@ impl LiveReplTail {
 
 /// 排队消息里 daemon 合成的那几种（判据见 `jobs::is_daemon_notice`）。
 pub(in crate::cli) enum QueuedNotice {
-    /// 后台任务报告：一行抬头。
-    JobReport(String),
+    /// 后台任务报告：一行抬头，全屏下点开是唤醒附的结果段（09-26）。
+    JobReport {
+        prompt_id: String,
+        headline: String,
+        report: Option<miyu_core::state::JobReportResult>,
+    },
     /// 另一个会话里的 AI 发来的跨会话消息（09-23）。
     CrossSession(miyu_core::state::CrossSessionMessage),
     /// daemon 重启后的续跑消息（09-24），带第几次。
     Restart(u32),
+}
+
+/// 事件送来的后台任务报告只有给人看的那一行：结果段按 `prompt_id` 去库里补。补不上（库打不开、
+/// 老 daemon）就还是点不开的那一行。
+pub(in crate::cli) fn fill_job_reports(paths: &MiyuPaths, notices: &mut [QueuedNotice]) {
+    let missing = notices
+        .iter()
+        .any(|notice| matches!(notice, QueuedNotice::JobReport { report: None, .. }));
+    if !missing || !render::blocks::enabled() {
+        return;
+    }
+    let Ok(store) = StateStore::new(paths) else {
+        return;
+    };
+    for notice in notices {
+        if let QueuedNotice::JobReport {
+            prompt_id,
+            report: report @ None,
+            ..
+        } = notice
+        {
+            *report = store.queued_job_report(prompt_id).ok().flatten();
+        }
+    }
 }

@@ -6,6 +6,7 @@
 
 use crate::cli::repl::editor::*;
 use crate::cli::repl::tail::*;
+use crate::cli::repl::turn_end::{show_turn_end, turn_started_instant};
 use crate::cli::*;
 
 /// Attach to a daemon-initiated wake turn and render it live: streaming
@@ -103,12 +104,18 @@ pub(in crate::cli) async fn follow_wake_run(
             // 擦掉重画，开着的浮层跟着闪一下（用户实测：后台任务完成时已经开着
             // 的浮层会鬼畜抖动一下）。
             if !header.is_empty() {
-                let glyph = miyu_hosts::render::timeline::glyph_notice();
+                // 后台任务报告起的这一轮：铃铛那一行点得开，看唤醒附的结果段（09-26）。
                 let text = header.trim_start_matches('⚙').trim_start();
-                let line = miyu_hosts::render::timeline::indent_body(&format!(
-                    "\x1b[2m{glyph} {text}\x1b[0m\r\n\r\n"
-                ));
-                live.apply_output_frame(line.as_bytes())?;
+                let report = turn_id
+                    .as_deref()
+                    .and_then(|turn_id| turn_job_report(paths, turn_id));
+                let mut line = Vec::new();
+                miyu_hosts::render::timeline::write_job_report_notice(
+                    &mut line,
+                    text,
+                    report.as_ref(),
+                )?;
+                live.apply_output_frame(&line)?;
             }
         } else {
             live.suspend()?;
@@ -186,6 +193,9 @@ pub(in crate::cli) async fn follow_wake_run(
     input_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     input_tick.tick().await;
     let mut follow_strip_tick: u32 = 0;
+    // 这一轮怎么结束的（是不是被打断、哪个模型答的），收尾那行 `✻` 用。
+    let mut ended: Option<(bool, String)> = None;
+    let mut round_model = String::new();
 
     'outer: loop {
         // 装箱而不是 `tokio::pin!`：取到这一帧就把它放掉，分发表里提问那一支
@@ -780,7 +790,8 @@ pub(in crate::cli) async fn follow_wake_run(
                     .unwrap_or_default();
                 let consumed_mode = PersonaLane::from_mode_word(Some(ipc_text(&data, "mode")));
                 // 同 `one_shot.rs`：收尾 → 通知行 → 空行。
-                let notices = live.take_queued_notices(&prompt_ids);
+                let mut notices = live.take_queued_notices(&prompt_ids);
+                fill_job_reports(paths, &mut notices);
                 let visible = live.has_queued(&prompt_ids);
                 if !notices.is_empty() || visible {
                     renderer.prepare_for_external_output()?;
@@ -801,6 +812,11 @@ pub(in crate::cli) async fn follow_wake_run(
             // 直连模式也有(走本地事件),唯独日常的「终端连 daemon」要等整
             // 个回合结束才动。
             "chat.round_usage" => {
+                // 被打断的轮收尾时写哪个模型：run.cancelled 里没有，记最近一次请求的。
+                let model = ipc_text(&data, "model");
+                if !model.is_empty() {
+                    round_model = model.to_string();
+                }
                 // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
                 live.cache_breaks = ipc_u64(&data, "cache_breaks");
                 let usage = data.get("usage").cloned().unwrap_or_default();
@@ -860,6 +876,12 @@ pub(in crate::cli) async fn follow_wake_run(
             // 排着的 `/compact` 开始做了：排队区那一行撤掉（09-25）。
             "context.compact_start" => live.drop_compact_marker()?,
             "run.completed" | "run.failed" | "run.cancelled" => {
+                // 收尾那行 `✻`：说完的写「完成」、被打断的写「中断」，报错的不画（回放也没有它）。
+                ended = match kind.as_str() {
+                    "run.completed" => Some((false, ipc_text(&data, "model").to_string())),
+                    "run.cancelled" => Some((true, round_model.clone())),
+                    _ => None,
+                };
                 // 没走到检查点就收场的，守护进程事后补压。
                 live.drop_compact_marker()?;
                 crate::cli::repl::question_flow::abandon_question_layer(
@@ -878,6 +900,17 @@ pub(in crate::cli) async fn follow_wake_run(
     live.flush_pending_chunks(&mut renderer)?;
     renderer.finish()?;
     live.apply_renderer_frame(&mut renderer)?;
+    if let Some((interrupted, model)) = &ended {
+        let elapsed = live.turn_elapsed();
+        show_turn_end(
+            paths,
+            live,
+            turn_id.as_deref(),
+            Some(model.as_str()),
+            elapsed,
+            *interrupted,
+        )?;
+    }
     handoff_raw!();
     // Suppress the duplicate DB report for a turn that was rendered live.
     if let Some(turn_id) = turn_id {
@@ -916,16 +949,11 @@ fn turn_from_parent(paths: &MiyuPaths, turn_id: Option<&str>) -> bool {
     })
 }
 
-/// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。
-fn turn_started_instant(paths: &MiyuPaths, turn_id: &str) -> Option<std::time::Instant> {
-    let started = StateStore::new(paths)
+/// 后台任务唤醒那一轮附的结果段，库打不开就当没有。
+fn turn_job_report(paths: &MiyuPaths, turn_id: &str) -> Option<miyu_core::state::JobReportResult> {
+    StateStore::new(paths)
         .ok()?
-        .turn_started_at(turn_id)
+        .turn_job_report(turn_id)
         .ok()
-        .flatten()?;
-    let started = chrono::DateTime::parse_from_rfc3339(&started).ok()?;
-    let ago = (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
-        .to_std()
-        .unwrap_or_default();
-    std::time::Instant::now().checked_sub(ago)
+        .flatten()
 }

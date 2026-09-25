@@ -27,9 +27,10 @@ pub(in crate::web) fn running_descendants(
         .count();
     let in_branch =
         |owner: &str| owner == session_id || descendants.iter().any(|(id, _)| id == owner);
+    // 后台子代理（开发模式的叫 `dev`）的镜像任务和会话是同一件事，会话那边已经数过了。
     let commands = jobs
         .iter()
-        .filter(|job| job.running && job.kind != "subagent")
+        .filter(|job| job.running && !matches!(job.kind.as_str(), "subagent" | "dev"))
         .filter(|job| job.session_id.as_deref().is_some_and(in_branch))
         .count();
     agents + commands
@@ -50,6 +51,9 @@ pub(in crate::web) fn is_subagent_session(state: &DaemonState, session_id: &str)
 /// 命令、后台孙代理、孙代理自己的轮和命令（09-26 用户拍板「连同它名下的一起停」）。会话都
 /// 留着，停在哪看得到；它自己闲着等后台的话，也记成被打断，等它的主会话照常收到汇报。
 /// 返回停掉了几个后台任务。
+///
+/// 主会话闲着按 Ctrl+C（`StopSessionJobs`）也走这里：它名下各层子代理的轮与命令一起停，主会话
+/// 自己没有任务状态，最后那一下「记成被打断」对它不起作用。
 ///
 /// 它自己的镜像任务先停：标成「已停止」的任务收尾时不叫醒谁。先停孙代理的轮的话，孙代理一
 /// 收尾就把这条子代理叫醒、再跑一轮汇报——人刚按了停止，它自己又动起来了。

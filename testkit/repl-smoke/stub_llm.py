@@ -155,6 +155,9 @@ class Handler(BaseHTTPRequestHandler):
         # 后台子代理：派出去那条的 prompt 里带 `BGSUB-SENT`，历史里认得出来，
         # 免得每轮再派一条。
         wants_bg_subagent = b"STUB_SUBBG" in body and b"BGSUB-SENT" not in body
+        # 在子代理会话里说 `STUB_GC_AGAIN`：再派一个后台孙代理（09-26：子代理被打断过、又在它自己
+        # 的会话里接着聊出了孙代理）。派出去那条的 prompt 带 `GC-AGAIN-SENT`，历史里认得出来。
+        wants_gc_again = b"STUB_GC_AGAIN" in body and b"GC-AGAIN-SENT" not in body
         # 消息里带 `STUB_USAGE` 就去查一次本会话用量，不看阶段表——阶段表是
         # 一轮内跑完的，而「这个会话烧了多少」要等**上一轮**落库才有数。
         wants_usage = b"STUB_USAGE" in body and b"Token \xe6\xb6\x88\xe8\x80\x97" not in body
@@ -168,6 +171,8 @@ class Handler(BaseHTTPRequestHandler):
         is_summary = SUMMARY_MARK in body
         if is_summary:
             stage = None
+        elif wants_gc_again:
+            stage = "grandchild_again"
         elif inside_subagent:
             spawn = GRANDCHILDREN if inside_bg_subagent else 0
             rounds = SUBAGENT_BG_ROUNDS if inside_bg_subagent else 1
@@ -256,6 +261,13 @@ class Handler(BaseHTTPRequestHandler):
                 arguments = json.dumps({
                     "description": "走查后台子代理",
                     "prompt": f"{SUBAGENT_MARK}BGSUB-SENT：跑一条命令看看，然后简单说一句。",
+                    "background": True,
+                }, ensure_ascii=False)
+            elif stage == "grandchild_again":
+                name = "subagent"
+                arguments = json.dumps({
+                    "description": "走查孙代理又一个",
+                    "prompt": f"{SUBAGENT_MARK}GRANDCHILD-SENT GC-AGAIN-SENT：跑一条慢命令。",
                     "background": True,
                 }, ensure_ascii=False)
             elif stage == "grandchild":

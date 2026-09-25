@@ -28,6 +28,12 @@ pub(in crate::cli) struct SubagentRow {
     pub(in crate::cli) job_id: Option<String>,
     /// 它名下还在跑的后代（孙代理、这一支的后台命令）：折起来时写成「（+N）」。
     pub(in crate::cli) running_descendants: u64,
+    /// 它这会儿在干什么，一行（daemon 跟着事件流记的，09-26）。
+    pub(in crate::cli) peek: String,
+    /// 它烧了多少词元的显示串（`≈12.3K`）。后台子代理的镜像任务也报，有镜像就用镜像的。
+    pub(in crate::cli) tokens_label: String,
+    /// 这一轮什么时候起的（unix 毫秒）；没在跑是 `None`。
+    pub(in crate::cli) running_since_ms: Option<u64>,
 }
 
 impl SubagentRow {
@@ -60,8 +66,9 @@ pub(in crate::cli) enum Place {
 /// 任务条上排好序的一行（`strip_tree::strip_items` 排的）。
 #[derive(Clone, Debug)]
 pub(in crate::cli) enum StripItem {
-    /// 车道上那条会话（主会话）：在子代理会话里时钉在顶上，点它回去。
-    Root(ParentRow),
+    /// 车道上那条会话（主会话），钉在顶上：在它里面时实心（`current`），在子代理会话里空心，
+    /// 点它回去。
+    Root { row: ParentRow, current: bool },
     /// 一条子代理会话。`depth` 是第几层（主会话名下的是 0），`twig` 是画在行首的树枝；`path`
     /// 是切过去之后的访问栈（从主会话往下到它的父会话）；`mirror` 是后台子代理的镜像任务，
     /// 量和用时从它来。
@@ -99,8 +106,9 @@ impl StripItem {
     /// 会话行点下去做什么；后台命令行是 `None`（点开日志面板，由活动区管）。
     pub(in crate::cli) fn action(&self) -> Option<StripAction> {
         match self {
-            Self::Root(root) => Some(StripAction::Go {
-                session_id: root.session_id.clone(),
+            Self::Root { current: true, .. } => Some(StripAction::Stay),
+            Self::Root { row, .. } => Some(StripAction::Go {
+                session_id: row.session_id.clone(),
                 path: Vec::new(),
             }),
             Self::Agent {
@@ -118,17 +126,25 @@ impl StripItem {
     /// 这一行是哪条会话（后台命令行不是）。
     pub(in crate::cli) fn session_id(&self) -> Option<&str> {
         match self {
-            Self::Root(root) => Some(&root.session_id),
+            Self::Root { row, .. } => Some(&row.session_id),
             Self::Agent { row, .. } => Some(&row.session_id),
             Self::Job { .. } => None,
         }
     }
 
-    /// 第几层：主会话那一行和它名下的是 0，再往下一层加一。
+    /// 第几层：主会话名下的是 0，再往下一层加一。
     pub(in crate::cli) fn depth(&self) -> usize {
         match self {
-            Self::Root(_) => 0,
+            Self::Root { .. } => 0,
             Self::Agent { depth, .. } | Self::Job { depth, .. } => *depth,
+        }
+    }
+
+    /// 树上的层级：主会话那一行在它名下的那一层之上（-1）。
+    pub(in crate::cli) fn level(&self) -> isize {
+        match self {
+            Self::Root { .. } => -1,
+            _ => self.depth() as isize,
         }
     }
 
@@ -138,7 +154,7 @@ impl StripItem {
             Self::Agent {
                 place: Place::Current,
                 ..
-            }
+            } | Self::Root { current: true, .. }
         )
     }
 
@@ -147,14 +163,16 @@ impl StripItem {
         match self {
             Self::Job { job, .. } => Some(job),
             Self::Agent { mirror, .. } => mirror.as_ref(),
-            Self::Root(_) => None,
+            Self::Root { .. } => None,
         }
     }
 
     /// 行的样子由哪些东西决定：这一串变了才要整个重画活动区，转轮和用时另有补帧。
     pub(in crate::cli) fn shape(&self) -> String {
         match self {
-            Self::Root(root) => format!("root|{}|{}", root.session_id, root.title),
+            Self::Root { row, current } => {
+                format!("root|{}|{}|{current}", row.session_id, row.title)
+            }
             Self::Agent {
                 row,
                 place,
@@ -192,7 +210,7 @@ impl StripItem {
             },
             Self::Agent { row, .. } if row.dev => miyu_base::i18n::text("dev", "开发中"),
             Self::Agent { .. } => miyu_base::i18n::text("agent", "子代理"),
-            Self::Root(_) => miyu_base::i18n::text("main", "主会话"),
+            Self::Root { .. } => miyu_base::i18n::text("main", "主会话"),
         }
     }
 
@@ -221,8 +239,9 @@ impl StripItem {
             Self::Agent {
                 place: Place::Current,
                 ..
-            } => '●',
-            Self::Root(_) | Self::Agent { .. } => '○',
+            }
+            | Self::Root { current: true, .. } => '●',
+            Self::Root { .. } | Self::Agent { .. } => '○',
             Self::Job { job, .. } if job.kind == "subagent" || job.kind == "dev" => '○',
             Self::Job { .. } => JOB_SPINNER_FRAMES[spinner_phase % JOB_SPINNER_FRAMES.len()],
         }
@@ -232,7 +251,7 @@ impl StripItem {
     fn head(&self, spinner_phase: usize) -> String {
         let twig = match self {
             Self::Agent { twig, .. } | Self::Job { twig, .. } => twig.as_str(),
-            Self::Root(_) => "",
+            Self::Root { .. } => "",
         };
         format!("{twig}{} {}", self.marker(spinner_phase), self.kind_label())
     }
@@ -251,7 +270,16 @@ impl StripItem {
                 ),
                 _ => row.title.clone(),
             },
-            Self::Root(root) => root.title.clone(),
+            // 只写「主会话」三个字，不跟标题（用户 09-26）：它是回去的路，标题在别处看得到。
+            Self::Root { .. } => String::new(),
+        }
+    }
+
+    /// 标题后面接的那截窥视：子代理这会儿在干什么（09-26）。放不下就整截不要，见 `strip_lines`。
+    fn peek(&self) -> Option<&str> {
+        match self {
+            Self::Agent { row, .. } if !row.peek.trim().is_empty() => Some(row.peek.trim()),
+            _ => None,
         }
     }
 
@@ -260,21 +288,53 @@ impl StripItem {
     /// 概念，那儿只有时间。前台子代理会话没有镜像任务，这一栏空着。
     fn timer(&self) -> String {
         let Some(job) = self.job() else {
+            return self.session_timer();
+        };
+        // 镜像任务还没报过量（刚派出去、或它那一轮已经收工）就用 daemon 报的会话累计。
+        let metric = job
+            .metric
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .or_else(|| match self {
+                Self::Agent { row, .. } => Some(row.tokens_label.trim()).filter(|t| !t.is_empty()),
+                _ => None,
+            });
+        match metric {
+            Some(metric) => format!("{metric}  {}", format_job_duration(job.runtime_seconds)),
+            None => format_job_duration(job.runtime_seconds),
+        }
+    }
+}
+
+impl StripItem {
+    /// 没有镜像任务的子代理（前台的、停下之后又接着聊的）：量和用时按会话自己报的来（09-26：
+    /// 原来这一栏只认后台子代理的镜像任务，停下再接着聊的那条就什么都没有）。
+    fn session_timer(&self) -> String {
+        let Self::Agent { row, .. } = self else {
             return String::new();
         };
-        match job.metric.as_deref().filter(|text| !text.trim().is_empty()) {
-            Some(metric) => format!(
-                "{}  {}",
-                metric.trim(),
-                format_job_duration(job.runtime_seconds)
-            ),
-            None => format_job_duration(job.runtime_seconds),
+        let elapsed = row.running_since_ms.map(|since| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|now| now.as_millis() as u64)
+                .unwrap_or(since);
+            format_job_duration(now.saturating_sub(since) / 1000)
+        });
+        match (row.tokens_label.trim(), elapsed) {
+            ("", None) => String::new(),
+            ("", Some(elapsed)) => elapsed,
+            (tokens, None) => tokens.to_string(),
+            (tokens, Some(elapsed)) => format!("{tokens}  {elapsed}"),
         }
     }
 }
 
 /// 任务条最多露几条（用户 09-25：状态行最多显示 5 个，多了底下写「↓ 还有 x 个」）。
 pub(in crate::cli) const STRIP_VISIBLE_ROWS: usize = 5;
+
+/// 标题和窥视之间的分隔。
+const PEEK_JOIN: &str = " · ";
 
 /// 任务条此刻怎么画：钉在顶上几条、下面从第几条露起、鼠标悬在哪条、方向键停在哪条。下标
 /// 都是 `strip_items` 里的下标。
@@ -353,12 +413,19 @@ pub(in crate::cli) fn strip_lines(
         let head = row.head(spinner_phase);
         let pad_head = " ".repeat(head_col.saturating_sub(visible_width(&head)));
         let gutter = if focused { '›' } else { ' ' };
-        let mut left = format!("{gutter} {head}{pad_head} {}", row.body());
         let timer = row.timer();
         let timer_width = visible_width(&timer);
         // Never exceed the terminal width: a wrapped strip line would shift
         // the whole tail and flicker.
         let max_left = cols.saturating_sub(timer_width).saturating_sub(2);
+        let mut left = format!("{gutter} {head}{pad_head} {}", row.body());
+        // 窥视接在标题后面，整截放得下才放，放不下就不要（用户 09-26），不截半截。
+        if let Some(peek) = row.peek() {
+            let with_peek = format!("{left}{PEEK_JOIN}{peek}");
+            if visible_width(&with_peek) <= max_left {
+                left = with_peek;
+            }
+        }
         while visible_width(&left) > max_left && !left.is_empty() {
             left.pop();
         }
@@ -442,6 +509,11 @@ pub(in crate::cli) fn subagent_rows(data: &serde_json::Value) -> Vec<SubagentRow
                 .get("running_descendants")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
+            peek: text(session, "peek"),
+            tokens_label: text(session, "tokens_label"),
+            running_since_ms: session
+                .get("running_since_ms")
+                .and_then(serde_json::Value::as_u64),
         })
         .filter(|row| !row.session_id.is_empty())
         .collect()

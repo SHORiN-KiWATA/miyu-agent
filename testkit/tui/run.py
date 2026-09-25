@@ -785,9 +785,13 @@ def main():
         report["tool_row_has_peek"] = bool(
             re.search(r"运行命令 · [\d.]+m?s · \S", stream)
         )
-        # 09-24 起跑过命令的那段写成 `Ran N commands · …`,其余仍是 `Worked for … · N tools`。
+        # 09-26 起收缩行按「动词了 + 次数」写（`运行了 N 次命令 · 用了 N 个工具`），英文界面是
+        # `Ran N commands · N tools`；老二进制的 `Worked for … · N tools` 也认。
         report["tool_counted_in_summary"] = bool(
-            re.search(r"Ran \d+ commands?\b|Worked for [^·]+· \d+ tools?\b", stream)
+            re.search(
+                r"Ran \d+ commands?\b|Worked for [^·]+· \d+ tools?\b|运行了 \d+ 次命令|用了 \d+ 个工具",
+                stream,
+            )
         )
         defaults = {
             "tool_detail_has_command": False,
@@ -1689,7 +1693,7 @@ def main():
         # 一回合那份——只按那一列回放的话，带工具的那一轮会少数一个思考
         #（用户实测：重开之后思考行消失）。
         report["item01_reopen_keeps_pre_tool_thought"] = any(
-            "2 thoughts" in line for line in replay
+            "2 thoughts" in line or "思考了 2 次" in line for line in replay
         )
         # 回放没有计时，收缩行长这样：`› 1 tool · 1 thought`——认 `›` 不认
         # `Worked for`。

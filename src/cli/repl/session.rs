@@ -495,7 +495,10 @@ pub(in crate::cli) async fn present_session(
             .map(|visit| visit.session_id.clone())
             .collect();
         feed.set_scope(&state.session_id, &path);
-        live_repl.set_jobs(feed.jobs.lock().unwrap().clone());
+        // 先拷出来再交给任务条：拿着任务表的锁进 `set_jobs`，里面又要锁会话号，和轮询线程
+        // （先会话号后任务表）的顺序相反，撞上就互等。
+        let jobs = feed.jobs.lock().unwrap().clone();
+        live_repl.set_jobs(jobs);
     }
     // 换了会话，显示就是这条会话自己的车道：大厅里按 Tab 换的那一下作废。
     live_repl.lobby_lane_pending = false;

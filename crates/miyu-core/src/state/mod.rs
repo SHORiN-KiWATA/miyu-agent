@@ -8,6 +8,8 @@ pub use conversation_db::SharedFile;
 mod conversation_db;
 mod cross_session;
 pub use cross_session::*;
+mod job_report;
+pub use job_report::*;
 mod service_restart;
 pub use service_restart::*;
 mod migrations;
@@ -41,14 +43,14 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
 #[allow(unused_imports)]
 pub use conversation_db::{
-    interrupted_text, pending_placeholder, ArtifactAsset, ArtifactAssetData, CacheBreakRecord,
-    ContextAnchor, ConversationDb, FlowMessage, GoalDenied, GoalPhase, GoalRecord, ImageAsset,
-    ImageAssetData, NewSponsorRecord, PlatformAccessActor, PlatformAccessGrant,
-    PlatformAccessGrantKey, PlatformMemeRefRecord, PlatformPluginScopeKey, PlatformSessionBinding,
-    PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,
-    RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, ReplayPage, RestartOrphan,
-    SessionOverview, SessionRecord, SessionValueKind, SponsorOrder, SponsorRecord, SponsorSummary,
-    SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnCompletion,
+    interrupted_text, pending_placeholder, ArtifactAsset, ArtifactAssetData, BackgroundReportRow,
+    CacheBreakRecord, ContextAnchor, ConversationDb, FlowMessage, GoalDenied, GoalPhase,
+    GoalRecord, ImageAsset, ImageAssetData, NewSponsorRecord, PlatformAccessActor,
+    PlatformAccessGrant, PlatformAccessGrantKey, PlatformMemeRefRecord, PlatformPluginScopeKey,
+    PlatformSessionBinding, PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment,
+    QueuedSyntheticPrompt, RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, ReplayPage,
+    RestartOrphan, SessionOverview, SessionRecord, SessionValueKind, SponsorOrder, SponsorRecord,
+    SponsorSummary, SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnCompletion,
     TurnFinishExtras, TurnFollowup, TurnInlineMedia, TurnJournalEvent, TurnPage,
     TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment, UserAttachmentData,
     DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE, INLINE_MEDIA_KIND_IMAGE,

@@ -19,7 +19,7 @@ mod turn_panel;
 mod update;
 
 pub(in crate::cli) use navigate::Navigated;
-pub(in crate::cli) use queue::queued_compact_marker;
+pub(in crate::cli) use queue::{fill_job_reports, queued_compact_marker};
 pub(in crate::cli) use update::{
     begin_frame_hold, frame_hold_active, release_frame_hold, synchronized_terminal_update,
     term_out, TermOut, CATCH_UP_QUIET,
@@ -784,7 +784,14 @@ impl LiveReplTail {
             return Ok((LiveRawMode::adopt(), false));
         }
         tracing::warn!("raw-mode handoff found the terminal cooked; re-enabling raw mode");
-        Ok((LiveRawMode::readopt_cooked()?, true))
+        match LiveRawMode::readopt_cooked() {
+            Ok(guard) => Ok((guard, true)),
+            // 补不开也得把交接时压着的那层键盘增强弹掉，不然退出后 shell 还开着 kitty 键盘协议。
+            Err(error) => {
+                drop(LiveRawMode::adopt());
+                Err(error)
+            }
+        }
     }
 
     /// 换车道:输入框竖条换色、banner 的模式行跟着走。
@@ -901,6 +908,11 @@ impl LiveReplTail {
     pub(in crate::cli) fn set_turn_clock_start(&mut self, started: std::time::Instant) {
         self.turn_started = Some(started);
         self.footer.turn_started = self.turn_started;
+    }
+
+    /// 这一轮到现在跑了多久（没在计时就是 `None`）。收尾那行 `✻` 要在熄转轮之前取。
+    pub(in crate::cli) fn turn_elapsed(&self) -> Option<std::time::Duration> {
+        self.turn_started.map(|started| started.elapsed())
     }
 
     /// 这一轮完了（或换了会话）：计时不再挂着。

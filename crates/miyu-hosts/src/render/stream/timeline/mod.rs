@@ -11,8 +11,10 @@
 //! 一段连续的过程结束（模型开始说正文／回合结束／面板要抢屏）就**收成一行**：
 //!
 //! ```text
-//!   › Worked for 12.3s · 3 tools · 2 thoughts · 1 err
+//!   › 运行了 1 次命令 · 用了 2 个工具 · 思考了 2 次 · 出错了 1 次
 //! ```
+//!
+//! （09-26 起不挂耗时，一轮花了多久看回复末尾那行 `✻`，见 `turn_end.rs`。）
 //!
 //! 这一行是可展开块，展开出来就是上面那条时间线；时间线里每一项**又**是可展开
 //! 块，点开是那个工具的完整输出或那段思考的全文。嵌套由 `screen/expand.rs` 负责，
@@ -24,7 +26,7 @@
 //! 时间线的**静态**版（[`StreamRenderer::timeline_static`]）：长相一样，只是没有
 //! 鼠标也没有回翻，所以没什么可展开的。每一步跑完就直接落进 scrollback，能展开的
 //! 东西（补丁 diff、命令输出的尾巴）就地印在那一步底下；live 区只留一根连线和
-//! 正在跑的那一行；也不写 `Worked for …` 收缩行——点不开的把手只是一行废话。
+//! 正在跑的那一行；也不写收缩行——点不开的把手只是一行废话。
 //!
 //! 只有 stdout 不是终端（管道）时才还是老的一行摘要。
 //!
@@ -32,15 +34,20 @@
 
 mod cross_session;
 mod glyphs;
+mod job_report;
 mod live;
 mod question;
 mod stall;
 mod subagent;
 mod thought_rows;
+mod turn_end;
+use turn_end::spell;
 
 pub use cross_session::write_cross_session_message;
 pub(crate) use cross_session::SEND_TOOL;
 pub(crate) use glyphs::step_rows;
+pub use job_report::write_job_report_notice;
+pub use turn_end::{turn_end_frame, turn_end_span, turn_end_styled, turn_end_text, TurnEnd};
 
 use super::{question_answer_text, StreamRenderer};
 use crate::render::blocks;

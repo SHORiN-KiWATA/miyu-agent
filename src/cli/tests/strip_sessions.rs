@@ -38,6 +38,9 @@ fn agent_row(id: &str, state: &str, job_id: Option<&str>, below: u64) -> Subagen
         dev: false,
         job_id: job_id.map(str::to_string),
         running_descendants: below,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
     }
 }
 
@@ -129,10 +132,17 @@ fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
         },
         &jobs,
     );
-    let lines = draw(&items, StripView::default());
+    let lines = draw(&items, home(&items));
 
-    assert_eq!(lines.len(), 4, "{lines:#?}");
+    assert_eq!(lines.len(), 5, "{lines:#?}");
     assert!(lines[0].is_empty(), "头上一行空的: {lines:#?}");
+    assert_eq!(
+        lines[1].trim_end(),
+        format!("  ● {}", text("main", "主会话")),
+        "有子代理在跑，主会话那一行就在最上面，只写「主会话」不跟标题（09-26）: {lines:#?}"
+    );
+    assert_eq!(items[0].action(), Some(StripAction::Stay));
+    let lines = lines[1..].to_vec();
     let spinner = JOB_SPINNER_FRAMES[0];
     assert!(
         lines[1].starts_with(&format!("  ○ {}{}", text("agent", "子代理"), plus(3))),
@@ -169,10 +179,10 @@ fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
         title_col(&lines[2]),
         "带（+N）的那行和别的行标题竖着对齐: {lines:#?}"
     );
-    // 点进去：访问栈就是主会话这一层（标题由切的那一头补）。原来这里是空的，切进去之后它被当成
-    // 主会话，任务条上没有「主会话」那一行、footer 也没有层数（09-26 走查）。
+    // 点进去：访问栈就是主会话这一层。原来这里是空的，切进去之后它被当成主会话，任务条上没有
+    // 「主会话」那一行、footer 也没有层数（09-26 走查）。
     assert_eq!(
-        items[0].action(),
+        items[1].action(),
         Some(StripAction::Go {
             session_id: "c1".into(),
             path: vec![ParentRow {
@@ -182,6 +192,36 @@ fn the_main_session_lists_its_own_rows_and_folds_the_rest() {
             }],
         })
     );
+}
+
+/// 子代理那一行：标题后面接它这会儿在干什么（09-26），整截放得下才接，放不下就整截不要、不截
+/// 半截；没有镜像任务的（前台的、停下之后接着聊的）量和用时按会话自己报的来。
+#[test]
+fn a_subagent_row_shows_what_it_is_doing_when_it_fits() {
+    let mut busy = agent_row("c1", "running", None, 0);
+    busy.peek = "运行命令 · sleep 600".into();
+    busy.tokens_label = "≈12.3K".into();
+    let children = tree(&[("root", vec![busy])]);
+    let items = strip_items(
+        &StripScope {
+            current: Some("root"),
+            children: Some(&children),
+            ..Default::default()
+        },
+        &[],
+    );
+    let wide = plain(strip_lines(&items, 0, 100, home(&items)));
+    let row = wide.iter().find(|line| line.contains("查c1")).unwrap();
+    assert!(row.contains("查c1 · 运行命令 · sleep 600"), "{wide:#?}");
+    assert!(
+        row.ends_with("≈12.3K"),
+        "没有镜像任务，量从会话来: {wide:#?}"
+    );
+
+    let narrow = plain(strip_lines(&items, 0, 34, home(&items)));
+    let row = narrow.iter().find(|line| line.contains("查c1")).unwrap();
+    assert!(!row.contains("运行"), "放不下就整截不要: {narrow:#?}");
+    assert!(row.ends_with("≈12.3K"), "{narrow:#?}");
 }
 
 /// 在子代理会话里（用户 09-26 照 Claude Code 定的样子）：`○ 主会话` 在最上面；主会话的子代理
@@ -217,10 +257,10 @@ fn inside_a_subagent_the_tree_starts_at_the_main_session() {
     let lines = draw(&items, home(&items));
     let spinner = JOB_SPINNER_FRAMES[0];
 
-    assert!(
-        lines[1].starts_with(&format!("  ○ {}", text("main", "主会话")))
-            && lines[1].ends_with("修登录页"),
-        "{lines:#?}"
+    assert_eq!(
+        lines[1].trim_end(),
+        format!("  ○ {}", text("main", "主会话")),
+        "主会话那一行只写「主会话」，不跟标题（09-26）: {lines:#?}"
     );
     assert!(
         lines[2].starts_with("  ○ ") && lines[2].contains(&plus(2)),
@@ -537,7 +577,7 @@ fn visiting_puts_the_way_back_on_the_strip() {
     assert!(live.set_jobs(Vec::new()), "多了一行，活动区要整个重画");
     assert!(matches!(
         live.strip_items.as_slice(),
-        [StripItem::Root(row)] if row.session_id == "root"
+        [StripItem::Root { row, .. }] if row.session_id == "root"
     ));
     assert!(!live.set_jobs(Vec::new()), "没变就不重画");
     live.visits.clear();

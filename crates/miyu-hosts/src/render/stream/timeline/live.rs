@@ -652,58 +652,67 @@ impl StreamRenderer {
     }
 }
 
-/// 收缩行的摘要(用户 09-24 拍板):动作在前、思考在后、报错垫底,为零的项不写。
+/// 收缩行的摘要（用户 09-26 拍板）：动作在前、思考在后、出错垫底，为零的项不写。不再有
+/// `Worked for`，也不挂耗时——这一轮花了多久看末尾那行 `✻`（`turn_end.rs`）。
 ///
-/// - 跑过命令:`Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err · 12s`——
-///   动作打头,耗时挂末尾;
-/// - 没跑命令但动过手:`Worked for 12s · 2 edits · 4 tools · 1 thought`;
-/// - 只想了想:`Thought for 5s`。
+/// - 动过手：`运行了 3 次命令 · 编辑了 2 次 · 用了 4 个工具 · 思考了 1 次 · 出错了 1 次`
+///   （英文界面：`Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err`）；
+/// - 只想了想：`思考了 5.2 秒`（`Thought for 5.2s`）；回放时没有计时，就写 `思考了 2 次`。
 ///
-/// edits 只数改磁盘文件的那几步,其余工具都算 tools(分类见 `tool_names::tool_kind`)。
-/// 措辞和 WebUI 的过程时间线一致(`web/app.js` 的 `procLineRefresh`):两端看到的是
-/// 同一件事,不该换说法。
+/// edits 只数改磁盘文件的那几步，其余工具都算 tools（分类见 `tool_names::tool_kind`）。
+/// 措辞和 WebUI 的过程时间线一致（`web/app.js` 的 `procLineRefresh`）：两端看到的是
+/// 同一件事，不该换说法。
 pub fn summary_line(elapsed: Duration, counts: Counts) -> String {
-    // 回放历史时**完全**没有计时（库里存的是做过什么，不是花了多久）。那种
-    // 情况下报个 `Worked for 0.0s` 比不报还糟——它看着像"这一轮瞬间就完了"。
+    // 回放历史时**完全**没有计时（库里存的是做过什么，不是花了多久）。那种情况下报个
+    // `思考了 0.0 秒` 比不报还糟——它看着像"这一轮瞬间就完了"。
     //
-    // 判据是「够不够一位小数」而不是「是不是零」：回放那条路上时间线还是会被
-    // 现场掐一次表，量出来是几十微秒，比零大但照样打印成 `0.0s`。
-    let timed = (elapsed >= Duration::from_millis(100)).then(|| format_seconds(elapsed));
-    let count =
-        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    // 判据是「够不够一位小数」而不是「是不是零」：回放那条路上时间线还是会被现场掐一次
+    // 表，量出来是几十微秒，比零大但照样打印成 `0.0`。
+    let timed = elapsed >= Duration::from_millis(100);
+    let zh = miyu_base::i18n::is_zh();
+    // 一项的说法：`{n}` 换成次数；英文按单复数挑。
+    let item = |n: usize, en: (&str, &str), zh_text: &str| {
+        if zh {
+            zh_text.replace("{n}", &n.to_string())
+        } else {
+            format!("{n} {}", if n == 1 { en.0 } else { en.1 })
+        }
+    };
+    let thoughts = item(counts.thoughts, ("thought", "thoughts"), "思考了 {n} 次");
     if !counts.acted() {
-        return match (&timed, counts.thoughts) {
-            (Some(elapsed), thoughts) if thoughts > 0 => format!("Thought for {elapsed}"),
-            (None, thoughts) if thoughts > 0 => count(thoughts, "thought", "thoughts"),
-            (Some(elapsed), _) => format!("Worked for {elapsed}"),
-            (None, _) => t("done", "已完成").to_string(),
+        return match (timed, counts.thoughts) {
+            (true, n) if n > 0 => {
+                if zh {
+                    spell("思考了", &miyu_base::durations::format_seconds_zh(elapsed))
+                } else {
+                    format!("Thought for {}", format_seconds(elapsed))
+                }
+            }
+            (false, n) if n > 0 => thoughts,
+            (true, _) if zh => spell("用时", &miyu_base::durations::format_seconds_zh(elapsed)),
+            (true, _) => format!("Took {}", format_seconds(elapsed)),
+            (false, _) => t("done", "已完成").to_string(),
         };
     }
     let mut parts = Vec::new();
     if counts.commands > 0 {
-        parts.push(format!(
-            "Ran {}",
-            count(counts.commands, "command", "commands")
-        ));
-    } else if let Some(elapsed) = &timed {
-        parts.push(format!("Worked for {elapsed}"));
+        parts.push(if zh {
+            format!("运行了 {} 次命令", counts.commands)
+        } else {
+            format!("Ran {}", item(counts.commands, ("command", "commands"), ""))
+        });
     }
     if counts.edits > 0 {
-        parts.push(count(counts.edits, "edit", "edits"));
+        parts.push(item(counts.edits, ("edit", "edits"), "编辑了 {n} 次"));
     }
     if counts.tools > 0 {
-        parts.push(count(counts.tools, "tool", "tools"));
+        parts.push(item(counts.tools, ("tool", "tools"), "用了 {n} 个工具"));
     }
     if counts.thoughts > 0 {
-        parts.push(count(counts.thoughts, "thought", "thoughts"));
+        parts.push(thoughts);
     }
     if counts.errors > 0 {
-        parts.push(format!("{} err", counts.errors));
-    }
-    if counts.commands > 0 {
-        if let Some(elapsed) = timed {
-            parts.push(elapsed);
-        }
+        parts.push(item(counts.errors, ("err", "err"), "出错了 {n} 次"));
     }
     parts.join(" · ")
 }

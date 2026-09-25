@@ -127,6 +127,24 @@
       "lane": "tui"
     },
     {
+      "name": "turn_end_notice",
+      "argv": [
+        "python3",
+        "testkit/tui/turn_end_notice.py"
+      ],
+      "timeout": 600,
+      "lane": "tui"
+    },
+    {
+      "name": "stop_from_main",
+      "argv": [
+        "python3",
+        "testkit/tui/stop_from_main.py"
+      ],
+      "timeout": 300,
+      "lane": "tui"
+    },
+    {
       "name": "bg_visit",
       "argv": [
         "python3",

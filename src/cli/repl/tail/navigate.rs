@@ -63,9 +63,23 @@ impl LiveReplTail {
         }
         if code == KeyCode::Down && plain && self.may_enter_strip() {
             // 露在最上面的那一条，滚动那一截停在原地（在子代理会话里是露着正在看的那条的地方）。
+            // 主会话里顶上那行「● 主会话」就是这里、回车什么也不做：跳过它，↓ 回车照旧是进第一个
+            // 子代理（09-26 加这一行之前就是这个手感）；想停到它上面再按 ↑。
             let view = self.strip_view();
+            let rows = self.strip_rows();
+            let visible = view.visible(rows.len());
+            let focus = visible
+                .iter()
+                .copied()
+                .find(|&index| {
+                    !matches!(
+                        rows[index],
+                        crate::cli::repl::strip::StripItem::Root { current: true, .. }
+                    )
+                })
+                .or_else(|| visible.first().copied());
             self.strip_scroll = view.scroll;
-            self.strip_focus = view.visible(self.strip_rows().len()).first().copied();
+            self.strip_focus = focus;
             return Ok(Navigated::Done);
         }
         Ok(Navigated::Pass)

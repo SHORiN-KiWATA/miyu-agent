@@ -3,7 +3,9 @@
 
 主会话派一个后台子代理（它又派两个后台孙代理、自己跑一条慢命令）和一条后台命令：
 - 主会话的任务条第一层只有子代理那一行（空心 `○`，名下两个孙代理收成「（+2）」）和那条命令
-  （转轮），孙代理不在第一层；
+  （转轮），孙代理不在第一层；有子代理在跑，`● 主会话` 那一行就在最上面（用户 09-26：不用
+  等切进子代理才出现）；子代理那一行标题后面窥视它此刻在干什么，右边先报词元再报时长
+  （09-26：子代理的 token 计数没了）；
 - 点进子代理：`○ 主会话` 钉在最上面，子代理这一行实心 `●`，两个孙代理用 `├`/`└` 挂在它下面，
   主会话自己的命令还在第一层；
 - 方向键停到孙代理那一行回车切进去：还是同一棵树（主会话、子代理、两个孙代理），只是实心圆挪到
@@ -44,6 +46,8 @@ STUB = {
 CHILD = "走查后台子代理"
 GRANDCHILDREN = ("走查孙代理1", "走查孙代理2")
 COMMAND = "走查后台任务二"
+# 行尾那一栏：先词元（`≈1.2K`、`450`）再时长（`12s`、`1m 05s`）。
+TOKENS_RE = re.compile(r"(?:≈)?\d[\d.]*[KM]?\s{2}\d+[hms]")
 
 
 def now(sink):
@@ -136,6 +140,14 @@ def main():
             name in line for line in rows for name in GRANDCHILDREN
         )
         report["main_child_row_is_hollow"] = row_with(ready, CHILD).lstrip().startswith("○")
+        report["_main_rows"] = rows
+        report["main_root_row_on_top"] = bool(rows) and rows[0].lstrip("› ").startswith("● 主会话")
+        # 窥视要等子代理那一轮真跑起来（派孙代理、跑慢命令），多等一会儿。
+        peeked = r.wait_screen(master, sink, lambda s: f"{CHILD} · " in (row_with(s, CHILD) or ""), 20.0)
+        child_row = row_with(peeked or now(sink), CHILD) or ""
+        report["_main_child_row"] = child_row
+        report["main_child_row_has_peek"] = peeked is not None
+        report["main_child_row_has_tokens"] = bool(TOKENS_RE.search(child_row))
         command_row = row_with(ready, COMMAND).lstrip()
         report["main_command_keeps_the_spinner"] = command_row[:1] not in ("○", "●")
 
@@ -153,6 +165,14 @@ def main():
         first, second = (row_with(inside, name).lstrip() for name in GRANDCHILDREN)
         report["inside_twigs"] = first.startswith("├ ○") and second.startswith("└ ○")
         report["inside_main_command_on_level_one"] = row_with(inside, COMMAND) is not None
+        # 孙代理那两行右边也要有词元（用户 09-26 截图：孙代理的 token 计数没了）。
+        counted = r.wait_screen(
+            master, sink,
+            lambda s: all(TOKENS_RE.search(row_with(s, name) or "") for name in GRANDCHILDREN),
+            20.0,
+        )
+        report["_grandchild_rows"] = [row_with(counted or now(sink), name) for name in GRANDCHILDREN]
+        report["inside_grandchild_rows_have_tokens"] = counted is not None
 
         # 方向键进任务条，停到孙代理一那一行，回车切进去。
         os.write(master, b"\x1b[B")

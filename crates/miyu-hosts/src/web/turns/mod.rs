@@ -648,6 +648,8 @@ pub(in crate::web) fn cancel_run_and_disarm_goal(state: &DaemonState, run_id: &s
     if is_subagent_session(state, &session_id) {
         let state = state.clone();
         tokio::spawn(async move {
+            // 先等这一轮真停下：还在收尾的那一轮要是又登记了后台孙代理，先停名下的就漏了它。
+            stop_session_runs(&state, &session_id, Duration::from_secs(5)).await;
             stop_subagent_subtree(&state, &session_id).await;
         });
     }

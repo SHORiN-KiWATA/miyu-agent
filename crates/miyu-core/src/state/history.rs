@@ -15,7 +15,7 @@ impl StateStore {
         &self,
         session_id: &str,
         after_seq: i64,
-    ) -> Result<Vec<(i64, String, String, String)>> {
+    ) -> Result<Vec<BackgroundReportRow>> {
         self.conv_db
             .background_report_replies_after(session_id, after_seq)
     }
@@ -170,6 +170,11 @@ impl StateStore {
     /// 这一轮是不是主会话派给子代理的任务，见 `ConversationDb::turn_from_parent`。
     pub fn turn_from_parent(&self, turn_id: &str) -> Result<bool> {
         self.conv_db.turn_from_parent(turn_id)
+    }
+
+    /// 见 `ConversationDb::turn_job_report`。
+    pub fn turn_job_report(&self, turn_id: &str) -> Result<Option<JobReportResult>> {
+        self.conv_db.turn_job_report(turn_id)
     }
 
     /// 会话里用户说的第一句，见 `ConversationDb::first_user_content`。

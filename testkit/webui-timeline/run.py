@@ -23,10 +23,11 @@ Playwright 拦下 index.html / app.js / styles.css 换成 WEB 里的文件,二�
   prep_row           「准备 xx」签在时间线里、无底色,线已长到它
   live_groups        实时:说话把时间线切成两条,第一条 1 思考 2 工具,第二条 1 工具 + 1 思考 + 1 工具
   live_head_hidden   实时运行中的那条没有总结行
-  live_collapsed     她一开口,前一条收起、总结行出现,文字形如「Worked for 1.2 s · 2 tools · 1 thought」
-  err_marked         失败的那条工具签 is-failure,所在组总结行含「1 err」
+  live_collapsed     她一开口,前一条收起、总结行出现,文字形如「运行了 2 次命令 · 思考了 1 次」(09-26 不挂耗时)
+  err_marked         失败的那条工具签 is-failure,所在组总结行含「出错了 1 次」
   rail_sized         切断后每条时间线的细线有高度(展开态)或缩到 0(收起态)
-  persisted_groups   刷新后从 turn.tool_flow 重建,分组数与实时一致,总结行带落库的耗时(Worked for …)
+  persisted_groups   刷新后从 turn.tool_flow 重建,分组数与实时一致,总结行与实时同一种写法
+  turn_end           回复末尾那行 ✻「模型 · 处理了 N 秒 · 几点完成」,跑完当场有、刷新后还在(09-26)
   no_times           用户消息和助手名字旁都没有时间
   toggle_off_on      设置里关掉「过程自动收起」→ 总结行藏起、全部展开;再开 → 收回
   console_clean      全程无 pageerror / console.error
@@ -34,6 +35,7 @@ Playwright 拦下 index.html / app.js / styles.css 换成 WEB 里的文件,二�
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,6 +64,9 @@ PORT = int(os.environ.get("PORT", "18483"))
 # 没写就跟浏览器走，无头 Chromium 是英文，整页成了 Queued / Arguments。配置和拦截
 # i18n.js 时的注入都按这一个来。
 UI_LANGUAGE = "zh"
+# 最后一段回复末尾那行 ✻ 的文字;没有就是空串。
+TURN_END_JS = "() => [...document.querySelectorAll('.assistant-message .turn-end')].pop()?.textContent || ''"
+TURN_END_RE = re.compile(r"^✻ (?:.+ · )?\S+ (?:\d+ 小时 )?(?:\d+ 分 )?\d+ 秒 · .+ 完成$|^✻ (?:.+ · )?\S+不到 1 秒 · .+ 完成$")
 STUB_PORT = int(os.environ.get("STUB_PORT", "18497"))
 BASE = f"http://127.0.0.1:{PORT}"
 ENV = dict(os.environ, MIYU_HOME=str(HOME), XDG_RUNTIME_DIR=str(RUNTIME))
@@ -297,12 +302,14 @@ def main():
             report["prep_row"] = bool(prep_seen) and prep_seen["inSteps"] and prep_seen["bg"] in ("rgba(0, 0, 0, 0)", "transparent") and prep_seen["railHeight"] > 20
             ls = (live_snapshot or {}).get("lines") or []
             report["live_head_hidden"] = head_hidden_seen and not head_shown_live
-            report["live_collapsed"] = bool(ls) and (not ls[0]["open"]) and (not ls[0]["headHidden"]) and ls[0]["summary"].startswith("Ran 2 commands") and "1 thought" in ls[0]["summary"]
+            report["live_collapsed"] = bool(ls) and (not ls[0]["open"]) and (not ls[0]["headHidden"]) and ls[0]["summary"].startswith("运行了 2 次命令") and "思考了 1 次" in ls[0]["summary"]
             dl = (done or {}).get("lines") or []
             report["live_groups"] = len(dl) == 2 and dl[0]["tools"] == 2 and dl[0]["thoughts"] == 1 and dl[1]["tools"] == 2 and dl[1]["thoughts"] == 1
-            report["err_marked"] = len(dl) == 2 and dl[1]["failures"] == 1 and "1 err" in dl[1]["summary"]
+            report["err_marked"] = len(dl) == 2 and dl[1]["failures"] == 1 and "出错了 1 次" in dl[1]["summary"]
             report["rail_sized"] = all((not l["open"] and l["railHeight"] == 0) or (l["open"] and l["railHeight"] > 20) for l in dl)
             report["no_times"] = done is not None and not any(s.strip() for s in done["labelSpans"]) and not done["userActionSpans"]
+            # 回复末尾那行 ✻(09-26):跑完当场就有。
+            end_live = page.evaluate(TURN_END_JS)
 
             # 展开第二条 + 点开失败那行的详情
             page.evaluate("() => { const l = [...document.querySelectorAll('.assistant-message:has(.proc-line)')].pop().querySelectorAll('.proc-line')[1]; l.querySelector('.proc-head').click(); }")
@@ -341,10 +348,15 @@ def main():
             again = page.evaluate(GROUPS_JS)
             report["reloaded"] = again
             al = (again or {}).get("lines") or []
-            # 回看的总结行也要有耗时(落库的 started_ms/finished_ms)。09-24 起按类写:第一组两条命令
-            # 「Ran 2 commands · 1 thought · 1.2 s」,第二组读文件失败 + 一条命令「Ran 1 command · 1 tool · 1 thought · 1 err · …」
-            report["persisted_groups"] = len(al) == 2 and [(l["tools"], l["thoughts"]) for l in al] == [(2, 1), (2, 1)] and all(l["static"] and not l["headHidden"] and not l["open"] for l in al) and al[0]["summary"].startswith("Ran 2 commands") and al[1]["summary"].startswith("Ran 1 command · 1 tool")
-            report["persisted_err"] = len(al) == 2 and al[1]["failures"] == 1 and "1 err" in al[1]["summary"]
+            # 回看的总结行和实时同一种写法(09-26 起不挂耗时):第一组两条命令「运行了 2 次命令 · 思考了 1 次」,
+            # 第二组读文件失败 + 一条命令「运行了 1 次命令 · 用了 1 个工具 · 思考了 1 次 · 出错了 1 次」
+            report["persisted_groups"] = len(al) == 2 and [(l["tools"], l["thoughts"]) for l in al] == [(2, 1), (2, 1)] and all(l["static"] and not l["headHidden"] and not l["open"] for l in al) and al[0]["summary"].startswith("运行了 2 次命令") and al[1]["summary"].startswith("运行了 1 次命令 · 用了 1 个工具")
+            report["persisted_err"] = len(al) == 2 and al[1]["failures"] == 1 and "出错了 1 次" in al[1]["summary"]
+            # 刷新后按落库的时刻重画:同一个动词(按轮号挑),写法不变。
+            end_again = page.evaluate(TURN_END_JS)
+            report["_turn_end"] = [end_live, end_again]
+            verb = lambda text: next((part.split(" ")[0] for part in text.split(" · ") if "秒" in part), None)
+            report["turn_end"] = bool(TURN_END_RE.match(end_live or "")) and bool(TURN_END_RE.match(end_again or "")) and verb(end_live) == verb(end_again)
             # 亮色主题也看一眼(用户日常用亮色)
             page.click("#sidebarThemeButton")
             page.wait_for_timeout(500)

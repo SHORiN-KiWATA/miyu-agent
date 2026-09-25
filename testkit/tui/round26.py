@@ -274,10 +274,15 @@ def scenario_interrupt(report):
         text = "\n".join(after)
         report["r26_03_no_inline_card"] = "×1" not in text and "↳" not in text
         (h.OUT / "round26-interrupt-raw.bin").write_bytes(bytes(sink))
-        # 收缩行：09-24 起按类写——跑过命令是 `› Ran 1 command · … · 1 err · 220ms`，没跑命令才是
-        # `› Worked for … · 1 tool`（打断得快的话没有秒数，只剩计数）。
+        # 收缩行：09-26 起「动词了 + 次数」——`› 运行了 1 次命令 · 出错了 1 次`（英文界面
+        # `› Ran 1 command · 1 err`），老二进制是 `› Ran 1 command · … · 220ms`。
         head = max(
-            (i for i, l in enumerate(after) if "›" in l and any(word in l for word in ("command", "tool", "edit"))),
+            (
+                i
+                for i, l in enumerate(after)
+                if "›" in l
+                and any(word in l for word in ("command", "tool", "edit", "命令", "工具", "编辑"))
+            ),
             default=None,
         )
         report["r26_03_timeline_folded"] = head is not None

@@ -179,6 +179,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     // 监督器盯着子会话每轮结束判「任务完没完」。
     install_subagent_host(&state);
     spawn_subagent_supervisor(state.clone());
+    spawn_subagent_activity_tracker(state.clone());
     // 上一个 daemon 死掉或关停时没跑完的回合：投递、平台、子代理宿主都装好之后接着跑
     // （09-24 断点续跑）。
     spawn_restart_resumes(&state);
@@ -435,6 +436,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
         .route("/crosssession.js", get(crosssession_js_asset))
+        .route("/turnend.js", get(turnend_js_asset))
         .route("/subagents.js", get(subagents_js_asset))
         .route("/sessionselect.js", get(sessionselect_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))

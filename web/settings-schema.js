@@ -218,7 +218,7 @@
         {
           path: "display.fold_timeline",
           label: t("过程收起成一行摘要"),
-          hint: t("开：做完的步骤收成一行，如 Ran 3 commands · 2 edits · 12s；关：每一步就地留着。两种情况下步骤都点得开"),
+          hint: t("开：做完的步骤收成一行，如「运行了 3 次命令 · 编辑了 2 次」；关：每一步就地留着。两种情况下步骤都点得开"),
           kind: "toggle",
           default: true,
         },

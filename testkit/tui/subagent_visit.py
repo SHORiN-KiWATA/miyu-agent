@@ -148,7 +148,8 @@ def main():
                 report["up_row_returns"] = screen is not None
                 r.save("visit-up-row", screen or r.LAST["screen"] or [])
 
-        # 2b. 方向键：↓ 停在子代理那一行、回车进去；再 ↓ 停在「○ 主会话」、回车回来。
+        # 2b. 方向键：↓ 停在子代理那一行、回车进去；光标留在任务条上、停在子代理那一行
+        # （用户 09-26），↑ 挪到「○ 主会话」、回车回来。
         os.write(master, b"\x1b[B")
         h.settle(master, sink, quiet=0.3, timeout=1.5)
         os.write(master, b"\r")
@@ -156,7 +157,10 @@ def main():
         report["keys_enter_child"] = screen is not None
         r.save("visit-keys-in", screen or r.LAST["screen"] or [])
         if screen is not None:
-            os.write(master, b"\x1b[B")
+            h.settle(master, sink, quiet=0.4, timeout=2.0)
+            focused = [line for line in h.render(bytes(sink))[-8:] if line.startswith("›")]
+            report["keys_focus_stays_on_child"] = bool(focused) and ROW in focused[0]
+            os.write(master, b"\x1b[A")
             h.settle(master, sink, quiet=0.3, timeout=1.5)
             os.write(master, b"\r")
             screen = r.wait_screen(master, sink, back_in_parent, 10.0)

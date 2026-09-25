@@ -798,7 +798,7 @@
    * 连续的思考块和工具签串成一条时间线(.proc-line):一根 1px 细线穿过图标列的中心,
    * 图标处断开,图标就是节点。正文、媒体、任何不是思考/工具的东西一出现,就把当前
    * 时间线「切断」——后面再来工具就另起一条。
-   * 「过程自动收起」开着时,切断那一刻收成一行总结(Worked for 5.4 s · 3 tools);
+   * 「过程自动收起」开着时,切断那一刻收成一行总结(运行了 2 次命令 · 用了 3 个工具);
    * 关着就保持展开,也不出总结行。运行中(还没切断)永远没有总结行。
    * 细线是独立元素,起点和终点跟着可见节点走,ResizeObserver 一触发就重算,
    * 高度交给 CSS transition——新出一行,线就平滑长到那个图标,不是瞬间跳。
@@ -1018,10 +1018,11 @@
     return "other";
   }
 
-  // 总结行文字(09-24,与 TUI 的 summary_line 同一套规则):
-  //   跑过命令 → Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err · 12s
-  //   没跑命令 → Worked for 12s · 2 edits · 4 tools · 1 thought
-  //   只想了想 → 1 thought(网页的思考块不记耗时)
+  // 总结行文字(09-26 用户拍板,与 TUI 的 summary_line 同一套规则):
+  //   动过手 → 运行了 3 次命令 · 编辑了 2 次 · 用了 4 个工具 · 思考了 1 次 · 出错了 1 次
+  //            (英文界面 Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err)
+  //   只想了想 → 思考了 1 次(网页的思考块不记耗时)
+  // 不再有 Worked for,也不挂耗时:一轮花了多久看回复末尾的 ✻ 那一行(turnend.js)。
   function procLineRefresh(line) {
     const proc = line?.miyuProc;
     if (!proc?.closed) return;
@@ -1031,17 +1032,6 @@
     }
     const thoughts = proc.steps.querySelectorAll(":scope > .reasoning-block").length;
     const errs = proc.steps.querySelectorAll(":scope > .tool-card.is-failure").length;
-    // 「Worked for」= 第一个工具开跑到最后一个工具跑完。实时用 performance.now,
-    // 回看用落库的 Unix 毫秒,差值同一口径,刷新前后数字一致。
-    let first = Infinity;
-    let last = -Infinity;
-    for (const card of proc.steps.querySelectorAll(":scope > .tool-card")) {
-      const timing = card.miyuTiming;
-      if (!timing || timing.startedAt == null || timing.finishedAt == null) continue;
-      first = Math.min(first, timing.startedAt);
-      last = Math.max(last, timing.finishedAt);
-    }
-    const elapsed = Number.isFinite(first) && Number.isFinite(last) ? formatToolDuration(last - first) : "";
     const strong = (text) => {
       const b = document.createElement("b");
       b.textContent = text;
@@ -1053,20 +1043,23 @@
       span.textContent = text;
       return span;
     };
+    // 中文按「动词了 + 次数」;英文照旧按单复数。
+    const zh = window.MiyuI18n?.lang === "zh";
     const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const thoughtText = zh ? t("思考了 {n} 次", { n: thoughts }) : count(thoughts, "thought", "thoughts");
     // 先排好文字,打头那一项加粗;报错那一项标红。
     const items = [];
     const acted = counts.command + counts.edit + counts.other > 0;
     if (!acted) {
-      items.push({ text: thoughts ? count(thoughts, "thought", "thoughts") : (elapsed ? `Worked for ${elapsed}` : t("已完成")) });
+      items.push({ text: thoughts ? thoughtText : t("已完成") });
     } else {
-      if (counts.command) items.push({ text: `Ran ${count(counts.command, "command", "commands")}` });
-      else if (elapsed) items.push({ text: `Worked for ${elapsed}` });
-      if (counts.edit) items.push({ text: count(counts.edit, "edit", "edits") });
-      if (counts.other) items.push({ text: count(counts.other, "tool", "tools") });
-      if (thoughts) items.push({ text: count(thoughts, "thought", "thoughts") });
-      if (errs) items.push({ text: `${errs} err`, className: "proc-err" });
-      if (counts.command && elapsed) items.push({ text: elapsed });
+      if (counts.command) {
+        items.push({ text: zh ? t("运行了 {n} 次命令", { n: counts.command }) : `Ran ${count(counts.command, "command", "commands")}` });
+      }
+      if (counts.edit) items.push({ text: zh ? t("编辑了 {n} 次", { n: counts.edit }) : count(counts.edit, "edit", "edits") });
+      if (counts.other) items.push({ text: zh ? t("用了 {n} 个工具", { n: counts.other }) : count(counts.other, "tool", "tools") });
+      if (thoughts) items.push({ text: thoughtText });
+      if (errs) items.push({ text: zh ? t("出错了 {n} 次", { n: errs }) : `${errs} err`, className: "proc-err" });
     }
     const parts = items.map((item, index) => (index === 0 ? strong(item.text) : plain(item.text, item.className || "")));
     proc.summary.replaceChildren();
@@ -7399,10 +7392,15 @@
     const assistantReasoning = String(turn?.assistant_reasoning || "");
     const assets = turn?.status === "running" ? [] : (Array.isArray(turn?.assets) ? turn.assets : []);
     const stashedFinal = takeStash("final");
+    // 回复末尾那行 ✻(09-26):跑完的轮才有,挂在最后一段回复里。
+    const turnEnd = turn?.status === "completed"
+      ? { turnId, model: turn?.model, startedAt: turn?.user_timestamp, finishedAt: turn?.assistant_timestamp }
+      : null;
     if (stashedFinal) {
       stashedFinal.classList.toggle("is-muted", turn?.active_context === false);
       stashedFinal.dataset.segmentKind = "final";
       setAssistantRedoAction(stashedFinal, candidate);
+      window.MiyuTurnEnd?.attach(stashedFinal, turnEnd);
       elements.timeline.appendChild(stashedFinal);
     } else if (
       !claimed
@@ -7412,7 +7410,7 @@
         || persistedToolRounds.length
         || persistedExchanges.length)
     ) {
-      elements.timeline.appendChild(createAssistantMessage({
+      const finalArticle = createAssistantMessage({
         content: assistantContent,
         reasoning: assistantReasoning,
         toolRounds: persistedToolRounds,
@@ -7433,7 +7431,9 @@
         segmentKind: "final",
         redoTarget: candidate,
         muted: turn?.active_context === false
-      }));
+      });
+      window.MiyuTurnEnd?.attach(finalArticle, turnEnd);
+      elements.timeline.appendChild(finalArticle);
     }
     if ((turn?.status === "running" && !claimed) || turn?.status === "interrupted") elements.timeline.appendChild(createTurnStatus(turn));
     else if (!stashedFinal && !assistantContent.trim() && !assistantReasoning.trim() && (asFiniteNumber(turn?.token_total) > 0 || turn?.active_context === false)) {
@@ -10691,6 +10691,13 @@
         });
         live.meta.textContent = usage || t("已完成");
       }
+      // 回复末尾那行 ✻(09-26);稍后按落库的回合重画时换成库里的时刻。
+      window.MiyuTurnEnd?.attach(live.article, {
+        turnId: live.turnId,
+        model: data?.model,
+        startedAt: live.startedAt,
+        finishedAt: new Date()
+      });
       // 输入框下方信息行:最新一轮的输出速度 + 会话累计 token(#99/#131)。收尾时
       // 会话累计是权威值(所有子代理都跑完、子会话都记好了),直接当基线,把中途的
       // 子代理实时估算清空(已被基线接管)。

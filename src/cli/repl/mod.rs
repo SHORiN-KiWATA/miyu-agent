@@ -23,6 +23,8 @@ pub(in crate::cli) mod session_picker;
 pub(in crate::cli) mod strip;
 /// 任务条上列哪些行、按什么顺序、挂在哪一层。
 pub(in crate::cli) mod strip_tree;
+/// 实时那一轮末尾的 `✻` 收尾行。
+pub(in crate::cli) mod turn_end;
 
 pub(super) mod direct;
 pub(super) mod editor;

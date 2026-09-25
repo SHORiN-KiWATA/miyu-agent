@@ -314,3 +314,116 @@ async fn stopping_an_idle_subagent_takes_its_branch_down() {
         Some("interrupted")
     );
 }
+
+/// 主会话闲着按 Ctrl+C（`StopSessionJobs`）：名下的子代理一支也一起停——哪怕它已经没有镜像任务
+/// （用户 09-26：切进子代理停过它一次、又在它会话里让它派了孙代理，回到主会话 Ctrl+C 一个都
+/// 停不到）。孙代理的轮和命令停下、记成被打断，子代理也记成被打断。
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_an_idle_main_session_takes_branches_without_mirrors_down() {
+    shared_jobs_home();
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let tree = tree(&state);
+    state
+        .state_store
+        .set_session_task_state(&tree.child, SubagentTaskState::Waiting)
+        .unwrap();
+    let below = command_in(&tree.grandchild).await;
+    let grandchild_run = run_in(&state, "grandchild-run-3", &tree.grandchild);
+
+    let (mut client, server) = tokio::net::UnixStream::pair().unwrap();
+    let server_state = state.clone();
+    let server = tokio::spawn(async move { handle_ipc_connection(server_state, server).await });
+    ipc::send(
+        &mut client,
+        &IpcRequest::new(IpcCommand::StopSessionJobs {
+            session_id: tree.main.clone(),
+        }),
+    )
+    .await
+    .unwrap();
+    let reply = ipc::receive::<IpcFrame>(&mut client).await.unwrap();
+    let _ = server.await;
+
+    // 没被要求停的话，假回合等满 3 秒自己退场、报「没人叫停」。
+    let grandchild_stopped = grandchild_run.await.unwrap();
+    let below_running = running(&below);
+    let _ = tools::jobs::stop_job(&below).await;
+    assert!(
+        matches!(reply, Some(IpcFrame::AdminResult { .. })),
+        "{reply:?}"
+    );
+    assert!(!below_running, "the grandchild's command kept running");
+    assert!(grandchild_stopped, "the grandchild kept running");
+    assert_eq!(
+        task_state(&state, &tree.grandchild).as_deref(),
+        Some("interrupted")
+    );
+    assert_eq!(
+        task_state(&state, &tree.child).as_deref(),
+        Some("interrupted")
+    );
+}
+
+/// 任务条那一行的窥视、量、用时不再只靠后台子代理的镜像任务（09-26 用户：停下之后接着聊的那条
+/// 子代理，任务条上什么都没有）：子代理会话一起轮，daemon 就跟着事件流记它在干什么，列子代理时
+/// 带上。这条会话没有镜像任务。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_subagent_reports_what_it_is_doing_without_a_mirror_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let tree = tree(&state);
+    spawn_subagent_activity_tracker(state.clone());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    state.events.publish(
+        "run.started",
+        json!({ "run_id": "live-run", "session_id": tree.child }),
+    );
+    state.events.publish(
+        "tool.started",
+        json!({
+            "run_id": "live-run",
+            "tool_id": "t1",
+            "name": "run_command",
+            "display_name": "运行命令",
+            "arguments": "{\"command\":\"sleep 600\"}",
+        }),
+    );
+    state.events.publish(
+        "chat.round_usage",
+        json!({ "run_id": "live-run", "cumulative_tokens": 12_345 }),
+    );
+    let mut row = Value::Null;
+    for _ in 0..100 {
+        let listed = subagent_sessions_json(&state, &tree.main).unwrap();
+        row = listed["sessions"][0].clone();
+        if row["peek"].as_str().is_some_and(|peek| !peek.is_empty())
+            && row["tokens"].as_u64() == Some(12_345)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(row["job_id"].is_null(), "这条没有镜像任务: {row}");
+    assert!(
+        row["peek"]
+            .as_str()
+            .is_some_and(|peek| peek.contains("sleep 600")),
+        "{row}"
+    );
+    assert_eq!(row["tokens"], 12_345, "{row}");
+    assert!(row["running_since_ms"].as_u64().is_some(), "{row}");
+
+    state
+        .events
+        .publish("run.completed", json!({ "run_id": "live-run" }));
+    for _ in 0..100 {
+        if subagent_activity(&tree.child).is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(subagent_activity(&tree.child).is_none(), "这一轮结束就撤");
+}

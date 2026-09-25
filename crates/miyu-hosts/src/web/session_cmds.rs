@@ -792,16 +792,32 @@ pub(in crate::web) fn subagent_sessions_json(
         .child_sessions(parent_session_id)
         .map_err(|error| safe_error_message(&error))?;
     let jobs = tools::jobs::overview();
-    let descendants: Vec<usize> = children
+    // 名下还在跑的后代、这会儿的样子只算还没到终态的：跑完的不上任务条，轮询一秒一次，
+    // 名下攒了几十条做完的子代理时不必每条都查一遍库。
+    let live: Vec<Option<(usize, LiveRow)>> = children
         .iter()
-        .map(|overview| running_descendants(state, &overview.record.session_id, &jobs))
+        .map(|overview| {
+            let record = &overview.record;
+            let pending = record
+                .task_state
+                .as_deref()
+                .and_then(miyu_core::state::SubagentTaskState::parse)
+                .is_some_and(miyu_core::state::SubagentTaskState::is_pending);
+            pending.then(|| {
+                (
+                    running_descendants(state, &record.session_id, &jobs),
+                    live_row(state, &record.session_id),
+                )
+            })
+        })
         .collect();
     let manager = state.manager.lock().unwrap();
     let sessions: Vec<Value> = children
         .iter()
-        .zip(descendants)
-        .map(|(overview, running_descendants)| {
+        .zip(live)
+        .map(|(overview, live)| {
             let record = &overview.record;
+            let (running_descendants, live) = live.unwrap_or_default();
             json!({
                 "session_id": record.session_id,
                 "name": record.name,
@@ -816,12 +832,54 @@ pub(in crate::web) fn subagent_sessions_json(
                 "job_id": miyu_engine::tools::subagent::background_job_of(&record.session_id),
                 // 它名下还在跑的后代（孙代理、这一支的后台命令）：任务条折叠行上的「（+N）」。
                 "running_descendants": running_descendants,
+                // 它这会儿在干什么、烧了多少、这一轮什么时候起的（09-26）：前台后台、停下之后
+                // 接着聊的都有，任务条那一行不再只靠后台子代理的镜像任务。
+                "peek": live.peek,
+                "tokens": live.tokens,
+                "tokens_label": live.tokens_label,
+                "running_since_ms": live.running_since_ms,
                 "created_at": record.created_at,
                 "updated_at": record.updated_at,
             })
         })
         .collect();
     Ok(json!({ "session_id": parent_session_id, "sessions": sessions }))
+}
+
+/// 任务条上一行子代理的实时那几样。
+#[derive(Default)]
+struct LiveRow {
+    peek: String,
+    tokens: u64,
+    tokens_label: String,
+    running_since_ms: Option<u64>,
+}
+
+/// 在跑的取事件流里记着的（`subagent_activity`）；闲着等后台的取库里的会话累计。
+fn live_row(state: &DaemonState, session_id: &str) -> LiveRow {
+    if let Some((status, since)) = subagent_activity(session_id) {
+        if status.tokens > 0 || !status.peek.is_empty() {
+            return LiveRow {
+                peek: status.peek,
+                tokens: status.tokens,
+                tokens_label: status.tokens_label,
+                running_since_ms: Some(since),
+            };
+        }
+    }
+    let tokens = state
+        .stores
+        .for_session(session_id)
+        .pinned(session_id)
+        .session_cumulative_token_totals()
+        .map(|totals| totals.total)
+        .unwrap_or_default();
+    LiveRow {
+        tokens,
+        tokens_label: miyu_engine::tools::subagent_runner::format_token_count(tokens, false),
+        running_since_ms: subagent_activity(session_id).map(|(_, since)| since),
+        ..LiveRow::default()
+    }
 }
 
 /// 网页能「看」的会话：侧栏里那些，外加它们名下的子代理会话（会话项目第 4 段）。子会话按

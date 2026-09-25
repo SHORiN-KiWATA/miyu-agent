@@ -2282,6 +2282,15 @@ body[data-theme="graphite"] .session-unread-dot {
   font-size: inherit;
 }
 
+/* 回复末尾那行 ✻(09-26,与终端同一种写法):跟 meta 行一样的灰与等宽字。 */
+.turn-end {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
 .message-actions button,
 .assistant-meta button,
 .code-copy-button {

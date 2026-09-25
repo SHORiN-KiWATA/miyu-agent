@@ -170,6 +170,19 @@ pub(in crate::cli) struct BackgroundReport {
     pub(in crate::cli) turn_id: String,
     pub(in crate::cli) headline: String,
     pub(in crate::cli) reply: String,
+    /// 后台任务报告附的结果段：铃铛那一行点开看（09-26）。
+    pub(in crate::cli) job_report: Option<miyu_core::state::JobReportResult>,
+    /// 回复末尾那行 `✻`：跑完或被打断的轮才有（报错的轮不画，回放也没有它）。
+    pub(in crate::cli) turn_end: Option<ReportTurnEnd>,
+}
+
+/// 补印的那一轮收尾要的几样（见 `render::timeline::TurnEnd`）。
+#[derive(Clone)]
+pub(in crate::cli) struct ReportTurnEnd {
+    pub(in crate::cli) model: Option<String>,
+    pub(in crate::cli) elapsed: std::time::Duration,
+    pub(in crate::cli) finished_at: chrono::DateTime<chrono::Local>,
+    pub(in crate::cli) interrupted: bool,
 }
 
 /// 任务条那棵树上的任务：正在看的会话和访问路径上各条会话自己的，以及它们名下的（树根是
@@ -573,15 +586,31 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                     }
                 };
                 if let Ok(rows) = store.background_report_replies_after(&session_id, watermark) {
-                    for (seq, turn_id, display, reply) in rows {
-                        seen.insert(session_id.clone(), seq);
-                        if feed.rendered_turns.lock().unwrap().contains(&turn_id) {
+                    for row in rows {
+                        seen.insert(session_id.clone(), row.seq);
+                        if feed.rendered_turns.lock().unwrap().contains(&row.turn_id) {
                             continue;
                         }
+                        let turn_end = (row.status != "failed")
+                            .then(|| {
+                                render::timeline::turn_end_span(
+                                    row.started_at.as_deref(),
+                                    row.finished_at.as_deref(),
+                                )
+                            })
+                            .flatten()
+                            .map(|(elapsed, finished_at)| ReportTurnEnd {
+                                model: row.assistant_model.clone(),
+                                elapsed,
+                                finished_at,
+                                interrupted: row.status == "interrupted",
+                            });
                         feed.reports.lock().unwrap().push(BackgroundReport {
-                            turn_id,
-                            headline: display,
-                            reply,
+                            turn_id: row.turn_id,
+                            headline: row.display_content,
+                            reply: row.reply,
+                            job_report: row.job_report,
+                            turn_end,
                         });
                     }
                 }
