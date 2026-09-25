@@ -546,3 +546,23 @@ async fn a_gateway_that_rejects_tool_choice_gets_the_toolless_request() {
     assert!(bodies[1].get("tool_choice").is_none());
     assert!(bodies[1].get("tools").is_none());
 }
+
+/// 09-24 B7：有的网关每一片都重发完整的函数名。同一个调用只在名字第一次出现（或
+/// 真的变了）时往外报一次，否则每片都算一个新调用，单个调用被画成「批量」。
+#[test]
+fn a_repeated_function_name_is_announced_once() {
+    let mut acc = ToolCallAccumulator::default();
+    let delta = |name: &str, arguments: &str| ToolCallDelta {
+        index: 0,
+        id: None,
+        kind: None,
+        function: ToolCallFunctionDelta {
+            name: Some(name.to_string()),
+            arguments: Some(arguments.to_string()),
+        },
+    };
+    assert_eq!(acc.push(delta("edit", "{")), Some("edit".to_string()));
+    assert_eq!(acc.push(delta("edit", "\"a\":")), None);
+    assert_eq!(acc.push(delta("edit", "1}")), None);
+    assert_eq!(acc.calls[0].arguments, "{\"a\":1}");
+}

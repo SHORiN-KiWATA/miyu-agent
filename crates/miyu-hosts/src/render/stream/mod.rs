@@ -373,9 +373,17 @@ impl StreamRenderer {
     /// 的那一步会被记成红色的「已中断」，而真结果回来时又记一次（09-19 在
     /// shellhook 里实测过一次发图两行报错）。
     pub fn prepare_for_panel(&mut self) -> Result<()> {
-        self.preparing_question_started_at = None;
-        self.tool_preparing = None;
+        // 「准备问题 / 准备编辑」是转轮画的那一行。面板一开 tick 就停了，只清状态不重画
+        // 的话，面板开着的整段时间上面都挂着一行过时的「⠋ 准备问题 · <1ms」（09-24，
+        // goal_question 走查）。清掉之后按新状态立刻重画一次，别的活动行照旧留着。
+        let was_preparing = self.preparing_question_started_at.take().is_some()
+            | self.tool_preparing.take().is_some();
         self.tool_preparing_since = None;
+        if was_preparing && self.wait_spinner.is_some() {
+            self.set_waiting_phase(self.waiting_phase_text());
+            self.last_tick = None;
+            self.tick_spinner()?;
+        }
         self.show_cursor()?;
         Ok(())
     }

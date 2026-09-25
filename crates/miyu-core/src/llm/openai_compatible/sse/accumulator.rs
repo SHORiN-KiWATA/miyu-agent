@@ -276,7 +276,7 @@ impl ToolCallAccumulator {
             self.calls.push(PartialToolCall::default());
         }
         let call = &mut self.calls[delta.index];
-        let name_updated = delta.function.name.is_some();
+        let name_before = call.name.len();
         if let Some(id) = delta.id {
             call.id = id;
         }
@@ -307,7 +307,10 @@ impl ToolCallAccumulator {
                 MAX_STREAM_TOOL_ARGUMENT_BYTES,
             );
         }
-        (name_updated && !call.name.is_empty()).then(|| call.name.clone())
+        // 只在名字真的变了（第一次出现、或碎片续上）时往外报（09-24 B7）。有的网关
+        // 每一片都重发完整函数名：原来每片都报一次，下游把一个调用数成好几个，单个
+        // 调用被画成「批量准备」。
+        (call.name.len() != name_before && !call.name.is_empty()).then(|| call.name.clone())
     }
 
     pub(in crate::llm::openai_compatible) fn finish(self) -> Vec<ToolCall> {

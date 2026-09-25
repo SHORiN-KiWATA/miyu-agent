@@ -74,19 +74,22 @@ pub fn register_readonly(
             let paths = read_paths.clone();
             async move { read_dispatch(args, &config, &paths) }
         },
-    ));
+    )
+    .concurrent());
     registry.register(ToolSpec::new(
         "glob",
         "Find files by case-insensitive glob pattern under a directory. Defaults to workspace; use ~ or /home for user files, or / for protected global search.",
         json!({"type":"object","properties":{"path":{"type":"string","description": "Directory to search. Defaults to workspace; use ~ or /home for user files, or / for protected global search."},"pattern":{"type":"string","description": "Case-insensitive glob pattern, for example *ai*test*."},"max_results":{"type":"integer","description": "Maximum results."}},"required":["pattern"],"additionalProperties":false}),
         |args| async move { glob_files(args).await },
-    ));
+    )
+    .concurrent());
     registry.register(ToolSpec::new(
         "grep",
         "Search file contents using ripgrep under a directory or single file. Defaults to workspace; use ~ or /home for user files, or / for protected global search. No matches are returned as an empty ok result.",
         json!({"type":"object","properties":{"path":{"type":"string","description": "Directory or file to search. Defaults to workspace; use ~ or /home for user files, or / for protected global search."},"pattern":{"type":"string","description": "Regex pattern."},"include":{"type":"string","description": "Optional case-insensitive file glob filter."},"max_results":{"type":"integer","description": "Maximum matches."}},"required":["pattern"],"additionalProperties":false}),
         |args| async move { grep_text(args).await },
-    ));
+    )
+    .concurrent());
 }
 
 /// `read` 的命名空间分发:`artifact:名字` 读当前会话的 Artifact 库
