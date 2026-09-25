@@ -145,7 +145,11 @@ def main():
         # 上键：历史得从被换掉的那条会话接过来。
         os.write(master, b"\x1b[A")
         h.settle(master, sink, quiet=0.5, timeout=8)
-        screen = h.render(bytes(sink))
+        # 大厅的星空一直在动，读到的字节常常停在一帧中间：星空补丁先把输入框那一行擦了，
+        # 同一帧后面才重画回来（09-25，miyu-fc）。截到最后一个整帧的结尾再看。
+        raw = bytes(sink)
+        end = raw.rfind(b"\x1b[?2026l")
+        screen = h.render(raw[: end + len(b"\x1b[?2026l")] if end >= 0 else raw)
         r.save("new-session-history-up", screen)
         report["上键调得出上一句"] = any("第一次说的话" in line for line in screen)
         # 把输入框清干净，免得它被当成下一步的输入（Ctrl+U 在这个编辑器里
