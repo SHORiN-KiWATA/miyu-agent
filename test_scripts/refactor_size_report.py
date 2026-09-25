@@ -195,7 +195,7 @@ def rename_map():
     return mapping
 
 
-def check(rows, baseline):
+def check(rows, baseline, strict=False):
     problems = []
     base_rows = baseline["files"]
     base_total = sum(row["total"] for row in base_rows.values())
@@ -207,7 +207,9 @@ def check(rows, baseline):
         # 「新文件」的判据是「上一个提交里没有」，不是「基线里没有」。基线是
         # 拆分开始时的快照，文件一路在搬家，早就对不上路径了；而 HEAD 是刚
         # 刚那一步，拿它判才准。
-        if row["total"] > RED_LINE and was is None and not exists_at_head(name):
+        # `strict`（CI）：干净检出里每个文件都「在上一个提交里」，那条豁免在 CI 上恒成立、
+        # 等于没查。CI 改成凡是基线里没有的越红线文件都判红。
+        if row["total"] > RED_LINE and was is None and (strict or not exists_at_head(name)):
             problems.append(f"新增越红线文件：{name} {row['total']} 行 > {RED_LINE}")
         elif (
             was
@@ -240,6 +242,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-baseline", action="store_true", help="记录当前状态为基线")
     parser.add_argument("--check", action="store_true", help="与基线对比并在恶化时退出非零")
+    parser.add_argument("--strict", action="store_true",
+                        help="CI 用：基线里没有的越红线文件一律判红，不看上一个提交里有没有")
     args = parser.parse_args()
 
     rows = collect()
@@ -259,7 +263,7 @@ def main():
             print(f"\n缺少基线文件 {BASELINE.relative_to(ROOT)}，"
                   "先跑 --write-baseline")
             return 1
-        return check(rows, json.loads(BASELINE.read_text(encoding="utf-8")))
+        return check(rows, json.loads(BASELINE.read_text(encoding="utf-8")), strict=args.strict)
     return 0
 
 

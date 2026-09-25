@@ -26,8 +26,10 @@ def execute(suite, binary, box, supervisor, report_dir, timeout, frozen):
     # 422 条,而本机 `refactor-check.sh` 跑的是 2667 条——差的两千多条里包括
     # 沙盒的行为测试，于是「CI 绿了」对那些代码根本不构成保证（当天差点据此
     # 宣布 macOS 沙盒验过了）。本机实测：不加 423 条，加了 825 条。
+    # `--tests` 而不是 `--lib`（09-25）:`--lib` 只跑库里的单测，`tests/` 下起真 daemon、真渲染
+    # worker 的两条集成测试（daemon_reload、renderer_worker）CI 上从来没跑过。
     argv = ['cargo', 'test', '--frozen' if frozen else '--locked',
-            '--workspace', '--lib']
+            '--workspace', '--tests']
     if suite in FILTERS:
         argv.append(FILTERS[suite])
     env = box.environment()

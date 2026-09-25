@@ -27,7 +27,8 @@ for _herdr_key in [key for key in os.environ if key.startswith("HERDR_")]:
 
 HOME = Path("/tmp/miyu-mermaid-probe/home")
 REPO = Path(__file__).resolve().parents[2]
-BIN = REPO / "target" / "debug" / "miyu"
+# 走查红绿账（testkit/fleet.py）按 MIYU_BIN / BIN 指定被测的二进制，和别的走查同一个口径。
+BIN = Path(os.environ.get("MIYU_BIN") or os.environ.get("BIN") or REPO / "target" / "debug" / "miyu")
 SMOKE = REPO / "testkit" / "repl-smoke"
 
 FLOW = (

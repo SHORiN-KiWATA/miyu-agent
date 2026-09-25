@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # 走查红账要和上一个提交比（PR 上 HEAD^ 就是目标分支，push 上是前一个提交）。
+          fetch-depth: 2
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
@@ -32,6 +34,15 @@ jobs:
         run: python3 -m unittest discover -s packaging/ci/tests -v
       - name: Keep the model-facing tool descriptions free of CJK
         run: bash test_scripts/check-model-english.sh
+      # 下面三道只依赖标准库，以前只在本机 refactor-check.sh 里跑（09-25 挪进 CI）。
+      - name: Keep files under the size ceiling
+        run: python3 test_scripts/refactor_size_report.py --check --strict
+      - name: Keep the layer order acyclic
+        run: python3 test_scripts/arch_dep_check.py
+      - name: Keep every web UI string translatable
+        run: python3 test_scripts/check-webui-i18n.py
+      - name: Keep the walkthrough ledger well-formed and its known reds shrinking
+        run: python3 testkit/fleet.py --check --against-ref HEAD^
 
   workflows:
     runs-on: ${{ vars.LINUX_X64_RUNNER || 'ubuntu-24.04' }}
