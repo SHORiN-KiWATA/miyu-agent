@@ -65,13 +65,17 @@ impl Agent {
             loaded_tools,
         );
         loop {
-            let tool_limit_reached = (self.core.max_tool_rounds > 0
-                && st.tool_round >= self.core.max_tool_rounds)
-                || st.repeat_fused;
+            let rounds_exhausted =
+                self.core.max_tool_rounds > 0 && st.tool_round >= self.core.max_tool_rounds;
+            let tool_limit_reached = rounds_exhausted || st.repeat_fused;
 
             self.refresh_tool_catalogs().await;
 
-            let definitions = self.round_tool_definitions(tool_limit_reached);
+            // 复读保险丝熔断是端点故障态，收走工具逼模型成文（08-24 设计，不动）；
+            // 轮数用完则照带同一份工具、只是不许调（09-24 B5）：tools 排在前缀最前面，
+            // 原来一收走，整段缓存在上下文最大的这一轮全部作废。
+            let definitions = self.round_tool_definitions(st.repeat_fused);
+            let tool_choice_none = rounds_exhausted && !definitions.is_empty();
 
             on_event(AgentEvent::ReasoningStart {
                 received_at: Instant::now(),
@@ -96,6 +100,7 @@ impl Agent {
                     current_turn_id,
                     request_messages.clone(),
                     definitions,
+                    tool_choice_none,
                     st.responses_continuation.as_deref(),
                     control,
                     on_event,

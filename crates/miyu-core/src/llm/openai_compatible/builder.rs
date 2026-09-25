@@ -64,6 +64,7 @@ impl OpenAiCompatibleClient {
             max_tokens_override: None,
             request_scope: "chat",
             continuation_health,
+            tool_choice_none: false,
             claude_code,
             antigravity,
             codex,
@@ -161,6 +162,7 @@ impl OpenAiCompatibleClient {
             max_tokens_override: None,
             request_scope: "chat",
             continuation_health,
+            tool_choice_none: false,
             claude_code,
             antigravity,
             codex,
@@ -297,6 +299,7 @@ impl OpenAiCompatibleClient {
             max_tokens_override: None,
             request_scope: "chat",
             continuation_health,
+            tool_choice_none: false,
             claude_code,
             antigravity,
             codex,
@@ -423,6 +426,7 @@ impl OpenAiCompatibleClient {
             request_scope: self.request_scope,
             // failover 换端点共享同一健康位(续传本就钉在原端点)。
             continuation_health: self.continuation_health.clone(),
+            tool_choice_none: self.tool_choice_none,
             claude_code: self.claude_code.clone(),
             antigravity: self.antigravity.clone(),
             codex: self.codex.clone(),
@@ -471,6 +475,27 @@ impl OpenAiCompatibleClient {
     pub fn with_max_tokens(&self, max_tokens: u32) -> Self {
         let mut clone = self.clone();
         clone.max_tokens_override = Some(max_tokens.max(1));
+        clone
+    }
+
+    /// `prompt_cache_key`：只对 OpenAI 官方端点发（09-24，对照 opencode）。别的网关
+    /// 不一定认这个字段，严格的会整条请求 400。值是会话 id，压缩的 fork 请求也是
+    /// 同一个会话，自然用同一个键。
+    pub(in crate::llm::openai_compatible) fn prompt_cache_key(&self) -> Option<String> {
+        let url = reqwest::Url::parse(&self.provider.base_url).ok()?;
+        let official = url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"));
+        if !official {
+            return None;
+        }
+        self.log_identity.session().map(str::to_string)
+    }
+
+    /// 带着同一份工具定义、但让模型这一轮不调工具（见 `tool_choice_none` 字段）。
+    pub fn with_tool_choice_none(&self) -> Self {
+        let mut clone = self.clone();
+        clone.tool_choice_none = true;
         clone
     }
 

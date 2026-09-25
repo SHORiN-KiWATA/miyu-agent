@@ -66,21 +66,65 @@ impl Agent {
         }
     }
 
-    /// 这一轮发给模型的工具定义:工具关着或到了轮数上限就一个不给。
+    /// 这一轮发给模型的工具定义:工具关着或复读保险丝熔断时一个不给。
     pub(super) fn round_tool_definitions(
         &self,
-        tool_limit_reached: bool,
+        withhold: bool,
     ) -> Vec<miyu_core::llm::ToolDefinition> {
-        if self.core.tools_enabled && !tool_limit_reached {
+        if self.core.tools_enabled && !withhold {
             let mut tools = self.tools.lock().unwrap();
             self.enforce_turn_restrictions(&mut tools);
             // 有效模式按候选模型池解析(模型级覆盖,任一成员要 full 则整池
             // full)——约束解码型模型吃不下空壳 stub(09-01)。
-            tools.request_definitions(tools::is_stub_loading_mode(
-                &tools::effective_tools_loading_mode(&self.core.config),
-            ))
+            let stub = tools::is_stub_loading_mode(&tools::effective_tools_loading_mode(
+                &self.core.config,
+            ));
+            let mut definitions = tools.request_definitions(stub);
+            drop(tools);
+            // stub 只露描述第一行，本来就是常量；full 才带着整份技能目录。
+            if !stub {
+                self.freeze_skill_catalog(&mut definitions);
+            }
+            definitions
         } else {
             Vec::new()
+        }
+    }
+
+    /// `load_skill` 的完整描述里拼着技能目录（09-24 B13）：技能一增删改描述，tools 的
+    /// 字节就变，所有在线会话下一轮整段缓存作废。按会话冻结：同一个压缩周期里（最近
+    /// 一份摘要没变）一直发这个会话第一次发出去的那份；压缩之后前缀本来就断了一次，
+    /// 这时换成当时的目录。注册表照旧热刷新，新发布的技能照样能按名字加载。
+    fn freeze_skill_catalog(&self, definitions: &mut [miyu_core::llm::ToolDefinition]) {
+        let Some(definition) = definitions
+            .iter_mut()
+            .find(|definition| definition.function.name == "load_skill")
+        else {
+            return;
+        };
+        let epoch = match self.state.load_last_summary() {
+            Ok(summary) => summary.map(|turn| turn.turn_id).unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to read the latest summary; skill catalog not frozen");
+                return;
+            }
+        };
+        match self.state.skill_catalog_snapshot() {
+            Ok(Some(snapshot)) if snapshot.epoch == epoch => {
+                definition.function.description = snapshot.description;
+            }
+            Ok(_) => {
+                let snapshot = miyu_core::state::SkillCatalogSnapshot {
+                    epoch,
+                    description: definition.function.description.clone(),
+                };
+                if let Err(error) = self.state.set_skill_catalog_snapshot(&snapshot) {
+                    tracing::warn!(error = %error, "failed to freeze the skill catalog for this session");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to read the frozen skill catalog")
+            }
         }
     }
 

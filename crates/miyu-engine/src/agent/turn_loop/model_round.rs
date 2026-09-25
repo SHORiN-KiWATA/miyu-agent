@@ -23,6 +23,7 @@ impl Agent {
         current_turn_id: &str,
         request_messages: Vec<ChatMessage>,
         definitions: Vec<miyu_core::llm::ToolDefinition>,
+        tool_choice_none: bool,
         responses_continuation: Option<&miyu_core::llm::ResponsesContinuation>,
         control: Option<&AgentTurnControl>,
         on_event: &mut F,
@@ -40,7 +41,12 @@ impl Agent {
         let mut round_timing = RoundTiming::default();
         let round = {
             let streamed_flag = round_streamed.clone();
-            let llm_future = self.client.chat_stream_with_continuation(
+            let client = if tool_choice_none {
+                self.client.with_tool_choice_none()
+            } else {
+                self.client.clone()
+            };
+            let llm_future = client.chat_stream_with_continuation(
                 request_messages,
                 definitions,
                 responses_continuation,

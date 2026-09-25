@@ -98,6 +98,12 @@ pub(in crate::llm::openai_compatible) struct ChatRequest {
     pub(in crate::llm::openai_compatible) max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::llm::openai_compatible) tools: Option<Vec<ToolDefinition>>,
+    /// 只在「带着工具、但这一轮不许调」时写 `"none"`（见 `tool_choice_none`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::llm::openai_compatible) tool_choice: Option<&'static str>,
+    /// 只对 OpenAI 官方端点发，值是会话 id：同一会话的请求路由到同一批缓存机器。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::llm::openai_compatible) prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::llm::openai_compatible) chat_template_kwargs: Option<ChatTemplateKwargs>,
     #[serde(flatten)]
@@ -121,6 +127,10 @@ pub(in crate::llm::openai_compatible) struct ResponsesRequest {
     pub(in crate::llm::openai_compatible) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::llm::openai_compatible) tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::llm::openai_compatible) tool_choice: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::llm::openai_compatible) prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::llm::openai_compatible) reasoning: Option<ResponsesReasoning>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -155,6 +165,8 @@ pub(in crate::llm::openai_compatible) struct AnthropicRequest {
     pub(in crate::llm::openai_compatible) messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::llm::openai_compatible) tools: Option<Vec<AnthropicTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::llm::openai_compatible) tool_choice: Option<Value>,
     pub(in crate::llm::openai_compatible) stream: bool,
     pub(in crate::llm::openai_compatible) max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]

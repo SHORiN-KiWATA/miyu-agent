@@ -366,6 +366,7 @@ async fn invalid_request_does_not_fail_over_to_another_endpoint() {
         zen_session: None,
         log_identity: Default::default(),
         continuation_health: ResponsesContinuationHealth::detached(),
+        tool_choice_none: false,
     };
 
     let error = client

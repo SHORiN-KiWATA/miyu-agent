@@ -534,6 +534,21 @@ pub(in crate::llm::openai_compatible) fn stream_options_unsupported(
             || body.contains("extra"))
 }
 
+/// 网关不认 `tool_choice`：报文点名了这个字段，并说不支持 / 不认识 / 无效。
+pub(in crate::llm::openai_compatible) fn tool_choice_unsupported(status: u16, body: &str) -> bool {
+    if status != 400 && status != 422 {
+        return false;
+    }
+    let body = body.to_ascii_lowercase();
+    body.contains("tool_choice")
+        && (body.contains("unsupported")
+            || body.contains("not supported")
+            || body.contains("unknown")
+            || body.contains("unrecognized")
+            || body.contains("invalid")
+            || body.contains("extra"))
+}
+
 pub(in crate::llm::openai_compatible) fn non_stream_quota_fallback_candidate(
     status: u16,
     body: &str,

@@ -401,3 +401,80 @@ fn test_anthropic_request_extra_body_flatten() {
     assert_eq!(serialized.matches("\"max_tokens\":").count(), 1);
     assert_eq!(serialized.matches("\"thinking\":").count(), 1);
 }
+
+/// 09-24（对照 opencode）：Anthropic 官方接口不打 cache_control 就完全不缓存。
+/// 最后一件工具、system、对话尾巴各打一个断点，和 opencode 的默认策略一样。
+#[tokio::test]
+async fn anthropic_requests_carry_cache_breakpoints() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let head = read_http_request_head(&mut stream).await;
+        let length = head
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        let mut body = vec![0u8; length];
+        stream.read_exact(&mut body).await.unwrap();
+        let events = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude\",\"stop_reason\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+        );
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{events}",
+                    events.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        serde_json::from_slice::<Value>(&body).unwrap()
+    });
+    let mut provider = test_provider("anthropic-cache-test", &url);
+    provider.protocol = "anthropic".to_string();
+    provider.default_model = "claude-sonnet-4-5".to_string();
+    let client = test_client(provider);
+    let tool = crate::llm::ToolDefinition {
+        kind: "function",
+        function: crate::llm::FunctionDefinition {
+            name: "noop".to_string(),
+            description: "does nothing".to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        },
+    };
+
+    client
+        .chat_stream(
+            vec![
+                ChatMessage::plain("system", "You are a test."),
+                ChatMessage::plain("user", "hi"),
+            ],
+            vec![tool],
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+    let body = server.await.unwrap();
+
+    let ephemeral = |value: &Value| value["cache_control"]["type"] == "ephemeral";
+    let tools = body["tools"].as_array().expect("tools");
+    assert!(ephemeral(tools.last().unwrap()), "{body:#}");
+    let system = body["system"].as_array().expect("system as blocks");
+    assert!(ephemeral(system.last().unwrap()), "{body:#}");
+    let messages = body["messages"].as_array().unwrap();
+    let last_blocks = messages.last().unwrap()["content"].as_array().unwrap();
+    assert!(ephemeral(last_blocks.last().unwrap()), "{body:#}");
+}

@@ -266,6 +266,8 @@ fn chat_request_includes_stream_usage_options() {
         }),
         max_tokens: None,
         tools: None,
+        tool_choice: None,
+        prompt_cache_key: None,
         chat_template_kwargs: None,
         extra_body: None,
     };
@@ -386,6 +388,8 @@ fn test_chat_request_extra_body_flatten() {
         }),
         max_tokens: None,
         tools: None,
+        tool_choice: None,
+        prompt_cache_key: None,
         chat_template_kwargs: None,
         extra_body: sanitize_extra_body(extra, CHAT_RESERVED_BODY_KEYS),
     };
@@ -456,4 +460,89 @@ fn empty_reasoning_field_beside_content_does_not_open_a_reasoning_part() {
     );
     assert!(!reasoning_part_active);
     assert_eq!(content, "问我的模型的话");
+}
+
+/// 09-24（对照 opencode）：`prompt_cache_key` 只对 OpenAI 官方端点发，值是会话 id；
+/// 别的网关不一定认这个字段，严格的会把整条请求拒掉。
+#[test]
+fn prompt_cache_key_goes_to_the_official_openai_endpoint_only() {
+    let official = test_client(test_provider("openai", "https://api.openai.com/v1"))
+        .with_log_session("sess_abc");
+    assert_eq!(official.prompt_cache_key().as_deref(), Some("sess_abc"));
+    let gateway = test_client(test_provider("gateway", "https://example.com/v1"))
+        .with_log_session("sess_abc");
+    assert_eq!(gateway.prompt_cache_key(), None);
+    let no_session = test_client(test_provider("openai", "https://api.openai.com/v1"));
+    assert_eq!(no_session.prompt_cache_key(), None);
+}
+
+/// 09-24 B5：到了工具轮数上限，最后一轮带着工具、`tool_choice: none`；网关不认
+/// `tool_choice` 时退回原来那种「这一轮不带工具」重发一次，回答不受影响。
+#[tokio::test]
+async fn a_gateway_that_rejects_tool_choice_gets_the_toolless_request() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = hits.clone();
+    let server = tokio::spawn(async move {
+        let mut bodies = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let head = read_http_request_head(&mut stream).await;
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            let mut body = vec![0u8; length];
+            stream.read_exact(&mut body).await.unwrap();
+            bodies.push(serde_json::from_slice::<Value>(&body).unwrap());
+            let response = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                let error = r#"{"error":{"message":"Unrecognized request argument supplied: tool_choice"}}"#;
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+                    error.len()
+                )
+            } else {
+                let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\ndata: [DONE]\n\n";
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}",
+                    sse.len()
+                )
+            };
+            stream.write_all(response.as_bytes()).await.unwrap();
+        }
+        bodies
+    });
+    let mut provider = test_provider("tool-choice-fallback-test", &url);
+    provider.protocol = "openai-chat".to_string();
+    let client = test_client(provider).with_tool_choice_none();
+    let tool = crate::llm::ToolDefinition {
+        kind: "function",
+        function: crate::llm::FunctionDefinition {
+            name: "noop".to_string(),
+            description: "does nothing".to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        },
+    };
+
+    let result = client
+        .chat_stream(vec![ChatMessage::plain("user", "hi")], vec![tool], |_| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let bodies = server.await.unwrap();
+
+    assert_eq!(result.content, "ok");
+    assert_eq!(bodies[0]["tool_choice"], "none");
+    assert!(bodies[0]["tools"].is_array());
+    assert!(bodies[1].get("tool_choice").is_none());
+    assert!(bodies[1].get("tools").is_none());
 }
