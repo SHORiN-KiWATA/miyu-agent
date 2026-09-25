@@ -11,6 +11,7 @@ use crate::render::*;
 
 impl StreamRenderer {
     pub fn start_waiting(&mut self) -> Result<()> {
+        self.spinner_frozen = false;
         if self.plain
             || self.wait_spinner.is_some()
             || self.command_display.is_some()
@@ -202,6 +203,10 @@ impl StreamRenderer {
     }
 
     pub fn tick_spinner(&mut self) -> Result<()> {
+        // 提问面板开着：画面停在开面板那一刻（见 `spinner_frozen`）。
+        if self.spinner_frozen && self.wait_spinner.is_some() {
+            return Ok(());
+        }
         let now = std::time::Instant::now();
         self.settle_stalled_reasoning(now)?;
         let should_tick = self
@@ -515,6 +520,7 @@ impl StreamRenderer {
 
     /// 只收转轮，正文的活尾巴留着（正文 delta 进来时用，见 `write_chunk`）。
     pub(crate) fn stop_spinner(&mut self) -> Result<()> {
+        self.spinner_frozen = false;
         if let Some(mut spinner) = self.wait_spinner.take() {
             // 已经在同步块里（落地时顺手收转轮）就别再发一对标记：2026 不是栈。
             let own_block = self.sync_depth == 0;

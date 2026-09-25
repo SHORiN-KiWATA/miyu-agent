@@ -12,6 +12,7 @@ mod golden;
 mod markdown;
 mod math;
 mod patch;
+mod question_panel;
 mod reasoning;
 mod reasoning_stall;
 mod reply_preview;

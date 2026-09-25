@@ -379,6 +379,8 @@ fn record_exchange(
     request: &QuestionRequest,
     response: &QuestionResponse,
 ) -> Result<()> {
+    // 面板收掉了：转轮接着动（开面板时冻住的，见 `prepare_for_panel`）。
+    renderer.resume_after_panel();
     // 全屏下面板退场之后，下一帧就按缓冲恢复正文和输入区，
     // 问了什么、答了什么会一起消失（用户原话「回答完问题也没输出」）。
     // 写进缓冲它才算进了历史、回翻找得到。

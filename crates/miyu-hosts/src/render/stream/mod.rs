@@ -128,6 +128,11 @@ pub struct StreamRenderer {
     pub live_summary: bool,
     pub wait_spinner: Option<WaitSpinner>,
     pub(crate) last_tick: Option<std::time::Instant>,
+    /// 提问面板开着：转轮不动（她在等人回答，没什么在跑）。面板改成活动区上的层之后回合
+    /// 循环照转（会话项目第 3 段），不冻的话转轮还在面板上头动；把整块转轮收掉又会连
+    /// 「已思考」那几行一起抹掉（09-20 修过一次的「面板一开，刚才的过程就没了」）。
+    /// 见 `prepare_for_panel` / `resume_after_panel`。
+    pub(crate) spinner_frozen: bool,
     /// 等待转轮上钉死的文案(压缩上下文那种不属于任何一步的等待):在,每帧都用它,
     /// 不让时间线的「正在思考/工具名」盖掉。
     pub(crate) custom_waiting_phase: Option<String>,
@@ -211,6 +216,7 @@ impl StreamRenderer {
             live_summary: io::stdout().is_terminal(),
             wait_spinner: None,
             last_tick: None,
+            spinner_frozen: false,
             custom_waiting_phase: None,
             compact_text: String::new(),
             event_clock: None,
@@ -378,16 +384,31 @@ impl StreamRenderer {
     /// 的那一步会被记成红色的「已中断」，而真结果回来时又记一次（09-19 在
     /// shellhook 里实测过一次发图两行报错）。
     pub fn prepare_for_panel(&mut self) -> Result<()> {
-        self.preparing_question_started_at = None;
-        self.tool_preparing = None;
+        // 「准备问题 / 准备编辑」是转轮画的那一行：清掉状态、按新状态立刻重画一次（④，
+        // 09-24 goal_question 走查），已经跑完的那几步（「已思考 · …」）原样留着。然后冻住
+        // 转轮（`spinner_frozen`）：面板开着时她在等人回答，没什么在跑。
+        //
+        // 集成时先取过「整块转轮收掉」（`stop_waiting`）：转轮是不动了，可全屏下时间线
+        // 那几行就画在转轮那块里，「已思考」跟着一起没了——正是 09-20 修过的「面板一开，
+        // 刚才的过程就没了」（09-25 红绿账 panel_keeps_body 抓到，会话分支上就红）。
+        let was_preparing = self.preparing_question_started_at.take().is_some()
+            | self.tool_preparing.take().is_some();
         self.tool_preparing_since = None;
-        // 面板开着时她在等人回答，没什么在跑：转轮停下，答完 `start_waiting` 再起。原来
-        // 面板一开回合循环就停了，转轮自然不动；面板改成活动区上的层之后循环照转
-        // （会话项目第 3 段，B4），不停的话「准备问题」会一直挂在面板上头（④ 同一处的
-        // 修法是清状态后重画一次，层上的转轮照样会动，集成时取这一版）。
-        self.stop_waiting()?;
+        self.clear_reply_tail()?;
+        if was_preparing && self.wait_spinner.is_some() {
+            self.set_waiting_phase(self.waiting_phase_text());
+            self.last_tick = None;
+            self.tick_spinner()?;
+        }
+        self.spinner_frozen = true;
         self.show_cursor()?;
         Ok(())
+    }
+
+    /// 提问面板收掉了（答了、关了、没法显示）：转轮接着动。
+    pub fn resume_after_panel(&mut self) {
+        self.spinner_frozen = false;
+        self.last_tick = None;
     }
 
     pub fn prepare_for_external_output(&mut self) -> Result<()> {
