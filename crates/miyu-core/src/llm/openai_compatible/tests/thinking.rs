@@ -492,3 +492,47 @@ fn a_session_pin_overrides_the_global_level_for_that_session_only() {
         );
     }
 }
+
+/// 历史里工具调用轮带的思考,只回传给认得这个字段的家:别的网关会拒收陌生字段,
+/// 剥掉也让无关端点的字节保持原样。mimo、sensenova 是 09-24 用探针实测的——网关
+/// 收下并转给了模型(prompt 多出约 20 token),models.dev 也把 mimo 标成 interleaved
+/// (`testkit/reasoning-passback/probe.py`)。
+#[test]
+fn reasoning_content_goes_back_only_to_providers_that_take_it() {
+    let kept = |id: &str, base_url: &str, model: &str| {
+        let mut provider = test_provider(id, base_url);
+        provider.default_model = model.to_string();
+        let mut turn = ChatMessage::assistant("", None);
+        turn.reasoning_content = Some("think".to_string());
+        prepare_chat_messages_for_provider(&provider, vec![turn])[0]
+            .reasoning_content
+            .is_some()
+    };
+    assert!(kept(
+        "opencodego",
+        "https://opencode.ai/zen/go/v1",
+        "mimo-v2.6-flash"
+    ));
+    assert!(kept(
+        "xiaomi",
+        "https://api.xiaomimimo.com/v1",
+        "mimo-v2.6-pro"
+    ));
+    assert!(kept(
+        "ririxin",
+        "https://token.sensenova.cn/v1",
+        "sensenova-6.8-flash-lite"
+    ));
+    assert!(kept("ririxin", "https://token.sensenova.cn/v1", "glm-5.2"));
+    assert!(kept(
+        "opencodego",
+        "https://opencode.ai/zen/go/v1",
+        "deepseek-v4.1-flash"
+    ));
+    assert!(!kept("openai", "https://api.openai.com/v1", "gpt-5.5"));
+    assert!(!kept(
+        "opencodego",
+        "https://opencode.ai/zen/go/v1",
+        "qwen3.6-plus"
+    ));
+}
