@@ -438,7 +438,7 @@ fn attach_loop(
             tokio::select! {
                 outgoing = outbound.recv() => {
                     let Some((kind, data)) = outgoing else { break };
-                    ipc::send(&mut stream, &ipc::Frame::Event { id: 0, kind, data }).await?;
+                    ipc::send(&mut stream, &ipc::Frame::Event { id: 0, kind, data, at_ms: None }).await?;
                 }
                 frame = ipc::receive::<ipc::Frame>(&mut stream) => {
                     let Some(frame) = frame? else { break };
