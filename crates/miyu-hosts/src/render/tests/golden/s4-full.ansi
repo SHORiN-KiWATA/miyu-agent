@@ -49,7 +49,7 @@
 [2m[36m[2m  │[0m[0m
 [2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
 [2m[36m[2m  │[0m[0m
-[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR> ·  提示词 · 去看看那个目录里有什么]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR>]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  $ 运行命令 · <DUR> · 看看输出[0m[0m
 [2m[36m[2m  │[0m [2mprintf '第一行[0m[0m
 [2m[36m[2m  │[0m [2m'[0m[0m
 [2m[36m[2m  │[0m [2mprintf '第二行[0m[0m
@@ -59,7 +59,7 @@
 [2m[36m[2m  │[0m[0m
 [2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
 [2m[36m[2m  │[0m[0m
-[2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · <DUR>[0m]1337;miyu-block-end[0m
+[2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · 450 · <DUR>[0m]1337;miyu-block-end[0m
 [2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Ran 1 command · 1 edit · 2 tools · <DUR>[0m
 
 ]1337;miyu-block-end  跑完了，结果如上。

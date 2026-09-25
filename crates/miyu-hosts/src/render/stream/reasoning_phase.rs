@@ -229,7 +229,6 @@ impl StreamRenderer {
                 self.set_waiting_phase(self.waiting_phase_text());
             } else if self.timeline_enabled() && self.wait_spinner.is_some() {
                 self.refresh_live_block();
-                self.refresh_subagent_panels();
                 // 全屏：live 区就是这一段过程的时间线——已完成的步骤原样列着,
                 // 最后一行是正在做的那个(转轮画在它上面)。
                 let (header, sub) = self.timeline_waiting();

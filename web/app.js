@@ -405,7 +405,6 @@
     backgroundJobs: new Map(),
     jobsStripOpen: localStorage.getItem("miyu.web.jobsStripOpen") === "1",
     expandedJobs: new Set(),
-    jobStreamSinks: new Map(),
     // 后台子代理任务此刻的样子(`job.progress` 里收好的窥视、词元、子会话,会话项目第 4 段
     // 之二):任务条那一行取它画,点它打开子会话。
     subagentJobs: new Map(),
@@ -3182,18 +3181,11 @@
           display_name: call?.display_name, arguments: call?.arguments,
         });
         // 在跑的前台子代理:检查点里记着它的子会话(会话项目第 4 段之二),刷新之后卡片照样
-        // 点得进去。老回合没有这个字段,下面按 `sub_trace` 回放。
+        // 点得进去。
         if (isSubagentTool(call?.name) && call?.child_session_id) {
           handleToolEvent("subagent.progress", live, {
             tool_id: call?.id, name: call?.name, session_id: call.child_session_id,
           });
-        }
-        if (isSubagentTool(call?.name) && Array.isArray(call?.sub_trace)) {
-          for (const marker of call.sub_trace) {
-            handleToolEvent("tool.progress", live, {
-              tool_id: call?.id, name: call?.name, message: String(marker),
-            });
-          }
         }
         const output = String(call?.output || "");
         // 有真实输出 = 这次调用已完成才收尾;检查点里在跑的那次 output 是空的(或
@@ -7000,25 +6992,6 @@
     }
   }
 
-  // 后台子代理的子过程流:一个 job 一份,持久存在 state.jobStreamSinks 里
-  // (任务条整条重建时面板 DOM 也不丢),点开对应任务条那行时挂到它下面。
-  function jobStreamSink(jobId) {
-    let sink = state.jobStreamSinks.get(jobId);
-    if (!sink) {
-      const panel = document.createElement("div");
-      panel.className = "job-stream-panel";
-      const blocks = document.createElement("div");
-      blocks.className = "sub-blocks assistant-blocks";
-      panel.appendChild(blocks);
-      // taskPeek / taskToken 由 renderJobsStrip 每次重建时挂到当前那行的窥视/
-      // token 元素上(09-12 用户要回行窥视:跑到工具显示工具、跑到思考窥思考;
-      // token 每步更新)。标题本身仍保持完整、不被窥视替换。
-      sink = { panel, blocks, taskPeek: null, taskToken: null, tokenText: "", think: null, thinkAccum: "", pendingCall: null, peekLine: "", usageKey: "job:" + jobId };
-      state.jobStreamSinks.set(jobId, sink);
-    }
-    return sink;
-  }
-
   function createReasoningBlock(text, title = t("已思考"), live = false, summaryOnly = false, withWindow = false) {
     const details = document.createElement("details");
     details.className = "reasoning-block";
@@ -9393,12 +9366,13 @@
       }
       if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress" && tool.isTask) {
-      // 子会话一建好就报的那条标记:卡片从此点下去打开它的会话(会话项目第 4 段)。
-      if (window.MiyuSubagents?.takeMarker(tool.card, String(data?.message || ""))) return;
-      // 子代理:标题行单行窥视 + 展开后的子过程时间线,不再用带底色的方块。
-      // (实时 token 汇进「累计」的逻辑统一在 renderSubagentProgress 的 stats 分支里,
-      // 前台工具卡与后台任务条同源,见 #131。)
-      renderSubagentProgress(tool, String(data?.message || ""));
+      // 子代理的过程在它自己的会话里,窥视、词元、会话走 `subagent.progress`(会话项目第 4 段
+      // 之二)。这条通道上只剩「交到后台了」那一句:当成窥视挂在标题行上。
+      const message = String(data?.message || "").replace(/^__subagent_detach__/, "").trim();
+      if (message && !message.startsWith("__")) {
+        tool.peekLine = message;
+        if (tool.taskPeek) setReasoningPeek(tool.taskPeek, message);
+      }
       if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress") {
       let message = String(data?.message || "");
@@ -10255,12 +10229,7 @@
         state.jobsStripOpen = !state.jobsStripOpen;
         // 收起「后台任务 ×N」合并行时,把里面所有已展开的状态行 + 思考/工具卡
         // 一并收起(09-12 #15),不留展开残留。
-        if (!state.jobsStripOpen) {
-          state.expandedJobs.clear();
-          for (const sink of state.jobStreamSinks.values()) {
-            sink.panel?.querySelectorAll("details[open]").forEach((d) => { d.open = false; });
-          }
-        }
+        if (!state.jobsStripOpen) state.expandedJobs.clear();
         localStorage.setItem("miyu.web.jobsStripOpen", state.jobsStripOpen ? "1" : "0");
         renderJobsStrip();
       });
@@ -10343,20 +10312,15 @@
       row.setAttribute("aria-expanded", String(expanded));
       row.addEventListener("click", (event) => {
         if (event.target.closest(".job-chip-stop")) return;
-        // 后台子代理:子会话建好了就打开它(和终端任务条口径一致),不在这儿展开过程。
-        const session = isSubagent ? state.subagentJobs.get(jid)?.session : "";
-        if (session && window.MiyuSubagents?.open) {
-          window.MiyuSubagents.open(session);
+        // 后台子代理:打开它的会话(和终端任务条口径一致),过程在那儿看。子会话还没建好
+        // (刚派出去那一瞬)就什么都不做。
+        if (isSubagent) {
+          const session = state.subagentJobs.get(jid)?.session;
+          if (session) window.MiyuSubagents?.open(session);
           return;
         }
         if (state.expandedJobs.has(jid)) {
           state.expandedJobs.delete(jid);
-          // 收起状态行时,把里面已展开的思考/工具卡也一并收起(09-12 #5),
-          // 下次展开是收起态,而不是保留上次的展开。
-          const sink = state.jobStreamSinks.get(jid);
-          if (sink?.panel) {
-            sink.panel.querySelectorAll("details[open]").forEach((d) => { d.open = false; });
-          }
         } else {
           state.expandedJobs.add(jid);
         }
@@ -10366,16 +10330,12 @@
       const wrap = document.createElement("div");
       wrap.className = "job-chip-wrap";
       wrap.appendChild(row);
-      if (expanded) {
-        if (isSubagent) {
-          wrap.appendChild(jobStreamSink(jid).panel);
-        } else {
-          const entry = commandLogPanel(jid);
-          wrap.appendChild(entry.panel);
-          refreshCommandLog(jid);
-          if (job.running && !entry.timer) {
-            entry.timer = setInterval(() => refreshCommandLog(jid), 1500);
-          }
+      if (expanded && !isSubagent) {
+        const entry = commandLogPanel(jid);
+        wrap.appendChild(entry.panel);
+        refreshCommandLog(jid);
+        if (job.running && !entry.timer) {
+          entry.timer = setInterval(() => refreshCommandLog(jid), 1500);
         }
       } else if (!isSubagent) {
         const entry = state.commandLogs.get(jid);
@@ -10419,27 +10379,10 @@
       for (const job of data?.jobs || []) {
         const jid = String(job.job_id);
         state.backgroundJobs.set(jid, { ...job, receivedAt: Date.now() });
-        // 刷新后子代理展开区是空的(子过程只在内存里,#9)。补拉这个任务到目前为止的
-        // 原始标记流回放进它的 sink,展开就能看到之前的思考/工具/正文;之后的实时进度
-        // 继续往同一个 sink 追加。每个 sink 只回放一次。
-        if (job.kind === "subagent" || job.kind === "dev") seedJobTrace(jid);
       }
       renderJobsStrip();
     } catch {
       /* daemon may predate the jobs API */
-    }
-  }
-
-  async function seedJobTrace(jid) {
-    const sink = jobStreamSink(jid);
-    if (sink.__replayed) return;
-    sink.__replayed = true;
-    try {
-      const data = await (await apiRequest(`/api/jobs/${encodeURIComponent(jid)}/trace`)).json();
-      for (const marker of data?.trace || []) renderSubagentProgress(sink, String(marker));
-      if ((data?.trace || []).length) renderJobsStrip();
-    } catch {
-      sink.__replayed = false; /* 拉失败下次再试 */
     }
   }
 
@@ -11101,7 +11044,6 @@
     }
     if (name === "job.progress") {
       const jobId = String(data?.job_id || "");
-      const message = String(data?.message || "");
       if (jobId && (data?.peek || data?.tokens_label || data?.child_session_id)) {
         const status = state.subagentJobs.get(jobId) || {};
         if (data.peek) status.peek = String(data.peek);
@@ -11110,11 +11052,6 @@
         state.subagentJobs.set(jobId, status);
         if (status.peekEl && status.peek) setReasoningPeek(status.peekEl, status.peek);
         if (status.tokenEl && status.tokens) status.tokenEl.textContent = status.tokens;
-      }
-      if (jobId && message) {
-        // 后台子代理的实时进度:喂给该 job 的子过程流(与前台子代理工具行同款
-        // 解析后渲进该 job 的子过程时间线(展开时可见,持久累积)。
-        renderSubagentProgress(jobStreamSink(jobId), message);
       }
       return;
     }
@@ -11125,14 +11062,14 @@
       const entry = state.liveSubagentTokens.get("job:" + jobId);
       if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       state.expandedJobs.delete(jobId);
-      state.jobStreamSinks.delete(jobId);
+      state.subagentJobs.delete(jobId);
       if (state.backgroundJobs.delete(jobId)) renderJobsStrip();
       return;
     }
     if (name === "job.acknowledged") {
       const jobId = String(data?.job_id || "");
       state.expandedJobs.delete(jobId);
-      state.jobStreamSinks.delete(jobId);
+      state.subagentJobs.delete(jobId);
       if (state.backgroundJobs.delete(jobId)) renderJobsStrip();
       return;
     }

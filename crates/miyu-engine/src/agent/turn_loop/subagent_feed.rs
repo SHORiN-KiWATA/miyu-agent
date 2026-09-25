@@ -29,7 +29,11 @@ impl SubagentFeeds {
             emit_tool_progress(on_event, call_id, name, progress)?;
             return Ok(false);
         };
-        if !tools::is_subagent_marker(message) {
+        // 「交到后台了」那句不是子会话里的过程，是这一次调用自己的结论：照旧当工具进度发
+        // （界面据它把这一步记成交出去的、不报秒数，挂上那句说明）。
+        if !tools::is_subagent_marker(message)
+            || message.starts_with(tools::subagent::protocol::DETACH_MARKER)
+        {
             emit_tool_progress(on_event, call_id, name, progress)?;
             return Ok(false);
         }

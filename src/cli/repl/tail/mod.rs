@@ -748,24 +748,6 @@ impl LiveReplTail {
     }
 
     /// 换车道:输入框竖条换色、banner 的模式行跟着走。
-    /// 把 `展开思考内容` / `展开工具内容` 交给后台任务面板。
-    ///
-    /// 那块面板是从日志/标记流攒步的，手上没有配置入口——不交进来的话同一件事
-    /// 在前台面板跟着开关走、在后台面板永远收着（用户 09-17 实测）。每轮交一次，
-    /// `/config` 改完下一轮就生效，和渲染器那侧同一个节奏。
-    pub(in crate::cli) fn set_display_expand(
-        &mut self,
-        reasoning: bool,
-        tools: bool,
-        fold: bool,
-        command_lines: usize,
-        thought_lines: usize,
-    ) {
-        if let Some(screen) = &mut self.screen {
-            screen.set_display_expand(reasoning, tools, fold, command_lines, thought_lines);
-        }
-    }
-
     pub(in crate::cli) fn set_mode(&mut self, mode: PersonaLane) {
         self.editor.mode = mode;
         if let Some(banner) = &mut self.banner {

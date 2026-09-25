@@ -33,25 +33,20 @@
 mod cross_session;
 mod glyphs;
 mod live;
-mod panel_preview;
 mod question;
 mod stall;
 mod subagent;
 mod thought_rows;
 
-// 后台子代理面板（根包 `cli::repl::tail::screen::overlay`）要按名字用这几样：
-// 它和前台面板**共用**排版、收缩、点开的规则，取数的地方不同，长相不该不同。
 pub use cross_session::write_cross_session_message;
 pub(crate) use cross_session::SEND_TOOL;
-pub use glyphs::{fold_open_lines, step_detail_lines, step_rows};
-pub use panel_preview::{panel_command_tail, panel_thought_window};
-pub use subagent::{fold_block_lines, thread_panel, PanelEntry};
+pub(crate) use glyphs::step_rows;
 
 use super::{question_answer_text, StreamRenderer};
 use crate::render::blocks;
 use crate::render::t;
 use crate::render::ReasoningDisplayMode;
-use crate::render::{prompt_glyph, THOUGHT_BODY_STYLE};
+use crate::render::THOUGHT_BODY_STYLE;
 use std::time::{Duration, Instant};
 
 // 搬走的帮手按老路径再导出：调用方写的还是 `timeline::…`（09-16 拆分）。
@@ -60,7 +55,6 @@ pub(crate) use glyphs::{tool_glyph, tool_output_lines};
 use live::indented_body;
 pub(crate) use live::undecorate;
 pub use live::{indent_body, peek_tail, render_speech_lines, summary_line, write_compact_summary};
-pub(crate) use subagent::SubagentLog;
 pub(crate) use thought_rows::{style_thought_rows, ThoughtRows};
 
 /// 竖线。它和 logo **同在一列**：logo 是这一步的节点，竖线是节点之间的连线，
@@ -160,7 +154,8 @@ struct PendingStep {
     /// 收进来的时候还没跑完——只有回合被打断（Ctrl+C、断线）才会这样。
     interrupted: bool,
     elapsed: Option<Duration>,
-    overlay: Option<u64>,
+    /// 子代理那一步：它的会话，点下去切进去。
+    session: Option<String>,
 }
 
 /// 一步：折叠时的那一行，加上点开能看到的正文。
@@ -200,8 +195,9 @@ pub struct Step {
     kind: StepKind,
     line: String,
     body: Vec<String>,
-    /// 子代理：点开是覆盖层而不是就地展开，用的是它自己那块流水账的 id。
-    overlay: Option<u64>,
+    /// 子代理那一步链着它的会话：点下去切进去，不就地展开（会话项目第 4 段之二，
+    /// 原来点开是一块覆盖层）。
+    session: Option<String>,
     /// 就地展开那一块的 id。**收进时间线那一刻就登记**，live 区和收缩之后用的是
     /// 同一个 id——原来只有收成 `Worked for …` 时才登记，于是回合还没结束时已经
     /// 跑完的那几步一个都点不开（用户实测：diff 要等 AI 输出完才看得到）。
@@ -231,31 +227,25 @@ pub struct Step {
 }
 
 impl Step {
-    pub(crate) fn new(line: String, body: Vec<String>, overlay: Option<u64>) -> Self {
+    /// 这一步点下去用哪一块。有正文、或者链着会话（子代理那一步）就登记一块，会话链上；
+    /// 两样都没有就是一行点不开的字。
+    fn ensure_block(&mut self) -> Option<u64> {
+        if self.block.is_none() && (!self.body.is_empty() || self.session.is_some()) {
+            self.block = blocks::register(step_detail(self));
+        }
+        if let (Some(id), Some(session)) = (self.block, self.session.as_deref()) {
+            blocks::link_session(id, session);
+        }
+        self.block
+    }
+
+    pub(crate) fn new(line: String, body: Vec<String>, session: Option<String>) -> Self {
         Self {
             kind: StepKind::Plain,
             line,
             body,
-            overlay,
+            session,
             block: None,
-            tail: Vec::new(),
-            open: false,
-            user_open: false,
-        }
-    }
-
-    /// 从**已经渲染好的**抬头与正文造一步。后台面板用它：那边的抬头要按面板
-    /// 宽度裁、正文要按面板宽度折，渲染时机和前台不同，但落进来的形状该是同一个。
-    ///
-    /// `block` 是这一步以前用过的块 id（按位置复用）——后台每帧重解析，不带着它
-    /// 的话用户点开的那一块下一帧就换了 id、当场合上。
-    pub fn panel(kind: StepKind, line: String, body: Vec<String>, block: Option<u64>) -> Self {
-        Self {
-            kind,
-            line,
-            body,
-            overlay: None,
-            block,
             tail: Vec::new(),
             open: false,
             user_open: false,
@@ -296,19 +286,6 @@ impl Step {
     pub fn line(&self) -> &str {
         &self.line
     }
-
-    pub(crate) fn speech(body: Vec<String>) -> Self {
-        Self {
-            kind: StepKind::Speech,
-            line: String::new(),
-            body,
-            overlay: None,
-            block: None,
-            tail: Vec::new(),
-            open: false,
-            user_open: false,
-        }
-    }
 }
 
 /// 抬头后面带上耗时：`已思考 · 2.6s`。不到十分之一秒的不带——`0.0s` 只是噪音
@@ -335,12 +312,6 @@ pub fn reported_seconds(elapsed: Duration) -> Option<String> {
 /// 宽度也是一格。
 pub const LIVE_SPINNER_CELL: char = '\u{10FFFD}';
 
-/// 面板里正在进行的那一行：转轮占位在第 0 列，logo 留在第 2 列——和主线一样。
-pub fn panel_live_step_line(glyph: &str, text: &str) -> String {
-    let text = crate::render::clip_to_display_width(text, panel_step_width());
-    format!("\x1b[2m{LIVE_SPINNER_CELL} {glyph} {text}\x1b[0m")
-}
-
 /// live 区里「正在进行」的一行。
 #[derive(Debug)]
 pub(crate) struct LiveRow {
@@ -363,10 +334,6 @@ const SUMMARY_GLYPH: &str = "⌄";
 /// `⌄`——主线那条就是这么翻的，面板里原来一直是 `⌄`，合着开着一个样
 ///（用户实测：Worked for 左侧箭头异常）。
 const FOLD_GLYPH_CLOSED: &str = "›";
-
-pub fn fold_glyph_closed() -> &'static str {
-    FOLD_GLYPH_CLOSED
-}
 
 /// 收缩行点开之后的抬头：`›` 换成 `⌄`。
 pub fn fold_line_open(line: &str) -> String {
@@ -513,15 +480,6 @@ fn step_width() -> usize {
         .max(8)
 }
 
-/// 子代理面板里一步能占多宽。
-///
-/// 面板没有竖线，左右只各留两列——正好和正文那条装订边同宽，所以能占的宽度
-/// 和主线时间线一样。留两列富余：图标是 Nerd Font 字形，某些终端把它算成两列。
-/// 见 `cli::repl::tail::screen::overlay::panel_inner_width`。
-fn panel_step_width() -> usize {
-    step_width().saturating_sub(2).max(8)
-}
-
 fn step_line(glyph: &str, text: &str) -> String {
     step_line_in(glyph, text, step_width())
 }
@@ -531,39 +489,6 @@ fn step_line(glyph: &str, text: &str) -> String {
 fn step_line_in(glyph: &str, text: &str, width: usize) -> String {
     let text = crate::render::clip_to_display_width(text, width);
     format!("\x1b[2m{}{glyph} {text}\x1b[0m", indent())
-}
-
-/// 面板里一步那一行。两种子代理面板（前台走事件、后台读日志）共用它——
-/// 取数的地方不同，**长相必须是同一份代码**。
-pub fn panel_step_line(glyph: &str, text: &str, failed: bool) -> String {
-    if failed {
-        step_line_failed_in(glyph, text, panel_step_width())
-    } else {
-        step_line_in(glyph, text, panel_step_width())
-    }
-}
-
-/// 面板里两步之间的连线。见 [`panel_step_line`]。
-pub fn panel_rail() -> String {
-    rail()
-}
-
-/// 面板里一步点开之后是什么样。见 [`panel_step_line`]。
-pub fn panel_step_detail(line: &str, body: &[String]) -> Vec<String> {
-    let mut detail = Vec::with_capacity(body.len() + 3);
-    detail.push(line.to_string());
-    detail.extend(indented_body(body));
-    detail
-}
-
-/// 面板里一步的**抬头**能占多宽：整行宽度减掉图标那一格和它后面的空格。
-pub fn panel_step_width_for_head() -> usize {
-    panel_step_width().saturating_sub(2)
-}
-
-/// 面板里正文那一层能用多宽（折行用）。
-pub fn panel_detail_width() -> usize {
-    detail_width()
 }
 
 /// 两步之间的连线：`  │`。
@@ -677,8 +602,8 @@ impl StreamRenderer {
                 elapsed: stats
                     .elapsed()
                     .filter(|elapsed| reported_seconds(*elapsed).is_some() && !stats.detached),
-                overlay: crate::render::is_subagent_tool(name)
-                    .then(|| self.subagent_overlay_id(name))
+                session: crate::render::is_subagent_tool(name)
+                    .then(|| self.subagent_session_of(name).map(str::to_string))
                     .flatten(),
             })
             .collect();
@@ -702,7 +627,7 @@ impl StreamRenderer {
             failed,
             interrupted,
             elapsed,
-            overlay,
+            session,
             tail,
         } in entries
         {
@@ -735,19 +660,19 @@ impl StreamRenderer {
             } else {
                 step_line(glyph, &label)
             };
-            let mut step = Step::new(line, detail, overlay);
+            let mut step = Step::new(line, detail, session);
             step.kind = StepKind::Tool;
             // 命令那一步抬头底下露的那几行命令（用户指名的行数）——这是唯一
             // 一处尾巴，和档位无关。
             step.tail = tail;
-            // 子代理点开是覆盖层，默认开着没有意义（也没处开）。
+            // 子代理那一步点下去是切会话，默认开着没有意义。
             // 用户在 live 区亲手点开过这个工具那一行,跑完同样不收回去。
             step.user_open = self
                 .live_tool_blocks
                 .get(&name)
                 .copied()
                 .is_some_and(blocks::user_open);
-            step.open = (open_by_default || step.user_open) && overlay.is_none();
+            step.open = (open_by_default || step.user_open) && step.session.is_none();
             self.timeline.steps.push(step);
         }
         // 留着的那几个(还在跑)不能清:它们的结果回来时要落在自己的统计上,
@@ -773,8 +698,8 @@ impl StreamRenderer {
             return self.commit_static_steps();
         }
         for step in &mut self.timeline.steps {
-            if step.block.is_none() && step.overlay.is_none() && !step.body.is_empty() {
-                step.block = blocks::register(step_detail(step));
+            if step.block.is_none() {
+                step.ensure_block();
                 // 这一步是用户亲手点开的:换的这块新的也得带上这个来历,收段时
                 // `Worked for …` 才知道不能把它收没(用户 09-19)。
                 if step.user_open {
@@ -820,13 +745,7 @@ impl StreamRenderer {
                 out.push('\n');
             }
             if expandable {
-                let step = &self.timeline.steps[index];
-                let id = step.overlay.or(step.block).or_else(|| {
-                    (!step.body.is_empty()).then(|| blocks::register(step_detail(step)))?
-                });
-                if step.overlay.is_none() {
-                    self.timeline.steps[index].block = id;
-                }
+                let id = self.timeline.steps[index].ensure_block();
                 out.push_str(&step_rows(&self.timeline.steps[index], id));
                 out.push('\n');
                 continue;
@@ -1155,23 +1074,15 @@ impl StreamRenderer {
             return self.flush_after_timeline();
         }
         let now = self.event_now();
-        let timeline = std::mem::take(&mut self.timeline);
+        let mut timeline = std::mem::take(&mut self.timeline);
         let summary = summary_line(timeline.elapsed(now), timeline.counts);
         // 展开内容：头行 + 用连线串起来的每一步（各自包成块）。
         let mut steps = Vec::with_capacity(timeline.steps.len());
-        for step in &timeline.steps {
-            if step.overlay.is_none() && step.body.is_empty() {
-                steps.push(step_rows(step, None));
-                continue;
-            }
-            // 展开这一步时**头行留着**：它是把手，再点一次才收得回去；
-            // 正文缩进到竖线右边，和折叠态对得上列。
-            let target = match step.overlay {
-                // 子代理直接挂它那块流水账：点开是覆盖层。
-                Some(id) => Some(id),
-                // live 区里用的那块，收缩之后还是它：点开着的保持点开。
-                None => step.block.or_else(|| blocks::register(step_detail(step))),
-            };
+        for step in &mut timeline.steps {
+            // 展开这一步时**头行留着**：它是把手，再点一次才收得回去；正文缩进到竖线右边，
+            // 和折叠态对得上列。live 区里用的那块，收缩之后还是它：点开着的保持点开。
+            // 子代理那一步没有正文也登记一块：链着它的会话，点下去切进去。
+            let target = step.ensure_block();
             steps.push(step_rows(step, target));
         }
         // 段尾那行空跟着这一段的最后一样东西走:有清单表就留到表后面。
@@ -1182,9 +1093,10 @@ impl StreamRenderer {
         expanded.extend((!result_follows).then(String::new));
         // 这一段里只要还有用户亲手点开着的步,收段时就不能把它们一起收没:
         // 收缩行自己出来就是展开态,里面那一步照旧开着(用户 09-19)。
-        let keep_open = timeline.steps.iter().any(|step| {
-            step.user_open || step.block.or(step.overlay).is_some_and(blocks::user_open)
-        });
+        let keep_open = timeline
+            .steps
+            .iter()
+            .any(|step| step.user_open || step.block.is_some_and(blocks::user_open));
         let stdout = &mut self.output;
         blocks::write_expandable_in(stdout, expanded, keep_open, |writer| {
             writeln!(writer, "\x1b[2m{INDENT}› {summary}\x1b[0m")?;

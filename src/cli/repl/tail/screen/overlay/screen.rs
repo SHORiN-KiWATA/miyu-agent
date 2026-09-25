@@ -3,28 +3,6 @@
 use super::*;
 
 impl Screen {
-    /// 打开一层。已经开着同一块就当作关闭（再点一次收起来）。
-    pub(in crate::cli) fn open_overlay(&mut self, id: u64) -> bool {
-        if self
-            .overlay
-            .as_ref()
-            .is_some_and(|panel| panel.block_id() == Some(id))
-        {
-            return self.close_overlay();
-        }
-        let Some(mut panel) = Overlay::from_block(id, panel_inner_width(self.cols)) else {
-            return false;
-        };
-        panel.display_expand = self.display_expand;
-        panel.display_fold = self.display_fold;
-        panel.display_command_lines = self.display_command_lines;
-        panel.display_thought_lines = self.display_thought_lines;
-        self.overlay = Some(panel);
-        self.invalidate();
-        self.needs_clear = true;
-        true
-    }
-
     /// 打开一个后台任务的日志面板。再点同一个就收起来。
     pub(in crate::cli) fn open_log_overlay(
         &mut self,
@@ -36,25 +14,11 @@ impl Screen {
         if self
             .overlay
             .as_ref()
-            .is_some_and(|panel| panel.file_path() == Some(path.as_path()))
+            .is_some_and(|panel| panel.file_path() == path.as_path())
         {
             return self.close_overlay();
         }
-        let mut panel = Overlay::from_file(
-            path,
-            title,
-            job_id,
-            command,
-            panel_inner_width(self.cols),
-            self.display_expand,
-            self.display_fold,
-            self.display_command_lines,
-            self.display_thought_lines,
-        );
-        panel.display_expand = self.display_expand;
-        panel.display_fold = self.display_fold;
-        panel.display_command_lines = self.display_command_lines;
-        panel.display_thought_lines = self.display_thought_lines;
+        let panel = Overlay::from_file(path, title, job_id, command, panel_inner_width(self.cols));
         self.overlay = Some(panel);
         self.invalidate();
         self.needs_clear = true;
@@ -178,39 +142,6 @@ impl Screen {
 
     pub(in crate::cli) fn overlay_open(&self) -> bool {
         self.overlay.is_some()
-    }
-
-    /// 把当前的两个显示开关交给后台面板。见 `Screen::display_expand`。
-    ///
-    /// 每轮都交一次：`/config` 改完下一轮就该生效，和渲染器那侧同一个节奏。
-    pub(in crate::cli) fn set_display_expand(
-        &mut self,
-        reasoning: bool,
-        tools: bool,
-        fold: bool,
-        command_lines: usize,
-        thought_lines: usize,
-    ) {
-        if self.display_expand == (reasoning, tools)
-            && self.display_fold == fold
-            && self.display_command_lines == command_lines
-            && self.display_thought_lines == thought_lines
-        {
-            return;
-        }
-        self.display_expand = (reasoning, tools);
-        self.display_fold = fold;
-        self.display_command_lines = command_lines;
-        self.display_thought_lines = thought_lines;
-        // 档位变了：已经排好的那份要按新档位重排一次，不然要等下一次日志变动。
-        if let Some(panel) = &mut self.overlay {
-            panel.display_expand = (reasoning, tools);
-            panel.display_fold = fold;
-            panel.display_command_lines = command_lines;
-            panel.display_thought_lines = thought_lines;
-            panel.force_reload();
-        }
-        self.invalidate();
     }
 
     /// 屏幕第 `row` 行对应面板里第几行**内容**。框线、上下留白、面板外都是 `None`。

@@ -208,17 +208,6 @@ pub enum Command {
     StopJob {
         job_id: String,
     },
-    /// 后台子代理的**原始进度标记**，从绝对序号 `after` 之后取。
-    ///
-    /// 全屏 TUI 的后台子代理面板据它逐条跟，不再每 150ms 重读整份日志。日志那条
-    /// 路留着当退路：daemon 重启后内存里的 trace 就没了，老任务也只有日志。
-    ///
-    /// 回 `{"markers": [...], "cursor": N, "reset": bool}`。`reset` 为真表示要的
-    /// 位置已被环形缓冲挤掉，这一份要**重新攒**而不是接在旧的后面。
-    JobTrace {
-        job_id: String,
-        after: u64,
-    },
     GetSessionState {
         target: SessionRef,
         /// 发起查询的客户端当前目录(REPL 带,09-23):默认沙盒的根跟着它走(自动

@@ -54,8 +54,6 @@ impl StreamRenderer {
             let stats = self.tool_stats_entry(name);
             stats.started_at = Some(now);
             stats.elapsed = None;
-            // 面板的第一步：交给它的差事。派出去这一刻是唯一还看得见它的地方。
-            self.subagent_prompt(name, arguments);
         }
         if self.captures_tools() {
             let now = self.event_now();
@@ -144,11 +142,10 @@ impl StreamRenderer {
         self.reanchor_wait_timer();
         self.end_subagent_stream_line()?;
         if is_subagent_tool(name) {
-            // 回放没有派出去时那条标记，会话 id 从结果里取。
+            // 回放没有 `subagent.progress`，会话 id 从结果里取。
             if let Some(session) = miyu_engine::tools::subagent_session_of_output(output) {
                 self.subagent_session(name, &session);
             }
-            self.finish_subagent_log(name);
         }
         let status = if ok { "ok" } else { "err" };
         let elapsed = self.finish_subagent_timer(name);
@@ -420,181 +417,13 @@ impl StreamRenderer {
             }
             return Ok(());
         }
-        if let Some(text) = message.strip_prefix("__subagent_metric__") {
-            // `<给人看的那串>\t<数字>\t<人话>`。数字进会话累计的实时加数，
-            // 人话进面板抬头。
-            let mut parts = text.splitn(3, '\t');
-            // 第一段是给人看的短标（`≈3.1K`）：时间线那一行挂它。
-            let display = parts.next().unwrap_or_default().trim().to_string();
-            if let Some(raw) = parts
-                .next()
-                .and_then(|value| value.trim().parse::<u64>().ok())
-            {
-                self.subagent_tokens.insert(name.to_string(), raw);
-            }
-            let text = parts.next().unwrap_or(text);
-            if self.timeline_enabled() {
-                self.subagent_stats(name, text, Some(display.as_str()));
-            }
-            // Full 档不打：这条一秒来好几次，打出来就是刷屏。跑完那次
-            // `__subagent_stats__` 照旧会留一行。
-            if self.captures_tools() {
-                self.tool_stats_entry(name).final_progress = Some(text.to_string());
-                self.update_tool_summary_display()?;
-            }
-            return Ok(());
-        }
-        if let Some(text) = message.strip_prefix("__subagent_stats__") {
-            if self.timeline_enabled() {
-                // 跑完那一次只有人话，短标沿用中途量报记下的那份。
-                self.subagent_stats(name, text, None);
-            }
-            if self.captures_tools() {
-                self.tool_stats_entry(name).final_progress = Some(text.to_string());
-                self.update_tool_summary_display()?;
-            } else if self.tool_call_mode == ToolCallDisplayMode::Full {
-                self.release_transient_output()?;
-                let display_name = self.display_tool_name(name);
-                let stdout = &mut self.output;
-                writeln!(stdout, "{} {}: {text}", t("progress", "进度"), display_name)?;
-                stdout.flush()?;
-            }
-            return Ok(());
-        }
-        if let Some(text) = message.strip_prefix("__subagent_content__") {
-            // 子代理开口说正文了。全屏：进它自己那块面板（并把前面那一段过程
-            // 收成一行）；别的档次一直是直接丢的——这个前缀只有终端渲染器认。
-            if self.timeline_enabled() {
-                self.subagent_content(name, &normalize_stream_text(text));
-            }
-            return Ok(());
-        }
-        if let Some(text) = message.strip_prefix("__subagent_reasoning__") {
-            let text = normalize_stream_text(text);
-            // 全屏：子代理的思考进它自己的时间线，不往正文里挤。
-            if self.timeline_enabled() {
-                self.subagent_thought(name, &text);
-                return Ok(());
-            }
-            if self.tool_call_mode == ToolCallDisplayMode::Full {
-                if self.subagent_mode != Some(ChatStreamKind::Reasoning) {
-                    self.stop_waiting()?;
-                    self.clear_summary_lines()?;
-                    self.end_active_stream_line()?;
-                    let stdout = &mut self.output;
-                    writeln!(stdout)?;
-                    stdout.flush()?;
-                }
-                let stdout = &mut self.output;
-                write_full_reasoning_chunk(stdout, &text)?;
-                stdout.flush()?;
-                self.subagent_mode = Some(ChatStreamKind::Reasoning);
-            }
-            return Ok(());
-        }
-        if let Some(tool) = message.strip_prefix("__subtool_preparing__") {
-            // 内层正在流工具参数：面板里露一行「准备xx」。别的档次一直是丢的。
-            if self.timeline_enabled() {
-                self.subagent_tool_preparing(name, tool.trim());
-            }
-            return Ok(());
-        }
-        if let Some(json) = message.strip_prefix("__subtool_call__") {
-            if let Ok(value) = serde_json::from_str::<Value>(json) {
-                let tool_name = value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                // 全屏：调用本身不单独占一步，等结果回来连着输出一起记——
-                // 一次调用和它的结果是同一件事，分成两行只是把面板撑长。
-                // 但要在这儿掐表（内层事件自己不带耗时），并在面板里露出
-                // 「正在跑」那一行。
-                if self.timeline_enabled() {
-                    let display = value
-                        .get("display")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| self.display_tool_name(tool_name));
-                    let args = value.get("args").and_then(Value::as_str).unwrap_or("");
-                    self.subagent_tool_started(name, tool_name, &display, args);
-                    return Ok(());
-                }
-                if self.tool_call_mode == ToolCallDisplayMode::Full {
-                    // 命令由结果那一条整块画（命令 + 状态 + 输出），这儿先画一遍
-                    // 就是画两遍。
-                    if tool_name == "run_command" {
-                        return Ok(());
-                    }
-                    let args = value.get("args").and_then(Value::as_str).unwrap_or("");
-                    self.release_transient_output()?;
-                    let display_name = self.display_tool_name(tool_name);
-                    let stdout = &mut self.output;
-                    writeln!(stdout, "{} {}", t("tool", "工具"), display_name)?;
-                    write_tool_payload(stdout, t("args", "参数"), args)?;
-                    stdout.flush()?;
-                }
-            }
-            return Ok(());
-        }
-        if let Some(json) = message.strip_prefix("__subtool_result__") {
-            if let Ok(value) = serde_json::from_str::<Value>(json) {
-                let tool_name = value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                if self.timeline_enabled() {
-                    let display = self.display_tool_name(tool_name);
-                    let args = value.get("args").and_then(Value::as_str).unwrap_or("");
-                    let output = value.get("output").and_then(Value::as_str).unwrap_or("");
-                    self.subagent_tool(name, tool_name, &display, args, ok, output);
-                    return Ok(());
-                }
-                if self.tool_call_mode == ToolCallDisplayMode::Full {
-                    let args = value.get("args").and_then(Value::as_str).unwrap_or("");
-                    let output = value.get("output").and_then(Value::as_str).unwrap_or("");
-                    let status = if ok { "ok" } else { "err" };
-                    self.release_transient_output()?;
-                    let display_name = self.display_tool_name(tool_name);
-                    let stdout = &mut self.output;
-                    if tool_name == "run_command" {
-                        write_command_block_with_status(
-                            stdout,
-                            args,
-                            if ok {
-                                CommandStatus::Ok
-                            } else {
-                                CommandStatus::Error
-                            },
-                        )?;
-                        write_command_result_blocks(stdout, output)?;
-                        write_command_block_gap(stdout, true)?;
-                    } else {
-                        writeln!(stdout, "{} {} {status}", t("result", "结果"), display_name)?;
-                        write_tool_payload(stdout, t("output", "输出"), output)?;
-                    }
-                    stdout.flush()?;
-                }
-            }
-            return Ok(());
-        }
         if is_silent_tool(name) {
             return Ok(());
         }
-        // 认不出的**子代理标记**一律咽掉：下面那个兜底分支是给人话进度用的，
-        // 机器标记掉进去就是原样打到屏幕上——`__subagent_brief__` 已经这么漏过
-        // 一次（`display.tool_calls = full` 的终端用户看到
-        // `进度 子代理: __subagent_brief__{"description":…}`）。它只在 Full 档发，
-        // 而前台早就从工具参数建好那一行了（`write_tool_call` → `subagent_prompt`），
-        // 这条是给没有参数的后台面板用的，终端这边跳过才对。
-        //
-        // 咽掉而不是逐个认领：标记的词汇表在 `tools::subagent::protocol::MARKERS`，
-        // 将来加一个新的，最坏情况是面板少显示点东西，而不是把 JSON 甩到用户脸上。
-        if let Some(session) = message.strip_prefix(miyu_engine::tools::SUBAGENT_SESSION_MARKER) {
-            // 子会话一建好就报：时间线上这一行点下去切进它（会话项目第 3 段）。
-            self.subagent_session(name, session);
-            return Ok(());
-        }
+        // 子代理的标记一律咽掉。09-25 起引擎把它们收成 `subagent.progress`（状态行那一行
+        // 的窥视、词元、子会话），不再原样转过来；万一还有（老 daemon），下面那个兜底分支
+        // 是给人话进度用的，机器标记掉进去就是原样打到屏幕上——`__subagent_brief__`
+        // 这么漏过一次。
         if miyu_engine::tools::is_subagent_marker(message) {
             return Ok(());
         }

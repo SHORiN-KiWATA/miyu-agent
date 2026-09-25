@@ -33,29 +33,37 @@ pub(in crate::web) fn install_background_job_hook(state: &DaemonState) {
         );
     }));
     // 后台子代理的实时进度上 SSE。标记在这儿收成任务条那一行要的三样(窥视、词元、
-    // 子会话,会话项目第 4 段之二,`tools::subagent::status`):网页不再自己解析标记,
-    // 点那一行打开子会话。收不出东西的(节流窗里、不是子代理的标记)只带原文。
+    // 子会话,会话项目第 4 段之二,`tools::subagent::status`):网页不解析标记,点那一行
+    // 打开子会话。节流窗里的、不是子代理标记的,不发。
     let progress_state = state.clone();
     let feeds: Arc<Mutex<HashMap<String, tools::subagent::status::SubagentStatusFeed>>> =
         Arc::default();
+    let finished_feeds = feeds.clone();
     tools::jobs::set_progress_hook(Arc::new(move |job_id, message| {
-        let session_id = tools::jobs::job_session_id(job_id);
-        let mut payload = json!({ "job_id": job_id, "message": message, "session_id": session_id });
         let absorbed = feeds
             .lock()
             .unwrap()
             .entry(job_id.to_string())
             .or_default()
             .absorb(message);
-        if let tools::subagent::status::Absorbed::Report { status, .. } = absorbed {
-            payload["peek"] = json!(status.peek);
-            payload["tokens_label"] = json!(status.tokens_label);
-            payload["child_session_id"] = json!(status.session_id);
-        }
-        progress_state.events.publish("job.progress", payload);
+        let tools::subagent::status::Absorbed::Report { status, .. } = absorbed else {
+            return;
+        };
+        progress_state.events.publish(
+            "job.progress",
+            json!({
+                "job_id": job_id,
+                "session_id": tools::jobs::job_session_id(job_id),
+                "peek": status.peek,
+                "tokens_label": status.tokens_label,
+                "child_session_id": status.session_id,
+            }),
+        );
     }));
     let hook_state = state.clone();
     tools::jobs::set_completion_hook(Arc::new(move |completion| {
+        // 跑完了，它那份进度状态不再用得着。
+        finished_feeds.lock().unwrap().remove(&completion.job_id);
         let state = hook_state.clone();
         tokio::spawn(async move {
             handle_job_completion(state, completion).await;

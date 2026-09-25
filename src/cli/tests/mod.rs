@@ -8,7 +8,6 @@ mod event_clock;
 mod footer_cumulative;
 mod footer_tail;
 mod footer_width;
-mod golden_panel;
 mod hangup;
 mod herdr_notify;
 mod input_editing;

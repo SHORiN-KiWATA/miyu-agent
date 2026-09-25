@@ -175,15 +175,6 @@ async fn run_remote_chat_inner(
     renderer.cross_session_preview_lines = config.display.cross_session_preview_lines;
     let queue_state = Some(state_probe);
     if let Some(live) = live.as_deref_mut() {
-        // 后台任务面板也跟着这两个开关走。每轮交一次：它和渲染器读的是同一份
-        // 配置，节奏也该一样。
-        live.set_display_expand(
-            config.display.expand_reasoning,
-            config.display.expand_tool_calls,
-            config.display.fold_timeline,
-            config.display.command_output_lines,
-            config.display.thinking_scroll_lines,
-        );
         renderer.use_external_cursor_control();
         renderer.use_buffered_output();
         live.external_output_active = false;

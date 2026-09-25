@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 /// 窥视留多长。界面各自按宽度再截，这里只防一段长思考整段搬过去。
 const PEEK_CHARS: usize = 240;
 
+/// 攒着的思考 / 正文最多留多长（字节）。窥视只要最后一行的尾巴，整段留着就是白占内存
+/// ——一段长思考能有几万字。
+const KEEP_BYTES: usize = 4096;
+
 /// 只有窥视变了的话，隔多久才报一次：思考和正文是逐字来的。
 const PEEK_EVERY: Duration = Duration::from_millis(200);
 
@@ -118,6 +122,7 @@ impl SubagentStatusFeed {
             if !delta.is_empty() {
                 self.speech.clear();
                 self.thought.push_str(delta);
+                keep_tail(&mut self.thought);
                 self.status.peek = tail(&self.thought);
             }
         } else if message.starts_with(REASONING_DONE_MARKER) {
@@ -126,6 +131,7 @@ impl SubagentStatusFeed {
             if !delta.is_empty() {
                 self.thought.clear();
                 self.speech.push_str(delta);
+                keep_tail(&mut self.speech);
                 self.status.peek = tail(&self.speech);
             }
         } else if let Some(json) = message
@@ -160,6 +166,18 @@ fn tool_peek(json: &str) -> String {
         .split_once('\t')
         .map_or(line.as_str(), |(_, rest)| rest);
     tail(line)
+}
+
+/// 只留最后 `KEEP_BYTES` 字节（落在字符边界上）。
+fn keep_tail(text: &mut String) {
+    if text.len() <= KEEP_BYTES {
+        return;
+    }
+    let mut cut = text.len() - KEEP_BYTES;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    text.drain(..cut);
 }
 
 /// 一段字的最后一行，截到 `PEEK_CHARS` 个字（留尾巴：最新的在后面）。

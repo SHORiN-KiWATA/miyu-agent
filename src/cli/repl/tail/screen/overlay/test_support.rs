@@ -63,27 +63,6 @@ impl Screen {
         }
     }
 
-    /// 直接把一串原始进度标记喂给面板（测试用）。
-    ///
-    /// 产品里这份是轮询线程从 `job.trace` 拉回来的，测试里起个 daemon 太重；
-    /// 走的仍是 `steps_from_events` + `render_steps` 那条**同一条**路。
-    pub(in crate::cli) fn overlay_feed_markers_for_test(&mut self, markers: &[String]) {
-        let (expand, fold, lines, thought_lines) = (
-            self.display_expand,
-            self.display_fold,
-            self.display_command_lines,
-            self.display_thought_lines,
-        );
-        let Some(panel) = &mut self.overlay else {
-            return;
-        };
-        panel.display_expand = expand;
-        panel.display_fold = fold;
-        panel.display_command_lines = lines;
-        panel.display_thought_lines = thought_lines;
-        panel.render_from_markers(markers);
-    }
-
     /// 鼠标停在面板里第 `index` 行上（测试用）：同 `overlay_toggle`，省掉屏幕行
     /// 到内容行的几何换算。返回真表示悬浮目标变了。
     pub(in crate::cli) fn overlay_hover_index(&mut self, index: Option<usize>) -> bool {

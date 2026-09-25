@@ -261,19 +261,13 @@ impl super::super::LiveReplTail {
                             .and_then(|screen| screen.block_at(row))
                             .map(|(id, _)| id);
                         // 子代理是一条会话（09-18）：点它那一行就切进去看、接着聊
-                        // （会话项目第 3 段）。认不出是哪条会话的（后台刚派出去的）
-                        // 照旧开覆盖层。
+                        // （会话项目第 3 段）。别的块就地展开。
                         let linked = block.and_then(miyu_hosts::render::blocks::linked_session);
                         if let Some(session) = linked {
                             self.pending_strip_action =
                                 Some(crate::cli::repl::strip::StripAction::Visit(session));
                         } else if let (Some(id), Some(screen)) = (block, &mut self.screen) {
-                            // 子代理点开的是覆盖层，不是就地展开。
-                            if miyu_hosts::render::blocks::is_overlay(id) {
-                                screen.open_overlay(id);
-                            } else {
-                                screen.toggle_block(id);
-                            }
+                            screen.toggle_block(id);
                         }
                     }
                     self.repaint_screen()?;

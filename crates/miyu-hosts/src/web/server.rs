@@ -772,7 +772,6 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/api/usage/clear", post(usage_clear_web))
         .route("/api/jobs/{job_id}", delete(stop_job_http))
         .route("/api/jobs/{job_id}/log", get(job_log_http))
-        .route("/api/jobs/{job_id}/trace", get(job_trace_http))
         // OneBot v11 reverse-WS endpoint: NapCat connects here as a WS
         // client. Gated by platforms.qq config, not web auth.
         .route("/ws", get(platforms::onebot::onebot_ws_on_web_port))

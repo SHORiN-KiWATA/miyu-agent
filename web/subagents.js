@@ -4,15 +4,14 @@
  * 子代理的会话(会话项目第 4 段):09-18 起子代理是一条会话。
  *
  * 1. 父会话里子代理那张卡片点下去,打开它的会话——和终端里点时间线上那一行、点任务条上
- *    那一行同一件事。卡片认子会话有三处来源:实时那条 `__subagent_session__` 标记(子会话
- *    一建好就报)、回看时落库的 `child_session_id`、结果里的 `session …`。后台子代理刚派
- *    出去时子会话还没建,三处都没有,卡片照旧展开收起。
+ *    那一行同一件事。卡片认子会话有三处来源:实时的 `subagent.progress`(子会话一建好就
+ *    报)、回看时落库的 `child_session_id`、结果里的 `session …`。后台子代理刚派出去时子
+ *    会话还没建,三处都没有,卡片照旧展开收起。
  * 2. 在子代理的会话里,输入框上方挂一块「↑ 主会话 · 名字」,点它回去。
  *
  * 单独成文件:app.js 已经一万四千行。
  */
 window.MiyuSubagents = (() => {
-  const SESSION_MARKER = "__subagent_session__";
   let openSession = () => {};
   let bar = null;
 
@@ -54,13 +53,6 @@ window.MiyuSubagents = (() => {
     if (head) head.title = t("打开子代理的会话");
   }
 
-  /** 实时那条标记:认出来就挂上、吃掉,别让它漏进窥视那一行。 */
-  function takeMarker(card, message) {
-    if (!String(message || "").startsWith(SESSION_MARKER)) return false;
-    link(card, String(message).slice(SESSION_MARKER.length).trim());
-    return true;
-  }
-
   /** 抬头被点了:认得子会话就打开它,返回真表示这一下已经处理了。 */
   function openFromCard(card) {
     const id = card?.dataset?.childSession;
@@ -88,5 +80,5 @@ window.MiyuSubagents = (() => {
     if (sessionId) openSession(String(sessionId));
   }
 
-  return { init, link, open, takeMarker, openFromCard, sessionOfOutput, viewed };
+  return { init, link, open, openFromCard, sessionOfOutput, viewed };
 })();

@@ -132,8 +132,6 @@ pub struct StreamRenderer {
     pub(crate) custom_waiting_phase: Option<String>,
     /// 全屏：自动压缩时流进来的摘要先攒着，压完收成一块（`finish_compact`）。
     pub(crate) compact_text: String,
-    /// 上一次把子代理面板重灌是什么时候。见 `refresh_subagent_panels`。
-    pub(crate) last_subagent_refresh: Option<std::time::Instant>,
     /// 正在喂的这个事件是什么时候发生的（`event_clock.rs`）。
     pub(crate) event_clock: Option<std::time::Instant>,
     pub(crate) preparing_question_started_at: Option<std::time::Instant>,
@@ -159,8 +157,6 @@ pub struct StreamRenderer {
     pub(crate) stream_control: TerminalControlState,
     /// 全屏下这一段连续过程的时间线。inline 模式全程为空。
     pub(crate) timeline: timeline::Timeline,
-    /// 每个子代理的内层流水账，按工具名归档。点开覆盖层看的就是这个。
-    pub(crate) subagent_logs: BTreeMap<String, timeline::SubagentLog>,
     /// 「正在进行」那一行的块 id。每帧重发标记但**id 不变**，否则每 tick
     /// 都会在登记处攒一个新块。想完/跑完就清掉。
     pub(crate) live_block: Option<u64>,
@@ -214,7 +210,6 @@ impl StreamRenderer {
             last_tick: None,
             custom_waiting_phase: None,
             compact_text: String::new(),
-            last_subagent_refresh: None,
             event_clock: None,
             preparing_question_started_at: None,
             tool_preparing: None,
@@ -223,7 +218,6 @@ impl StreamRenderer {
             sent_meme_filter: SentMemeStreamFilter::default(),
             stream_control: TerminalControlState::default(),
             timeline: timeline::Timeline::default(),
-            subagent_logs: BTreeMap::new(),
             live_block: None,
         }
     }

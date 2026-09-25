@@ -26,14 +26,13 @@ const MAX_LINES: usize = 16_000;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// 一块的内容。`overlay` 为真表示它**不在正文里就地展开**，而是点开一个盖住
-/// 整屏的面板——子代理那种「里面还在流」的东西塞进正文行里没法看。
+/// 一块的内容：点开时就地展开的那几行。
+///
+/// 原来还有一种「点开是覆盖层」的块（子代理的内层时间线，带标题栏）。子代理 09-18 起
+/// 是一条会话，点它切进去看；09-25 那一种随浮层退役（会话项目第 4 段之二）。
 struct Entry {
     lines: Vec<String>,
-    overlay: bool,
-    /// 覆盖层的标题栏文字。就地展开的块用不上。
-    title: String,
-    /// 每次更新 +1。覆盖层开着时靠它判断要不要重画。
+    /// 每次更新 +1。
     version: u64,
     /// 最后一次被登记／更新／读取的序号。淘汰按它来，见 [`evict`]。
     touched: u64,
@@ -84,33 +83,15 @@ pub fn enabled() -> bool {
 
 /// 存一份展开内容，拿到它的 id。没开全屏就什么都不做。
 pub fn register(lines: Vec<String>) -> Option<u64> {
-    insert(lines, false)
-}
-
-/// 登记一块「点开是覆盖层」的内容。允许先登记空的，之后用 [`update`] 往里灌。
-pub fn register_overlay(title: String, lines: Vec<String>) -> Option<u64> {
-    if !enabled() {
-        return None;
-    }
-    insert_entry(lines, true, title)
-}
-
-fn insert(lines: Vec<String>, overlay: bool) -> Option<u64> {
     if !enabled() || lines.is_empty() {
         return None;
     }
-    insert_entry(lines, overlay, String::new())
-}
-
-fn insert_entry(lines: Vec<String>, overlay: bool, title: String) -> Option<u64> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let mut map = registry().lock().ok()?;
     map.insert(
         id,
         Entry {
             lines,
-            overlay,
-            title,
             version: 0,
             touched: touch(),
             user_open: false,
@@ -144,16 +125,13 @@ pub fn user_open(id: u64) -> bool {
         .unwrap_or(false)
 }
 
-/// 往一块里灌新内容（子代理边跑边更新）。标题跟着一起更新——它带着耗时。
-pub fn update(id: u64, title: String, lines: Vec<String>) {
+/// 往一块里灌新内容（跑着的工具那一行边跑边更新）。
+pub fn update(id: u64, lines: Vec<String>) {
     let Ok(mut map) = registry().lock() else {
         return;
     };
     if let Some(entry) = map.get_mut(&id) {
         entry.lines = lines;
-        if !title.is_empty() {
-            entry.title = title;
-        }
         entry.version = entry.version.wrapping_add(1);
         entry.touched = touch();
     }
@@ -173,12 +151,6 @@ pub fn link_session(id: u64, session_id: &str) {
 /// 点这一块要切进的会话（见 [`link_session`]）。
 pub fn linked_session(id: u64) -> Option<String> {
     registry().lock().ok()?.get(&id)?.session.clone()
-}
-
-/// 覆盖层的标题。
-pub fn title(id: u64) -> Option<String> {
-    let title = registry().lock().ok()?.get(&id)?.title.clone();
-    (!title.is_empty()).then_some(title)
 }
 
 /// 淘汰按**最久没碰过**来，不是按 id 从小到大。
@@ -213,15 +185,6 @@ pub fn get(id: u64) -> Option<Vec<String>> {
     let entry = map.get_mut(&id)?;
     entry.touched = stamp;
     Some(entry.lines.clone())
-}
-
-/// 这一块点开是覆盖层还是就地展开。
-pub fn is_overlay(id: u64) -> bool {
-    registry()
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&id).map(|entry| entry.overlay))
-        .unwrap_or(false)
 }
 
 /// 一批块的内容版本号，一把锁问完。不在登记处的给 0（和 [`version`] 一致）。

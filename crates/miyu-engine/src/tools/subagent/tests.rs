@@ -489,3 +489,20 @@ mod status_feed {
         assert!(status.peek.contains("2.0s"), "{}", status.peek);
     }
 }
+
+/// 一段很长的思考：只留尾巴，窥视照样是最后那一截。
+#[test]
+fn a_long_thought_keeps_only_its_tail() {
+    use super::status::SubagentStatusFeed;
+    let mut feed = SubagentStatusFeed::default();
+    for _ in 0..2000 {
+        feed.absorb("__subagent_reasoning__想一想，");
+    }
+    feed.absorb("__subagent_reasoning__最后一句");
+    let peek = feed
+        .pending()
+        .map(|status| status.peek)
+        .unwrap_or_else(|| feed.status().peek.clone());
+    assert!(peek.ends_with("最后一句"), "{peek}");
+    assert!(peek.chars().count() <= 240);
+}

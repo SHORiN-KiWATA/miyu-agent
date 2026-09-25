@@ -196,26 +196,25 @@ fn run_script(renderer: &mut StreamRenderer) {
         .unwrap();
     tick();
 
-    // 子代理:面板那条路(前台走事件)。
+    // 子代理:状态行那一行(会话项目第 4 段之二:前台走 `subagent.progress`,窥视、词元、
+    // 子会话;过程在子会话里,父会话不再画一遍)。
     renderer
         .write_tool_call(
             "subagent",
             r#"{"description":"查目录","prompt":"去看看那个目录里有什么"}"#,
         )
         .unwrap();
-    renderer.subagent_thought("subagent", "先列一下。");
+    let status = |peek: &str, tokens: u64| miyu_engine::tools::subagent::status::SubagentStatus {
+        peek: peek.to_string(),
+        tokens_label: tokens.to_string(),
+        tokens,
+        session_id: Some("sess_golden_child".to_string()),
+    };
+    renderer.write_subagent_status("subagent", status("先列一下。", 150));
     tick();
-    renderer.subagent_tool_preparing("subagent", "run_command");
+    renderer.write_subagent_status("subagent", status("运行命令 · 列目录", 300));
     tick();
-    renderer.subagent_tool(
-        "subagent",
-        "run_command",
-        "运行命令",
-        r#"{"command":"ls -la","title":"列目录"}"#,
-        true,
-        "total 0",
-    );
-    renderer.subagent_content("subagent", "里面是空的。");
+    renderer.write_subagent_status("subagent", status("里面是空的。", 450));
     tick();
     renderer
         .write_tool_result("subagent", true, "子代理跑完了")
