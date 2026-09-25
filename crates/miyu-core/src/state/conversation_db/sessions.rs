@@ -754,7 +754,6 @@ impl ConversationDb {
         if deleted == 0 {
             bail!("session not found: {session_id}");
         }
-        super::skill_catalog::prune_orphan_snapshots(&tx)?;
         tx.commit()?;
         Ok(())
     }

@@ -74,6 +74,8 @@ impl Agent {
         on_event(AgentEvent::TurnStarted {
             turn_id: turn_id.clone(),
         })?;
+        // 技能目录随回合尾巴发(指令源):先按指纹刷一次,尾巴里的才是此刻的目录。
+        self.refresh_tool_catalogs().await;
         let (mut messages, user_index) = self.chat_messages(&turn_id, &input)?;
         // 按显式下标把占位用户消息换成带附件的成品;瞬态尾巴保持原位。
         if let Some(user) = messages.get_mut(user_index) {
@@ -201,8 +203,8 @@ impl Agent {
             // repeat adds nothing and is skipped — the associative-memory
             // dedup reasoning. State snapshots (the WebUI artifact manifest)
             // are skipped when the most recent visible copy is byte-identical
-            // (`STATE_SNAPSHOT_TAGS`). Everything else ("this turn is system
-            // triggered", identity warnings, moderation prechecks) refers to
+            // (`HostSnapshot`, an instruction source). Everything else ("this
+            // turn is system triggered", identity warnings, moderation prechecks) refers to
             // the CURRENT turn, so an identical old fossil is no substitute
             // and those blocks are always sent.
             let fresh = self
@@ -212,10 +214,8 @@ impl Agent {
                 .filter(|block| {
                     let standing = block.starts_with(STANDING_ADVISORY_PREFIX)
                         && turn_context_block_visible(&messages, block);
-                    let unchanged_snapshot = STATE_SNAPSHOT_TAGS.iter().any(|tag| {
-                        block.starts_with(tag)
-                            && latest_visible_snapshot(&messages, tag) == Some(block.as_str())
-                    });
+                    let unchanged_snapshot = HostSnapshot::of(block)
+                        .is_some_and(|snapshot| project(&snapshot, messages).is_none());
                     !(standing || unchanged_snapshot)
                 })
                 .cloned()

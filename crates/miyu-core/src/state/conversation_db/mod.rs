@@ -22,8 +22,6 @@ pub use rows::{interrupted_text, pending_placeholder};
 mod sessions;
 mod shared_files;
 pub use shared_files::SharedFile;
-mod skill_catalog;
-pub use skill_catalog::SkillCatalogSnapshot;
 mod sponsors;
 pub use sponsors::*;
 mod accounts;

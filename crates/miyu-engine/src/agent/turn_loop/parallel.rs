@@ -197,11 +197,15 @@ impl Agent {
         // 按首轮同一口径"变了才追加"(只挂第一条),图片路径/context-images
         // 提示原样跟随。live 推进 messages 的就是这同一份 tail,活体与化石
         // 逐字节一致——少了这一步,下一轮回放在 followup 处比活体短一截,
-        // 缓存前缀与 CLI 续传链都在这里掰断(09-04 codex 线实证)。
-        let runtime = runtime_context(self.input.platform_context.is_some());
-        let runtime_block = (last_fossil_with_prefix(messages, "<runtime ")
-            != Some(runtime.as_str()))
-        .then(|| ChatMessage::turn_context(runtime));
+        // 缓存前缀与 CLI 续传链都在这里掰断(09-04 codex 线实证)。别的指令源
+        // (沙盒……)等下一轮再说。
+        let runtime_block = project(
+            &RuntimeSource {
+                platform: self.input.platform_context.is_some(),
+            },
+            messages,
+        )
+        .map(ChatMessage::turn_context);
         let mut consumed = Vec::with_capacity(prepared.len());
         let mut tails: Vec<Vec<ChatMessage>> = Vec::with_capacity(prepared.len());
         for (index, (prompt, input)) in prepared.iter().enumerate() {

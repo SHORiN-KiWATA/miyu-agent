@@ -31,7 +31,7 @@ Everything below that says "call `manage_skill`" means this.
 2. Prefer instruction-only skills. Add scripts only when deterministic code or an external program is genuinely required.
 3. Load the development and skill authoring tools before editing.
 4. Use `manage_skill` with `action=create` for a new skill or `action=update` for an existing one. Use the returned absolute `skill_file` and `skill_dir`; never guess a Miyu home path.
-5. Use `apply_patch` to edit `SKILL.md` and add optional `scripts/`, `references/`, or `assets/` files below the returned draft directory.
+5. Use `edit` to change `SKILL.md` and add optional `scripts/`, `references/`, or `assets/` files below the returned draft directory.
 6. Keep `SKILL.md` concise. Put detailed reference material in supporting files and reference those files with paths relative to the skill root.
 7. Call `manage_skill` with `action=publish` and the returned draft ID. Publishing performs structural validation and atomically installs the package.
 8. Load the published skill with `load_skill` to verify the final instructions and resource manifest.

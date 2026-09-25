@@ -385,12 +385,7 @@ impl ToolSpec {
 
     pub fn apply_built_in_description(mut self) -> Self {
         if let Some(desc) = crate::tools::tool_descriptions::get(&self.name) {
-            // load_skill owns a dynamic catalog description, but still uses
-            // the same loading policy, groups, schema, and display metadata
-            // as every other built-in tool.
-            if self.name != "load_skill" {
-                self.description = desc.description.clone();
-            }
+            self.description = desc.description.clone();
             self.parameters = desc.parameters.clone();
             // 显示名走双语表(内建工具 41/41 全覆盖),JSON 里那一份只是中文单槽:
             // 直接用它,英文界面就会把「查找文件」端给英文用户。表里没有的
