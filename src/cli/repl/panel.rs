@@ -11,7 +11,7 @@
 
 use crate::cli::*;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::cli) struct Panel {
     pub(in crate::cli) left: u16,
     pub(in crate::cli) top: u16,
@@ -76,6 +76,7 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
     let mut body_delta = 0isize;
     let mut layout: Option<((u16, u16, u16), Panel)> = None;
     let mut next_tick = std::time::Instant::now() + TICK;
+    let mut canvas = Canvas::default();
     loop {
         if expire_toast(live) {
             layout = None;
@@ -89,7 +90,11 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
             let geometry = (cols, rows, desired);
             let panel = match layout {
                 Some((previous, panel)) if previous == geometry && body_delta == 0 => panel,
-                _ => prepare(live, desired, body_delta)?,
+                _ => {
+                    // 重新布局会把整屏（或面板那一带）擦了重画，屏上的面板不算数了。
+                    canvas.forget();
+                    prepare(live, desired, body_delta)?
+                }
             };
             layout = Some((geometry, panel));
             page_rows = panel.top.max(1) as isize;
@@ -101,17 +106,18 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
             };
             let mut lines = model.content(&frame);
             lines.resize(usize::from(panel.rows), String::new());
-            paint_panel(&panel, &bar, &lines)?;
+            canvas.paint(&panel, &bar, &lines, repaint_epoch(live), false)?;
             painted = Some((panel, bar, lines));
             Ok(())
         })?;
         body_delta = 0;
         // 面板拿着输入时 REPL 的事件泵是停的。大厅 banner 挂着就按 40ms 的节拍
-        // 推帧(与输入泵一致),每拍推一帧星空、再把面板压回去——以前面板开着的
-        // 那段星空与扫光是定格的(09-17 用户报)。节拍按**时刻**算,不按「等满
-        // 40ms 没按键」算:按住 j/k 时按键比 40ms 密,后一种算法一帧都推不出,
-        // 扫光一顿一顿(用户实测)。面板占的是 banner 让出来的那几行,整帧 diff
-        // 不会碰它,压回去只是保险。没有 banner 就 100ms 只看通知条过期。
+        // 推帧(与输入泵一致),每拍推一帧星空——以前面板开着的那段星空与扫光是
+        // 定格的(09-17 用户报)。节拍按**时刻**算,不按「等满 40ms 没按键」算:按住
+        // j/k 时按键比 40ms 密,后一种算法一帧都推不出,扫光一顿一顿(用户实测)。
+        // 面板占的是 banner 让出来的那几行,星空补丁不碰它(`cells`):这一拍正文层
+        // 没整行擦写过面板那几行,面板就一个字节都不写(09-25,以前每拍整块压回去,
+        // 不支持同步输出的终端上面板每拍闪一次)。没有 banner 就 100ms 只看通知条过期。
         loop {
             let wait = if live.banner.is_some() {
                 let now = std::time::Instant::now();
@@ -119,7 +125,12 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
                     if let Some((panel, bar, lines)) = &painted {
                         synchronized_terminal_update(CursorAfterUpdate::Hidden, || {
                             live.tick_banner()?;
-                            paint_panel(panel, bar, lines)
+                            let rows = panel.top..panel.top.saturating_add(panel.rows);
+                            let touched = live
+                                .screen
+                                .as_ref()
+                                .is_some_and(|screen| screen.touched_any(rows));
+                            canvas.paint(panel, bar, lines, repaint_epoch(live), touched)
                         })?;
                     }
                     next_tick = now + TICK;
@@ -176,24 +187,77 @@ fn run<M: PanelModel>(live: &mut LiveReplTail, model: &mut M) -> Result<M::Outpu
     }
 }
 
-/// 把面板那几行写到屏上:每行先用空格铺满面板宽再写内容(竖条 + 行)。
-fn paint_panel(panel: &Panel, bar: &str, lines: &[String]) -> Result<()> {
-    let mut stdout = crate::cli::repl::tail::term_out();
-    for (row, line) in lines.iter().enumerate() {
-        let y = panel.top.saturating_add(row as u16);
-        queue!(
-            stdout,
-            MoveTo(panel.left, y),
-            Print(" ".repeat(usize::from(panel.width))),
-            MoveTo(panel.left, y),
-            Print(render::clip_to_display_width(
-                &format!("{bar}{line}"),
-                usize::from(panel.width)
-            ))
-        )?;
+/// 面板的一行：竖条 + 内容，按面板宽截断、不够就用默认样式的空格补满——一笔写完，
+/// 不先铺空格再写字（那样不支持同步输出的终端上看得见「先空了一下」）。
+fn panel_row(bar: &str, line: &str, width: u16) -> String {
+    let clipped = render::clip_to_display_width(&format!("{bar}{line}"), usize::from(width));
+    let pad = usize::from(width).saturating_sub(visible_width(&clipped));
+    format!("{clipped}\x1b[0m{}", " ".repeat(pad))
+}
+
+/// 屏上现在画着的面板：位置、竖条、每一行，外加画它那一刻屏幕整片失效的次数
+/// （`Screen::repaint_epoch`）。下一次只写变了的行；位置或竖条变了、屏幕整片重画过、
+/// 调用方说那几行被擦写过，就整块重画（09-25）。
+#[derive(Default)]
+struct Canvas {
+    shown: Option<(Panel, String, Vec<String>, u64)>,
+}
+
+impl Canvas {
+    /// 屏上的面板不算数了（重新布局会擦掉那一带）。
+    fn forget(&mut self) {
+        self.shown = None;
     }
-    stdout.flush()?;
-    Ok(())
+
+    /// 这一版该写的字节：`full` = 屏上那一块已经被擦写过，整块重画。
+    fn bytes(&self, panel: &Panel, bar: &str, lines: &[String], epoch: u64, full: bool) -> Vec<u8> {
+        let reuse = match &self.shown {
+            Some((shown_panel, shown_bar, shown_lines, shown_epoch))
+                if !full && shown_panel == panel && shown_bar == bar && *shown_epoch == epoch =>
+            {
+                Some(shown_lines)
+            }
+            _ => None,
+        };
+        let mut out = Vec::new();
+        for (row, line) in lines.iter().enumerate() {
+            if reuse.is_some_and(|shown| shown.get(row) == Some(line)) {
+                continue;
+            }
+            let y = panel.top.saturating_add(row as u16);
+            let _ = queue!(
+                out,
+                MoveTo(panel.left, y),
+                Print(panel_row(bar, line, panel.width))
+            );
+        }
+        out
+    }
+
+    fn paint(
+        &mut self,
+        panel: &Panel,
+        bar: &str,
+        lines: &[String],
+        epoch: u64,
+        full: bool,
+    ) -> Result<()> {
+        let bytes = self.bytes(panel, bar, lines, epoch, full);
+        if !bytes.is_empty() {
+            let mut stdout = crate::cli::repl::tail::term_out();
+            stdout.write_all(&bytes)?;
+            stdout.flush()?;
+        }
+        self.shown = Some((*panel, bar.to_string(), lines.to_vec(), epoch));
+        Ok(())
+    }
+}
+
+/// 屏幕整片失效的次数（没有全屏就是 0）。
+fn repaint_epoch(live: &LiveReplTail) -> u64 {
+    live.screen
+        .as_ref()
+        .map_or(0, |screen| screen.repaint_epoch())
 }
 
 fn expire_toast(live: &mut LiveReplTail) -> bool {
@@ -260,6 +324,52 @@ mod tests {
             let panel = body_panel(80, rows, 12);
             assert!(panel.top + panel.rows <= rows);
         }
+    }
+
+    /// 面板没变就一个字节都不写；只变了一行就只写那一行；屏上被擦写过、位置变了、
+    /// 屏幕整片失效过就整块重画。每一行都是一笔写满面板宽，不先铺空格。
+    #[test]
+    fn the_canvas_writes_only_what_changed_on_screen() {
+        let panel = Panel {
+            left: 10,
+            top: 20,
+            width: 30,
+            rows: 3,
+        };
+        let lines: Vec<String> = vec!["选择会话".into(), "› 第一条".into(), "帮助".into()];
+        let mut canvas = Canvas::default();
+        assert!(
+            !canvas.bytes(&panel, "┃ ", &lines, 4, false).is_empty(),
+            "第一次整块写"
+        );
+        canvas.shown = Some((panel, "┃ ".into(), lines.clone(), 4));
+        assert!(
+            canvas.bytes(&panel, "┃ ", &lines, 4, false).is_empty(),
+            "没变就不写"
+        );
+        let mut moved = lines.clone();
+        moved[1] = "  第一条".into();
+        let one = String::from_utf8(canvas.bytes(&panel, "┃ ", &moved, 4, false)).unwrap();
+        assert!(one.starts_with("\x1b[22;11H"), "只写第二行：{one:?}");
+        assert!(
+            !one.contains("选择会话") && !one.contains("帮助"),
+            "{one:?}"
+        );
+        for full in [
+            canvas.bytes(&panel, "┃ ", &lines, 4, true),
+            canvas.bytes(&panel, "┃ ", &lines, 5, false),
+            canvas.bytes(&Panel { top: 21, ..panel }, "┃ ", &lines, 4, false),
+        ] {
+            let text = String::from_utf8(full).unwrap();
+            assert!(
+                text.contains("选择会话") && text.contains("帮助"),
+                "{text:?}"
+            );
+        }
+        // 一笔写满面板宽：定位之后没有先铺一整行空格。
+        let row = panel_row("┃ ", "第一条", 30);
+        assert_eq!(visible_width(&row), 30);
+        assert!(!row.starts_with(' '), "{row:?}");
     }
 
     #[test]
