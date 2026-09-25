@@ -517,6 +517,10 @@ pub enum Frame {
         id: u64,
         kind: String,
         data: Value,
+        /// 事件发生的时刻（Unix 毫秒）。挂上来的终端补发一轮时靠它按事件自己的时刻掐表
+        /// （会话项目第 3 段收尾）；不带（老 daemon、不是回合事件）就按收到的那一刻。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
     },
     Ack,
     AdminResult {

@@ -392,10 +392,10 @@ impl Timeline {
     /// 起点不是"这一步被收进来的那一刻"——步是跑完才收的，两者正好差出这一步的
     /// 耗时。一轮只想了一次就交卷时，这个差就是整段思考，摘要于是报出刺眼的
     /// `Worked for 0.0s`：看着像这一轮瞬间就完了。
-    fn note_start_since(&mut self, spent: Duration) {
-        let at = Instant::now()
-            .checked_sub(spent)
-            .unwrap_or_else(Instant::now);
+    ///
+    /// `now` 是收进来的这一刻：补发的事件按它自己发生的时刻（`event_clock.rs`）。
+    fn note_start_since(&mut self, spent: Duration, now: Instant) {
+        let at = now.checked_sub(spent).unwrap_or(now);
         if self.started.is_none_or(|existing| at < existing) {
             self.started = Some(at);
         }
@@ -423,8 +423,11 @@ impl Timeline {
     /// `Worked for` 那一截整个消失，重开之后只剩 `1 tool · 2 thoughts`
     ///（用户实测对比图）。回放时每一步自己带着耗时，累加起来就是这一段的下限，
     /// 取两者的大者：实时不受影响，回放拿得回那个数。
-    fn elapsed(&self) -> Duration {
-        let wall = self.started.map(|at| at.elapsed()).unwrap_or_default();
+    fn elapsed(&self, now: Instant) -> Duration {
+        let wall = self
+            .started
+            .map(|at| now.saturating_duration_since(at))
+            .unwrap_or_default();
         wall.max(self.spent)
     }
 }
@@ -686,7 +689,8 @@ impl StreamRenderer {
             .filter_map(|entry| entry.elapsed)
             .max()
             .unwrap_or_default();
-        self.timeline.note_start_since(spent);
+        let now = self.event_now();
+        self.timeline.note_start_since(spent, now);
         // 清单是一段的句点:表落在收缩行之后、新一段之前(对齐 WebUI)。
         let ends_segment = entries.iter().any(|e| e.name == "todowrite" && !e.failed);
         for PendingStep {
@@ -869,11 +873,15 @@ impl StreamRenderer {
         if self.reasoning_title.is_none() && self.reasoning_text.trim().is_empty() {
             return Ok(());
         }
+        let now = self.event_now();
         let elapsed = self
             .reasoning_elapsed
-            .or_else(|| self.reasoning_started_at.map(|at| at.elapsed()))
+            .or_else(|| {
+                self.reasoning_started_at
+                    .map(|at| now.saturating_duration_since(at))
+            })
             .unwrap_or_default();
-        self.timeline.note_start_since(elapsed);
+        self.timeline.note_start_since(elapsed, now);
         let mut label = t("thought", "已思考").to_string();
         if self.reasoning_tokens > 0 {
             label = format!(
@@ -1075,8 +1083,9 @@ impl StreamRenderer {
         if elapsed.is_zero() {
             return;
         }
+        let now = self.event_now();
         let stats = self.tool_stats_entry(name);
-        stats.started_at = Instant::now().checked_sub(elapsed);
+        stats.started_at = now.checked_sub(elapsed);
     }
 
     /// 同 [`Self::replay_tool_elapsed`]，这一段思考想了多久。
@@ -1145,8 +1154,9 @@ impl StreamRenderer {
             stdout.flush()?;
             return self.flush_after_timeline();
         }
+        let now = self.event_now();
         let timeline = std::mem::take(&mut self.timeline);
-        let summary = summary_line(timeline.elapsed(), timeline.counts);
+        let summary = summary_line(timeline.elapsed(now), timeline.counts);
         // 展开内容：头行 + 用连线串起来的每一步（各自包成块）。
         let mut steps = Vec::with_capacity(timeline.steps.len());
         for step in &timeline.steps {

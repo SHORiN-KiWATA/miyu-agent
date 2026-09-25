@@ -38,6 +38,8 @@ pub(in crate::web) fn catch_up_from_journal(
             id: resume_at,
             kind: "turn.catchup".to_string(),
             data,
+            // 追赶那一包里每一步带着自己的耗时（流水的时刻），这一帧本身就是现在。
+            at_ms: None,
         },
     ))
 }

@@ -4,6 +4,7 @@
 //! 参数解析、日志格式化、footer、活动区、菜单——名字名不副实。
 mod cli_args;
 mod daemon_log;
+mod event_clock;
 mod footer_cumulative;
 mod footer_tail;
 mod footer_width;

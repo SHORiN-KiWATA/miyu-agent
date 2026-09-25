@@ -22,6 +22,7 @@
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -48,6 +49,19 @@ def timeline_row(screen):
         if f"·{ROW}" in line and r.is_running_row(line, ROW):
             return index
     return None
+
+
+def row_seconds(screen):
+    """时间线上子代理那一行报的秒数（`· 12.3s ·`、`· 1m 02s ·`）。"""
+    index = timeline_row(screen)
+    if index is None:
+        return None
+    line = screen[index]
+    minutes = re.search(r"· (\d+)m (\d+)s", line)
+    if minutes:
+        return int(minutes.group(1)) * 60 + int(minutes.group(2))
+    seconds = re.search(r"· (\d+(?:\.\d+)?)s\b", line)
+    return float(seconds.group(1)) if seconds else None
 
 
 def strip_row(screen, text):
@@ -90,6 +104,9 @@ def main():
             r.save("visit-no-timeline-row", r.LAST["screen"] or [])
             report["subagent_row_appeared"] = False
             return report
+        # 等那一行报到 2 秒以上再点：刚出现时不到十分之一秒不报秒数，拿不到「之前」的读数。
+        screen = r.wait_screen(master, sink, lambda s: (row_seconds(s) or 0) >= 2.0, 20.0) or screen
+        seconds_before = row_seconds(screen)
         h.click(master, sink, 6, timeline_row(screen), quiet=0.3, timeout=1.5)
         screen = r.wait_screen(master, sink, inside_child, 10.0)
         report["timeline_click_enters_child"] = screen is not None
@@ -101,6 +118,13 @@ def main():
         screen = r.wait_screen(master, sink, back_in_parent, 10.0)
         report["back_command_returns"] = screen is not None
         r.save("visit-back", screen or r.LAST["screen"] or [])
+        # 回来之后这一轮是从头补的：子代理那一步的秒数从它派出去那一刻算，不从补发那一刻
+        # 重新数（原来 13s 回来变 1.4s）。
+        seconds_after = row_seconds(screen) if screen is not None else None
+        report["subagent_seconds_keep_counting"] = (
+            seconds_before is not None and seconds_after is not None and seconds_after >= seconds_before
+        )
+        report["_subagent_seconds"] = [seconds_before, seconds_after]
 
         # 2. 任务条上那一行
         screen = r.wait_screen(
@@ -184,7 +208,8 @@ def main():
 if __name__ == "__main__":
     report = main()
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    passed = sum(1 for ok in report.values() if ok)
-    print(f"{passed}/{len(report)} passed")
+    checks = {key: ok for key, ok in report.items() if not key.startswith("_")}
+    passed = sum(1 for ok in checks.values() if ok)
+    print(f"{passed}/{len(checks)} passed")
     print("产物：", h.OUT)
-    sys.exit(0 if report and passed == len(report) else 1)
+    sys.exit(0 if checks and passed == len(checks) else 1)

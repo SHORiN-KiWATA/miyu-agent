@@ -709,6 +709,7 @@ async fn dispatch_ipc_connection(
                         id: event_id,
                         kind,
                         data,
+                        at_ms: None,
                     },
                 )
                 .await?;
@@ -1246,6 +1247,7 @@ pub(in crate::web) async fn handle_ipc_turn(
                 id: record.id,
                 kind: record.kind,
                 data,
+                at_ms: Some(record.at_ms),
             },
         )
         .await?;

@@ -7,6 +7,7 @@
 //! 打一遍」——过滤要在流式条件下做，所以得记住最长的部分匹配前缀
 //! （`longest_sent_meme_prefix_suffix`），不能等看完整段。
 
+mod event_clock;
 mod reasoning_phase;
 pub(crate) mod surface;
 pub mod timeline;
@@ -129,6 +130,8 @@ pub struct StreamRenderer {
     pub(crate) compact_text: String,
     /// 上一次把子代理面板重灌是什么时候。见 `refresh_subagent_panels`。
     pub(crate) last_subagent_refresh: Option<std::time::Instant>,
+    /// 正在喂的这个事件是什么时候发生的（`event_clock.rs`）。
+    pub(crate) event_clock: Option<std::time::Instant>,
     pub(crate) preparing_question_started_at: Option<std::time::Instant>,
     /// Phase text and start time for the "still receiving arguments" hint.
     /// Sticky like `preparing_question_started_at` and for the same reason:
@@ -207,6 +210,7 @@ impl StreamRenderer {
             custom_waiting_phase: None,
             compact_text: String::new(),
             last_subagent_refresh: None,
+            event_clock: None,
             preparing_question_started_at: None,
             tool_preparing: None,
             tool_preparing_since: None,
@@ -666,8 +670,9 @@ impl StreamRenderer {
             .find(|(name, stats)| is_command_tool(name) && !stats.settled())
             .map(|(name, _)| name.clone());
         if let Some(name) = name {
+            let now = self.event_now();
             let stats = self.tool_stats_entry(&name);
-            stats.elapsed = stats.started_at.map(|at| at.elapsed());
+            stats.elapsed = stats.started_at.map(|at| now.saturating_duration_since(at));
             stats.detail = detail;
             stats.tail = tail;
         }

@@ -16,6 +16,17 @@ pub(crate) struct EventRecord {
     pub(crate) id: u64,
     pub(crate) kind: String,
     pub(crate) data: String,
+    /// 发布的那一刻（Unix 毫秒），转发给跟着看的终端（`IpcFrame::Event::at_ms`）。
+    pub(crate) at_ms: u64,
+}
+
+/// 现在的 Unix 毫秒。
+pub(crate) fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 #[derive(Clone)]
@@ -64,6 +75,7 @@ impl EventHub {
             kind: kind.into(),
             data: serde_json::to_string(&data)
                 .unwrap_or_else(|_| "{\"error\":\"event serialization failed\"}".to_string()),
+            at_ms: unix_millis(),
         };
         let record_bytes = record.kind.len() + record.data.len();
         inner.bytes += record_bytes;
@@ -128,5 +140,6 @@ pub(crate) fn resync_record(inner: &mut EventHubInner) -> VecDeque<EventRecord> 
         id,
         kind: "resync_required".to_string(),
         data: json!({ "latest_event_id": id }).to_string(),
+        at_ms: unix_millis(),
     }])
 }

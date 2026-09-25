@@ -144,6 +144,11 @@ def main():
         r.save("bg-visit-child", screen or r.LAST["screen"] or [])
         if screen is None:
             return report
+        # 进门补发出来的那几步按事件自己的时刻掐表：命令睡了 2 秒、思考也有一百多毫秒，
+        # 哪一步都不该是「<1ms」（原来补发时按收到的那一刻掐表，全是 <1ms）。
+        replayed = [line.strip() for line in screen if "运行命令" in line or "已思考" in line]
+        report["replayed_steps_keep_their_time"] = bool(replayed) and not any("<1ms" in line for line in replayed)
+        report["_replayed_steps"] = replayed
         # 主回合说完之前，每秒看一眼子会话：跑命令那一步出现、同时主回合还在跑，才算跟上。
         # 一直看到主回合在库里跑完、再多看几秒：这段时间人还在子会话里，主回合那一轮在 daemon
         # 里照跑，它的字一个都不许画进来。
@@ -170,7 +175,10 @@ def main():
                 r.save("bg-visit-leaked", screen)
             if not running and parent_done_at is None:
                 parent_done_at = now
-            if parent_done_at is not None and now - parent_done_at >= 4.0:
+            # 主回合跑完再多看几秒，并且等子代理自己的回复出来（`--thinking` 档子代理也要想
+            # 半分钟，常常比主回合晚收尾）。
+            replied = SUB_REPLY in "".join(line.strip() for line in screen)
+            if parent_done_at is not None and now - parent_done_at >= 4.0 and replied:
                 break
         r.save("bg-visit-watched", h.render(bytes(sink)))
         report["child_moves_while_the_parent_runs"] = followed_at is not None

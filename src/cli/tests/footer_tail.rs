@@ -637,21 +637,34 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_spinner_started: std::time::Instant::now(),
     };
 
-    for (kind, text) in [
+    // 每一片带着它所在事件的时刻；并成一段后留第一片的（思考转正文就是正文第一片到的那一刻）。
+    let base = std::time::Instant::now();
+    for (index, (kind, text)) in [
         (ChatStreamKind::Reasoning, "one"),
         (ChatStreamKind::Reasoning, " two"),
         (ChatStreamKind::Content, "answer"),
         (ChatStreamKind::Content, " text"),
-    ] {
-        live.queue_stream_chunk(ChatStreamChunk {
-            kind,
-            text: text.to_string(),
-        });
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        live.queue_stream_chunk(
+            ChatStreamChunk {
+                kind,
+                text: text.to_string(),
+            },
+            Some(base + std::time::Duration::from_secs(index as u64)),
+        );
     }
 
     assert_eq!(live.pending_chunks.len(), 2);
-    assert_eq!(live.pending_chunks[0].text, "one two");
-    assert_eq!(live.pending_chunks[1].text, "answer text");
+    assert_eq!(live.pending_chunks[0].0.text, "one two");
+    assert_eq!(live.pending_chunks[0].1, Some(base));
+    assert_eq!(live.pending_chunks[1].0.text, "answer text");
+    assert_eq!(
+        live.pending_chunks[1].1,
+        Some(base + std::time::Duration::from_secs(2))
+    );
     live.discard_pending_chunks();
     assert!(live.pending_chunks.is_empty());
 }

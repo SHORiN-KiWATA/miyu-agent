@@ -51,6 +51,20 @@ pub(in crate::cli) async fn handle_live_post_turn_overflow(
     Ok(None)
 }
 
+/// daemon 记下的事件时刻（Unix 毫秒）换算成本机的 `Instant`，喂给渲染器的事件时钟
+/// （`StreamRenderer::set_event_clock`）。同一台机器上墙上时钟是同一个；比现在还晚
+/// （时钟被往回拨过）就当是现在。
+pub(in crate::cli) fn event_instant(at_ms: Option<u64>) -> Option<Instant> {
+    let at_ms = at_ms?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let age = u64::try_from(now_ms.saturating_sub(u128::from(at_ms))).unwrap_or(u64::MAX);
+    let now = Instant::now();
+    Some(now.checked_sub(Duration::from_millis(age)).unwrap_or(now))
+}
+
 pub(in crate::cli) fn handle_live_agent_event(
     live: &mut LiveReplTail,
     renderer: &mut render::StreamRenderer,
@@ -58,7 +72,7 @@ pub(in crate::cli) fn handle_live_agent_event(
 ) -> Result<()> {
     let event = match event {
         AgentEvent::Chunk(chunk) => {
-            live.queue_stream_chunk(chunk);
+            live.queue_stream_chunk(chunk, renderer.event_clock());
             return Ok(());
         }
         AgentEvent::RoundUsage {

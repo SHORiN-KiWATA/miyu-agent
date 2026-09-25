@@ -18,25 +18,36 @@ impl LiveReplTail {
         self.queued.sort_by_key(|prompt| prompt.seq);
     }
 
-    pub(in crate::cli) fn queue_stream_chunk(&mut self, chunk: ChatStreamChunk) {
-        if let Some(pending) = self
+    /// `at` 是这一片所在事件的时刻（没有就是 `None`）。挨着的同类片段并成一段，留第一片
+    /// 的时刻：思考转正文的那一刻，就是这一段开头到的那一刻。
+    pub(in crate::cli) fn queue_stream_chunk(
+        &mut self,
+        chunk: ChatStreamChunk,
+        at: Option<Instant>,
+    ) {
+        if let Some((pending, _)) = self
             .pending_chunks
             .last_mut()
-            .filter(|pending| pending.kind == chunk.kind)
+            .filter(|(pending, _)| pending.kind == chunk.kind)
         {
             pending.text.push_str(&chunk.text);
         } else {
-            self.pending_chunks.push(chunk);
+            self.pending_chunks.push((chunk, at));
         }
     }
 
+    /// 攒着的片段冲进渲染器，每一段按它自己到的那一刻（事件时钟，`event_clock.rs`），冲完
+    /// 把时钟放回原样。
     pub(in crate::cli) fn flush_pending_chunks(
         &mut self,
         renderer: &mut render::StreamRenderer,
     ) -> Result<()> {
-        for chunk in std::mem::take(&mut self.pending_chunks) {
+        let sticky = renderer.event_clock();
+        for (chunk, at) in std::mem::take(&mut self.pending_chunks) {
+            renderer.set_event_clock(at.or(sticky));
             renderer.write_chunk(chunk)?;
         }
+        renderer.set_event_clock(sticky);
         Ok(())
     }
 

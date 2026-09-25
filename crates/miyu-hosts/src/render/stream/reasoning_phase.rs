@@ -130,7 +130,7 @@ impl StreamRenderer {
             return Ok(());
         }
         self.reasoning_title = Some(title);
-        self.reasoning_last_delta_at = Some(std::time::Instant::now());
+        self.reasoning_last_delta_at = Some(self.event_now());
         self.ensure_waiting_phase(self.reasoning_live_text(), self.wait_style())
     }
 
@@ -351,7 +351,7 @@ impl StreamRenderer {
         if self.reasoning_title.is_some() || !self.reasoning_text.is_empty() {
             return;
         }
-        self.reasoning_started_at = Some(std::time::Instant::now());
+        self.reasoning_started_at = Some(self.event_now());
         self.reasoning_elapsed = None;
     }
 
@@ -380,9 +380,9 @@ impl StreamRenderer {
     }
 
     pub(crate) fn record_reasoning_text(&mut self, text: &str) {
-        self.reasoning_started_at
-            .get_or_insert_with(std::time::Instant::now);
-        self.reasoning_last_delta_at = Some(std::time::Instant::now());
+        let now = self.event_now();
+        self.reasoning_started_at.get_or_insert(now);
+        self.reasoning_last_delta_at = Some(now);
         self.reasoning_text.push_str(text);
         // Incremental: recounting the whole accumulated text on every chunk is
         // O(n²) over the stream and the value only feeds the spinner label.
@@ -479,7 +479,7 @@ impl StreamRenderer {
             return Ok(());
         }
         self.release_transient_output()?;
-        self.preparing_question_started_at = Some(std::time::Instant::now());
+        self.preparing_question_started_at = Some(self.event_now());
         if !WaitSpinner::supported() {
             return Ok(());
         }

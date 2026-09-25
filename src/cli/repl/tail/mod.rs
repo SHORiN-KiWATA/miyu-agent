@@ -155,7 +155,8 @@ pub(in crate::cli) fn cursor_col_or(fallback: u16) -> u16 {
 pub(in crate::cli) struct LiveReplTail {
     pub(in crate::cli) editor: LiveReplEditor,
     pub(in crate::cli) queued: Vec<QueuedPrompt>,
-    pub(in crate::cli) pending_chunks: Vec<ChatStreamChunk>,
+    /// 攒着没冲的流式片段，带着各自到的时刻（`queue_stream_chunk`）。
+    pub(in crate::cli) pending_chunks: Vec<(ChatStreamChunk, Option<Instant>)>,
     pub(in crate::cli) footer: ReplFooterStatus,
     /// 回合中途逐请求刷新计量时的基线(回合开始前的 footer 快照)。
     /// 每次 RoundUsage 事件都从基线重新叠加,避免累计值重复相加;

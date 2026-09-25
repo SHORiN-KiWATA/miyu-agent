@@ -384,6 +384,7 @@ pub(in crate::web) async fn follow_run(
                 id: record.id,
                 kind: record.kind,
                 data,
+                at_ms: Some(record.at_ms),
             },
         )
         .await?;

@@ -466,12 +466,16 @@ pub(in crate::cli) async fn follow_wake_run(
             }
         };
         drop(recv);
-        if let Some(IpcFrame::Event { id, .. }) = &frame {
+        if let Some(IpcFrame::Event { id, at_ms, .. }) = &frame {
             last_event_id = *id;
+            // 事件时钟停在这个事件上，直到下一个事件（补发的一轮按事件自己的时刻掐表）。
+            renderer.set_event_clock(crate::cli::repl::live_turn::event_instant(*at_ms));
         }
         let Some(IpcFrame::Event { kind, data, .. }) = frame else {
             break;
         };
+        // 这一帧发生的时刻（事件时钟），思考几种事件的 `received_at` 用它。
+        let event_at = renderer.event_now();
         match kind.as_str() {
             "turn.started" => {
                 turn_id = Some(ipc_text(&data, "turn_id").to_string());
@@ -564,28 +568,28 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.reset" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_start" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_end" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartEnd {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.title" => handle_live_agent_event(
@@ -763,7 +767,7 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             // daemon 自己开的轮里模型也会提问（目标续轮最常见）。这一条以前

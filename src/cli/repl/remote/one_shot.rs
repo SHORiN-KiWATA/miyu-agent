@@ -622,8 +622,10 @@ async fn run_remote_chat_inner(
             handoff_raw!();
             bail!("Miyu core disconnected during the turn");
         };
-        if let IpcFrame::Event { id, .. } = &frame {
+        if let IpcFrame::Event { id, at_ms, .. } = &frame {
             last_event_id = *id;
+            // 事件时钟停在这个事件上，直到下一个事件（补发的一轮按事件自己的时刻掐表）。
+            renderer.set_event_clock(crate::cli::repl::live_turn::event_instant(*at_ms));
         }
         let IpcFrame::Event { kind, data, .. } = frame else {
             if let IpcFrame::Error { message, .. } = frame {
@@ -635,6 +637,8 @@ async fn run_remote_chat_inner(
             }
             continue;
         };
+        // 这一帧发生的时刻（事件时钟），思考几种事件的 `received_at` 用它。
+        let event_at = renderer.event_now();
         match kind.as_str() {
             "turn.started" => {
                 let id = ipc_text(&data, "turn_id");
@@ -667,7 +671,7 @@ async fn run_remote_chat_inner(
             "reasoning.start" => handle_agent_event(
                 &mut renderer,
                 AgentEvent::ReasoningStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.reset" => {
@@ -675,20 +679,20 @@ async fn run_remote_chat_inner(
                 handle_agent_event(
                     &mut renderer,
                     AgentEvent::ReasoningReset {
-                        received_at: Instant::now(),
+                        received_at: event_at,
                     },
                 )?;
             }
             "reasoning.part_start" => handle_agent_event(
                 &mut renderer,
                 AgentEvent::ReasoningPartStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_end" => handle_agent_event(
                 &mut renderer,
                 AgentEvent::ReasoningPartEnd {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.title" => handle_agent_event(
@@ -944,7 +948,7 @@ async fn run_remote_chat_inner(
                 handle_agent_event(
                     &mut renderer,
                     AgentEvent::ReasoningReset {
-                        received_at: Instant::now(),
+                        received_at: event_at,
                     },
                 )?;
             }

@@ -42,7 +42,7 @@ fn flush_subagent_thought(log: &mut SubagentLog, expand: bool) {
         .map(|line| format!("{THOUGHT_BODY_STYLE}{line}\x1b[0m"))
         .collect::<Vec<_>>();
     log.segment.counts.thoughts += 1;
-    log.segment.note_start_since(elapsed);
+    log.segment.note_start_since(elapsed, Instant::now());
     let mut step = Step::new(
         step_line_in(
             glyph_think(),
@@ -142,7 +142,7 @@ fn collapse_subagent_segment(log: &mut SubagentLog) {
         return;
     }
     let counts = log.segment.counts;
-    let summary = summary_line(log.segment.elapsed(), counts);
+    let summary = summary_line(log.segment.elapsed(Instant::now()), counts);
     let collapsed: Vec<Step> = log.steps.drain(from..).collect();
     // 收起来的每一步**还是块**：点开收缩行看到的是时间线，时间线里每一步再点开
     // 才是它的正文。原来只把抬头串起来，工具输出、思考全文在收缩那一刻就没了
@@ -427,7 +427,8 @@ impl StreamRenderer {
             label.push_str(&peek);
         }
         log.segment.counts.record_tool(tool, failed);
-        log.segment.note_start_since(elapsed_of_step);
+        log.segment
+            .note_start_since(elapsed_of_step, Instant::now());
         let mut step = Step::new(
             if failed {
                 step_line_failed_in(glyph, &label, panel_step_width())

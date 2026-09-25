@@ -34,9 +34,10 @@ impl StreamRenderer {
             if self.timeline_enabled() {
                 self.command_display = Some(display);
                 let peek = command_peek(arguments);
+                let now = self.event_now();
                 let stats = self.tool_stats_entry(name);
                 stats.calls += 1;
-                stats.started_at.get_or_insert_with(std::time::Instant::now);
+                stats.started_at.get_or_insert(now);
                 stats.peek = peek;
                 self.ensure_tool_waiting_phase()?;
                 return Ok(());
@@ -49,20 +50,22 @@ impl StreamRenderer {
             return Ok(());
         }
         if is_subagent_tool(name) && self.tool_call_mode != ToolCallDisplayMode::Hidden {
+            let now = self.event_now();
             let stats = self.tool_stats_entry(name);
-            stats.started_at = Some(std::time::Instant::now());
+            stats.started_at = Some(now);
             stats.elapsed = None;
             // 面板的第一步：交给它的差事。派出去这一刻是唯一还看得见它的地方。
             self.subagent_prompt(name, arguments);
         }
         if self.captures_tools() {
+            let now = self.event_now();
             let stats = self.tool_stats_entry(name);
             stats.calls += 1;
             stats.subject = tool_subject(name, arguments);
             // 每个工具都掐表，不只命令和子代理。时间线上那一步要报秒数，收缩行的
             // `Worked for` 要把它算进去——原来普通工具不掐，一段里只有普通工具时
             // 收缩行就成了光秃秃的 `1 tool · 1 err`（用户实测）。
-            stats.started_at.get_or_insert_with(std::time::Instant::now);
+            stats.started_at.get_or_insert(now);
             if self.timeline_enabled() && tool_event_base_name(name) == timeline::SEND_TOOL {
                 self.note_cross_session_send(name, arguments);
             }
@@ -121,9 +124,8 @@ impl StreamRenderer {
         // immediately, and that tick re-derives the phase from renderer state.
         // Without the sticky field the tool summary or the reasoning timer wins
         // there and the hint never reaches the screen.
-        let since = *self
-            .tool_preparing_since
-            .get_or_insert_with(std::time::Instant::now);
+        let now = self.event_now();
+        let since = *self.tool_preparing_since.get_or_insert(now);
         self.tool_preparing = Some((phase, crate::render::tool_glyph_for(name), since));
         // Braille + the dim tool palette: this is a tool starting up, not the
         // model thinking, and the scanner/green pair reads as the latter.
@@ -168,13 +170,14 @@ impl StreamRenderer {
                     }
                     None => (Vec::new(), Vec::new()),
                 };
+                let now = self.event_now();
                 let stats = self.tool_stats_entry(name);
                 if ok {
                     stats.ok += 1;
                 } else {
                     stats.error += 1;
                 }
-                stats.elapsed = stats.started_at.map(|at| at.elapsed());
+                stats.elapsed = stats.started_at.map(|at| now.saturating_duration_since(at));
                 stats.detail = detail;
                 stats.tail = tail;
                 return self.settle_tool_batch();
@@ -215,11 +218,13 @@ impl StreamRenderer {
                 // 再留一行「任务清单×1 ok」是同一件事说两遍。注意**不能**顺手
                 // `tool_stats.clear()`：同一批里别的工具会被一起抹掉。
                 if self.timeline_enabled() {
+                    let now = self.event_now();
                     let stats = self.tool_stats_entry(name);
                     stats.ok += 1;
                     stats.progress = None;
                     if stats.elapsed.is_none() {
-                        stats.elapsed = stats.started_at.map(|at| at.elapsed());
+                        stats.elapsed =
+                            stats.started_at.map(|at| now.saturating_duration_since(at));
                     }
                     // 和别的工具一样结算：不结算的话这一步要等下一个事件才收
                     // 进时间线，live 区里它会一直挂着转轮。
@@ -250,6 +255,7 @@ impl StreamRenderer {
             } else {
                 self.timeline_enabled().then(|| tool_output_lines(output))
             };
+            let now = self.event_now();
             let stats = self.tool_stats_entry(name);
             if ok {
                 stats.ok += 1;
@@ -258,7 +264,7 @@ impl StreamRenderer {
             }
             // 跑完就把表停下：时间线上那一步报的是它自己花的时间，不是到收缩为止。
             if stats.elapsed.is_none() {
-                stats.elapsed = stats.started_at.map(|at| at.elapsed());
+                stats.elapsed = stats.started_at.map(|at| now.saturating_duration_since(at));
             }
             // 已经有更好的详情（补丁 diff）就别用原始输出盖掉它。
             if let Some(detail) = detail {
@@ -925,8 +931,9 @@ impl StreamRenderer {
         if !is_subagent_tool(name) {
             return None;
         }
+        let now = self.event_now();
         let stats = self.tool_stats.get_mut(name)?;
-        let elapsed = stats.started_at.take()?.elapsed();
+        let elapsed = now.saturating_duration_since(stats.started_at.take()?);
         stats.elapsed = Some(elapsed);
         Some(elapsed)
     }
