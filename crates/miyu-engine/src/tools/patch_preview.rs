@@ -10,15 +10,54 @@ pub(crate) fn write_with_patch_preview(
     progress: &ToolProgress,
     mut result: Map<String, Value>,
 ) -> Result<String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let target = write_target(path)?;
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let temp = tempfile::NamedTempFile::new_in(parent)?;
+    let temp = new_temp_file(parent)?;
     std::fs::write(temp.path(), after.as_bytes())?;
-    temp.persist(path)?;
+    // 已有的文件沿用原来的权限位（09-24 B2）：tempfile 在 Unix 上按 0600 建临时
+    // 文件，rename 之后目标就成了 0600，改一次脚本就丢执行位。
+    if let Ok(metadata) = std::fs::metadata(&target) {
+        std::fs::set_permissions(temp.path(), metadata.permissions())?;
+    }
+    temp.persist(&target)?;
     report_patch_preview(progress, path, &patch_result_json(path, before, after));
     result.insert("ok".to_string(), Value::Bool(true));
     result.insert("path".to_string(), Value::String(display_path(path)));
     Ok(serde_json::to_string_pretty(&Value::Object(result))?)
+}
+
+/// 真正要写的那个文件。
+///
+/// 路径是软链时写到它指向的文件（09-24 B2）：rename 会把软链本身换成普通文件，
+/// dotfiles 这类软链就此断开。解析出来的目标要再过一遍沙盒写检查——项目里一个
+/// 指向沙盒外的软链，不能成为往外写的口子。指向不存在的目标时按原路径写。
+fn write_target(path: &Path) -> Result<PathBuf> {
+    let is_link = std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    match std::fs::canonicalize(path) {
+        Ok(target) => {
+            miyu_base::sandbox::guard_write(&target)?;
+            Ok(target)
+        }
+        Err(_) => Ok(path.to_path_buf()),
+    }
+}
+
+/// 新文件按 0666 建、交给 umask 收窄，和 shell 重定向建出来的权限一样；tempfile
+/// 默认的 0600 只适合临时文件。已有文件随后改回它原来的权限。
+fn new_temp_file(parent: &Path) -> Result<tempfile::NamedTempFile> {
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    Ok(builder.tempfile_in(parent)?)
 }
 
 pub(crate) fn patch_result_json(path: &Path, before: &str, after: &str) -> String {

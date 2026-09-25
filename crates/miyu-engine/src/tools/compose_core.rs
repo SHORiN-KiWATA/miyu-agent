@@ -19,7 +19,7 @@ pub fn register(
         );
     } else {
         // 只挂 run_command:coreutils 干得更好的都不注册(dev 验收三轮裁剪)。
-        default_tools::register_run_command(registry, config.skills.allow_command_execution);
+        default_tools::register_run_command(registry, config.skills.allow_command_execution, paths);
     }
     jobs::register_management(registry);
     // 编辑器只留 apply_patch(聚合增/改/删,diff 渲染载体)。

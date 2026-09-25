@@ -84,7 +84,7 @@ fn update_hunk_replaces_exact_text() {
             HunkLine::Context("three".to_string()),
         ],
     };
-    let result = apply_hunk(&path, "one\ntwo\nthree\n", &hunk).unwrap();
+    let (result, _) = apply_hunk(&path, "one\ntwo\nthree\n", &hunk, 0).unwrap();
     assert_eq!(result, "one\nTWO\nthree\n");
 }
 
@@ -99,7 +99,7 @@ fn update_hunk_fails_when_stale() {
             HunkLine::Insert("new".to_string()),
         ],
     };
-    assert!(apply_hunk(&path, "current\n", &hunk).is_err());
+    assert!(apply_hunk(&path, "current\n", &hunk, 0).is_err());
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn insertion_hunk_uses_context_header() {
         end_of_file: false,
         lines: vec![HunkLine::Insert("inserted".to_string())],
     };
-    let result = apply_hunk(&path, "one\ntwo\n", &hunk).unwrap();
+    let (result, _) = apply_hunk(&path, "one\ntwo\n", &hunk, 0).unwrap();
     assert_eq!(result, "one\ninserted\ntwo\n");
 }
 
@@ -269,4 +269,149 @@ fn artifact_patch_rejects_unsafe_paths_and_symlinks_but_allows_delete() {
     );
     assert!(deleted.is_ok(), "{deleted:?}");
     assert!(!report.exists());
+}
+
+fn update_patch(path: &std::path::Path, hunks: &str) -> String {
+    format!(
+        "*** Begin Patch\n*** Update File: {}\n{hunks}\n*** End Patch",
+        path.display()
+    )
+}
+
+/// 09-24 B2：改完的文件要保住原来的权限位。tempfile 在 Unix 上按 0600 建临时文件，
+/// rename 之后目标就成了 0600——改一次脚本就丢执行位。
+#[cfg(unix)]
+#[test]
+fn edit_keeps_the_files_permission_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let script = temp.path().join("run.sh");
+    std::fs::write(&script, "#!/bin/sh\necho old\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    edit_filesystem(
+        json!({ "patchText": update_patch(&script, "@@\n-echo old\n+echo new") }),
+        ToolProgress::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&script).unwrap(),
+        "#!/bin/sh\necho new\n"
+    );
+    assert_eq!(
+        std::fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+}
+
+/// 09-24 B2：改软链时写到它指向的文件，软链本身留着（原来 rename 把软链换成了普通文件）。
+#[cfg(unix)]
+#[test]
+fn edit_writes_through_a_symlink() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let real = temp.path().join("real.conf");
+    let link = temp.path().join("link.conf");
+    std::fs::write(&real, "alpha\n").unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    edit_filesystem(
+        json!({ "patchText": update_patch(&link, "@@\n-alpha\n+beta") }),
+        ToolProgress::default(),
+    )
+    .unwrap();
+
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_to_string(&real).unwrap(), "beta\n");
+}
+
+/// 09-24 B10：精确匹配唯一时，后面一处只差缩进的同文不算歧义（原来四档一起数，误报）。
+#[test]
+fn an_exact_match_is_not_ambiguous_with_a_differently_indented_copy() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let file = temp.path().join("lib.rs");
+    std::fs::write(
+        &file,
+        "fn a() {\n    return Ok(());\n}\nfn b() {\n        return Ok(());\n}\n",
+    )
+    .unwrap();
+
+    edit_filesystem(
+        json!({ "patchText": update_patch(&file, "@@\n-    return Ok(());\n+    return Err(());") }),
+        ToolProgress::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn a() {\n    return Err(());\n}\nfn b() {\n        return Ok(());\n}\n"
+    );
+}
+
+/// 09-24 B10：从头找有两处时，取上一块改完之后唯一的那一处——补丁里的块按文件
+/// 顺序写。匹配唯一时照旧从头找，乱序写的补丁不受影响。
+#[test]
+fn an_ambiguous_hunk_resolves_to_the_copy_after_the_previous_hunk() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let file = temp.path().join("notes.txt");
+    std::fs::write(&file, "top\nsame\nmiddle\nsame\nbottom\n").unwrap();
+
+    edit_filesystem(
+        json!({ "patchText": update_patch(&file, "@@\n-middle\n+MIDDLE\n@@\n-same\n+SAME") }),
+        ToolProgress::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "top\nsame\nMIDDLE\nSAME\nbottom\n"
+    );
+}
+
+/// 09-24 B11：补丁里的 Delete File 进回收站，不是永久删除。
+#[test]
+fn deleting_a_file_moves_it_to_the_trash() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let file = temp.path().join("old.txt");
+    std::fs::write(&file, "bye\n").unwrap();
+
+    edit_filesystem(
+        json!({ "patchText": format!("*** Begin Patch\n*** Delete File: {}\n*** End Patch", file.display()) }),
+        ToolProgress::default(),
+    )
+    .unwrap();
+
+    assert!(!file.exists());
+    assert!(test_support::trashed().contains(&file));
+}
+
+/// 09-24 B10：多文件补丁写到一半失败时，报错说清哪些文件已经写进去了。
+#[test]
+fn a_failed_multi_file_patch_names_what_was_already_written() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let first = temp.path().join("first.txt");
+    let blocked_dir = temp.path().join("blocked");
+    std::fs::write(&first, "one\n").unwrap();
+    // 第二个文件的父路径是个普通文件：预检过得去，真正写的时候建目录失败。
+    std::fs::write(&blocked_dir, "not a directory").unwrap();
+    let second = blocked_dir.join("second.txt");
+    let patch = format!(
+        "*** Begin Patch\n*** Update File: {}\n@@\n-one\n+ONE\n*** Add File: {}\n+two\n*** End Patch",
+        first.display(),
+        second.display()
+    );
+
+    let error = edit_filesystem(json!({ "patchText": patch }), ToolProgress::default())
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("Already applied before this failure"),
+        "{error}"
+    );
+    assert!(error.contains("first.txt"), "{error}");
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "ONE\n");
 }
