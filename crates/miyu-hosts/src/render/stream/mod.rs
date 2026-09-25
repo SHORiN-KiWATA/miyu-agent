@@ -66,6 +66,10 @@ pub struct StreamRenderer {
     /// 时会话累计从库里重读，加数跟着清掉，不会算两遍。
     /// 记的是**各自的最新值**不是增量，所以并行几个也不会互相叠加出鬼数。
     pub(crate) subagent_tokens: BTreeMap<String, u64>,
+    /// 前台子代理此刻的样子（`subagent.progress`，工具事件名 → 状态）：状态行那一行的
+    /// 窥视、词元从这儿取（会话项目第 4 段之二）。
+    pub(crate) subagent_status:
+        BTreeMap<String, miyu_engine::tools::subagent::status::SubagentStatus>,
     pub(crate) reasoning_mode: ReasoningDisplayMode,
     pub(crate) tool_call_mode: ToolCallDisplayMode,
     pub(crate) plain: bool,
@@ -199,6 +203,7 @@ impl StreamRenderer {
             timeline_ends_after_tools: false,
             live_tool_blocks: BTreeMap::new(),
             subagent_tokens: BTreeMap::new(),
+            subagent_status: BTreeMap::new(),
             command_display: None,
             finalizing_for_external_output: false,
             summary_line_active: false,
@@ -526,6 +531,7 @@ impl StreamRenderer {
         // 这一轮的子代理用量交还给会话累计：回合收尾时调用方会从库里重读 Σ，
         // 那时审计会话已经落盘，实时加数留着就是算两遍。
         self.subagent_tokens.clear();
+        self.subagent_status.clear();
         self.mode = None;
         self.show_cursor()?;
         Ok(())

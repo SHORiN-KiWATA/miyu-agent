@@ -130,6 +130,13 @@ pub enum AgentEvent {
         name: String,
         message: String,
     },
+    /// 前台子代理此刻的样子：窥视、词元、子会话（会话项目第 4 段之二）。子会话里的过程
+    /// 不再原样转成工具进度，界面只画状态行那一行，点它切进子会话看全程。
+    SubagentProgress {
+        call_id: String,
+        name: String,
+        status: tools::subagent::status::SubagentStatus,
+    },
     CommandOutput {
         call_id: String,
         name: String,

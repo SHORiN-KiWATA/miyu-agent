@@ -732,6 +732,14 @@ async fn run_remote_chat_inner(
                     message: ipc_text(&data, "message").to_string(),
                 },
             )?,
+            "subagent.progress" => handle_agent_event(
+                &mut renderer,
+                AgentEvent::SubagentProgress {
+                    call_id: ipc_text(&data, "tool_id").to_string(),
+                    name: ipc_text(&data, "name").to_string(),
+                    status: miyu_hosts::runtime::subagent_status_from(&data),
+                },
+            )?,
             "tool.output" => handle_agent_event(
                 &mut renderer,
                 AgentEvent::CommandOutput {

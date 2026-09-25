@@ -38,8 +38,9 @@ def row_segment(raw, text):
 def main():
     """场景由 argv 选:fg(默认,前台子代理跑着)/bg(后台子代理,那一行已收工)/dev-fg/dev-bg。"""
     scenario = sys.argv[1] if len(sys.argv) > 1 else "fg"
-    panel = scenario == "panel"
-    background = scenario.endswith("bg") or panel
+    # 原来还有一档 panel：点开后台子代理的浮层、悬浮浮层里那一步。09-18 起点子代理是切进
+    # 它的会话，浮层退役，那一档 09-25 删了（新行为见 `subagent_visit.py`）。
+    background = scenario.endswith("bg")
     dev = scenario.startswith("dev")
     row_text = "走查后台子代理" if background else ROW_TEXT
     report = {}
@@ -69,18 +70,6 @@ def main():
             return report
         row = next(i for i, l in enumerate(screen) if row_text in l)
         ROW = row_text
-        if panel:
-            # 点任务条那一行打开后台子代理的面板,悬浮面板里「运行命令」那一步。
-            h.click(master, sink, 5, row, quiet=0.3, timeout=2.0)
-            screen = r.wait_screen(master, sink, lambda s: any("Esc" in l and "关闭" in l for l in s)
-                                   and any("运行命令" in l for l in s), 15.0)
-            report["panel_opened_with_step"] = screen is not None
-            if screen is None:
-                r.save("hover-panel-timeout", r.LAST["screen"] or [])
-                return report
-            row = next(i for i, l in enumerate(screen) if "运行命令" in l)
-            ROW = "运行命令"
-            r.save("hover-panel-open", screen)
         before = bytes(sink).decode("utf-8", "replace")
         seg_before = row_segment(before, ROW)
         report["row_dim_before_hover"] = "\x1b[2m" in seg_before

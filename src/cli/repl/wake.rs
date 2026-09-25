@@ -633,6 +633,15 @@ pub(in crate::cli) async fn follow_wake_run(
                     message: ipc_text(&data, "message").to_string(),
                 },
             )?,
+            "subagent.progress" => handle_live_agent_event(
+                live,
+                &mut renderer,
+                AgentEvent::SubagentProgress {
+                    call_id: ipc_text(&data, "tool_id").to_string(),
+                    name: ipc_text(&data, "name").to_string(),
+                    status: miyu_hosts::runtime::subagent_status_from(&data),
+                },
+            )?,
             "tool.output" => handle_live_agent_event(
                 live,
                 &mut renderer,

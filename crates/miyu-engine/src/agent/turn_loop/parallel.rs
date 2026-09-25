@@ -93,6 +93,7 @@ impl Agent {
                 }
             }
             let mut remaining = slots.iter().filter(|slot| slot.future.is_some()).count();
+            let mut feeds = super::subagent_feed::SubagentFeeds::default();
             let mut spinner_interval = tokio::time::interval(self.core.spinner_interval);
             spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             spinner_interval.tick().await;
@@ -126,10 +127,14 @@ impl Agent {
                     }
                 };
                 match event {
-                    WaveEvent::Spinner => on_event(AgentEvent::SpinnerTick)?,
+                    WaveEvent::Spinner => {
+                        on_event(AgentEvent::SpinnerTick)?;
+                        for slot in slots.iter().filter(|slot| slot.future.is_some()) {
+                            feeds.flush(on_event, &slot.call_id, &slot.event_name)?;
+                        }
+                    }
                     WaveEvent::Progress(position, progress) => {
-                        tee_subagent_trace(&slots[position].call_id, &progress);
-                        emit_tool_progress(
+                        feeds.forward(
                             on_event,
                             &slots[position].call_id,
                             &slots[position].event_name,
@@ -139,14 +144,18 @@ impl Agent {
                     WaveEvent::Done(position, result) => {
                         remaining -= 1;
                         while let Ok(progress) = slots[position].progress.try_recv() {
-                            tee_subagent_trace(&slots[position].call_id, &progress);
-                            emit_tool_progress(
+                            feeds.forward(
                                 on_event,
                                 &slots[position].call_id,
                                 &slots[position].event_name,
                                 progress,
                             )?;
                         }
+                        feeds.flush(
+                            on_event,
+                            &slots[position].call_id,
+                            &slots[position].event_name,
+                        )?;
                         let call_index = slots[position].call_index;
                         let call_id = slots[position].call_id.clone();
                         let event_name = slots[position].event_name.clone();
@@ -301,16 +310,6 @@ impl Agent {
                 tracing::warn!(error = %error, "persona reminder distillation failed");
                 None
             }
-        }
-    }
-}
-
-/// 把一条子代理子过程标记留进该次调用的 trace(供回合收尾落库、刷新回放 #9)。
-/// 只留 `__subagent_*`/`__subtool_*` 那类标记,别的进度不进。
-pub(super) fn tee_subagent_trace(call_id: &str, progress: &tools::ToolProgressEvent) {
-    if let tools::ToolProgressEvent::Message(message) = progress {
-        if tools::is_subagent_marker(message) {
-            tools::record_subagent_trace(call_id, message);
         }
     }
 }

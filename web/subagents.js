@@ -83,5 +83,10 @@ window.MiyuSubagents = (() => {
     bar.hidden = false;
   }
 
-  return { init, link, takeMarker, openFromCard, sessionOfOutput, viewed };
+  /** 打开一条子代理会话(任务条上的后台子代理那一行)。 */
+  function open(sessionId) {
+    if (sessionId) openSession(String(sessionId));
+  }
+
+  return { init, link, open, takeMarker, openFromCard, sessionOfOutput, viewed };
 })();

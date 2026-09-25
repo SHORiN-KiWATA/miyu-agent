@@ -2,7 +2,6 @@
 //! 其它工具真执行——带进度事件、子代理子过程的限流检查点、桩工具的契约补提示、内联媒体
 //! 落库与视觉退回。09-17 从 `tool_exec.rs` 再拆一层。
 
-use super::parallel;
 use super::round_state::RoundState;
 use super::QUESTION_WAIT_LIMIT;
 use crate::agent::*;
@@ -166,36 +165,26 @@ impl Agent {
         let mut spinner_interval = tokio::time::interval(self.core.spinner_interval);
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         spinner_interval.tick().await;
-        // 前台子代理跑到一半刷新页面就丢子过程(#5a 续:子过程只在内存里,
-        // 回合收尾才落库,而单个前台子代理走的就是这条串行路,收尾在它
-        // 整个跑完之后)。这里在子过程标记流上限流打检查点:此刻
-        // `messages` 里已有那条调子代理的 assistant 消息(见上面 push),
-        // checkpoint_tool_flow 走 peek 把当前累积的 sub_trace 落库,刷新时
-        // renderPersistedTurn 就能把在跑的子过程时间线画出来,不再是空。
-        // None = 还没落过,第一条子过程标记就立刻落一次(子代理常是先爆一小段
-        // 标记再钻进一次长 LLM 应答里安静好一会儿,若等满 1.5s 那一窗就全错过了)。
-        // `sub_dirty`:上次落库后又来过标记但被节流跳过了。子代理典型节奏是「爆一段
-        // 标记 → 钻进长 LLM 应答安静十几秒」:首条落库只抓到爆发的第一条,后面几条
-        // 全在 1.5s 窗内被跳过,然后一安静就再没有 recv 触发——那段就只活在实时流里、
-        // 刷新即丢。所以工具空转的 spinner tick 上补一刀:脏了且过了节流窗就把尾巴落了。
-        let mut last_sub_checkpoint: Option<std::time::Instant> = None;
-        let mut sub_dirty = false;
+        // 前台子代理的进度收成状态行那一行再发（`subagent_feed.rs`）。子会话 id 一到就落一次
+        // 检查点：前台子代理跑到一半刷新页面时，卡片靠落了库的 `child_session_id` 链到那条
+        // 会话（原来这里按标记流限流落 `sub_trace`，在父会话里把子过程再画一遍）。
+        let mut feeds = super::subagent_feed::SubagentFeeds::default();
         let (output, tool_succeeded) = loop {
             tokio::select! {
                 result = &mut tool_future => {
                     break match result {
                         Ok(output) => {
                             while let Ok(progress) = progress_rx.try_recv() {
-                                parallel::tee_subagent_trace(&call_id, &progress);
-                                emit_tool_progress(on_event, &call_id, &event_name, progress)?;
+                                feeds.forward(on_event, &call_id, &event_name, progress)?;
                             }
+                            feeds.flush(on_event, &call_id, &event_name)?;
                             (output, true)
                         }
                         Err(err) => {
                             while let Ok(progress) = progress_rx.try_recv() {
-                                parallel::tee_subagent_trace(&call_id, &progress);
-                                emit_tool_progress(on_event, &call_id, &event_name, progress)?;
+                                feeds.forward(on_event, &call_id, &event_name, progress)?;
                             }
+                            feeds.flush(on_event, &call_id, &event_name)?;
                             let output = attach_contract(format!("tool error: {err}"));
                             on_event(AgentEvent::ToolResult {
                                 call_id: call_id.clone(),
@@ -208,47 +197,13 @@ impl Agent {
                     };
                 }
                 Some(progress) = progress_rx.recv() => {
-                    let is_sub_marker = matches!(
-                        &progress,
-                        tools::ToolProgressEvent::Message(message)
-                            if tools::is_subagent_marker(message)
-                    );
-                    parallel::tee_subagent_trace(&call_id, &progress);
-                    emit_tool_progress(on_event, &call_id, &event_name, progress)?;
-                    // 限流:首条立刻落,之后每 ~1.5s 一次(peek 不清空,幂等),
-                    // 避免逐 token 写库。跳过的标记记脏,交给下面 spinner tick 补落。
-                    if is_sub_marker {
-                        sub_dirty = true;
-                        if last_sub_checkpoint.map_or(true, |at| {
-                            at.elapsed() >= std::time::Duration::from_millis(1500)
-                        }) {
-                            last_sub_checkpoint = Some(std::time::Instant::now());
-                            sub_dirty = false;
-                            self.checkpoint_tool_flow(
-                                current_turn_id,
-                                messages,
-                                st.replay_start,
-                            );
-                        }
+                    if feeds.forward(on_event, &call_id, &event_name, progress)? {
+                        self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
                     }
                 }
                 _ = spinner_interval.tick() => {
                     on_event(AgentEvent::SpinnerTick)?;
-                    // 子代理安静下来(钻进长应答)后,把爆发尾巴那几条被节流跳过的
-                    // 标记补落一次,不然刷新只剩爆发首条。
-                    if sub_dirty
-                        && last_sub_checkpoint.map_or(true, |at| {
-                            at.elapsed() >= std::time::Duration::from_millis(1500)
-                        })
-                    {
-                        last_sub_checkpoint = Some(std::time::Instant::now());
-                        sub_dirty = false;
-                        self.checkpoint_tool_flow(
-                            current_turn_id,
-                            messages,
-                            st.replay_start,
-                        );
-                    }
+                    feeds.flush(on_event, &call_id, &event_name)?;
                 }
             }
         };

@@ -49,7 +49,7 @@ pub use subagent::{
     is_subagent_marker, subagent_session_of_output, SUBAGENT_SESSION_EXCLUDED,
     SUBAGENT_SESSION_MARKER,
 };
-pub(crate) use subagent::{peek_subagent_trace, record_subagent_trace, take_subagent_trace};
+pub(crate) use subagent::{peek_subagent_session, record_subagent_session, take_subagent_session};
 pub use voice_chat::TOOL_NAME as END_VOICE_CHAT_TOOL;
 pub mod subagent_runner;
 mod todowrite;

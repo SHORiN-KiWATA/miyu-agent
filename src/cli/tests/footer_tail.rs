@@ -859,6 +859,7 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
         log_path: None,
         metric: metric.map(str::to_string),
         metric_tokens: None,
+        child_session_id: None,
     };
     let row = |metric: Option<&str>| {
         let job = job(metric);
@@ -907,6 +908,7 @@ fn the_job_panel_title_carries_the_token_figure() {
         log_path: None,
         metric: None,
         metric_tokens: None,
+        child_session_id: None,
     };
     assert_eq!(job_panel_title(&job), "走查后台子代理 · running");
     job.metric = Some("≈3.1K".into());

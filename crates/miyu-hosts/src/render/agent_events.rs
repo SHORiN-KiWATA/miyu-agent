@@ -57,6 +57,10 @@ pub fn apply_agent_event(
             renderer.write_tool_progress(&name, &message)?;
             renderer.tick_spinner()
         }
+        AgentEvent::SubagentProgress { name, status, .. } => {
+            renderer.write_subagent_status(&name, status);
+            renderer.tick_spinner()
+        }
         AgentEvent::CommandOutput {
             name,
             stream,

@@ -550,12 +550,6 @@ impl StateStore {
         self.conv_db.platform_meme_ref_counts(library)
     }
 
-    pub fn delete_subagent_sessions_older_than(&self, days: i64) -> Result<usize> {
-        let deleted = self.conv_db.delete_subagent_sessions_older_than(days)?;
-        self.remove_deleted_session_files(&deleted);
-        Ok(deleted.len())
-    }
-
     pub fn delete_ask_sessions_older_than(&self, hours: i64) -> Result<usize> {
         let deleted = self.conv_db.delete_ask_sessions_older_than(hours)?;
         self.remove_deleted_session_files(&deleted);

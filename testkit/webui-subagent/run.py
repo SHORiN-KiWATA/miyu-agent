@@ -143,7 +143,8 @@ def main():
     RUNTIME.mkdir(parents=True, exist_ok=True)
     write_config()
     stub_env = dict(os.environ, STUB_PORT=str(STUB_PORT), STUB_SUBAGENT="1",
-                    STUB_SUBAGENT_COMMAND="sleep 15; printf 'SUBOUT\\n'", STUB_CHUNK_SLEEP="0.01")
+                    STUB_SUBAGENT_COMMAND="sleep 15; printf 'SUBOUT\\n'", STUB_CHUNK_SLEEP="0.01",
+                    STUB_SUBAGENT_BG_COMMAND="sleep 20; printf 'BGOUT\\n'", STUB_SUBAGENT_BG_ROUNDS="1")
     stub = subprocess.Popen([sys.executable, str(ROOT / "testkit" / "repl-smoke" / "stub_llm.py")],
                             env=stub_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     daemon = None
@@ -199,6 +200,15 @@ def main():
             except Exception:
                 token_text = ""
             check("实时卡片上有子代理的词元数", bool(token_text), token_text)
+            peek = page.locator(".tool-card.is-task .tool-peek").first
+            try:
+                page.wait_for_function(
+                    "el => el && el.textContent.trim().length > 0", arg=peek.element_handle(), timeout=15000
+                )
+                peek_text = peek.text_content().strip()
+            except Exception:
+                peek_text = ""
+            check("实时卡片上露出子代理在干什么", bool(peek_text), peek_text[:40])
             leaked = leaks(page)
             check("标记没漏到页面上", not leaked, ", ".join(leaked))
             page.screenshot(path=str(OUT / "01-parent-live.png"))
@@ -258,6 +268,35 @@ def main():
                 page.screenshot(path=str(OUT / "03-child-saved.png"))
             # 刷新之后观察者没了，重挂一个也只看得到回看那一截：这一项查的是回看画出来的样子。
             check("回看的页面上也没有标记", not MARKER.search(page.text_content("body") or ""))
+
+            # 后台子代理：任务条上那一行点下去打开它的会话（会话项目第 4 段之二），不在原地
+            # 展开过程。先回到主会话。
+            if page.locator("#subagentParentBar").is_visible():
+                page.locator("#subagentParentBar").click()
+                page.wait_for_timeout(1500)
+            api("POST", "/api/turns", {"content": "走查一句 STUB_SUBBG 开条后台子代理", "session_id": parent_id})
+            chip = page.locator(".job-chip").filter(has_text="走查后台子代理").first
+            try:
+                chip.wait_for(timeout=20000)
+                page.wait_for_function(
+                    "() => [...document.querySelectorAll('.job-chip .job-chip-peek')].some(el => el.textContent.trim())",
+                    timeout=15000,
+                )
+                chip_ok = True
+            except Exception:
+                chip_ok = False
+            check("任务条上后台子代理那一行露出它在干什么", chip_ok)
+            page.screenshot(path=str(OUT / "04-job-chip.png"))
+            entered_job = False
+            if chip_ok:
+                chip.click()
+                try:
+                    page.locator("#subagentParentBar").wait_for(state="visible", timeout=10000)
+                    entered_job = "BGSUB-SENT" in (page.text_content("#timeline") or "")
+                except Exception:
+                    entered_job = False
+            check("点任务条上那一行打开后台子代理的会话", entered_job)
+            page.screenshot(path=str(OUT / "05-job-child.png"))
             browser.close()
     finally:
         if daemon:

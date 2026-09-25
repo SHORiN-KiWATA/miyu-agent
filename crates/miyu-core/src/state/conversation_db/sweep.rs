@@ -1,4 +1,5 @@
-//! 按闲置时长清掉没人要的会话：中途被杀的一次性 `ask` 会话、过了保留期的子代理会话。
+//! 按闲置时长清掉没人要的会话：中途被杀的一次性 `ask` 会话。子代理会话 09-18 起是看得见、
+//! 切得进去的会话，不再按保留期清（启动时那次清理 24f04665 就删了，函数 09-25 一并删掉）。
 //!
 //! 返回删掉的会话 id，调用方好把它们散在库外的文件一起清掉（09-24 会话项目
 //! 第 1 段；以前只删行，spill、转录、artifact 都成了孤儿）。
@@ -6,12 +7,6 @@
 use super::*;
 
 impl ConversationDb {
-    /// Deletes subagent audit sessions older than the retention window;
-    /// their turns/images/queues cascade away.
-    pub fn delete_subagent_sessions_older_than(&self, days: i64) -> Result<Vec<String>> {
-        self.delete_idle_sessions("subagent", &format!("-{days} days"))
-    }
-
     /// Deletes abandoned one-shot sessions older than the retention window. A
     /// `miyu ask` turn deletes its own session; anything still here was
     /// orphaned by a client that died mid-turn (Ctrl+C, SIGKILL).

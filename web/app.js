@@ -163,6 +163,7 @@
     "tool.started",
     "tool.preparing",
     "tool.progress",
+    "subagent.progress",
     "tool.output",
     "tool.image",
     "tool.artifact",
@@ -405,6 +406,9 @@
     jobsStripOpen: localStorage.getItem("miyu.web.jobsStripOpen") === "1",
     expandedJobs: new Set(),
     jobStreamSinks: new Map(),
+    // 后台子代理任务此刻的样子(`job.progress` 里收好的窥视、词元、子会话,会话项目第 4 段
+    // 之二):任务条那一行取它画,点它打开子会话。
+    subagentJobs: new Map(),
     commandLogs: new Map(),
     commandPeekLine: new Map(),
     commandPeekTimers: new Map(),
@@ -3177,6 +3181,13 @@
           tool_id: call?.id, name: call?.name,
           display_name: call?.display_name, arguments: call?.arguments,
         });
+        // 在跑的前台子代理:检查点里记着它的子会话(会话项目第 4 段之二),刷新之后卡片照样
+        // 点得进去。老回合没有这个字段,下面按 `sub_trace` 回放。
+        if (isSubagentTool(call?.name) && call?.child_session_id) {
+          handleToolEvent("subagent.progress", live, {
+            tool_id: call?.id, name: call?.name, session_id: call.child_session_id,
+          });
+        }
         if (isSubagentTool(call?.name) && Array.isArray(call?.sub_trace)) {
           for (const marker of call.sub_trace) {
             handleToolEvent("tool.progress", live, {
@@ -6708,14 +6719,6 @@
     return { kind: "plain", text: text.trim() };
   }
 
-  function subagentPeekLine(ev) {
-    if (ev.kind === "reasoning") return ev.text;
-    if (ev.kind === "content") return ev.text;
-    if (ev.kind === "call") return t("调用 {name}{subject}", {name: ev.name, subject: ev.subject ? " · " + ev.subject : ""});
-    if (ev.kind === "result") return t("{name} {status}", {name: ev.name, status: ev.ok ? t("完成") : t("出错")});
-    return ev.text || "";
-  }
-
   // 子过程时间线:子代理自己的思考与工具流,复用主对话同一套渲染——proc-line
   // 细线时间线 + createReasoningBlock(思考:累加、可展开、有窥视、动画)+
   // createPersistedToolCard(完成的工具卡,与主流工具卡同构)。sink.blocks 承载
@@ -6824,16 +6827,10 @@
     mutate();
     if (c && atBottom) c.scrollTop = c.scrollHeight;
   }
-  function subAutoScroll(sink) {
-    // 内容已经加完了才调它(工具卡/结果那种低频路径):当前离底 <30 就跟,否则不动。
-    const c = subScrollContainer(sink);
-    if (!c) return;
-    if (c.scrollHeight - c.scrollTop - c.clientHeight < 30) c.scrollTop = c.scrollHeight;
-  }
   // 往子过程区加一个块(思考块头/工具卡)必须走「加之前先量在不在底,加完只在原本
   // 贴底时才拉回底」——直接 procLineAttach 会把容器撑高却不滚,一次没滚就把整条贴底
   // 跟随链打断,之后逐 token 的 subStickBottom 全测得「改前不在底」再不跟(#159/#160,
-  // 前台后台同此)。subAutoScroll 是「加完再量」,块一高就已经离底 >30px 也修不回来。
+  // 前台后台同此)。「加完再量」那种跟法(原来的 subAutoScroll,09-25 删了)块一高就已经离底 >30px,修不回来。
   function subAttach(sink, el) {
     subStickBottom(sink, () => procLineAttach(sink.blocks, el));
   }
@@ -9380,6 +9377,21 @@
         tool.progressDetail.wrapper.hidden = false;
       }
       updateToolSummary(tool);
+    } else if (name === "subagent.progress" && tool.isTask) {
+      // 子代理此刻的样子(会话项目第 4 段之二):窥视、词元、子会话。子会话里的过程在它自己
+      // 那儿,卡片点下去打开它,父会话这边只画标题行这一行。
+      if (data?.session_id) window.MiyuSubagents?.link(tool.card, String(data.session_id));
+      const peek = String(data?.peek || "");
+      if (peek) {
+        tool.peekLine = peek;
+        if (tool.taskPeek) setReasoningPeek(tool.taskPeek, peek);
+      }
+      const tokens = String(data?.tokens_label || "");
+      if (tokens) {
+        tool.tokenText = tokens;
+        if (tool.taskToken) tool.taskToken.textContent = tokens;
+      }
+      if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress" && tool.isTask) {
       // 子会话一建好就报的那条标记:卡片从此点下去打开它的会话(会话项目第 4 段)。
       if (window.MiyuSubagents?.takeMarker(tool.card, String(data?.message || ""))) return;
@@ -10310,11 +10322,15 @@
       row.append(makeJobSpinner(), label, token, time, peekSlot, stop);
 
       if (isSubagent) {
-        const sink = jobStreamSink(jid);
-        sink.taskPeek = peek;
-        sink.taskToken = token;
-        if (sink.peekLine) setReasoningPeek(peek, sink.peekLine);
-        if (sink.tokenText) token.textContent = sink.tokenText;
+        // 窥视、词元取 `job.progress` 里收好的那份(会话项目第 4 段之二)。
+        const status = state.subagentJobs.get(jid) || {};
+        status.peekEl = peek;
+        status.tokenEl = token;
+        if (job.child_session_id) status.session = String(job.child_session_id);
+        state.subagentJobs.set(jid, status);
+        if (status.peek) setReasoningPeek(peek, status.peek);
+        if (status.tokens) token.textContent = status.tokens;
+        else if (job.metric) token.textContent = String(job.metric);
       } else {
         // 后台命令没有进度流,但有输出日志(#120):把日志尾行当窥视,轮询刷新;
         // 先用已缓存的尾行填上(重建行时不闪)。
@@ -10327,6 +10343,12 @@
       row.setAttribute("aria-expanded", String(expanded));
       row.addEventListener("click", (event) => {
         if (event.target.closest(".job-chip-stop")) return;
+        // 后台子代理:子会话建好了就打开它(和终端任务条口径一致),不在这儿展开过程。
+        const session = isSubagent ? state.subagentJobs.get(jid)?.session : "";
+        if (session && window.MiyuSubagents?.open) {
+          window.MiyuSubagents.open(session);
+          return;
+        }
         if (state.expandedJobs.has(jid)) {
           state.expandedJobs.delete(jid);
           // 收起状态行时,把里面已展开的思考/工具卡也一并收起(09-12 #5),
@@ -10997,7 +11019,7 @@
     else if (name === "generation.superseded") resetSupersededGeneration(live);
     else if (name.startsWith("reasoning.")) handleReasoningEvent(name, live, data);
     else if (name === "queue.consumed") consumeLiveQueue(live, data);
-    else if (name.startsWith("tool.")) handleToolEvent(name, live, data);
+    else if (name.startsWith("tool.") || name === "subagent.progress") handleToolEvent(name, live, data);
     else if (name === "question.requested") {
       clearPreparingTool(live);
       createQuestion(live, data);
@@ -11080,6 +11102,15 @@
     if (name === "job.progress") {
       const jobId = String(data?.job_id || "");
       const message = String(data?.message || "");
+      if (jobId && (data?.peek || data?.tokens_label || data?.child_session_id)) {
+        const status = state.subagentJobs.get(jobId) || {};
+        if (data.peek) status.peek = String(data.peek);
+        if (data.tokens_label) status.tokens = String(data.tokens_label);
+        if (data.child_session_id) status.session = String(data.child_session_id);
+        state.subagentJobs.set(jobId, status);
+        if (status.peekEl && status.peek) setReasoningPeek(status.peekEl, status.peek);
+        if (status.tokenEl && status.tokens) status.tokenEl.textContent = status.tokens;
+      }
       if (jobId && message) {
         // 后台子代理的实时进度:喂给该 job 的子过程流(与前台子代理工具行同款
         // 解析后渲进该 job 的子过程时间线(展开时可见,持久累积)。

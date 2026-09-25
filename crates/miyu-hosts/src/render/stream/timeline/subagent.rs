@@ -240,11 +240,32 @@ impl StreamRenderer {
         )
     }
 
+    /// 前台子代理报了一次样子（`subagent.progress`，会话项目第 4 段之二）：窥视、词元、
+    /// 子会话。子会话里的过程不再原样转过来，状态行那一行只画这几样。
+    pub fn write_subagent_status(
+        &mut self,
+        name: &str,
+        status: miyu_engine::tools::subagent::status::SubagentStatus,
+    ) {
+        self.subagent_tokens.insert(name.to_string(), status.tokens);
+        if let Some(session) = status.session_id.as_deref() {
+            self.subagent_session(name, session);
+        }
+        self.subagent_status.insert(name.to_string(), status);
+    }
+
     pub(super) fn subagent_peek(&self, name: &str) -> Option<String> {
-        let log = self.subagent_logs.get(name)?;
         let width = crate::render::command_terminal_width()
             .saturating_sub(48)
             .max(16);
+        if let Some(status) = self
+            .subagent_status
+            .get(name)
+            .filter(|status| !status.peek.trim().is_empty())
+        {
+            return Some(peek_tail(status.peek.trim(), width));
+        }
+        let log = self.subagent_logs.get(name)?;
         if !log.reasoning.trim().is_empty() {
             return Some(peek_tail(&log.reasoning, width));
         }
@@ -609,6 +630,13 @@ impl StreamRenderer {
 
     /// 这个子代理至此烧了多少（短标，给时间线那一行用）。
     pub(crate) fn subagent_tokens_label(&self, name: &str) -> Option<String> {
+        if let Some(status) = self
+            .subagent_status
+            .get(name)
+            .filter(|status| !status.tokens_label.is_empty())
+        {
+            return Some(status.tokens_label.clone());
+        }
         self.subagent_logs.get(name)?.tokens.clone()
     }
 

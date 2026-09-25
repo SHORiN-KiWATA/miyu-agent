@@ -24,6 +24,7 @@ fn job(id: &str, kind: &str, metric: Option<&str>) -> JobOverview {
         log_path: None,
         metric: metric.map(str::to_string),
         metric_tokens: None,
+        child_session_id: None,
     }
 }
 

@@ -566,9 +566,9 @@ fn flow_message(message: &ChatMessage) -> miyu_core::state::FlowMessage {
     }
 }
 
-/// `drain_sub_trace`:回合最终落库时传 `true`,把子代理暂存的子过程标记流取走
-/// (取完清掉,避免长会话堆积);回合中途的检查点传 `false`,只读不清——否则
-/// 检查点会把标记流提前抽干,等收尾真正落库时只剩空的(#5a 刷新丢子过程真因)。
+/// `drain_sub_trace`:回合最终落库时传 `true`,把前台子代理暂存的子会话 id 取走
+/// (取完清掉);回合中途的检查点传 `false`,只读不清——否则检查点会提前取走,等收尾
+/// 真正落库时就没了。
 pub(in crate::agent) fn derive_tool_flow(
     messages: &[ChatMessage],
     live_start: usize,
@@ -604,27 +604,19 @@ pub(in crate::agent) fn derive_tool_flow(
                     calls: calls
                         .iter()
                         .map(|call| {
-                            // 子代理调用:取走这次调用暂存的子过程标记流,挂上去落库,
-                            // 刷新/回看时回放(#9)。别的工具没有,为 None。
-                            let (sub_trace, child_session_id) = if call.function.name == "subagent"
+                            // 前台子代理:挂上它的子会话(会话项目第 4 段之二)。前端据它把
+                            // 状态行 / 卡片链到那条会话;子会话里的过程在它自己那儿,不再
+                            // 把标记流(`sub_trace`)抄一份进父会话。老回合落过的照旧读得出。
+                            let child_session_id = if call.function.name == "subagent"
                                 || call.function.name == "task"
                             {
-                                let trace = if drain_sub_trace {
-                                    crate::tools::take_subagent_trace(&call.id)
+                                if drain_sub_trace {
+                                    crate::tools::take_subagent_session(&call.id)
                                 } else {
-                                    crate::tools::peek_subagent_trace(&call.id)
-                                };
-                                // 会话化的子代理在标记流开头报自己的子会话 id(09-18):
-                                // 落库后前端据它把状态行链到那条会话。
-                                let child = trace
-                                    .iter()
-                                    .find_map(|marker| {
-                                        marker.strip_prefix(crate::tools::SUBAGENT_SESSION_MARKER)
-                                    })
-                                    .map(str::to_string);
-                                ((!trace.is_empty()).then_some(trace), child)
+                                    crate::tools::peek_subagent_session(&call.id)
+                                }
                             } else {
-                                (None, None)
+                                None
                             };
                             miyu_core::state::ToolFlowCall {
                                 id: call.id.clone(),
@@ -633,7 +625,7 @@ pub(in crate::agent) fn derive_tool_flow(
                                 output: String::new(),
                                 started_ms: None,
                                 finished_ms: None,
-                                sub_trace,
+                                sub_trace: None,
                                 child_session_id,
                             }
                         })

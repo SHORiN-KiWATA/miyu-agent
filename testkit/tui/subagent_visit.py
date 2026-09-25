@@ -107,6 +107,11 @@ def main():
         # 等那一行报到 2 秒以上再点：刚出现时不到十分之一秒不报秒数，拿不到「之前」的读数。
         screen = r.wait_screen(master, sink, lambda s: (row_seconds(s) or 0) >= 2.0, 20.0) or screen
         seconds_before = row_seconds(screen)
+        # 那一行的窥视露它此刻在干什么（跑着 `sleep 40` 那条命令）：09-25 起窥视走
+        # `subagent.progress`，不再靠终端自己解析标记流。
+        row_line = screen[timeline_row(screen)] if timeline_row(screen) is not None else ""
+        report["row_peeks_what_the_child_is_doing"] = "跑个命令" in row_line or "运行命令" in row_line
+        report["_row"] = row_line.strip()
         h.click(master, sink, 6, timeline_row(screen), quiet=0.3, timeout=1.5)
         screen = r.wait_screen(master, sink, inside_child, 10.0)
         report["timeline_click_enters_child"] = screen is not None

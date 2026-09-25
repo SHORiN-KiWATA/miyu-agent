@@ -164,6 +164,10 @@ pub struct JobOverview {
     /// 同一个量的数字形态。跑着的时候先记在会话累计上，跑完由审计会话接手。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metric_tokens: Option<u64>,
+    /// 后台子代理的子会话（子会话一建好就有）。任务条上点它打开那条会话（会话项目
+    /// 第 4 段之二），刷新之后也点得进去。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_session_id: Option<String>,
 }
 
 struct JobHost {
@@ -339,6 +343,9 @@ fn overview_of(job: &JobEntry) -> JobOverview {
         status: job.state.label(),
         metric: job.metric.clone(),
         metric_tokens: job.metric_tokens,
+        child_session_id: matches!(job.kind, JobKind::Subagent { .. })
+            .then(|| crate::tools::subagent::child_session_of_job(&job.job_id))
+            .flatten(),
         running: !job.state.is_terminal(),
         runtime_seconds: job
             .finished

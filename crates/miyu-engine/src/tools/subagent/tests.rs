@@ -393,3 +393,99 @@ fn the_child_session_is_read_back_from_the_tool_output() {
     );
     assert_eq!(subagent_session_of_output("some other tool output"), None);
 }
+
+// ---- 前台子代理的进度收成状态行那一行（会话项目第 4 段之二，`status.rs`） ----
+
+mod status_feed {
+    use super::super::status::{Absorbed, SubagentStatusFeed};
+    use std::time::{Duration, Instant};
+
+    fn report(absorbed: Absorbed) -> super::super::status::SubagentStatus {
+        match absorbed {
+            Absorbed::Report { status, .. } => status,
+            other => panic!("该报一次，结果是 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plain_tool_progress_is_not_ours() {
+        let mut feed = SubagentStatusFeed::default();
+        assert_eq!(feed.absorb("正在下载 3/10"), Absorbed::NotSubagent);
+    }
+
+    /// 子会话 id 一到就报，并且说清楚是新来的（调用方要记进这一步、落检查点）。
+    #[test]
+    fn the_session_reports_at_once_and_says_it_is_new() {
+        let mut feed = SubagentStatusFeed::default();
+        let now = Instant::now();
+        match feed.absorb_at("__subagent_session__sess_child", now) {
+            Absorbed::Report {
+                status,
+                new_session,
+            } => {
+                assert!(new_session);
+                assert_eq!(status.session_id.as_deref(), Some("sess_child"));
+            }
+            other => panic!("{other:?}"),
+        }
+        // 同一个 id 再来一次不算新的，也没什么可报。
+        assert_eq!(
+            feed.absorb_at("__subagent_session__sess_child", now),
+            Absorbed::Quiet
+        );
+    }
+
+    /// 词元照 `显示串\t数\t人话` 拆；变了就报，不等节流窗。
+    #[test]
+    fn tokens_report_without_waiting() {
+        let mut feed = SubagentStatusFeed::default();
+        let now = Instant::now();
+        report(feed.absorb_at("__subagent_session__s", now));
+        let status = report(feed.absorb_at(
+            "__subagent_metric__≈1.2K\t1234\t工具调用 3 次",
+            now + Duration::from_millis(10),
+        ));
+        assert_eq!(status.tokens_label, "≈1.2K");
+        assert_eq!(status.tokens, 1234);
+    }
+
+    /// 思考是逐字来的：窥视只露最后一行的尾巴，节流窗里的只记不报，收尾时补报最新的。
+    #[test]
+    fn thinking_is_throttled_and_the_latest_is_flushed() {
+        let mut feed = SubagentStatusFeed::default();
+        let now = Instant::now();
+        let first = report(feed.absorb_at("__subagent_reasoning__先看一眼\n再", now));
+        assert_eq!(first.peek, "再");
+        assert_eq!(
+            feed.absorb_at(
+                "__subagent_reasoning__动手",
+                now + Duration::from_millis(50)
+            ),
+            Absorbed::Quiet
+        );
+        let pending = feed.pending().expect("压着的那条要补报");
+        assert_eq!(pending.peek, "再动手");
+        assert!(feed.pending().is_none(), "补报过就没有了");
+    }
+
+    /// 工具那一步：`中文名 · 主题`，跑完带 ok/err 和秒数；打头的工具 id 不露。
+    #[test]
+    fn a_tool_step_peeks_as_a_readable_line() {
+        let mut feed = SubagentStatusFeed::default();
+        let now = Instant::now();
+        let status = report(feed.absorb_at(
+            r#"__subtool_call__{"name":"run_command","display":"运行命令","args":"{\"command\":\"ls\",\"title\":\"看看目录\"}"}"#,
+            now,
+        ));
+        assert!(!status.peek.contains("run_command\t"), "{}", status.peek);
+        assert!(status
+            .peek
+            .contains(crate::tools::readable_tool_name("run_command").as_str()));
+        let status = report(feed.absorb_at(
+            r#"__subtool_result__{"name":"run_command","display":"运行命令","args":"","ok":true,"ms":2000,"output":"a\nb"}"#,
+            now + Duration::from_millis(500),
+        ));
+        assert!(status.peek.contains("ok"), "{}", status.peek);
+        assert!(status.peek.contains("2.0s"), "{}", status.peek);
+    }
+}

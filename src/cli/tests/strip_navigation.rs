@@ -32,6 +32,7 @@ fn jobs(count: usize) -> Vec<JobOverview> {
             log_path: None,
             metric: None,
             metric_tokens: None,
+            child_session_id: None,
         })
         .collect()
 }
