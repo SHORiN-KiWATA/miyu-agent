@@ -14,6 +14,7 @@ import sys
 import termios
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -53,6 +54,9 @@ def wait_http(url, timeout=30):
     while time.time() < deadline:
         try:
             urllib.request.urlopen(url, timeout=2)
+            return True
+        except urllib.error.HTTPError:
+            # 网页要登录之后 /api/config 回 401：能回话就是起来了。
             return True
         except Exception:
             time.sleep(0.3)

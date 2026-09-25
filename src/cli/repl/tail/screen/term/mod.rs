@@ -960,7 +960,7 @@ impl Perform for Term {
             let start = self.cursor_row();
             // 同一块在原地被重写时,**把它原来的结束行留着**。
             //
-            // 转轮那侧为了不闪,一帧只重写变了的行(`rewrite_changed_spinner_lines`)。
+            // 转轮那侧为了不闪,一帧只重写变了的行(`live_area::rewrite_changed_rows`)。
             // 滚动思考窗的第一行每帧都在变(转轮、秒数),后面几行常常没变——于是
             // 这一帧只带开始标记、不带结束标记。要是照旧把跨度清成 `start..start`,
             // 块就停在半开状态,展开层算出「要替换 0 行」,于是把展开内容**插进去**

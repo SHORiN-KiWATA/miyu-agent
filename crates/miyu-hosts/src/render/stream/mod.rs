@@ -9,6 +9,7 @@
 
 mod event_clock;
 mod reasoning_phase;
+mod reply_tail;
 pub(crate) mod surface;
 pub mod timeline;
 mod tool_summary;
@@ -160,6 +161,8 @@ pub struct StreamRenderer {
     /// 「正在进行」那一行的块 id。每帧重发标记但**id 不变**，否则每 tick
     /// 都会在登记处攒一个新块。想完/跑完就清掉。
     pub(crate) live_block: Option<u64>,
+    /// 正文还没落下的那一截（见 `reply_tail`）。
+    pub(crate) reply_tail: reply_tail::ReplyTail,
 }
 
 impl StreamRenderer {
@@ -219,6 +222,7 @@ impl StreamRenderer {
             stream_control: TerminalControlState::default(),
             timeline: timeline::Timeline::default(),
             live_block: None,
+            reply_tail: Default::default(),
         }
     }
 
@@ -309,7 +313,8 @@ impl StreamRenderer {
             self.ensure_waiting_phase(self.reasoning_live_text(), self.wait_style())?;
             return Ok(());
         }
-        self.stop_waiting()?;
+        // 只停转轮：正文的活尾巴留着，下面有整行落下时和正文同一帧交接。
+        self.stop_spinner()?;
         if self.mode != Some(chunk.kind) {
             if chunk.kind == ChatStreamKind::Content {
                 self.finalize_reasoning_summary()?;
@@ -321,26 +326,23 @@ impl StreamRenderer {
             }
             self.switch_mode(chunk.kind)?;
         }
-        // 能力位要在借走 `self.output` 之前问:借用检查不让同时拿。
-        let expandable = self.caps().expandable;
-        let stdout = &mut self.output;
         if chunk.kind == ChatStreamKind::Reasoning {
-            write_full_reasoning_chunk(stdout, &text)?;
+            write_full_reasoning_chunk(&mut self.output, &text)?;
         } else if self.plain {
-            write!(stdout, "{text}")?;
+            write!(self.output, "{text}")?;
         } else {
             let rendered = self.markdown.push(&text);
             // 全屏：正文也缩进两格，和时间线、用户消息共用一条装订边。
             // `push` 只吐**整行**（半行留在它自己的缓冲里），所以这里逐行加
             // 前缀不会把一行切成两半。
-            let rendered = if expandable {
+            let rendered = if self.caps().expandable {
                 timeline::indent_body(&rendered)
             } else {
                 rendered
             };
-            write!(stdout, "{rendered}")?;
+            self.write_committed_body(&rendered)?;
         }
-        stdout.flush()?;
+        self.output.flush()?;
         Ok(())
     }
 
@@ -567,6 +569,8 @@ impl StreamRenderer {
     }
 
     pub(crate) fn end_active_stream_line(&mut self) -> Result<()> {
+        // 半行要冲出去了：先把活尾巴擦掉，冲出去的字落在它原来的位置上。
+        self.clear_reply_tail()?;
         if self.captures_reasoning() && self.mode == Some(ChatStreamKind::Reasoning) {
             self.mode = None;
             return Ok(());
