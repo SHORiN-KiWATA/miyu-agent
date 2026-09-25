@@ -192,6 +192,8 @@ impl RemoteRepl {
             // 不收就拿上一轮的旧值盖掉它，一秒后才由下一拍补上——屏幕上是闪一下。
             self.footer.goal = self.live_repl.footer.goal.clone();
             self.live_repl.set_footer(self.footer.clone());
+            // 回到空闲读输入：还攒着的切换画面一律放出去（兜底，见 `begin_frame_hold`）。
+            crate::cli::repl::tail::release_frame_hold()?;
             let (next_mode, input, images, history_entry) = match read_live_repl_input(
                 &mut self.live_repl,
                 &self.paths,
@@ -421,9 +423,11 @@ impl RemoteRepl {
     ) -> Result<LoopStep> {
         match action {
             SuspendedAction::Command { command, args } => self.dispatch_slash(command, &args).await,
-            // `/session` 面板已经在回合里跑完，人挑好了：只管切过去。
+            // `/session` 面板已经在回合里跑完，人挑好了：只管切过去。删掉的是自己那条的话，
+            // 切到兜底会话之后在原位把面板开回来（09-25）。
             SuspendedAction::SwitchSession(state) => {
                 self.switch_to_session(&state).await?;
+                self.reopen_session_picker().await?;
                 Ok(LoopStep::Continue)
             }
             // 面板开着时点了子代理那一行：面板是给原来那条会话开的，跟着换过去就落到别的
@@ -459,8 +463,17 @@ impl RemoteRepl {
         .await?;
         if let crate::cli::repl::midturn_panel::HostedPanel::SwitchSession(state) = outcome {
             self.switch_to_session(&state).await?;
+            self.reopen_session_picker().await?;
         }
         Ok(())
+    }
+
+    /// 回合里的 `/session` 面板删掉了自己待着的那条、已经落到兜底会话上：面板开回来。
+    async fn reopen_session_picker(&mut self) -> Result<()> {
+        match self.live_repl.reopen_session_picker.take() {
+            Some(cursor) => self.pick_session(Some(cursor)).await,
+            None => Ok(()),
+        }
     }
 
     /// 回合中寄宿的 `/models` 面板改了会话模型（09-20）：活动区那份 footer 已经

@@ -741,6 +741,41 @@ fn root_session_of(state: &DaemonState, session_id: &str) -> Option<String> {
     None
 }
 
+/// 名下有回合在跑的会话：跑着回合的会话自己，加上它往上每一层父会话。子代理在跑，主会话
+/// 也算「在跑」——删它会连子代理一起停（`/session` 面板里这种要按两下 Ctrl+D，09-25）。
+pub(in crate::web) fn sessions_with_running_trees(
+    state: &DaemonState,
+) -> std::collections::HashSet<String> {
+    let running: Vec<String> = state
+        .manager
+        .lock()
+        .unwrap()
+        .active_runs
+        .values()
+        .map(|info| info.session_id.to_string())
+        .collect();
+    let mut busy = std::collections::HashSet::new();
+    for session_id in running {
+        let mut current = Some(session_id);
+        // 深度上限同 `root_session_of`：写死到 2，多留点余量防坏数据成环。
+        for _ in 0..4 {
+            let Some(id) = current.take() else { break };
+            if !busy.insert(id.clone()) {
+                break;
+            }
+            current = state
+                .stores
+                .for_session(&id)
+                .session_record(&id)
+                .ok()
+                .flatten()
+                .filter(|record| record.kind == SUBAGENT_SESSION_KIND)
+                .and_then(|record| record.parent_session_id);
+        }
+    }
+    busy
+}
+
 /// reset / 删除会话:沿整棵子代理树停回合、停后台任务、收中转进程、删行(先深后浅),
 /// 根会话自己的后台任务也一并停掉。删会话现状只停回合(不停任务、不收进程),这里
 /// 连根会话的一起补上。

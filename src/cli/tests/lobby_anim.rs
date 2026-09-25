@@ -45,6 +45,7 @@ fn lobby_tail(banner: Option<BannerScene>) -> LiveReplTail {
         row_memo: Default::default(),
         suppress_switch_note: false,
         session_footer_stale: false,
+        reopen_session_picker: None,
         cumulative_from_poll: false,
         lobby_lane_pending: false,
         jobs: Vec::new(),

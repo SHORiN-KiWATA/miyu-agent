@@ -14,6 +14,7 @@ mod instruction_source;
 mod overflow_recovery;
 mod prompt;
 mod queue_journal;
+mod queued_compact;
 mod reasoning;
 mod remote_tools;
 mod replay_prefix;

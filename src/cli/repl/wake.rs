@@ -164,6 +164,7 @@ pub(in crate::cli) async fn follow_wake_run(
     let herdr_follow = herdr::TurnGuard::begin(session_id);
     let mut raw = LiveRawMode::start()?;
 
+    let mut last_frame_at = std::time::Instant::now();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(33));
     spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     spinner_tick.tick().await;
@@ -206,6 +207,7 @@ pub(in crate::cli) async fn follow_wake_run(
                         if let Some(HostedPanel::SwitchSession(state)) =
                             turn_panel_event(paths, live, &event, &mut scope).await?
                         {
+                            crate::cli::repl::tail::begin_frame_hold();
                             renderer.finish()?;
                             live.stop_footer_spinner()?;
                             live.apply_renderer_frame(&mut renderer)?;
@@ -355,10 +357,22 @@ pub(in crate::cli) async fn follow_wake_run(
                                         .await?;
                                         continue;
                                     }
+                                    // 像插话一样排进这一轮（09-25），同 `one_shot.rs`。
+                                    DuringTurn::Queue => {
+                                        live.editor.clear();
+                                        crate::cli::repl::midturn_panel::queue_turn_command(
+                                            paths, live, command, session_id,
+                                        )
+                                        .await?;
+                                        continue;
+                                    }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
                                         let args = args.trim().to_string();
                                         live.editor.clear();
+                                        if miyu_core::slash_commands::switches_session(command, &args) {
+                                            crate::cli::repl::tail::begin_frame_hold();
+                                        }
                                         renderer.finish()?;
                                         live.stop_footer_spinner()?;
                                         live.apply_renderer_frame(&mut renderer)?;
@@ -442,8 +456,18 @@ pub(in crate::cli) async fn follow_wake_run(
                         }
                     }
                 }
-                frame = &mut recv => break frame?,
+                frame = &mut recv => {
+                    last_frame_at = std::time::Instant::now();
+                    break frame?;
+                }
                 _ = spinner_tick.tick() => {
+                    // 切过来挂上的这一轮，补发的那一阵画完了（一小会儿没有新帧）：
+                    // 攒着的切换画面整段放出去（09-25，见 `begin_frame_hold`）。
+                    if crate::cli::repl::tail::frame_hold_active()
+                        && last_frame_at.elapsed() >= crate::cli::repl::tail::CATCH_UP_QUIET
+                    {
+                        crate::cli::repl::tail::release_frame_hold()?;
+                    }
                     // SpinnerTick 经 live 路径冲刷 chunk 缓冲，流式输出靠它。
                     handle_live_agent_event(live, &mut renderer, AgentEvent::SpinnerTick)?;
                     // 状态条是 live tail 的一部分，附着期间同样要持续刷新。
@@ -808,7 +832,11 @@ pub(in crate::cli) async fn follow_wake_run(
                     Some(&herdr_follow),
                 )?;
             }
+            // 排着的 `/compact` 开始做了：排队区那一行撤掉（09-25）。
+            "context.compact_start" => live.drop_compact_marker()?,
             "run.completed" | "run.failed" | "run.cancelled" => {
+                // 没走到检查点就收场的，守护进程事后补压。
+                live.drop_compact_marker()?;
                 crate::cli::repl::question_flow::abandon_question_layer(
                     live,
                     &mut renderer,

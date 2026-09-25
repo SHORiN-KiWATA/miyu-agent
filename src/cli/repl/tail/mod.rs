@@ -19,7 +19,11 @@ mod turn_panel;
 mod update;
 
 pub(in crate::cli) use navigate::Navigated;
-pub(in crate::cli) use update::{synchronized_terminal_update, term_out, TermOut};
+pub(in crate::cli) use queue::queued_compact_marker;
+pub(in crate::cli) use update::{
+    begin_frame_hold, frame_hold_active, release_frame_hold, synchronized_terminal_update,
+    term_out, TermOut, CATCH_UP_QUIET,
+};
 
 #[cfg(test)]
 pub(in crate::cli) use frame::queue_lifted_frame;
@@ -253,6 +257,9 @@ pub(in crate::cli) struct LiveReplTail {
     /// 的盖回来（主循环每圈 `set_footer`）。立这面旗让它在盖之前先重算一次。
     /// 一次性，用过即清。
     pub(in crate::cli) session_footer_stale: bool,
+    /// 回合里的 `/session` 面板删掉了自己待着的那条会话：`RemoteRepl` 切到兜底会话之后，
+    /// 在这一行把面板开回来接着删（09-25）。一次性，用过即清。
+    pub(in crate::cli) reopen_session_picker: Option<usize>,
     /// 界面上的 Σ 是空闲循环按轮询改的（上次显式刷新之后才读的那份）。主循环整份
     /// 覆盖之前据此把它收回来，见 `ReplFooterStatus::adopt_cumulative`。
     pub(in crate::cli) cumulative_from_poll: bool,
@@ -691,6 +698,7 @@ impl LiveReplTail {
             row_memo: row_memo::RowMemo::default(),
             suppress_switch_note: false,
             session_footer_stale: false,
+            reopen_session_picker: None,
             cumulative_from_poll: false,
             lobby_lane_pending: false,
         })

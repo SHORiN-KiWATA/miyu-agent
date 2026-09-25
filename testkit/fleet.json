@@ -75,6 +75,15 @@
       "lane": "tui"
     },
     {
+      "name": "session_ux",
+      "argv": [
+        "python3",
+        "testkit/tui/session_ux_probe.py"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
       "name": "bg_visit",
       "argv": [
         "python3",

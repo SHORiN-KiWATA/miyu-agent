@@ -210,6 +210,30 @@ pub struct AgentTurnControl {
     pub(in crate::agent) queue_ingress: Option<Arc<QueueIngressBarrier>>,
     pub(in crate::agent) supersede: Option<Arc<TurnSupersedeSignal>>,
     pub(in crate::agent) supersede_seen: Arc<AtomicU64>,
+    pub(in crate::agent) compact: Option<Arc<TurnCompactRequest>>,
+}
+
+/// 回合跑着的时候有人敲了 `/compact`（09-25，用户：「像 followup 消息一样排队」）。回合
+/// 循环在接插话的那两处（一批工具跑完、模型要收尾时）看一眼，立着就先把本轮之前的历史
+/// 压掉再接着跑。守护进程按会话各存一份，这一轮没走到那两处就退场的，由它在回合退场后补压。
+#[derive(Default)]
+pub struct TurnCompactRequest {
+    requested: std::sync::atomic::AtomicBool,
+}
+
+impl TurnCompactRequest {
+    pub fn request(&self) {
+        self.requested.store(true, Ordering::Release);
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
+
+    /// 取走请求：只有一处能拿到 `true`（同一会话里并行的几轮、回合与守护进程之间不会压两遍）。
+    pub fn take(&self) -> bool {
+        self.requested.swap(false, Ordering::AcqRel)
+    }
 }
 
 #[derive(Default)]
@@ -316,7 +340,17 @@ impl AgentTurnControl {
             queue_ingress: None,
             supersede: None,
             supersede_seen: Arc::new(AtomicU64::new(0)),
+            compact: None,
         }
+    }
+
+    pub fn set_compact_request(&mut self, request: Arc<TurnCompactRequest>) {
+        self.compact = Some(request);
+    }
+
+    /// 这一轮排着一次压缩就取走它（见 [`TurnCompactRequest`]）。
+    pub(in crate::agent) fn take_compact_request(&self) -> bool {
+        self.compact.as_ref().is_some_and(|request| request.take())
     }
 
     pub fn set_queue_ingress(&mut self, ingress: Arc<QueueIngressBarrier>) {

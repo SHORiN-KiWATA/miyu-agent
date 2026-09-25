@@ -98,6 +98,22 @@ pub(crate) struct ManagerState {
     /// 每当有 run 从 `active_runs` 移除时通知一次。等「某个/某些 run 结束」
     /// 的循环靠它事件化，免掉定周期拿全局锁轮询。
     pub(crate) runs_changed: Arc<tokio::sync::Notify>,
+    /// 按会话记的「回合跑着时敲了 `/compact`」（09-25）。回合的控制句柄挂的就是这一份，
+    /// 回合在接插话的检查点取走；没走到检查点就退场的，由 `compact_queue` 补压。
+    pub(crate) compact_requests: HashMap<String, Arc<miyu_engine::agent::TurnCompactRequest>>,
+    /// 正在跑的会话这一轮的实时数（每次模型请求结束时更新，回合全部退场就清）。快照里的
+    /// 上下文与累计本来只在回合结束时落定，回合中途切回来看到的是库里现估的旧数（09-25）。
+    pub(crate) live_turns: HashMap<String, LiveTurnFigures>,
+}
+
+/// 一条正在跑的会话此刻的上下文与会话累计，口径同 `chat.round_usage`：上下文是最近一次请求的
+/// 输入 + 输出，累计含已落库的回合、跑完的子代理和本轮至今。
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LiveTurnFigures {
+    pub(crate) context_tokens: u64,
+    pub(crate) cumulative_tokens: u64,
+    pub(crate) cumulative_prompt_tokens: u64,
+    pub(crate) cumulative_cache_read_tokens: u64,
 }
 
 impl ManagerState {
@@ -118,6 +134,31 @@ impl ManagerState {
                 .admin_session
                 .as_deref()
                 .is_none_or(|scoped| scoped == session_id)
+    }
+
+    /// 这条会话的排队压缩开关，没有就建一份。
+    pub(crate) fn compact_request(
+        &mut self,
+        session_id: &str,
+    ) -> Arc<miyu_engine::agent::TurnCompactRequest> {
+        self.compact_requests
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// 正在跑的会话用这一轮的实时数盖掉快照里的上下文与累计（09-25：回到正跑着的主会话，
+    /// footer 原来显示库里现估的数——这一轮还没落库，只剩系统提示词加前几轮，用户看到 13k）。
+    pub(crate) fn overlay_live_turn(&self, session_id: &str, context: &mut ContextSnapshot) {
+        if !self.session_has_runs(session_id) {
+            return;
+        }
+        if let Some(live) = self.live_turns.get(session_id) {
+            context.tokens = live.context_tokens;
+            context.cumulative_tokens = live.cumulative_tokens;
+            context.cumulative_prompt_tokens = live.cumulative_prompt_tokens;
+            context.cumulative_cache_read_tokens = live.cumulative_cache_read_tokens;
+        }
     }
 
     pub(crate) fn session_has_runs(&self, session_id: &str) -> bool {
@@ -236,6 +277,9 @@ pub(crate) fn finish_run(
     if let Some(run) = manager.active_runs.remove(run_id) {
         if let Some(followup) = run.platform_followup {
             followup.close();
+        }
+        if !manager.session_has_runs(&run.session_id) {
+            manager.live_turns.remove(&*run.session_id);
         }
         manager.runs_changed.notify_waiters();
     }

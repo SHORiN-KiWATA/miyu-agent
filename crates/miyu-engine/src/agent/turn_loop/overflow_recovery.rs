@@ -94,20 +94,7 @@ impl Agent {
                         kind: None,
                     },
                 )?;
-                // Splice the rebuilt (compacted) history prefix in
-                // front of the current turn's user message; the
-                // live tail (user input, runtime stamp, hints)
-                // is preserved byte-for-byte.
-                let user_index = live_user_index(messages, st.replay_start)
-                    .unwrap_or_else(|| st.replay_start.min(messages.len()));
-                let (rebuilt, rebuilt_user_index) = self.chat_messages(current_turn_id, "")?;
-                let tail = messages.split_off(user_index);
-                messages.clear();
-                messages.extend(rebuilt.into_iter().take(rebuilt_user_index));
-                messages.extend(tail);
-                // 活跃轮边界随尾巴整体平移:新前缀长 + 尾内偏移。
-                st.replay_start = rebuilt_user_index + (st.replay_start - user_index);
-                st.continuation_input_start = messages.len();
+                self.splice_compacted_prefix(current_turn_id, messages, st)?;
                 tracing::info!(
                     folded = compact_result.folded_turns,
                     kept = compact_result.kept_turns,

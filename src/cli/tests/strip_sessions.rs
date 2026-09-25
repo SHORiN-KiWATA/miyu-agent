@@ -79,7 +79,7 @@ fn session_rows_come_first_and_absorb_their_mirror_job() {
     assert_eq!(lines.len(), 5, "{lines:#?}");
     assert!(lines[0].is_empty(), "头上一行空的: {lines:#?}");
     assert!(
-        lines[1].starts_with(&format!("↑ {}", text("main", "主会话")))
+        lines[1].starts_with(&format!("  ↑ {}", text("main", "主会话")))
             && lines[1].ends_with("修登录页"),
         "{:?}",
         lines[1]
@@ -209,4 +209,68 @@ fn a_replayed_parent_task_is_not_drawn_as_a_user_prompt() {
         !frame.contains(&submitted_echo_bar(PersonaLane::Active)),
         "{frame}"
     );
+}
+
+fn sibling(id: &str, current: bool) -> StripSession {
+    let StripSession::Child(row) = child(id, "running", None) else {
+        unreachable!()
+    };
+    StripSession::Sibling { row, current }
+}
+
+/// 方向键停着的那一行，`›` 占行首单独留出来的两列，转轮照常在它后面（用户 09-25：原来 `›`
+/// 直接顶掉转轮）。别的行那两列空着，竖着对齐。
+#[test]
+fn the_arrow_takes_its_own_column_and_keeps_the_spinner() {
+    let sessions = vec![child("c1", "running", None), child("c2", "running", None)];
+    let lines = plain(strip_lines(
+        &strip_rows(&sessions, &[]),
+        0,
+        80,
+        StripView {
+            focused: Some(1),
+            ..StripView::default()
+        },
+    ));
+    let spinner = crate::cli::repl::jobs::JOB_SPINNER_FRAMES[0];
+    assert!(
+        lines[1].starts_with(&format!("  {spinner} ")),
+        "{:?}",
+        lines[1]
+    );
+    assert!(
+        lines[2].starts_with(&format!("› {spinner} ")),
+        "{:?}",
+        lines[2]
+    );
+}
+
+/// 在子会话里：父会话下面列兄弟，当前这条标 `●`、点它不动；点别的兄弟横着切过去（09-25：
+/// 原来得先回主会话才能进另一条）。
+#[test]
+fn siblings_are_listed_under_the_way_back_and_switch_sideways() {
+    let sessions = vec![
+        StripSession::Parent(parent()),
+        sibling("c1", true),
+        sibling("c2", false),
+    ];
+    let lines = plain(strip_lines(
+        &strip_rows(&sessions, &[]),
+        0,
+        80,
+        StripView::default(),
+    ));
+    assert!(
+        lines[2].starts_with("  ● ") && lines[2].contains("查c1"),
+        "{:?}",
+        lines[2]
+    );
+    assert!(
+        lines[3].contains("查c2") && !lines[3].contains('●'),
+        "{:?}",
+        lines[3]
+    );
+    assert_eq!(sessions[1].action(), StripAction::Stay);
+    assert_eq!(sessions[2].action(), StripAction::VisitSibling("c2".into()));
+    assert_eq!(sessions[0].action(), StripAction::Back);
 }

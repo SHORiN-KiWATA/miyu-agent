@@ -423,6 +423,7 @@ fn session_selection_defaults_to_the_current_entry() {
         sandbox: None,
         sandbox_read_all: false,
         mode: "normal".to_string(),
+        running: false,
     };
     let entries = vec![entry("default", true), entry("active", false)];
 

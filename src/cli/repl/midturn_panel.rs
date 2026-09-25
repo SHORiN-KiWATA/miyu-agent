@@ -139,12 +139,21 @@ pub(in crate::cli) async fn open_turn_panel(
                 return Ok(());
             };
             TurnPanel::Session {
-                picker: SessionPicker::new(entries, session_id, None),
+                picker: SessionPicker::new(entries, &picker_home(live, session_id), None),
             }
         }
         _ => return Ok(()),
     };
     live.open_turn_panel(panel)
+}
+
+/// `/session` 列表里哪一行算「自己」：切进子代理会话看的时候是这棵树的根（子会话不进列表，
+/// 09-25），同 `RemoteRepl::picker_home`。
+fn picker_home(live: &LiveReplTail, session_id: &str) -> String {
+    live.visits
+        .first()
+        .map(|root| root.session_id.clone())
+        .unwrap_or_else(|| session_id.to_string())
 }
 
 fn models_panel(paths: &MiyuPaths, session_id: &str) -> Result<TurnPanel> {
@@ -287,32 +296,68 @@ async fn session_picked(
             session_id: deleted,
             index,
         } => {
-            let was_active = deleted == session_id;
-            let outcome = repl_ipc_admin(
-                paths,
-                live,
-                IpcCommand::DeleteSession {
-                    target: miyu_core::ipc::SessionRef::Id { id: deleted },
-                },
-            )
-            .await?;
-            if outcome.is_none() {
-                return Ok(HostedPanel::Stayed);
-            }
-            if was_active {
+            let home = picker_home(live, session_id);
+            let was_active = deleted == home;
+            let notice = delete_session_from_picker(paths, live, deleted)
+                .await?
+                .err();
+            // 删掉的是自己这条（或者正在看的子代理树的根）：落到兜底会话上，切完在原位把
+            // 面板开回来接着删（09-25）。
+            if notice.is_none() && was_active {
                 return Ok(
                     match repl_fallback_session_state(paths, live, mode).await? {
-                        Some(state) => HostedPanel::SwitchSession(state),
+                        Some(state) => {
+                            live.reopen_session_picker = Some(index);
+                            HostedPanel::SwitchSession(state)
+                        }
                         None => HostedPanel::Stayed,
                     },
                 );
             }
+            // 删掉了别的、或者没删成（原因显示在面板里）：原位把面板开回来。
             if let Some(entries) = session_picker_entries(paths, live, mode).await? {
                 live.open_turn_panel(TurnPanel::Session {
-                    picker: SessionPicker::new(entries, session_id, Some(index)),
+                    picker: SessionPicker::new(entries, &home, Some(index)).with_notice(notice),
                 })?;
             }
             Ok(HostedPanel::Stayed)
         }
     }
+}
+
+/// 回合中排队执行的命令（`DuringTurn::Queue`，目前只有 `/compact`）：发给守护进程。回合还在跑
+/// 就排进去、排队区挂一行；恰好刚跑完的话守护进程当场做了，什么都不用挂；出错说一句。
+pub(in crate::cli) async fn queue_turn_command(
+    paths: &MiyuPaths,
+    live_tail: &mut LiveReplTail,
+    command: miyu_core::slash_commands::ReplSlashCommand,
+    session_id: &str,
+) -> Result<()> {
+    let target = miyu_core::ipc::SessionRef::Id {
+        id: session_id.to_string(),
+    };
+    let request = match command {
+        miyu_core::slash_commands::ReplSlashCommand::Compact => IpcCommand::Compact { target },
+        _ => return Ok(()),
+    };
+    match send_ipc_admin(paths, request).await {
+        Ok((_, data)) if data.get("queued").and_then(serde_json::Value::as_bool) == Some(true) => {
+            let marker = crate::cli::repl::tail::queued_compact_marker();
+            if live_tail.external_output_active {
+                live_tail.append_queued(marker);
+            } else {
+                synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                    live_tail.enqueue(marker)
+                })?;
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            live_tail.toast_note(&format!("{error:#}"));
+            if !live_tail.external_output_active {
+                synchronized_terminal_update(CursorAfterUpdate::Preserve, || live_tail.redraw())?;
+            }
+        }
+    }
+    Ok(())
 }

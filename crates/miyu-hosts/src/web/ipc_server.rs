@@ -666,6 +666,18 @@ async fn dispatch_ipc_connection(
                 }
             };
             let session_id: Arc<str> = record.session_id.into();
+            // 回合跑着：排进这一轮，回合在下一个检查点压（09-25，见 `compact_queue`）。
+            if queue_compact_if_running(&state, &session_id) {
+                ipc::send(
+                    &mut stream,
+                    &IpcFrame::AdminResult {
+                        state: session_state_for(&state, &session_id)?,
+                        data: json!({ "queued": true }),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
             reserve_admin_for_session(&state.manager, &session_id)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let (reply, receiver) = oneshot::channel();

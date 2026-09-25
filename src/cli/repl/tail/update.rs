@@ -25,6 +25,106 @@ thread_local! {
 /// 一帧的初始容量。大厅一帧十几 KB（09-23 实测），先留够免得边攒边扩。
 const FRAME_CAPACITY: usize = 16 * 1024;
 
+thread_local! {
+    /// 攒帧（09-25）：切会话那一阵分好几步画（回合收尾、清屏回放、footer、挂上正在跑的
+    /// 那一轮），每一步原来各出一帧，终端上先是空屏、再一截截长出来（用户：「切换会话一点
+    /// 都不顺畅」）。开着的时候最外层同步块收尾不写出去，续在这里，放行时整段作一帧。
+    /// 只在全屏下开；REPL 跑在单线程运行时上，跨 await 也还在同一个线程。
+    static HOLD: RefCell<Option<Held>> = const { RefCell::new(None) };
+}
+
+struct Held {
+    bytes: Vec<u8>,
+    since: std::time::Instant,
+}
+
+/// 挂上一轮之后，多久没有新帧就算补发的那一阵画完了：攒帧在这时放行。
+pub(in crate::cli) const CATCH_UP_QUIET: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// 攒帧最多攒多久。过了就连同手上这一帧一起放出去，免得哪一步出了岔子画面一直不动。
+const HOLD_LIMIT: std::time::Duration = std::time::Duration::from_millis(500);
+const SYNC_BEGIN: &[u8] = b"\x1b[?2026h";
+const SYNC_END: &[u8] = b"\x1b[?2026l";
+
+/// 开始攒帧（已经在攒就不动）。
+pub(in crate::cli) fn begin_frame_hold() {
+    if !crate::cli::repl::tail::screen::in_fullscreen() {
+        return;
+    }
+    HOLD.with(|hold| {
+        hold.borrow_mut().get_or_insert_with(|| Held {
+            bytes: Vec::new(),
+            since: std::time::Instant::now(),
+        });
+    });
+}
+
+pub(in crate::cli) fn frame_hold_active() -> bool {
+    HOLD.with(|hold| hold.borrow().is_some())
+}
+
+/// 放行：攒着的几步画面整段作一帧写出去。
+pub(in crate::cli) fn release_frame_hold() -> Result<()> {
+    let Some(held) = HOLD.with(|hold| hold.borrow_mut().take()) else {
+        return Ok(());
+    };
+    if held.bytes.is_empty() {
+        return Ok(());
+    }
+    let mut frame = Vec::with_capacity(held.bytes.len() + SYNC_BEGIN.len() + SYNC_END.len());
+    frame.extend_from_slice(SYNC_BEGIN);
+    frame.extend_from_slice(&held.bytes);
+    frame.extend_from_slice(SYNC_END);
+    let mut door = FrameDoor(io::stdout().lock());
+    door.write_all(&frame)?;
+    door.flush()?;
+    Ok(())
+}
+
+/// 最外层同步块攒好的一帧：攒帧开着就续进去（去掉它自己的开始/结束标记），返回是否已经
+/// 接手。攒过了时限就连这一帧一起放行。
+fn hold_frame(frame: &[u8]) -> io::Result<bool> {
+    let expired = HOLD.with(|hold| {
+        let mut hold = hold.borrow_mut();
+        let Some(held) = hold.as_mut() else {
+            return None;
+        };
+        append_without_sync_marks(&mut held.bytes, frame);
+        Some(held.since.elapsed() >= HOLD_LIMIT)
+    });
+    match expired {
+        None => Ok(false),
+        Some(false) => Ok(true),
+        Some(true) => release_frame_hold()
+            .map(|()| true)
+            .map_err(|error| io::Error::other(error.to_string())),
+    }
+}
+
+fn append_without_sync_marks(out: &mut Vec<u8>, frame: &[u8]) {
+    let mut rest = frame;
+    while !rest.is_empty() {
+        let next = [SYNC_BEGIN, SYNC_END]
+            .iter()
+            .filter_map(|mark| {
+                rest.windows(mark.len())
+                    .position(|window| window == *mark)
+                    .map(|at| (at, mark.len()))
+            })
+            .min();
+        match next {
+            Some((at, len)) => {
+                out.extend_from_slice(&rest[..at]);
+                rest = &rest[at + len..];
+            }
+            None => {
+                out.extend_from_slice(rest);
+                break;
+            }
+        }
+    }
+}
+
 /// `MIYU_SYNC_TRACE=1`：每个最外层同步块的时长（微秒）与这一帧的字节数追加到
 /// `/tmp/miyu-sync-trace.log`。kitty 在块开着的时间里按活光标给输入法定位，块越
 /// 短越不容易撞上（09-17），这把尺子量的就是那个窗口。
@@ -219,10 +319,14 @@ impl<W: Write> UpdateGuard<W> {
                 .with(|frame| frame.borrow_mut().take())
                 .unwrap_or_default();
             bytes = frame.len();
-            let written = self
-                .writer
-                .write_all(&frame)
-                .and_then(|()| self.writer.flush());
+            let written = match hold_frame(&frame) {
+                Ok(true) => Ok(()),
+                Ok(false) => self
+                    .writer
+                    .write_all(&frame)
+                    .and_then(|()| self.writer.flush()),
+                Err(error) => Err(error),
+            };
             result = result.and(written);
         }
         if self.outermost {

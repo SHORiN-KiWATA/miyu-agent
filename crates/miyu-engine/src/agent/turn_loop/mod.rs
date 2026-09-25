@@ -16,6 +16,7 @@ mod model_round;
 mod overflow_recovery;
 mod parallel;
 mod queue;
+mod queued_compact;
 mod redo;
 mod repeat_gate;
 mod round_request;

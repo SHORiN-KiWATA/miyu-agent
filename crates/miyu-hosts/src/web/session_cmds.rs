@@ -153,12 +153,24 @@ pub(in crate::web) async fn handle_session_command(
             // 表(一万多),挂在没聊过的会话上会误导,列表里给 0。
             const LAZY_FILL_PER_CALL: usize = 8;
             let mut filled = 0usize;
+            // 在跑的（连同子代理在跑的）：`/session` 面板里删它要按两下（09-25）。
+            let running = sessions_with_running_trees(state);
+            // 回合还在跑的会话，上下文取这一轮的实时数（09-25，见 `overlay_live_turn`）。
+            let live_context = |id: &str| {
+                let manager = state.manager.lock().unwrap();
+                manager
+                    .session_has_runs(id)
+                    .then(|| manager.live_turns.get(id).map(|live| live.context_tokens))
+                    .flatten()
+            };
             let sessions: Vec<Value> = sessions
                 .iter()
                 .map(|overview| {
                     let mut value = session_overview_json(overview, &current);
                     let id = overview.record.session_id.as_str();
-                    let tokens = if overview.turn_count == 0 {
+                    let tokens = if let Some(tokens) = live_context(id) {
+                        Some(tokens)
+                    } else if overview.turn_count == 0 {
                         Some(0)
                     } else if let Some(tokens) = overview.context_tokens {
                         Some(tokens)
@@ -171,6 +183,7 @@ pub(in crate::web) async fn handle_session_command(
                         None
                     };
                     value["context_tokens"] = json!(tokens);
+                    value["running"] = json!(running.contains(id));
                     value
                 })
                 .collect();
@@ -496,57 +509,7 @@ pub(in crate::web) async fn handle_session_command(
                 )
                 .to_string());
             }
-            // 运行中的会话也能删：先替用户按停止，等 run 退场再删。
-            if state
-                .manager
-                .lock()
-                .unwrap()
-                .session_has_runs(&record.session_id)
-            {
-                crate::web::stop_session_runs(
-                    state,
-                    &record.session_id,
-                    std::time::Duration::from_secs(5),
-                )
-                .await;
-            }
-            // 子代理树先拆(09-18 会话化):停回合、停后台任务、收中转进程、删行。
-            teardown_subagent_tree(state, &record.session_id).await;
-            reserve_admin_for_session(&state.manager, &record.session_id)
-                .map_err(|error| error.message)?;
-            if &*store.session_id() == record.session_id.as_str() {
-                let fallback = match fallback_session_id(state, &record.session_id) {
-                    Ok(fallback) => fallback,
-                    Err(error) => {
-                        release_admin(&state.manager);
-                        return Err(error);
-                    }
-                };
-                if let Err(error) = switch_session_via_actor_reserved(state, fallback).await {
-                    release_admin(&state.manager);
-                    return Err(error);
-                }
-            }
-            let result = state
-                .stores
-                .for_session(&record.session_id)
-                .delete_session(&record.session_id)
-                .map_err(|error| safe_error_message(&error));
-            crate::web::forget_session_processes(&record.session_id);
-            release_admin(&state.manager);
-            result?;
-            // 这个会话钉住的思考档位（09-24）跟着会话走。
-            miyu_core::llm::remove_session_thinking_variants(
-                &session_variant_paths(state, &record.owner),
-                &record.session_id,
-            );
-            // 库里的目标行随会话级联删除；进程内的 goal 状态（armed 等）
-            // 也一起清，不然条目在内存里陪跑到进程退出。
-            miyu_engine::tools::goal::forget_session(&record.session_id);
-            state.events.publish(
-                "session.deleted",
-                json!({ "session_id": record.session_id }),
-            );
+            delete_session_tree(state, &record).await?;
             Ok(json!({}))
         }
         IpcCommand::SetSandbox {

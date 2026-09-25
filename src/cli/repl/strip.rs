@@ -1,7 +1,8 @@
 //! 任务条：footer 底下那几行。
 //!
 //! 会话项目第 3 段（09-18 子代理会话化的前端半边）起，任务条先列会话行，再列后台任务：
-//! - 在子会话里时，第一行「↑ 主会话」，点它回去；
+//! - 在子会话里时，第一行「↑ 主会话」，点它回去；下面列兄弟（父会话名下还在干活的子代理，
+//!   当前这条标 `●`），点兄弟横着切过去，不用先回主会话（09-25）；
 //! - 这条会话名下还在干活的子代理会话，点它切进去看、接着聊。以前点开的是盖在正文上
 //!   的浮层；
 //! - 后台命令照旧一行一个，点开是日志面板。
@@ -39,6 +40,11 @@ pub(in crate::cli) struct ParentRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::cli) enum StripSession {
     Parent(ParentRow),
+    /// 父会话名下的另一条子代理（`current` = 就是正在看的这条）。
+    Sibling {
+        row: SubagentRow,
+        current: bool,
+    },
     Child(SubagentRow),
 }
 
@@ -46,14 +52,27 @@ pub(in crate::cli) enum StripSession {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::cli) enum StripAction {
     Visit(String),
+    /// 横着切到兄弟：访问栈不压新层，`/back` 照旧回父会话。
+    VisitSibling(String),
     Back,
+    /// 点的就是正在看的这条。
+    Stay,
 }
 
 impl StripSession {
     pub(in crate::cli) fn action(&self) -> StripAction {
         match self {
             Self::Parent(_) => StripAction::Back,
+            Self::Sibling { current: true, .. } => StripAction::Stay,
+            Self::Sibling { row, .. } => StripAction::VisitSibling(row.session_id.clone()),
             Self::Child(row) => StripAction::Visit(row.session_id.clone()),
+        }
+    }
+
+    fn subagent(&self) -> Option<&SubagentRow> {
+        match self {
+            Self::Sibling { row, .. } | Self::Child(row) => Some(row),
+            Self::Parent(_) => None,
         }
     }
 }
@@ -71,12 +90,11 @@ pub(in crate::cli) fn strip_rows<'a>(
     sessions: &'a [StripSession],
     jobs: &'a [JobOverview],
 ) -> Vec<StripRow<'a>> {
-    let mirrored = |session: &StripSession| match session {
-        StripSession::Child(child) => child
-            .job_id
-            .as_deref()
-            .and_then(|id| jobs.iter().find(|job| job.job_id == id)),
-        StripSession::Parent(_) => None,
+    let mirrored = |session: &StripSession| {
+        session
+            .subagent()
+            .and_then(|child| child.job_id.as_deref())
+            .and_then(|id| jobs.iter().find(|job| job.job_id == id))
     };
     sessions
         .iter()
@@ -90,9 +108,10 @@ pub(in crate::cli) fn strip_rows<'a>(
 }
 
 fn job_listed_as_session(job_id: &str, sessions: &[StripSession]) -> bool {
-    sessions.iter().any(
-        |row| matches!(row, StripSession::Child(child) if child.job_id.as_deref() == Some(job_id)),
-    )
+    sessions.iter().any(|row| {
+        row.subagent()
+            .is_some_and(|child| child.job_id.as_deref() == Some(job_id))
+    })
 }
 
 impl StripRow<'_> {
@@ -105,10 +124,12 @@ impl StripRow<'_> {
                 "subagent" => miyu_base::i18n::text("agent", "子代理"),
                 _ => miyu_base::i18n::text("cmd", "命令"),
             },
-            Self::Session(StripSession::Child(child), _) if child.dev => {
+            Self::Session(session, _) if session.subagent().is_some_and(|child| child.dev) => {
                 miyu_base::i18n::text("dev", "开发中")
             }
-            Self::Session(StripSession::Child(_), _) => miyu_base::i18n::text("agent", "子代理"),
+            Self::Session(StripSession::Child(_) | StripSession::Sibling { .. }, _) => {
+                miyu_base::i18n::text("agent", "子代理")
+            }
             Self::Session(StripSession::Parent(parent), _) if parent.root => {
                 miyu_base::i18n::text("main", "主会话")
             }
@@ -119,6 +140,7 @@ impl StripRow<'_> {
     fn marker(&self, spinner_phase: usize) -> char {
         match self {
             Self::Session(StripSession::Parent(_), _) => '↑',
+            Self::Session(StripSession::Sibling { current: true, .. }, _) => '●',
             _ => JOB_SPINNER_FRAMES[spinner_phase % JOB_SPINNER_FRAMES.len()],
         }
     }
@@ -139,7 +161,10 @@ impl StripRow<'_> {
                     job.title
                 )
             }
-            Self::Session(StripSession::Child(child), _) => match child.state.as_str() {
+            Self::Session(
+                StripSession::Child(child) | StripSession::Sibling { row: child, .. },
+                _,
+            ) => match child.state.as_str() {
                 // 转轮已经说了「在跑」。
                 "running" => child.title.clone(),
                 _ => format!(
@@ -196,7 +221,8 @@ impl StripView {
 ///
 /// 悬浮的那一条不 dim——和正文里可点的块一个规矩：悬浮提亮，好让人知道这行能点（用户
 /// 09-18：任务条行悬浮没有高亮）。方向键停着的那一条和选择面板的选中项一个样子：
-/// 行首一个 `›`，整行加粗。
+/// 行首一个 `›`，整行加粗。`›` 占行首单独留出来的两列，转轮照常在它后面（用户 09-25：
+/// 原来 `›` 直接顶掉转轮，看不出那一条还在不在跑）。
 pub(in crate::cli) fn strip_lines(
     rows: &[StripRow<'_>],
     spinner_phase: usize,
@@ -219,12 +245,9 @@ pub(in crate::cli) fn strip_lines(
         let focused = view.focused == Some(index);
         let kind_word = row.kind_word();
         let kind_pad = " ".repeat(kind_col.saturating_sub(visible_width(kind_word)));
-        let marker = if focused {
-            '›'
-        } else {
-            row.marker(spinner_phase)
-        };
-        let mut left = format!("{marker} {kind_word}{kind_pad} {}", row.body());
+        let gutter = if focused { '›' } else { ' ' };
+        let marker = row.marker(spinner_phase);
+        let mut left = format!("{gutter} {marker} {kind_word}{kind_pad} {}", row.body());
         let timer = row.timer();
         let timer_width = visible_width(&timer);
         // Never exceed the terminal width: a wrapped strip line would shift
@@ -262,14 +285,28 @@ pub(in crate::cli) fn strip_lines(
     lines
 }
 
-/// 任务条上该列哪些会话行：访问子会话时先列回去的那一行，再列这条会话名下还在干活的
-/// 子代理。子代理那几行由轮询线程按这个 REPL 的会话拉回来（直连模式没有，就是空的）。
+/// 任务条上该列哪些会话行：访问子会话时先列回去的那一行和兄弟（当前这条也在里面，标
+/// 出来），再列这条会话名下还在干活的子代理。子代理和兄弟那几行由轮询线程按这个 REPL 的
+/// 会话、父会话拉回来（直连模式没有，就是空的）。
 pub(in crate::cli) fn strip_sessions(parent: Option<&ParentRow>) -> Vec<StripSession> {
     let mut rows = Vec::new();
     if let Some(parent) = parent {
         rows.push(StripSession::Parent(parent.clone()));
     }
     if let Some(feed) = super::jobs::feed() {
+        if parent.is_some() {
+            let here = feed.repl_session.lock().unwrap().clone();
+            rows.extend(
+                feed.siblings
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|row| StripSession::Sibling {
+                        current: here.as_deref() == Some(row.session_id.as_str()),
+                        row: row.clone(),
+                    }),
+            );
+        }
         rows.extend(
             feed.subagents
                 .lock()

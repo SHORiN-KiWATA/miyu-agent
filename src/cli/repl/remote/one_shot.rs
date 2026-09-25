@@ -226,6 +226,8 @@ async fn run_remote_chat_inner(
     macro_rules! suspend_for_strip {
         ($live_tail:ident) => {
             if let Some(action) = $live_tail.take_strip_action() {
+                // 要切走了：回合收尾这一帧和后面的清屏回放攒成一帧（09-25）。
+                crate::cli::repl::tail::begin_frame_hold();
                 renderer.finish()?;
                 $live_tail.stop_footer_spinner()?;
                 $live_tail.apply_renderer_frame(&mut renderer)?;
@@ -241,6 +243,7 @@ async fn run_remote_chat_inner(
     }
     // 攒着还没打的图（非全屏那条路）。见 `tool.image` / `tool.finished`。
     let mut deferred_images: Vec<(serde_json::Value, Option<String>)> = Vec::new();
+    let mut last_frame_at = std::time::Instant::now();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(33));
     let mut job_strip_tick: u32 = 0;
     spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -305,6 +308,7 @@ async fn run_remote_chat_inner(
                         if let Some(HostedPanel::SwitchSession(state)) =
                             turn_panel_event(paths, live_tail, &event, &mut scope).await?
                         {
+                            crate::cli::repl::tail::begin_frame_hold();
                             renderer.finish()?;
                             live_tail.stop_footer_spinner()?;
                             live_tail.apply_renderer_frame(&mut renderer)?;
@@ -432,10 +436,27 @@ async fn run_remote_chat_inner(
                                         .await?;
                                         continue;
                                     }
+                                    // 像插话一样排进这一轮（09-25）：守护进程记下来，
+                                    // 回合在下一个检查点做；排队区挂一行「/compact 排队中」。
+                                    DuringTurn::Queue => {
+                                        live_tail.editor.clear();
+                                        crate::cli::repl::midturn_panel::queue_turn_command(
+                                            paths,
+                                            live_tail,
+                                            command,
+                                            &turn_session_id,
+                                        )
+                                        .await?;
+                                        continue;
+                                    }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
                                         let args = args.trim().to_string();
                                         live_tail.editor.clear();
+                                        // 换会话的命令：收尾这一帧和后面的清屏回放攒成一帧（09-25）。
+                                        if miyu_core::slash_commands::switches_session(command, &args) {
+                                            crate::cli::repl::tail::begin_frame_hold();
+                                        }
                                         // 和 Ctrl+D 那条路同一套收尾：渲染器
                                         // 收口、把帧落到屏幕上、交接 raw 模式。
                                         renderer.finish()?;
@@ -548,8 +569,18 @@ async fn run_remote_chat_inner(
                         }
                     }
                 },
-                frame = &mut recv => break frame?,
+                frame = &mut recv => {
+                    last_frame_at = std::time::Instant::now();
+                    break frame?;
+                }
                 _ = spinner_tick.tick() => {
+                    // 切过来挂上的这一轮，补发的那一阵画完了（一小会儿没有新帧）：
+                    // 攒着的切换画面整段放出去（09-25）。
+                    if crate::cli::repl::tail::frame_hold_active()
+                        && last_frame_at.elapsed() >= crate::cli::repl::tail::CATCH_UP_QUIET
+                    {
+                        crate::cli::repl::tail::release_frame_hold()?;
+                    }
                     // 外部输出期间活动区是挂起的(rendered=false),这时
                     // apply_output_frame 会把帧直接写在光标当下的位置——
                     // 也就是工具刚打完的图片中间。文本只盖住左边一截,右
@@ -951,7 +982,13 @@ async fn run_remote_chat_inner(
                     },
                 )?;
             }
-            "context.compact_start" => handle_agent_event(&mut renderer, AgentEvent::CompactStart)?,
+            "context.compact_start" => {
+                // 排着的 `/compact` 开始做了：排队区那一行撤掉（09-25）。
+                if let Some(live) = live.as_deref_mut() {
+                    live.drop_compact_marker()?;
+                }
+                handle_agent_event(&mut renderer, AgentEvent::CompactStart)?
+            }
             "context.compact_delta" => handle_agent_event(
                 &mut renderer,
                 AgentEvent::CompactChunk(ChatStreamChunk {
@@ -1007,6 +1044,8 @@ async fn run_remote_chat_inner(
             }
             "run.completed" => {
                 if let Some(live) = live.as_deref_mut() {
+                    // 这一轮没走到检查点就收场：排着的压缩由守护进程事后补做（09-25）。
+                    live.drop_compact_marker()?;
                     crate::cli::repl::question_flow::abandon_question_layer(
                         live,
                         &mut renderer,
@@ -1017,6 +1056,8 @@ async fn run_remote_chat_inner(
             }
             "run.failed" => {
                 if let Some(live) = live.as_deref_mut() {
+                    // 这一轮没走到检查点就收场：排着的压缩由守护进程事后补做（09-25）。
+                    live.drop_compact_marker()?;
                     crate::cli::repl::question_flow::abandon_question_layer(
                         live,
                         &mut renderer,
@@ -1036,6 +1077,8 @@ async fn run_remote_chat_inner(
             }
             "run.cancelled" => {
                 if let Some(live) = live.as_deref_mut() {
+                    // 这一轮没走到检查点就收场：排着的压缩由守护进程事后补做（09-25）。
+                    live.drop_compact_marker()?;
                     crate::cli::repl::question_flow::abandon_question_layer(
                         live,
                         &mut renderer,

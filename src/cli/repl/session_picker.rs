@@ -5,6 +5,10 @@
 //! Ctrl+D **当场删**，没有 y/N（用户 09-20 拍板：「应该改成 ctrl+d 直接删除」）。
 //! 原来是按一下弹一行「删除「xx」？y/N」再等一个键。删掉的那一行从列表里消失
 //! 就是回执，光标停在原位（下面的行顶上来），可以连着删。
+//!
+//! 例外是**正在跑**的会话（它自己或它的子代理在跑，09-25）：删它会停掉这一轮、拆掉整棵
+//! 子代理树。第一下只把那一行换成提醒，再按一下才删，按别的键就算了。连着删的时候光标
+//! 会顶到它身上——用户就是这么一下把正跑着调研的主会话删掉的。
 
 use super::panel::{self, with_help_line, PanelFrame, PanelModel};
 use crate::cli::*;
@@ -14,8 +18,9 @@ pub(super) fn pick(
     entries: &[SessionListEntry],
     active: &str,
     cursor: Option<usize>,
+    notice: Option<String>,
 ) -> Result<SessionPick> {
-    let mut picker = SessionPicker::new(entries.to_vec(), active, cursor);
+    let mut picker = SessionPicker::new(entries.to_vec(), active, cursor).with_notice(notice);
     panel::pick(live, &mut picker)
 }
 
@@ -28,6 +33,10 @@ pub(in crate::cli) struct SessionPicker {
     query: String,
     selected: usize,
     scroll: usize,
+    /// 按过一下 Ctrl+D、等着第二下的那一行（`entries` 下标）。
+    armed: Option<usize>,
+    /// 上一次删除没成的原因，换掉帮助行，按任意键消失。
+    notice: Option<String>,
 }
 
 impl SessionPicker {
@@ -46,7 +55,40 @@ impl SessionPicker {
             query: String::new(),
             selected: cursor.unwrap_or_else(|| session_initial_selection(&entries, Some(active))),
             scroll: 0,
+            armed: None,
+            notice: None,
             entries,
+        }
+    }
+
+    pub(in crate::cli) fn with_notice(mut self, notice: Option<String>) -> Self {
+        self.notice = notice;
+        self
+    }
+
+    /// 那一行此刻显示的字：等第二下 Ctrl+D 的换成提醒（标题留着，看得出是哪条）。
+    fn row_text(&self, index: usize) -> String {
+        if self.armed != Some(index) {
+            return self.lines[index].clone();
+        }
+        format!(
+            "{} · {}",
+            t(
+                "running · Ctrl+D again stops it and its subagents and deletes it",
+                "正在运行 · 再按 Ctrl+D 连同这一轮和子代理一起删",
+            ),
+            display_session_name(&self.entries[index].name),
+        )
+    }
+
+    fn help_line(&self, width: usize) -> String {
+        if self.armed.is_some() {
+            let hint = t("any other key keeps it", "按别的键就不删");
+            return format!("\x1b[33m{}\x1b[0m", truncate_visible_width(hint, width));
+        }
+        match &self.notice {
+            Some(notice) => format!("\x1b[31m{}\x1b[0m", truncate_visible_width(notice, width)),
+            None => inline_single_help_line(width, true),
         }
     }
 
@@ -84,23 +126,23 @@ impl PanelModel for SessionPicker {
                     .enumerate()
                     .map(|(row, (_, index))| {
                         inline_single_item_line(
-                            &self.lines[*index],
+                            &self.row_text(*index),
                             self.scroll + row == self.selected,
                             width,
                         )
                     }),
             );
         }
-        with_help_line(
-            content,
-            frame.panel.rows,
-            inline_single_help_line(width, true),
-        )
+        with_help_line(content, frame.panel.rows, self.help_line(width))
     }
 
     fn on_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<SessionPick> {
         let matches = self.matches();
-        match inline_select_key(code, modifiers, true) {
+        let key = inline_select_key(code, modifiers, true);
+        // 提醒和上一次的报错都只活到下一个键。
+        self.notice = None;
+        let armed = self.armed.take();
+        match key {
             InlineSelectKey::Cancel => Some(SessionPick::Cancelled),
             InlineSelectKey::Accept => Some(matches.get(self.selected).map_or(
                 SessionPick::Cancelled,
@@ -111,14 +153,17 @@ impl PanelModel for SessionPicker {
                 },
             )),
             // 当场删，不问 y/N（用户 09-20）。调用方删完会带着同一个
-            // `index` 重开列表，光标停在原位。
+            // `index` 重开列表，光标停在原位。正在跑的要按第二下（09-25）。
             InlineSelectKey::DeleteRequest => {
-                matches
-                    .get(self.selected)
-                    .map(|(_, index)| SessionPick::Delete {
-                        session_id: self.entries[*index].id.clone(),
-                        index: *index,
-                    })
+                let &(_, index) = matches.get(self.selected)?;
+                if self.entries[index].running && armed != Some(index) {
+                    self.armed = Some(index);
+                    return None;
+                }
+                Some(SessionPick::Delete {
+                    session_id: self.entries[index].id.clone(),
+                    index,
+                })
             }
             InlineSelectKey::Up => {
                 self.selected = self.selected.saturating_sub(1);

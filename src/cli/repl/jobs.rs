@@ -136,6 +136,11 @@ pub(in crate::cli) struct SharedJobsFeed {
     /// 这个 REPL 看着的会话名下还在干活的子代理会话（轮询线程一秒问一次），任务条列
     /// 它们。见 `strip`。
     pub(in crate::cli) subagents: std::sync::Mutex<Vec<super::strip::SubagentRow>>,
+    /// 正在访问子会话时它的父会话（访问栈顶）：任务条要列兄弟，轮询线程按它再拉一份
+    /// （09-25）。没在访问就是 `None`。
+    pub(in crate::cli) visit_parent: std::sync::Mutex<Option<String>>,
+    /// 父会话名下还在干活的子代理会话，也就是正在看的这条子会话的兄弟（连同它自己）。
+    pub(in crate::cli) siblings: std::sync::Mutex<Vec<super::strip::SubagentRow>>,
 }
 
 /// 这个 REPL 进程里那一条。后台面板要读 `trace`，而它拿不到 `SharedJobsFeed` 的
@@ -196,6 +201,33 @@ impl SharedJobsFeed {
         retain_session_jobs(&mut self.jobs.lock().unwrap(), Some(session));
         // 子代理会话按会话问的，换了会话那一份整个不算数。
         self.subagents.lock().unwrap().clear();
+    }
+
+    /// 换了访问的父会话（切进子会话、横着切、回去）。`seed` 是刚知道的一份兄弟（从父会话
+    /// 切进来那一刻，父会话名下的子代理就是兄弟），等下一轮轮询之前先用它，任务条第一帧就
+    /// 列得出兄弟。
+    pub(in crate::cli) fn set_visit_parent(
+        &self,
+        parent: Option<&str>,
+        seed: Vec<super::strip::SubagentRow>,
+    ) {
+        let mut current = self.visit_parent.lock().unwrap();
+        if current.as_deref() == parent {
+            return;
+        }
+        *current = parent.map(str::to_string);
+        *self.siblings.lock().unwrap() = if parent.is_some() { seed } else { Vec::new() };
+    }
+
+    /// 刚拉回来的兄弟放上去；拉的途中访问的父会话换了就作废。
+    pub(in crate::cli) fn publish_siblings(
+        &self,
+        parent: &str,
+        rows: Vec<super::strip::SubagentRow>,
+    ) {
+        if self.visit_parent.lock().unwrap().as_deref() == Some(parent) {
+            *self.siblings.lock().unwrap() = rows;
+        }
     }
 
     /// 刚拉回来的子代理会话放上去。拉的途中 REPL 换了会话（切进子会话、回主会话）就
@@ -485,6 +517,20 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                 });
                 if let Ok(Ok(rows)) = subagents {
                     feed.publish_subagents(session, rows);
+                }
+                // 在子会话里：父会话名下的子代理就是兄弟，任务条列它们（09-25）。
+                let parent = feed.visit_parent.lock().unwrap().clone();
+                if let Some(parent) = parent {
+                    let siblings = runtime.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            super::strip::fetch_subagent_rows(&paths, &parent),
+                        )
+                        .await
+                    });
+                    if let Ok(Ok(rows)) = siblings {
+                        feed.publish_siblings(&parent, rows);
+                    }
                 }
             }
             if let (Some(store), Some(session)) = (store.as_ref(), repl_session.as_deref()) {

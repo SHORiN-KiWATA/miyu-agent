@@ -330,6 +330,7 @@ fn session_list_groups_the_current_lane_first() {
         sandbox: None,
         sandbox_read_all: false,
         mode: mode.to_string(),
+        running: false,
     };
     let mixed = vec![
         entry("d1", "dev"),

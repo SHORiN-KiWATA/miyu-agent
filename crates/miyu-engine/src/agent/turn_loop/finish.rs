@@ -186,6 +186,9 @@ impl Agent {
                 return Ok(None);
             }
         }
+        // 排队的 `/compact`（09-25）：模型要收尾了，只压库里的历史，下一轮从库里重建。
+        self.run_queued_compact(current_turn_id, messages, st, control, false, on_event)
+            .await?;
         let mut result = result;
         if let Some(usage) = st.usage_accumulator.usage() {
             // 供应商已给出"最后一次请求"的口径(claude-code 中转:

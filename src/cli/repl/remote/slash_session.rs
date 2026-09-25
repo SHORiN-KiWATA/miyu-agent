@@ -157,6 +157,8 @@ impl RemoteRepl {
     /// 输入框竖条、banner、footer 一并换过去——不然会话已经跑在 dev 人格上，
     /// 屏幕上还是普通模式的样子（初诊 §五 ③）。老 daemon 不报 `mode` 就留在原车道。
     pub(super) async fn switch_to_session(&mut self, state: &ipc::SessionState) -> Result<()> {
+        // 换会话整段攒成一帧：清屏、回放、footer、挂上正在跑的那一轮（09-25）。
+        crate::cli::repl::tail::begin_frame_hold();
         let lane = self.lane_of(state);
         if lane != self.mode {
             // 先换色再切：切换的回执行和输入框竖条都按新模式画（和 Tab 换车道一样）。
@@ -211,14 +213,15 @@ impl RemoteRepl {
         // 元组的第四项是 `(run_id, session_id)`：所有活动回合（own 的过滤是
         // 客户端自己做的，这里要的正是自己刚分离掉的那一轮）。
         let Ok((_, _, _, active_runs)) = fetch_jobs_overview(&self.paths).await else {
-            return Ok(());
+            return crate::cli::repl::tail::release_frame_hold();
         };
         let session = self.active_session_id.clone();
         let Some((run_id, _)) = active_runs
             .into_iter()
             .find(|(_, run_session)| run_session == &session)
         else {
-            return Ok(());
+            // 这条会话没有在跑的：切换画面到这儿就画完了。
+            return crate::cli::repl::tail::release_frame_hold();
         };
         // 空闲循环也会认领「同一会话里别人起的轮」：记下来，免得它看完之后又被认领、
         // 从头再画一遍（切进正跑着的子会话最容易撞上）。
@@ -234,40 +237,56 @@ impl RemoteRepl {
 
     pub(super) async fn cmd_session(&mut self, command_args: &str) -> Result<LoopStep> {
         let arg = command_args.trim();
-        let state = if arg.is_empty() {
-            match repl_pick_session(
-                &self.paths,
-                &mut self.live_repl,
-                self.mode,
-                &self.active_session_id,
-            )
-            .await?
+        if arg.is_empty() {
+            self.pick_session(None).await?;
+            return Ok(LoopStep::Continue);
+        }
+        let target =
+            match resolve_repl_session_target(&self.paths, &mut self.live_repl, self.mode, arg)
+                .await?
             {
-                Some(state) => state,
+                Some(target) => target,
                 None => return Ok(LoopStep::Continue),
-            }
-        } else {
-            let target =
-                match resolve_repl_session_target(&self.paths, &mut self.live_repl, self.mode, arg)
-                    .await?
-                {
-                    Some(target) => target,
-                    None => return Ok(LoopStep::Continue),
-                };
-            match repl_get_session_switch(
-                &self.paths,
-                &mut self.live_repl,
-                target,
-                &self.active_session_id,
-            )
-            .await?
-            {
-                Some(state) => state,
-                None => return Ok(LoopStep::Continue),
-            }
-        };
-        self.switch_to_session(&state).await?;
+            };
+        if let Some(state) = repl_get_session_switch(
+            &self.paths,
+            &mut self.live_repl,
+            target,
+            &self.active_session_id,
+        )
+        .await?
+        {
+            self.switch_to_session(&state).await?;
+        }
         Ok(LoopStep::Continue)
+    }
+
+    /// `/session` 面板：挑一条切过去，或者连着删。删掉自己待着的那条会先落到兜底会话上，
+    /// 再在原位把面板开回来（09-25）。
+    pub(super) async fn pick_session(&mut self, mut cursor: Option<usize>) -> Result<()> {
+        loop {
+            let home = self.picker_home();
+            match repl_pick_session(&self.paths, &mut self.live_repl, self.mode, &home, cursor)
+                .await?
+            {
+                SessionPickOutcome::Stayed => return Ok(()),
+                SessionPickOutcome::Switch(state) => return self.switch_to_session(&state).await,
+                SessionPickOutcome::Fallback { state, cursor: at } => {
+                    self.switch_to_session(&state).await?;
+                    cursor = Some(at);
+                }
+            }
+        }
+    }
+
+    /// `/session` 列表里哪一行算「自己」：切进子代理会话看的时候是这棵树的根——子会话不进
+    /// 列表，原来一个「*」都没有、光标落在第 0 行，而第 0 行往往就是正跑着的主会话（09-25）。
+    pub(super) fn picker_home(&self) -> String {
+        self.live_repl
+            .visits
+            .first()
+            .map(|root| root.session_id.clone())
+            .unwrap_or_else(|| self.active_session_id.clone())
     }
 
     pub(super) async fn cmd_rename(&mut self, command_args: &str) -> Result<LoopStep> {

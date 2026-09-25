@@ -85,6 +85,28 @@ impl RunEventMapper {
         }
     }
 
+    /// 这一轮的实时上下文与会话累计记到守护进程这边：回合中途切回这条会话、列会话时用它
+    /// （09-25，见 `ManagerState::overlay_live_turn`）。
+    fn record_live_turn(&self, round: &Usage, cumulative: &miyu_core::llm::TurnTokens) {
+        let mut manager = self.manager.lock().unwrap();
+        let Some(session_id) = manager
+            .active_runs
+            .get(&self.run_id)
+            .map(|run| run.session_id.to_string())
+        else {
+            return;
+        };
+        manager.live_turns.insert(
+            session_id,
+            crate::runtime::LiveTurnFigures {
+                context_tokens: round.prompt_tokens.saturating_add(round.completion_tokens),
+                cumulative_tokens: cumulative.total,
+                cumulative_prompt_tokens: cumulative.prompt,
+                cumulative_cache_read_tokens: cumulative.cache_read,
+            },
+        );
+    }
+
     pub(in crate::web) fn publish(&self, kind: &str, data: Value) {
         self.events.publish(kind, data);
     }
@@ -478,6 +500,7 @@ impl RunEventMapper {
                 provider_id,
                 model,
             } => {
+                self.record_live_turn(&round, &cumulative);
                 self.round_endpoint = match (provider_id.as_deref(), model.as_deref()) {
                     (None, None) => None,
                     (provider, model) => Some((

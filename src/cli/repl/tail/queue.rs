@@ -403,6 +403,32 @@ impl LiveReplTail {
     }
 }
 
+/// 回合里排进去的 `/compact` 在排队区的那一行（09-25）。它不是用户说的话：压缩一开始、或者
+/// 这一轮结束就撤，不落成气泡（回放时也没有它）。
+pub(in crate::cli) const QUEUED_COMPACT_ID: &str = "queued-compact";
+
+pub(in crate::cli) fn queued_compact_marker() -> QueuedPrompt {
+    QueuedPrompt {
+        prompt_id: QUEUED_COMPACT_ID.to_string(),
+        // 排在所有真消息后面：它在检查点上和插话一起被取走，谁先谁后看不出来，放最后最省心。
+        seq: i64::MAX,
+        content: "/compact".to_string(),
+        display_content: "/compact".to_string(),
+        attachments: Vec::new(),
+        uploaded_attachments: Vec::new(),
+        submitted_at: String::new(),
+    }
+}
+
+impl LiveReplTail {
+    /// 撤掉排队区里的 `/compact`（见 [`QUEUED_COMPACT_ID`]）。
+    pub(in crate::cli) fn drop_compact_marker(&mut self) -> Result<()> {
+        synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+            self.drop_queued(&[QUEUED_COMPACT_ID.to_string()])
+        })
+    }
+}
+
 /// 排队消息里 daemon 合成的那几种（判据见 `jobs::is_daemon_notice`）。
 pub(in crate::cli) enum QueuedNotice {
     /// 后台任务报告：一行抬头。

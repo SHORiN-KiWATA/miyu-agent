@@ -504,14 +504,17 @@ async fn run_turn_task_inner(
         }
         agent.prepare_for_turn()?;
         let mut control = AgentTurnControl::new(mode, normal_tools, dev_tools);
-        if let Some(signal) = manager
-            .lock()
-            .unwrap()
-            .active_runs
-            .get(run_id)
-            .map(|run| run.supersede.clone())
         {
-            control.set_supersede_signal(signal);
+            let mut manager = manager.lock().unwrap();
+            if let Some(signal) = manager
+                .active_runs
+                .get(run_id)
+                .map(|run| run.supersede.clone())
+            {
+                control.set_supersede_signal(signal);
+            }
+            // 回合跑着时敲的 `/compact` 排进这一轮（09-25，见 `compact_queue`）。
+            control.set_compact_request(manager.compact_request(&session_id));
         }
         if let Some(ingress) = profile
             .as_ref()

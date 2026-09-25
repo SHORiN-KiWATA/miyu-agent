@@ -479,6 +479,10 @@ pub enum DuringTurn {
     ///
     /// 只有全屏 TUI 有面板；行内 REPL 拿到它就当 `Detach` 处理。
     Panel,
+    /// 像插话一样排进这一轮（09-25，用户：「像 followup 消息一样排队」）：发给守护进程，
+    /// 回合走到下一个检查点（一批工具跑完、模型要收尾）时执行，输入框上方挂一行「排队中」。
+    /// 直连模式没有守护进程，排不了，照旧等这一轮说完。
+    Queue,
     /// 回合中做不了。`reason_*` 是给用户看的一句话——原来是**静默**吞掉，
     /// 屏幕上一点反应都没有，比拒绝本身更难受。
     Blocked {
@@ -540,10 +544,14 @@ pub fn during_turn(command: ReplSlashCommand, args: &str) -> DuringTurn {
         // `/exit` 只是被这道闸吞掉了。
         Exit => DuringTurn::Detach,
 
+        // ── 排进这一轮 ──
+        // 压缩只动本轮之前的历史，回合在检查点做得了（09-25）。
+        Compact => DuringTurn::Queue,
+
         // ── 回合中做不了 ──
-        // 前四个 daemon 自己就拒：`reserve_admin_for_session` 看到这条会话
+        // 这三个 daemon 自己就拒：`reserve_admin_for_session` 看到这条会话
         // 有活动回合直接 409。客户端提前说清楚，别等它报一句 admin busy。
-        Undo | Pop | Compact | Reset => DuringTurn::Blocked {
+        Undo | Pop | Reset => DuringTurn::Blocked {
             reason_en: "this rewrites the conversation the running reply is still appending to; wait for it to finish",
             reason_zh: "这要改写正在被续写的对话，等这一轮说完再来",
         },
@@ -555,6 +563,17 @@ pub fn during_turn(command: ReplSlashCommand, args: &str) -> DuringTurn {
             reason_en: "she may be writing memory this very turn; wait for it to finish",
             reason_zh: "她这一轮可能正在写记忆，等说完再来",
         },
+    }
+}
+
+/// 这条命令会把终端换到另一条会话上（进出子代理会话、新开、换车道、`/session <名字>`）。回合
+/// 中敲的话，终端要把「这一轮收尾」和「新会话的画面」攒成一帧（09-25）。
+pub fn switches_session(command: ReplSlashCommand, args: &str) -> bool {
+    use ReplSlashCommand::*;
+    match command {
+        New | Dev | Normal | Subagent | Back => true,
+        Session => !args.trim().is_empty(),
+        _ => false,
     }
 }
 
@@ -575,7 +594,8 @@ mod tests {
         assert_eq!(during_turn(Effort, ""), DuringTurn::Detach);
         assert_eq!(during_turn(Persona, ""), DuringTurn::Detach);
         assert_eq!(during_turn(Goal, "看看"), DuringTurn::Inline);
-        assert!(during_turn(Compact, "").reason().is_some());
+        assert_eq!(during_turn(Compact, ""), DuringTurn::Queue);
+        assert!(during_turn(Undo, "").reason().is_some());
         assert!(during_turn(Models, "").reason().is_none());
     }
 }

@@ -133,7 +133,7 @@ def main():
 
         # 2. 任务条上那一行
         screen = r.wait_screen(
-            master, sink, lambda s: strip_row(s, ROW) is not None and s[strip_row(s, ROW)][:1] in r.BRAILLE, 10.0
+            master, sink, lambda s: strip_row(s, ROW) is not None and s[strip_row(s, ROW)].lstrip()[:1] in r.BRAILLE, 10.0
         )
         report["strip_lists_running_child"] = screen is not None
         if screen is not None:

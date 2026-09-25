@@ -7,6 +7,7 @@
 //! 自动命名（`maybe_auto_name_session`）放在这里而不是回合模块：它是会话的属
 //! 性变更，只是恰好由第一条消息触发。
 
+mod delete;
 mod empty_context;
 mod http;
 mod state;
@@ -14,6 +15,7 @@ mod turn_page;
 
 use crate::web::*;
 
+pub(in crate::web) use delete::delete_session_tree;
 pub(in crate::web) use empty_context::empty_session_context;
 pub(in crate::web) use http::*;
 pub(in crate::web) use state::*;
@@ -586,8 +588,13 @@ pub(in crate::web) fn session_state(
     manager: &Arc<Mutex<ManagerState>>,
     state_store: &StateStore,
 ) -> Result<ipc::SessionState> {
-    let context = manager.lock().unwrap().context;
     let session_id = state_store.session_id();
+    let context = {
+        let manager = manager.lock().unwrap();
+        let mut context = manager.context;
+        manager.overlay_live_turn(&session_id, &mut context);
+        context
+    };
     let record = state_store.session_record(&session_id)?;
     // 会话跑在哪个模式上：REPL 切到另一侧的会话时靠它把车道跟过去。
     let mode = record

@@ -93,6 +93,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
             state_store.session_id().to_string(),
         )]),
         runs_changed: Arc::new(tokio::sync::Notify::new()),
+        compact_requests: HashMap::new(),
+        live_turns: HashMap::new(),
     }));
     if let Some(pending_context) = pending_context {
         let manager = manager.clone();
@@ -189,6 +191,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     // 「是否自动跑」驻内存、重启即失，必须由人 `/goal resume` 重新授权。
     // 不然一次崩溃重启就能让机器在无人看管的情况下继续自己开轮。
     spawn_goal_round_driver(state.clone());
+    // 回合跑着时敲的 `/compact` 没被那一轮取走的，回合退场后补压（09-25）。
+    spawn_queued_compact_driver(state.clone());
     // QQ 定时消息:常驻 tick 循环,每个 tick 现读配置,启停/改表无需重启。
     crate::platforms::plugins::scheduled_messages::spawn_scheduled_message_worker(state.clone());
     let app = router(state.clone());

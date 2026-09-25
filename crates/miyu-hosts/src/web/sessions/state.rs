@@ -322,6 +322,12 @@ pub(in crate::web) fn session_state_for(
         let store = session_store.pinned(session_id);
         current_context(&build_session_agent(&config, &state.paths, &store, mode)?)?
     };
+    // 回合还在跑：上下文与累计取这一轮的实时数，别拿库里现估的旧数（09-25）。
+    state
+        .manager
+        .lock()
+        .unwrap()
+        .overlay_live_turn(session_id, &mut context);
     if let Some((window, source)) = config.active_context_window_with_source()? {
         context.window = Some(window);
         context.window_assumed = matches!(source, miyu_base::config::ContextWindowSource::Assumed);

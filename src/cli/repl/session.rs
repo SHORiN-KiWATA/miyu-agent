@@ -488,6 +488,15 @@ pub(in crate::cli) async fn present_session(
     // 要等主循环转回顶上、再等下一轮轮询（最多一秒），`/new` 之后大厅里旧任务还挂着
     //（todolist 09-24）。直连模式没有轮询线程，这里是空操作。
     if let Some(feed) = crate::cli::repl::jobs::feed() {
+        // 从父会话切进子会话那一刻，父会话名下的子代理就是兄弟：先拿来垫上（09-25）。
+        let seed = feed.subagents.lock().unwrap().clone();
+        feed.set_visit_parent(
+            live_repl
+                .visits
+                .last()
+                .map(|parent| parent.session_id.as_str()),
+            seed,
+        );
         feed.set_repl_session(&state.session_id);
         live_repl.set_jobs(feed.jobs.lock().unwrap().clone());
     }
@@ -560,6 +569,8 @@ pub(in crate::cli) struct SessionListEntry {
     pub(in crate::cli) mode: String,
     /// 当前上下文(词元):当前会话是活数,其余是库里最近一轮记的;还没跑过回合为 None。
     pub(in crate::cli) context_tokens: Option<u64>,
+    /// 它自己或它的子代理有回合在跑：`/session` 面板里删它要按两下 Ctrl+D（09-25）。
+    pub(in crate::cli) running: bool,
 }
 
 pub(in crate::cli) fn session_list_entries(data: &serde_json::Value) -> Vec<SessionListEntry> {
@@ -607,6 +618,10 @@ pub(in crate::cli) fn session_list_entry(session: &serde_json::Value) -> Session
         context_tokens: session
             .get("context_tokens")
             .and_then(serde_json::Value::as_u64),
+        running: session
+            .get("running")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -1022,63 +1037,100 @@ pub(in crate::cli) async fn session_picker_entries(
     Ok(Some(entries))
 }
 
+/// `/session` 面板挑完的结果。
+pub(in crate::cli) enum SessionPickOutcome {
+    /// 没换会话：取消了，或者列不出来。
+    Stayed,
+    /// 挑了另一条：切过去。
+    Switch(ipc::SessionState),
+    /// 删掉的是自己待着的那条：先落到兜底会话上（画面上不再挂着被删的那条，用户 09-20），
+    /// 再在 `cursor` 处把面板重新打开，可以接着删（09-25：原来删完面板就关了）。
+    Fallback {
+        state: ipc::SessionState,
+        cursor: usize,
+    },
+}
+
 /// Runs the interactive session picker inside the REPL, servicing Ctrl+D
-/// deletions in place. Returns the session state to switch to — a fallback
-/// session when the REPL's own session was one of the ones deleted, so backing
-/// out never strands the REPL on a session that no longer exists.
+/// deletions in place. `active_session_id` is the row the panel treats as
+/// "mine": the session on screen, or the root of the subagent tree being
+/// visited (the child itself is not in the list).
 pub(in crate::cli) async fn repl_pick_session(
     paths: &MiyuPaths,
     live: &mut LiveReplTail,
     mode: PersonaLane,
     active_session_id: &str,
-) -> Result<Option<ipc::SessionState>> {
-    let mut cursor = None;
-    // 09-20 起「删掉自己待着的那条」当场就返回兜底会话（见下面的 Delete
-    // 分支），所以循环里不再有「我的会话已经没了但还在挑」这个状态——原来
-    // 那个 `lost_active` 标记随之消失。
+    mut cursor: Option<usize>,
+) -> Result<SessionPickOutcome> {
+    let mut notice = None;
     loop {
         let Some(entries) = session_picker_entries(paths, live, mode).await? else {
-            return Ok(None);
+            return Ok(SessionPickOutcome::Stayed);
         };
         let picked = if live.screen.is_some() {
-            super::session_picker::pick(live, &entries, active_session_id, cursor)
+            super::session_picker::pick(live, &entries, active_session_id, cursor, notice.take())
         } else {
+            if let Some(notice) = notice.take() {
+                repl_note(live, &format!("\x1b[31m{notice}\x1b[0m\n"))?;
+            }
             synchronized_terminal_update(CursorAfterUpdate::Hidden, || live.suspend())?;
             let picked = select_session_target(&entries, Some(active_session_id), cursor);
             synchronized_terminal_update(CursorAfterUpdate::Shown, || live.resume())?;
             picked
         };
         match picked? {
-            SessionPick::Cancelled => return Ok(None),
+            SessionPick::Cancelled => return Ok(SessionPickOutcome::Stayed),
             SessionPick::Switch(target) => {
-                return repl_get_session_switch(paths, live, target, active_session_id).await;
+                return Ok(
+                    match repl_get_session_switch(paths, live, target, active_session_id).await? {
+                        Some(state) => SessionPickOutcome::Switch(state),
+                        None => SessionPickOutcome::Stayed,
+                    },
+                );
             }
             SessionPick::Delete { session_id, index } => {
-                let was_active = session_id == active_session_id;
-                let deleted = repl_ipc_admin(
-                    paths,
-                    live,
-                    IpcCommand::DeleteSession {
-                        target: miyu_core::ipc::SessionRef::Id { id: session_id },
-                    },
-                )
-                .await?;
-                if deleted.is_none() {
-                    return Ok(None);
-                }
-                // 删掉的是**自己正待着**的那条：当场离开，别继续挂在一条已经
-                // 不存在的会话的画面上接着挑（用户 09-20 实测：删完还看得见被
-                // 删会话的正文）。落到本车道的一条可用会话上，没有就自举一条
-                // 新的空会话——`repl_fallback_session_state` 管这件事。
-                if was_active {
-                    return repl_fallback_session_state(paths, live, mode).await;
-                }
                 // The rows below shift up, so holding the index parks the
                 // cursor on the next session instead of jumping to the top.
                 cursor = Some(index);
+                let was_active = session_id == active_session_id;
+                if let Err(message) = delete_session_from_picker(paths, live, session_id).await? {
+                    notice = Some(message);
+                    continue;
+                }
+                // 删掉的是**自己正待着**的那条：当场离开，别继续挂在一条已经不存在的
+                // 会话的画面上接着挑（用户 09-20 实测：删完还看得见被删会话的正文）。
+                // 落到本车道的一条可用会话上，没有就自举一条新的空会话。
+                if was_active {
+                    return Ok(
+                        match repl_fallback_session_state(paths, live, mode).await? {
+                            Some(state) => SessionPickOutcome::Fallback {
+                                state,
+                                cursor: index,
+                            },
+                            None => SessionPickOutcome::Stayed,
+                        },
+                    );
+                }
             }
         }
     }
+}
+
+/// 面板里按 Ctrl+D 删一条。删不成返回原因给面板显示（不往正文里打，面板也不关）。
+pub(in crate::cli) async fn delete_session_from_picker(
+    paths: &MiyuPaths,
+    live: &mut LiveReplTail,
+    session_id: String,
+) -> Result<std::result::Result<(), String>> {
+    let command = IpcCommand::DeleteSession {
+        target: miyu_core::ipc::SessionRef::Id { id: session_id },
+    };
+    Ok(
+        match await_in_lobby(live, send_ipc_admin(paths, command)).await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(format!("{}{error}", t("not deleted: ", "没删掉："))),
+        },
+    )
 }
 
 pub(in crate::cli) async fn repl_active_or_default_state(

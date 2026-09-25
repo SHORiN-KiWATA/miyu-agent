@@ -28,7 +28,9 @@ impl RemoteRepl {
     pub(super) async fn perform_strip_action(&mut self, action: StripAction) -> Result<LoopStep> {
         match action {
             StripAction::Visit(session_id) => self.visit_session(Vec::new(), &session_id).await?,
+            StripAction::VisitSibling(session_id) => self.visit_sibling(&session_id).await?,
             StripAction::Back => self.leave_visit().await?,
+            StripAction::Stay => {}
         }
         Ok(LoopStep::Continue)
     }
@@ -94,6 +96,17 @@ impl RemoteRepl {
         self.present_visit(&state).await
     }
 
+    /// 横着切到兄弟（任务条上父会话下面那几行，09-25）：访问栈不压新层，`/back` 照旧回父会话。
+    async fn visit_sibling(&mut self, target: &str) -> Result<()> {
+        if target == self.active_session_id {
+            return Ok(());
+        }
+        let Some(state) = self.visitable_state(target).await? else {
+            return Ok(());
+        };
+        self.present_visit(&state).await
+    }
+
     /// 回到切进来之前那条会话（`/back`、任务条第一行）。
     async fn leave_visit(&mut self) -> Result<()> {
         let Some(parent) = self.live_repl.visits.last().cloned() else {
@@ -127,6 +140,10 @@ impl RemoteRepl {
     /// 换画面：访问栈已经摆好了，footer 的层数、任务条第一行跟着它画。车道跟着会话走，
     /// 和真正换会话一样（开发模式的子代理是开发车道）。
     async fn present_visit(&mut self, state: &ipc::SessionState) -> Result<()> {
+        // 进出子会话整段攒成一帧（09-25）；在哪条会话里 footer 上的「子代理 ↳N」、任务条第一行
+        // 已经说了，不再弹「已切换到会话」。
+        crate::cli::repl::tail::begin_frame_hold();
+        self.live_repl.suppress_switch_note = true;
         let lane = self.lane_of(state);
         if lane != self.mode {
             self.live_repl.set_mode(lane);
