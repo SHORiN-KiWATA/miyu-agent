@@ -554,18 +554,19 @@ async fn relay_child_events(
             continue;
         }
         last_id = record.id;
-        let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
-            continue;
-        };
+        let run = record.run_id.as_deref().unwrap_or_default();
         if record.kind == "run.started" {
-            if field(&data, "session_id") == child {
-                runs.insert(field(&data, "run_id").to_string());
+            if record.session_id.as_deref().unwrap_or_default() == child {
+                runs.insert(run.to_string());
             }
             continue;
         }
-        if !runs.contains(field(&data, "run_id")) {
+        if !runs.contains(run) {
             continue;
         }
+        let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
+            continue;
+        };
         match record.kind.as_str() {
             "reasoning.delta" => {
                 let delta = field(&data, "delta");
@@ -662,10 +663,7 @@ pub(in crate::web) fn spawn_subagent_supervisor(state: DaemonState) {
             ) {
                 continue;
             }
-            let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
-                continue;
-            };
-            let session_id = field(&data, "session_id").to_string();
+            let session_id = record.session_id.clone().unwrap_or_default();
             if session_id.is_empty() {
                 continue;
             }

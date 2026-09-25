@@ -134,39 +134,21 @@ impl Agent {
             .into_iter()
             .map(|(_, report)| report)
             .collect::<Vec<_>>();
-        self.state
-            .append_persisted_contexts(&candidate.turn_id, &reports)?;
-        let tokens = TurnTokens::from_usage(result.usage.as_ref());
-        guard.complete_with_model(
-            &result.content,
-            result.reasoning.as_deref(),
-            result.provider_id.as_deref(),
-            result.model.as_deref(),
-            tokens,
-            result.usage_estimated,
-        )?;
-        self.state.set_turn_context_end(
-            &candidate.turn_id,
-            crate::agent::context_meter::context_end_tokens(&result),
-        )?;
-        if let Some(usage) = result.usage.as_ref() {
-            if usage.generation_tokens > 0 && usage.generation_ms > 0 {
-                self.state.set_turn_generation(
-                    &candidate.turn_id,
-                    usage.generation_tokens,
-                    usage.generation_ms,
-                )?;
-            }
-        }
-        if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
-            self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
-        }
         // 无条件覆盖:redo 前的旧修订可能留有 tool_flow,新修订没有工具
         // 调用时空 flow 也必须写入,否则旧工具流会被冒名回放。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
         self.append_remote_tool_flow(&mut tool_flow);
-        self.state
-            .set_turn_tool_flow(&candidate.turn_id, &tool_flow)?;
+        guard.finish(
+            &super::turn_completion(&result),
+            &TurnFinishExtras {
+                tool_flow: Some(tool_flow.as_slice()),
+                persisted_contexts: &reports,
+                ..super::turn_finish_metrics(&result)
+            },
+        )?;
+        if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
+            self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
+        }
         if self.memory.store.process_after_turn(
             &diary_input,
             &result.content,

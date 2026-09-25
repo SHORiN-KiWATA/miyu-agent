@@ -73,17 +73,15 @@ impl EventOwnerFilter {
         if record.kind == "resync_required" {
             return true;
         }
-        let data: Value = match serde_json::from_str(&record.data) {
-            Ok(data) => data,
-            Err(_) => return self.admin,
-        };
-        let session_id = data.get("session_id").and_then(Value::as_str);
-        let run_id = data.get("run_id").and_then(Value::as_str);
-        match (run_id, session_id) {
+        // 路由字段发布时就取好了,只有排序广播还要看正文里的 id 列表。
+        match (record.run_id.as_deref(), record.session_id.as_deref()) {
             (Some(run_id), hint) => self.run_allowed(run_id, hint),
             (None, Some(session_id)) => self.session_allowed(session_id),
             // 排序广播只带 id 列表:列表里有一条归自己就放行(前端只重排它认识的)。
             (None, None) if record.kind == "session.reordered" => {
+                let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
+                    return self.admin;
+                };
                 let ids = data
                     .get("session_ids")
                     .and_then(Value::as_array)

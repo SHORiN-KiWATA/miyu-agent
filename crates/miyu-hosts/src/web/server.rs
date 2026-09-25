@@ -352,10 +352,7 @@ pub(in crate::web) async fn follow_run(
             break;
         }
         last_id = record.id;
-        let Ok(mut data) = serde_json::from_str::<Value>(&record.data) else {
-            continue;
-        };
-        if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
+        if record.run_id.as_deref() != Some(run_id.as_str()) {
             // 补发一轮已经结束的记录时，缓冲里夹着别的轮的事件是常态：跳过
             // 就是了，不能在这儿 break——一 break 就把本轮还没补完的尾巴切掉。
             // 补发的收口在上面「pending 空了就 break」那一处。
@@ -375,6 +372,9 @@ pub(in crate::web) async fn follow_run(
             }
             continue;
         }
+        let Ok(mut data) = serde_json::from_str::<Value>(&record.data) else {
+            continue;
+        };
         let terminal = matches!(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"
@@ -386,7 +386,7 @@ pub(in crate::web) async fn follow_run(
             stream,
             &IpcFrame::Event {
                 id: record.id,
-                kind: record.kind,
+                kind: record.kind.clone(),
                 data,
                 at_ms: Some(record.at_ms),
             },

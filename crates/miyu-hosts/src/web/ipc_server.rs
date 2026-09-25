@@ -1217,12 +1217,12 @@ pub(in crate::web) async fn handle_ipc_turn(
             break;
         }
         last_id = record.id;
+        if record.run_id.as_deref() != Some(run_id.as_str()) {
+            continue;
+        }
         let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
             continue;
         };
-        if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
-            continue;
-        }
         let terminal = matches!(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"
@@ -1231,7 +1231,7 @@ pub(in crate::web) async fn handle_ipc_turn(
             stream,
             &IpcFrame::Event {
                 id: record.id,
-                kind: record.kind,
+                kind: record.kind.clone(),
                 data,
                 at_ms: Some(record.at_ms),
             },

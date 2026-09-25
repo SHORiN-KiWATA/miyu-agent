@@ -106,6 +106,34 @@ impl TurnStatus {
     }
 }
 
+/// 回合完成时写进 `turns` 的正文与用量。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnCompletion<'a> {
+    pub content: &'a str,
+    pub reasoning: Option<&'a str>,
+    pub provider_id: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub tokens: TurnTokens,
+    pub token_usage_estimated: bool,
+}
+
+/// 回合收尾时和完成标记一起写的东西（09-25 合进同一个事务）。
+///
+/// 原来是完成之后再分四笔写：完成那一笔同时删掉流水，工具流、上下文锚点、输出速度、
+/// 持久上下文各写一笔。中途崩溃会留下「已完成、流水已删、工具流还是上一个检查点」
+/// 的轮，下一轮回放就少了最后几步工具。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnFinishExtras<'a> {
+    /// 这一轮最后一次请求的真实上下文占用。照写，None 写 NULL（同 `set_turn_context_end`）。
+    pub context_end: Option<u64>,
+    /// 输出速度样本 (tokens, ms)。None 不动那两列。
+    pub generation: Option<(u64, u64)>,
+    /// 最终工具流。None 不动，留着检查点写的那份。
+    pub tool_flow: Option<&'a [ToolFlowRound]>,
+    /// 追加进 `turn_tool_reports` 的持久上下文。
+    pub persisted_contexts: &'a [String],
+}
+
 /// Deterministic per-turn tool footprint. BTreeSet: sorted, deduplicated,
 /// byte-deterministic serialization (cache-purity requirement for anything
 /// that ends up in a rendered summary).
