@@ -5,6 +5,8 @@
 mod artifacts;
 mod compact_analysis;
 mod compact_extras;
+mod compact_structure;
+mod compact_transcript;
 mod context;
 mod context_meter;
 mod input;

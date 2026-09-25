@@ -4,7 +4,9 @@ use crate::agent::compact_analysis::{
 use crate::agent::compact_extras::{
     build_compact_extras, CompactExtras, CompactExtrasPolicy, FoldFootprints,
 };
-use crate::agent::tool_report::{fold_repeated_rounds, live_rounds};
+use crate::agent::compact_structure::{SummaryStructure, SUMMARY_CORRECTION};
+use crate::agent::compact_transcript::{turn_to_text, turns_to_text};
+use crate::agent::tool_report::fold_repeated_rounds;
 use anyhow::{bail, Result};
 use miyu_base::prompts::COMPACT_SYSTEM_PROMPT;
 use miyu_core::llm::{
@@ -22,11 +24,6 @@ const MIN_TAIL_TURNS: usize = 2;
 /// Fold-economics gate: a non-forced compaction that would free less than
 /// this is skipped silently — the cache reset would cost more than it buys.
 const MIN_FOLD_TOKENS: usize = 400;
-/// Per-item cap for tool reports and reasoning fed to the summarizer. Long
-/// tool payloads are the largest summary-input cost and a prompt-injection
-/// vector when echoed back into the summary (sub-agent prompts re-entering
-/// the session as history).
-const SUMMARY_ITEM_MAX_CHARS: usize = 2000;
 /// A stalled summarizer stream fails loudly instead of wedging compaction.
 /// 固定 90s 是 09-09 的实况事故:输出帽提到 16384 之后,opus 在 148k 上下文
 /// 的会话上生成完整摘要要好几分钟,90s 必然砍在半路——而且砍完还要再试,
@@ -82,6 +79,8 @@ pub struct Compactor {
     tool_result_prune: Option<(usize, usize, usize)>,
     /// 摘要系统提示词,构造时按输出帽决定开不开分析段并冻结。
     system_prompt: String,
+    /// 摘要得照这份模板的标题写,不合格的输出不落库。见 `compact_structure`。
+    structure: SummaryStructure,
     /// 摘要输出帽。超时按它缩放——生成一万 token 和生成一千 token 不该
     /// 共用一个墙钟预算。
     summary_cap: u32,
@@ -126,6 +125,7 @@ impl Compactor {
         // 慢模型上直接把墙钟推过超时线。
         let summary_cap = ((reserved_tokens as f32 * 0.8) as u32).clamp(2048, 8192);
         let system_prompt = compact_system_prompt(COMPACT_SYSTEM_PROMPT, summary_cap);
+        let structure = SummaryStructure::from_template(&system_prompt);
         let client = client
             .with_max_tokens(summary_cap)
             .with_request_scope("compact");
@@ -139,6 +139,7 @@ impl Compactor {
             extras_policy: None,
             tool_result_prune: None,
             system_prompt,
+            structure,
             summary_cap,
             running_turn_id: None,
         }
@@ -217,7 +218,9 @@ impl Compactor {
     /// The previous summary is already rendered inside the prefix as the
     /// <conversation-checkpoint> block, so anchoring is implicit. Tool calls
     /// in the response invalidate the attempt (prompt-level deny is not a
-    /// guarantee), triggering the isolated fallback.
+    /// guarantee), triggering the isolated fallback. A reply that ignores the
+    /// template (the persona chatting on) gets one correction on the same
+    /// prefix before the isolated fallback takes over.
     async fn summarize_via_fork<F>(
         &self,
         prefix: Vec<ChatMessage>,
@@ -253,10 +256,44 @@ impl Compactor {
                 anchor_note,
             ),
         ));
+        let text = self
+            .fork_attempt(&messages, &tools, compact_usage, usage_estimated, on_chunk)
+            .await?;
+        if self.structure.accepts(&text) {
+            return Ok(text);
+        }
+        tracing::warn!(
+            target: "miyu::qq",
+            summary_chars = text.len(),
+            "fork summary ignored the template; asking once more on the same prefix"
+        );
+        messages.push(ChatMessage::assistant(text, None));
+        messages.push(ChatMessage::plain("user", SUMMARY_CORRECTION));
+        let text = self
+            .fork_attempt(&messages, &tools, compact_usage, usage_estimated, on_chunk)
+            .await?;
+        if !self.structure.accepts(&text) {
+            bail!("fork summary still ignores the template after a correction");
+        }
+        Ok(text)
+    }
+
+    /// 一次 fork 摘要请求。调工具、空输出都算失败。
+    async fn fork_attempt<F>(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        compact_usage: &mut Usage,
+        usage_estimated: &mut bool,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(ChatStreamChunk) -> Result<()>,
+    {
         let mut filter = AnalysisChunkFilter::new();
         let result = self
             .client
-            .chat_stream(messages.clone(), tools, &mut |chunk| {
+            .chat_stream(messages.to_vec(), tools.to_vec(), &mut |chunk| {
                 filter.push(chunk, on_chunk)
             })
             .await?;
@@ -264,13 +301,22 @@ impl Compactor {
         if !result.tool_calls.is_empty() {
             bail!("fork summarization attempted a tool call");
         }
-        let outcome = compact_text_result(result, &messages);
+        let outcome = compact_text_result(result, messages);
         add_usage(compact_usage, &outcome.usage);
         *usage_estimated |= outcome.usage_estimated;
         if outcome.text.trim().is_empty() {
             bail!("fork summarization returned empty output");
         }
         Ok(outcome.text)
+    }
+
+    /// 隔离路径的输出也得照模板写。不合格按失败处理,由 `perform_compact` 重试一次、
+    /// 再不行走机械兜底(手动 `/compact` 报错)。
+    fn require_structure(&self, text: String) -> Result<String> {
+        if !self.structure.accepts(&text) {
+            bail!("compaction summary ignores the template sections");
+        }
+        Ok(text)
     }
 
     async fn summarize_fold<F>(
@@ -302,7 +348,7 @@ impl Compactor {
             .await?;
             add_usage(compact_usage, &result.usage);
             *usage_estimated |= result.usage_estimated;
-            return Ok(result.text);
+            return self.require_structure(result.text);
         }
 
         let segments = split_into_segments(fold, usable);
@@ -332,7 +378,7 @@ impl Compactor {
         .await?;
         add_usage(compact_usage, &result.usage);
         *usage_estimated |= result.usage_estimated;
-        Ok(result.text)
+        self.require_structure(result.text)
     }
 
     /// `mechanical_fallback`: automatic compactions must always free space —
@@ -709,22 +755,6 @@ fn append_footprint_sections(
     output
 }
 
-/// Head-truncate a summarizer input item at a char boundary, marking the cut.
-fn truncate_for_summary(text: &str) -> std::borrow::Cow<'_, str> {
-    if text.len() <= SUMMARY_ITEM_MAX_CHARS {
-        return std::borrow::Cow::Borrowed(text);
-    }
-    let mut end = SUMMARY_ITEM_MAX_CHARS;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    std::borrow::Cow::Owned(format!(
-        "{}\n[... {} more bytes truncated ...]",
-        &text[..end],
-        text.len() - end
-    ))
-}
-
 fn add_usage(total: &mut Usage, usage: &Usage) {
     total.prompt_tokens = total.prompt_tokens.saturating_add(usage.prompt_tokens);
     total.completion_tokens = total
@@ -771,57 +801,6 @@ fn add_usage(total: &mut Usage, usage: &Usage) {
             slot.cached_tokens = Some(slot.cached_tokens.unwrap_or(0).saturating_add(cached));
         }
     }
-}
-
-fn turns_to_text(turns: &[&Turn]) -> String {
-    let mut output = String::new();
-    for (i, turn) in turns.iter().enumerate() {
-        if turn.is_summary {
-            continue;
-        }
-        output.push_str(&format!("--- Turn {} ---\n", i + 1));
-        output.push_str("User: ");
-        output.push_str(&turn.user_content);
-        for exchange in &turn.question_exchanges {
-            output.push_str("\nAssistant clarification: ");
-            output.push_str(&miyu_base::question::assistant_exchange_text(exchange));
-            output.push_str("\nUser clarification: ");
-            output.push_str(&miyu_base::question::user_exchange_text(exchange));
-        }
-        for followup in &turn.followups {
-            if let Some(content) = &followup.preceding_assistant_content {
-                if !content.trim().is_empty() {
-                    output.push_str("\nAssistant: ");
-                    output.push_str(content);
-                }
-            }
-            if let Some(reasoning) = &followup.preceding_assistant_reasoning {
-                if !reasoning.trim().is_empty() {
-                    output.push_str("\n[Reasoning: ");
-                    output.push_str(reasoning);
-                    output.push(']');
-                }
-            }
-            output.push_str("\nUser: ");
-            output.push_str(&followup.content);
-        }
-        output.push_str("\nAssistant: ");
-        output.push_str(&turn.assistant_content);
-        if let Some(reasoning) = &turn.assistant_reasoning {
-            if !reasoning.trim().is_empty() {
-                output.push_str("\n[Reasoning: ");
-                output.push_str(&truncate_for_summary(reasoning));
-                output.push(']');
-            }
-        }
-        for report in &turn.tool_reports {
-            output.push_str("\n[Tool Report: ");
-            output.push_str(&truncate_for_summary(report));
-            output.push(']');
-        }
-        output.push('\n');
-    }
-    output
 }
 
 fn build_compact_prompt(history: &str, previous_summary: Option<&str>) -> String {
@@ -956,45 +935,6 @@ fn split_into_segments<'a>(turns: &[&'a Turn], budget_tokens: usize) -> Vec<Vec<
         segments.push(current);
     }
     segments
-}
-
-fn turn_to_text(turn: &Turn) -> String {
-    let mut output = String::new();
-    output.push_str(&turn.user_content);
-    for exchange in &turn.question_exchanges {
-        output.push_str(&miyu_base::question::assistant_exchange_text(exchange));
-        output.push_str(&miyu_base::question::user_exchange_text(exchange));
-    }
-    for followup in &turn.followups {
-        if let Some(content) = &followup.preceding_assistant_content {
-            output.push_str(content);
-        }
-        if let Some(reasoning) = &followup.preceding_assistant_reasoning {
-            output.push_str(reasoning);
-        }
-        output.push_str(&followup.content);
-    }
-    output.push_str(&turn.assistant_content);
-    if let Some(reasoning) = &turn.assistant_reasoning {
-        output.push_str(reasoning);
-    }
-    // v20+ 工具密集回合的主体在 tool_flow 里(reports 多为空):漏计它,
-    // 压缩预算会把"40 轮"当成保尾额度塞进 16K,压后必然仍超。
-    for round in live_rounds(&turn.tool_flow) {
-        output.push_str(&round.assistant_content);
-        if let Some(reasoning) = &round.assistant_reasoning {
-            output.push_str(reasoning);
-        }
-        for call in &round.calls {
-            output.push_str(&call.name);
-            output.push_str(&call.arguments);
-            output.push_str(&call.output);
-        }
-    }
-    for report in &turn.tool_reports {
-        output.push_str(report);
-    }
-    output
 }
 
 async fn merge_summaries_tree<F>(
@@ -1189,17 +1129,6 @@ mod tests {
         assert_eq!(strip_footprint_sections(&summary), "## Goal\nstuff");
         let empty = miyu_core::state::ToolFootprint::default();
         assert_eq!(append_footprint_sections("x".to_string(), &empty), "x");
-    }
-
-    #[test]
-    fn summary_truncation_respects_multibyte_boundaries() {
-        let text = "汉".repeat(SUMMARY_ITEM_MAX_CHARS);
-        let truncated = truncate_for_summary(&text);
-        assert!(truncated.len() < text.len());
-        assert!(truncated.contains("more bytes truncated"));
-        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
-        let short = "short";
-        assert_eq!(truncate_for_summary(short), short);
     }
 
     /// fork 摘要大量命中缓存,而摘要行落库记的是 `TurnTokens::from_usage`
