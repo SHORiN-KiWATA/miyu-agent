@@ -63,6 +63,9 @@ def wait_screen(master, sink, predicate, timeout):
             if not chunk:
                 return None
             sink.extend(chunk)
+        # 只在一帧画完时判，见 `h.frame_complete`。
+        if not h.frame_complete(sink):
+            continue
         screen = h.render(bytes(sink))
         LAST["screen"] = screen
         if predicate(screen):

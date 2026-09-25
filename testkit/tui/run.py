@@ -155,6 +155,53 @@ def spawn_tui():
     return process, master
 
 
+SYNC_MARK = re.compile(rb"\x1b\[\?2026h|\x1b\[\?2026l")
+# 每份流（sink）各记各的：扫到哪了、最后一个「块外」的位置。有的走查同时开两个 TUI。
+_SYNC = {}
+
+
+def frame_complete(sink):
+    """这份流是不是停在一帧画完的地方：同步块外，或者最后一个块已经收尾。
+
+    pyte 不认同步块（`ESC[?2026h` … `ESC[?2026l`）：块里画到一半就去渲染，读到的是半帧——
+    模式行换了 footer 还没换、提示行画了输入框还没画（09-25 lobby_lane、goal_hint 偶发假红，
+    机器一忙就撞上）。真终端按块整帧呈现，人看不到半帧。
+
+    增量扫：从上一个「块外」的位置往后看，只扫还没收尾的那一段。流变短（换了 sink）或者
+    `reset_view()`（换了 TUI 进程）时从头来。
+    """
+    length, boundary = _SYNC.get(id(sink), (0, 0))
+    if len(sink) < length:
+        boundary = 0
+    depth = 0
+    for match in SYNC_MARK.finditer(sink, boundary):
+        if match.group(0).endswith(b"h"):
+            depth += 1
+        else:
+            depth = max(0, depth - 1)
+            if depth == 0:
+                boundary = match.end()
+    _SYNC[id(sink)] = (len(sink), boundary)
+    return depth == 0
+
+
+def finish_frame(master, sink, timeout=1.0):
+    """停在一帧中间的话再读一点，读到这一帧画完为止（最多 `timeout` 秒）。"""
+    import select
+    deadline = time.time() + timeout
+    while not frame_complete(sink) and time.time() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            return
+        if not chunk:
+            return
+        sink.extend(chunk)
+
+
 def drain(master, seconds, sink):
     import select
     deadline = time.time() + seconds
@@ -169,6 +216,8 @@ def drain(master, seconds, sink):
         if not chunk:
             break
         sink.extend(chunk)
+    # 定时读完可能正停在一帧中间（大厅动画一直在出帧），接着截屏读到的就是半帧。
+    finish_frame(master, sink)
 
 
 def click(master, sink, column, row, quiet=0.35, timeout=8.0):
@@ -215,7 +264,11 @@ def settle(master, sink, quiet=0.35, timeout=8.0):
 
 
 def drain_until(master, sink, marker, timeout):
-    """读到屏幕上出现 marker 为止。TUI 是整屏重绘，只能按渲染后的画面判。"""
+    """读到屏幕上出现 marker 为止。TUI 是整屏重绘，只能按渲染后的画面判。
+
+    只在一帧画完时判（`frame_complete`）：返回时流停在帧边界上，调用方接着截屏读到的
+    是整帧，不是半帧。
+    """
     import select
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -228,6 +281,8 @@ def drain_until(master, sink, marker, timeout):
             if not chunk:
                 break
             sink.extend(chunk)
+        if not frame_complete(sink):
+            continue
         if marker in "\n".join(render(bytes(sink))):
             return True
     return False
@@ -343,6 +398,7 @@ def render(raw):
 def reset_view():
     """扔掉虚拟屏。换了 TUI 进程就要调一次，否则上一个进程画的东西还在。"""
     _VIEW["screen"] = None
+    _SYNC.clear()
     _VIEW["stream"] = None
     _VIEW["decoder"] = None
     _VIEW["fed"] = 0
@@ -928,11 +984,21 @@ def main():
         # 量法：趁它在流式输出，猛发一串鼠标移动，紧跟一个字符，看那个字符多久
         # 才出现在输入框里。回合里的输入泵如果一个 tick 只取一个事件，这一串就
         # 得排队排上一秒——手上的感觉就是"选文字发涩"。
+        #
+        # 判定按倍率不按毫秒（AGENTS §5.2，09-25）：同一时刻先量一个不带鼠标事件的字符
+        # 多久回显，作基线；机器忙的时候两个数一起变慢，比值不动。堵队的实现是一个 tick
+        # 只取一个事件，80 个事件就是基线的几十倍。
         report["input_lag_ms"] = None
+        report["input_lag_baseline_ms"] = None
         mark_lag = len(sink)
         os.write(master, "看看延迟".encode())
         os.write(master, b"\r")
         if drain_until_bytes(master, sink, "思考中", 20.0, since=mark_lag):
+            os.write(master, b"Y")
+            started = time.time()
+            seen = drain_until_bytes(master, sink, "Y", 8.0, since=len(sink) - 1)
+            report["input_lag_baseline_ms"] = int((time.time() - started) * 1000) if seen else None
+            os.write(master, b"\x7f")
             burst = b"".join(
                 f"\x1b[<35;{10 + (i % 40)};{10 + (i % 5)}M".encode() for i in range(80)
             )
@@ -983,9 +1049,11 @@ def main():
         # 差别（逐行 diff 早就把没变的行拦下来了），差别在每帧要不要把三十几行
         # 重新排一遍。
         cpu_after = cpu_ms(tui.pid)
-        # 一串鼠标事件之后那个字符要在半秒内出来。堵队的实现会是它的好几倍。
+        # 一串鼠标事件之后那个字符，回显不超过基线的 10 倍（基线按 40ms 起算，别让一次
+        # 特别快的基线把门槛压得太低）。堵队的实现是基线的几十倍。
+        lag, baseline = report["input_lag_ms"], report["input_lag_baseline_ms"]
         report["item02_input_keeps_up"] = (
-            report["input_lag_ms"] is not None and report["input_lag_ms"] <= 500
+            lag is not None and baseline is not None and lag <= max(baseline, 40) * 10
         )
         report["streaming_cpu_ms"] = (
             None if cpu_before is None or cpu_after is None else cpu_after - cpu_before

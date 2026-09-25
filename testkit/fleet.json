@@ -1,0 +1,1192 @@
+{
+  "about": "走查红绿账（09-25）。testkit/fleet.py 按这份清单一项一项跑、和 known_red 对账；只收离线、能自动判绿的走查。要真模型、真 kitty、PipeWire、真人的不收（清单在 fleet.py 文件头）。known_red 只减不增：CI 和上一个提交比。",
+  "env": {
+    "MIYU_TUI_PORT": 18691,
+    "STUB_PORT": 18692,
+    "MIYU_TV_PORT": 18693,
+    "MIYU_ST_PORT": 18694,
+    "PORT": 18695
+  },
+  "walkthroughs": [
+    {
+      "name": "round26",
+      "argv": [
+        "python3",
+        "testkit/tui/round26.py"
+      ],
+      "timeout": 900,
+      "lane": "tui"
+    },
+    {
+      "name": "reopen_midturn",
+      "argv": [
+        "python3",
+        "testkit/tui/reopen_midturn.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "exit_keeps_turn",
+      "argv": [
+        "python3",
+        "testkit/tui/exit_keeps_turn.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "reasoning_stall",
+      "argv": [
+        "python3",
+        "testkit/tui/reasoning_stall.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "think_expand",
+      "argv": [
+        "python3",
+        "testkit/tui/think_expand.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "keep_open",
+      "argv": [
+        "python3",
+        "testkit/tui/keep_open.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "history_no_synthetic",
+      "argv": [
+        "python3",
+        "testkit/tui/history_no_synthetic.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "subagent_visit",
+      "argv": [
+        "python3",
+        "testkit/tui/subagent_visit.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "bg_visit",
+      "argv": [
+        "python3",
+        "testkit/tui/bg_visit_midturn.py"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "bg_visit_thinking",
+      "argv": [
+        "python3",
+        "testkit/tui/bg_visit_midturn.py",
+        "--thinking"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "bg_visit_sub_thinking",
+      "argv": [
+        "python3",
+        "testkit/tui/bg_visit_midturn.py",
+        "--sub-thinking"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "strip_keys",
+      "argv": [
+        "python3",
+        "testkit/tui/strip_keys.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "panel_streams",
+      "argv": [
+        "python3",
+        "testkit/tui/panel_streams.py"
+      ],
+      "timeout": 900,
+      "lane": "tui"
+    },
+    {
+      "name": "question_replay",
+      "argv": [
+        "python3",
+        "testkit/tui/question_replay.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "goal_question",
+      "argv": [
+        "python3",
+        "testkit/tui/goal_question.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "question_body",
+      "argv": [
+        "python3",
+        "testkit/tui/question_body.py",
+        "--binary",
+        "{bin}"
+      ],
+      "timeout": 900,
+      "lane": "tui"
+    },
+    {
+      "name": "midturn_commands",
+      "argv": [
+        "python3",
+        "testkit/tui/midturn_commands.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "new_session",
+      "argv": [
+        "python3",
+        "testkit/tui/new_session.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "switch_back",
+      "argv": [
+        "python3",
+        "testkit/tui/switch_back.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "session_delete",
+      "argv": [
+        "python3",
+        "testkit/tui/session_delete.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "replay_pages",
+      "argv": [
+        "python3",
+        "testkit/tui/replay_pages.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "long_reply_replay",
+      "argv": [
+        "python3",
+        "testkit/tui/long_reply_replay.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "goal_hint",
+      "argv": [
+        "python3",
+        "testkit/tui/goal_hint.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "bg_followup",
+      "argv": [
+        "python3",
+        "testkit/tui/bg_followup.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "stop_job_midturn",
+      "argv": [
+        "python3",
+        "testkit/tui/stop_job_midturn.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "other_session_jobs",
+      "argv": [
+        "python3",
+        "testkit/tui/other_session_jobs.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "subagent_hover_fg",
+      "argv": [
+        "python3",
+        "testkit/tui/subagent_hover.py",
+        "fg"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "subagent_hover_bg",
+      "argv": [
+        "python3",
+        "testkit/tui/subagent_hover.py",
+        "bg"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "midturn_panels",
+      "argv": [
+        "python3",
+        "testkit/tui/midturn_panels.py"
+      ],
+      "timeout": 1800,
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "panel_keeps_body",
+      "argv": [
+        "python3",
+        "testkit/tui/panel_keeps_body.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
+      "name": "cursor_sync",
+      "argv": [
+        "python3",
+        "testkit/tui/cursor_sync.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "cursor_sync_direct",
+      "argv": [
+        "python3",
+        "testkit/tui/cursor_sync.py",
+        "--binary",
+        "{bin}",
+        "--direct"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "softwrap",
+      "argv": [
+        "python3",
+        "testkit/tui/softwrap.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "compact_footer",
+      "argv": [
+        "python3",
+        "testkit/tui/compact_footer.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "stream_timing",
+      "argv": [
+        "python3",
+        "testkit/tui/stream_timing.py"
+      ],
+      "timeout": 300,
+      "env": {
+        "NEWLINE_EVERY": "1000",
+        "SEGMENTS": "20",
+        "CHUNK_SLEEP": "0.12",
+        "WATCH": "40"
+      },
+      "pass": "判定：\\s*边流边出",
+      "lane": "tui"
+    },
+    {
+      "name": "lobby",
+      "argv": [
+        "python3",
+        "testkit/tui/lobby.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "lobby_anim",
+      "argv": [
+        "python3",
+        "testkit/tui/lobby_anim.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "lobby_lane",
+      "argv": [
+        "python3",
+        "testkit/tui/lobby_lane.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "tui_run",
+      "argv": [
+        "python3",
+        "testkit/tui/run.py"
+      ],
+      "timeout": 1800,
+      "lane": "tui"
+    },
+    {
+      "name": "stale_model",
+      "argv": [
+        "python3",
+        "testkit/tui/stale_model.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "notify_sound",
+      "argv": [
+        "python3",
+        "testkit/tui/notify_sound.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "hover_leave",
+      "argv": [
+        "python3",
+        "testkit/tui/hover_leave.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "hover_cpu",
+      "argv": [
+        "python3",
+        "testkit/tui/hover_cpu.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "usage_visible",
+      "argv": [
+        "python3",
+        "testkit/tui/usage_visible.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "config_in_repl",
+      "argv": [
+        "python3",
+        "testkit/tui/config_in_repl.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "mixed_endpoint",
+      "argv": [
+        "python3",
+        "testkit/tui/mixed_endpoint.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "session_rows",
+      "argv": [
+        "python3",
+        "testkit/tui/session_rows.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "readonly_toggle",
+      "argv": [
+        "python3",
+        "testkit/tui/readonly_toggle.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "expand_switches",
+      "argv": [
+        "python3",
+        "testkit/tui/expand_switches.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "error_visual",
+      "argv": [
+        "python3",
+        "testkit/tui/error_visual.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "error_footer_wave",
+      "argv": [
+        "python3",
+        "testkit/tui/error_footer_wave.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "dev_command",
+      "argv": [
+        "python3",
+        "testkit/tui/dev_command.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "direct_overlay_keys",
+      "argv": [
+        "python3",
+        "testkit/tui/direct_overlay_keys.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "models_inherit",
+      "argv": [
+        "python3",
+        "testkit/tui/models_inherit.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "undo_redraw",
+      "argv": [
+        "python3",
+        "testkit/tui/undo_redraw.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "script_names",
+      "argv": [
+        "python3",
+        "testkit/tui/script_names.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "tui"
+    },
+    {
+      "name": "toast_expiry",
+      "argv": [
+        "python3",
+        "testkit/tui/toast_expiry.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "session_picker",
+      "argv": [
+        "python3",
+        "testkit/tui/session_picker.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "effort_menu",
+      "argv": [
+        "python3",
+        "testkit/tui/effort_menu.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "config_resize",
+      "argv": [
+        "python3",
+        "testkit/tui/config_resize.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "config_visual",
+      "argv": [
+        "python3",
+        "testkit/tui/config_visual.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "persona_menu",
+      "argv": [
+        "python3",
+        "testkit/tui/persona_menu.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "kb_embedding_row",
+      "argv": [
+        "python3",
+        "testkit/tui/kb_embedding_row.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "two_views",
+      "argv": [
+        "python3",
+        "testkit/tui/two_views.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "command_highlight",
+      "argv": [
+        "python3",
+        "testkit/tui/command_highlight.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "static_timeline",
+      "argv": [
+        "python3",
+        "testkit/static-timeline/run.py"
+      ],
+      "timeout": 900,
+      "lane": "tui"
+    },
+    {
+      "name": "static_wake",
+      "argv": [
+        "python3",
+        "testkit/static-timeline/wake.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "static_todo_rail",
+      "argv": [
+        "python3",
+        "testkit/static-timeline/todo_rail.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "rp_empty",
+      "argv": [
+        "python3",
+        "testkit/reasoning-parts/repro_openai.py"
+      ],
+      "env": {
+        "MODE": "empty"
+      },
+      "pass": "fragment lines: 1\\b",
+      "lane": "tui"
+    },
+    {
+      "name": "rp_interleave",
+      "argv": [
+        "python3",
+        "testkit/reasoning-parts/repro_openai.py"
+      ],
+      "env": {
+        "MODE": "interleave"
+      },
+      "pass": "fragment lines: 1\\b",
+      "lane": "tui"
+    },
+    {
+      "name": "rp_footer",
+      "argv": [
+        "python3",
+        "testkit/reasoning-parts/repl_footer_probe.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "rp_models",
+      "argv": [
+        "python3",
+        "testkit/reasoning-parts/repl_models_probe.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "mermaid_probe",
+      "argv": [
+        "python3",
+        "testkit/mermaid/probe.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "oobe_mcp",
+      "argv": [
+        "python3",
+        "testkit/oobe/mcp_probe.py",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "oobe_sandbox_page",
+      "argv": [
+        "python3",
+        "testkit/oobe/sandbox_page.py",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "oobe_top",
+      "argv": [
+        "python3",
+        "testkit/oobe/top_probe.py"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "cross_session_tui",
+      "argv": [
+        "python3",
+        "testkit/cross-session/tui.py",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "turn_resume_tui",
+      "argv": [
+        "python3",
+        "testkit/turn-resume/tui.py",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
+      "name": "webui_subagent",
+      "argv": [
+        "python3",
+        "testkit/webui-subagent/run.py"
+      ],
+      "timeout": 900,
+      "lane": "web"
+    },
+    {
+      "name": "webui_paging",
+      "argv": [
+        "python3",
+        "testkit/webui-paging/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_delete_footer",
+      "argv": [
+        "python3",
+        "testkit/webui-delete-footer/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_i18n",
+      "argv": [
+        "python3",
+        "testkit/webui-i18n/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_timeline",
+      "argv": [
+        "python3",
+        "testkit/webui-timeline/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_command_rows",
+      "argv": [
+        "python3",
+        "testkit/webui-timeline/command_rows.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_markdown",
+      "argv": [
+        "python3",
+        "testkit/webui-markdown/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_composer_effort",
+      "argv": [
+        "python3",
+        "testkit/webui-composer/effort.py",
+        "{bin}"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_composer_walk",
+      "argv": [
+        "python3",
+        "testkit/webui-composer/walk.py",
+        "{bin}"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "webui_todo_question",
+      "argv": [
+        "python3",
+        "testkit/webui-fixes/todo_and_question.py"
+      ],
+      "pass": "(?m)^通过$",
+      "lane": "web"
+    },
+    {
+      "name": "webui_vendor_headers",
+      "argv": [
+        "python3",
+        "testkit/webui-artifact/vendor_headers.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "mermaid_webui",
+      "argv": [
+        "python3",
+        "testkit/mermaid/webui.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "cross_session_webui",
+      "argv": [
+        "python3",
+        "testkit/cross-session/webui.py",
+        "{bin}"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "turn_resume_webui",
+      "argv": [
+        "python3",
+        "testkit/turn-resume/webui.py",
+        "{bin}"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "settings_kb_embedding_link",
+      "argv": [
+        "python3",
+        "testkit/settings-ui/kb_embedding_link.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "settings_sandbox_toggle",
+      "argv": [
+        "python3",
+        "testkit/settings-ui/sandbox_default_toggle.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "settings_provider_rename",
+      "argv": [
+        "python3",
+        "testkit/settings-ui/provider-rename-ledger.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "composer_placeholder",
+      "argv": [
+        "python3",
+        "testkit/composer-placeholder/run.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "multi_user_ui",
+      "argv": [
+        "python3",
+        "testkit/multi-user/ui.py"
+      ],
+      "lane": "web"
+    },
+    {
+      "name": "mcp_persistent",
+      "argv": [
+        "python3",
+        "testkit/mcp-persistent/run.py",
+        "{bin}"
+      ],
+      "timeout": 400,
+      "lane": "daemon"
+    },
+    {
+      "name": "cli",
+      "argv": [
+        "python3",
+        "testkit/cli/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "cli_terminal_mode",
+      "argv": [
+        "python3",
+        "testkit/cli/terminal_mode.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "host_query",
+      "argv": [
+        "python3",
+        "testkit/host-query/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "compact_concurrency",
+      "argv": [
+        "python3",
+        "testkit/compact-concurrency/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "session_store_upgrade",
+      "argv": [
+        "python3",
+        "testkit/session-store/upgrade.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "subagent_session",
+      "argv": [
+        "python3",
+        "testkit/subagent-session/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "subagent_dev",
+      "argv": [
+        "python3",
+        "testkit/subagent-dev/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "turn_resume",
+      "argv": [
+        "python3",
+        "testkit/turn-resume/run.py",
+        "{bin}"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "cross_session",
+      "argv": [
+        "python3",
+        "testkit/cross-session/run.py",
+        "{bin}"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "shell_hook",
+      "argv": [
+        "python3",
+        "testkit/shell-hook/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "fish_accept_line",
+      "argv": [
+        "python3",
+        "testkit/fish-accept-line/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "zsh_accept_line",
+      "argv": [
+        "python3",
+        "testkit/zsh-accept-line/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "repl_oneshot_question",
+      "argv": [
+        "python3",
+        "testkit/repl-cursor/oneshot_question.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "multi_user_e2e",
+      "argv": [
+        "python3",
+        "testkit/multi-user/e2e.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "multi_user_layout",
+      "argv": [
+        "python3",
+        "testkit/multi-user/layout_e2e.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "multi_user_cross_session",
+      "argv": [
+        "python3",
+        "testkit/multi-user/cross_session_probe.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "multi_user_member_tools",
+      "argv": [
+        "python3",
+        "testkit/multi-user/member_tools_probe.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "daemon_orphan",
+      "argv": [
+        "python3",
+        "testkit/daemon-orphan/run.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "herdr",
+      "argv": [
+        "python3",
+        "testkit/herdr/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "herdr_daemon_env",
+      "argv": [
+        "python3",
+        "testkit/herdr/daemon_env.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "dev_prompt",
+      "argv": [
+        "python3",
+        "testkit/dev-prompt/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "pm_e2e",
+      "argv": [
+        "python3",
+        "testkit/pm/pm_e2e.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "kb_reindex",
+      "argv": [
+        "python3",
+        "testkit/kb-reindex/run.py"
+      ],
+      "pass": "走查通过",
+      "lane": "daemon"
+    },
+    {
+      "name": "meme",
+      "argv": [
+        "python3",
+        "testkit/meme/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "battery_care",
+      "argv": [
+        "python3",
+        "testkit/battery-care/macos_fake.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "reddit_search",
+      "argv": [
+        "python3",
+        "testkit/reddit-search/run.py"
+      ],
+      "lane": "daemon"
+    },
+    {
+      "name": "qq_outreach",
+      "argv": [
+        "python3",
+        "testkit/qq-outreach/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_reaction",
+      "argv": [
+        "python3",
+        "testkit/qq-reaction/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_rate_override",
+      "argv": [
+        "python3",
+        "testkit/qq-rate-override/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_reset_recall",
+      "argv": [
+        "python3",
+        "testkit/qq-reset-recall/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_sleep",
+      "argv": [
+        "python3",
+        "testkit/qq-sleep/run.py"
+      ],
+      "pass": "ALL_OK",
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_longtext_columns",
+      "argv": [
+        "python3",
+        "testkit/qq-longtext/columns.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_longtext_link_color",
+      "argv": [
+        "python3",
+        "testkit/qq-longtext/link_color.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_longtext_mermaid",
+      "argv": [
+        "python3",
+        "testkit/qq-longtext/mermaid.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "intermediate_reply",
+      "argv": [
+        "python3",
+        "testkit/intermediate-reply/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "relay_overrides",
+      "argv": [
+        "python3",
+        "testkit/relay-overrides/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "relay_tool_face",
+      "argv": [
+        "python3",
+        "testkit/relay-tool-face/run.py",
+        "{bin}"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "agy_reuse",
+      "argv": [
+        "python3",
+        "testkit/agy-reuse/run.py"
+      ],
+      "lane": "qq-relay"
+    }
+  ],
+  "known_red": []
+}
