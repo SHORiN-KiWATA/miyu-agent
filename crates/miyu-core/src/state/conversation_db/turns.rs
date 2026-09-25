@@ -90,6 +90,32 @@ impl ConversationDb {
         tokens: TurnTokens,
         token_usage_estimated: bool,
     ) -> Result<()> {
+        let done = TurnCompletion {
+            content,
+            reasoning,
+            provider_id,
+            model,
+            tokens,
+            token_usage_estimated,
+        };
+        self.finish_turn(turn_id, &done, None)
+    }
+
+    /// 完成一轮，`extras` 在同一个事务里一起写（见 [`TurnFinishExtras`]）。
+    pub fn finish_turn(
+        &self,
+        turn_id: &str,
+        done: &TurnCompletion<'_>,
+        extras: Option<&TurnFinishExtras<'_>>,
+    ) -> Result<()> {
+        let TurnCompletion {
+            content,
+            reasoning,
+            provider_id,
+            model,
+            tokens,
+            token_usage_estimated,
+        } = *done;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let now = Utc::now().to_rfc3339();
@@ -126,6 +152,9 @@ impl ConversationDb {
             params![turn_id],
         )?;
         touch_session_last_request(&tx, turn_id)?;
+        if let Some(extras) = extras {
+            write_finish_extras(&tx, turn_id, extras)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -142,6 +171,33 @@ impl ConversationDb {
         tokens: TurnTokens,
         token_usage_estimated: bool,
     ) -> Result<()> {
+        let done = TurnCompletion {
+            content,
+            reasoning,
+            provider_id,
+            model,
+            tokens,
+            token_usage_estimated,
+        };
+        self.finish_turn_revision(turn_id, revision, &done, None)
+    }
+
+    /// 完成一轮重做，`extras` 在同一个事务里一起写（见 [`TurnFinishExtras`]）。
+    pub fn finish_turn_revision(
+        &self,
+        turn_id: &str,
+        revision: i64,
+        done: &TurnCompletion<'_>,
+        extras: Option<&TurnFinishExtras<'_>>,
+    ) -> Result<()> {
+        let TurnCompletion {
+            content,
+            reasoning,
+            provider_id,
+            model,
+            tokens,
+            token_usage_estimated,
+        } = *done;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let now = Utc::now().to_rfc3339();
@@ -184,6 +240,9 @@ impl ConversationDb {
             params![turn_id],
         )?;
         touch_session_last_request(&tx, turn_id)?;
+        if let Some(extras) = extras {
+            write_finish_extras(&tx, turn_id, extras)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -309,6 +368,36 @@ impl ConversationDb {
         tx.commit()?;
         Ok(restored)
     }
+}
+
+/// 收尾时和完成标记同一个事务写的几样（见 [`TurnFinishExtras`]）。各列的写法与原先分开
+/// 写的 `set_turn_context_end` / `set_turn_generation` / `set_turn_tool_flow` /
+/// `append_tool_reports` 一致。
+fn write_finish_extras(tx: &Transaction, turn_id: &str, extras: &TurnFinishExtras) -> Result<()> {
+    tx.execute(
+        "UPDATE turns SET token_context_end = ?1 WHERE turn_id = ?2",
+        params![extras.context_end.map(|value| value as i64), turn_id],
+    )?;
+    if let Some((tokens, millis)) = extras.generation {
+        tx.execute(
+            "UPDATE turns SET generation_tokens = ?1, generation_ms = ?2 WHERE turn_id = ?3",
+            params![tokens as i64, millis as i64, turn_id],
+        )?;
+    }
+    if let Some(flow) = extras.tool_flow {
+        tx.execute(
+            "UPDATE turns SET tool_flow = ?1 WHERE turn_id = ?2",
+            params![serde_json::to_string(flow)?, turn_id],
+        )?;
+    }
+    if !extras.persisted_contexts.is_empty() {
+        let mut stmt =
+            tx.prepare("INSERT INTO turn_tool_reports (turn_id, report) VALUES (?1, ?2)")?;
+        for report in extras.persisted_contexts {
+            stmt.execute(params![turn_id, report])?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(any(test, feature = "testkit"))]

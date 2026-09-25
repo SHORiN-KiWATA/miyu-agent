@@ -80,24 +80,14 @@ impl PendingTurnGuard {
         self
     }
 
-    pub fn complete_with_model(
+    /// 收尾：完成标记和 `extras` 同一个事务落库。失败时守卫照常在 Drop 里把这一轮
+    /// 收成已中断——库里不会出现「已完成、工具流还是上一个检查点」的轮。
+    pub fn finish(
         mut self,
-        content: &str,
-        reasoning: Option<&str>,
-        provider_id: Option<&str>,
-        model: Option<&str>,
-        tokens: TurnTokens,
-        token_usage_estimated: bool,
+        done: &TurnCompletion<'_>,
+        extras: &TurnFinishExtras<'_>,
     ) -> Result<()> {
-        self.state.complete_turn_with_usage_and_model(
-            &self.turn_id,
-            content,
-            reasoning,
-            provider_id,
-            model,
-            tokens,
-            token_usage_estimated,
-        )?;
+        self.state.finish_turn(&self.turn_id, done, extras)?;
         self.completed = true;
         Ok(())
     }
@@ -173,26 +163,14 @@ impl PendingRedoGuard {
         self
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::agent) fn complete_with_model(
+    /// 同 `PendingTurnGuard::finish`，写的是这一版修订。
+    pub(in crate::agent) fn finish(
         mut self,
-        content: &str,
-        reasoning: Option<&str>,
-        provider_id: Option<&str>,
-        model: Option<&str>,
-        tokens: TurnTokens,
-        token_usage_estimated: bool,
+        done: &TurnCompletion<'_>,
+        extras: &TurnFinishExtras<'_>,
     ) -> Result<()> {
-        self.state.complete_turn_revision_with_usage_and_model(
-            &self.turn_id,
-            self.revision,
-            content,
-            reasoning,
-            provider_id,
-            model,
-            tokens,
-            token_usage_estimated,
-        )?;
+        self.state
+            .finish_turn_revision(&self.turn_id, self.revision, done, extras)?;
         self.completed = true;
         Ok(())
     }

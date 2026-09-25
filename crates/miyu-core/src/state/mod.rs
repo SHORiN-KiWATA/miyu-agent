@@ -48,12 +48,12 @@ pub use conversation_db::{
     PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment, QueuedSyntheticPrompt,
     RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, ReplayPage, RestartOrphan,
     SessionOverview, SessionRecord, SessionValueKind, SponsorOrder, SponsorRecord, SponsorSummary,
-    SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnFollowup, TurnInlineMedia,
-    TurnJournalEvent, TurnPage, TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment,
-    UserAttachmentData, DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE,
-    INLINE_MEDIA_KIND_IMAGE, INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT,
-    INLINE_MEDIA_KIND_VIDEO, USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE,
-    USER_ATTACHMENT_KIND_TEXT,
+    SponsorTotal, ToolFlowCall, ToolFlowRound, ToolFootprint, Turn, TurnCompletion,
+    TurnFinishExtras, TurnFollowup, TurnInlineMedia, TurnJournalEvent, TurnPage,
+    TurnRedoCheckpointPayload, TurnReplay, TurnStatus, UserAttachment, UserAttachmentData,
+    DEFAULT_MAX_GOAL_ROUNDS, GLOBAL_PLATFORM_ACCOUNT_SCOPE, INLINE_MEDIA_KIND_IMAGE,
+    INLINE_MEDIA_KIND_PDF, INLINE_MEDIA_KIND_TEXT, INLINE_MEDIA_KIND_VIDEO,
+    USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE, USER_ATTACHMENT_KIND_TEXT,
 };
 pub use usage::{
     UsageMeta, UsageRange, UsageSnapshot, UsageStats, USAGE_KIND_AFFECTION, USAGE_KIND_GROUP_JOIN,

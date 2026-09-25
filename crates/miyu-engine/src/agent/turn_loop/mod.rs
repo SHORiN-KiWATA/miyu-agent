@@ -253,6 +253,32 @@ impl Agent {
     }
 }
 
+/// 回合收尾写进 `turns` 的正文与用量(普通回合与重做同一份)。
+fn turn_completion(result: &ChatResult) -> TurnCompletion<'_> {
+    TurnCompletion {
+        content: &result.content,
+        reasoning: result.reasoning.as_deref(),
+        provider_id: result.provider_id.as_deref(),
+        model: result.model.as_deref(),
+        tokens: TurnTokens::from_usage(result.usage.as_ref()),
+        token_usage_estimated: result.usage_estimated,
+    }
+}
+
+/// 收尾时和完成标记一起写的两个量:上下文锚点(这一轮最后一次请求的真实占用,下一次
+/// 问上下文有多满时直接读它,不再本地估算)与输出速度。工具流和持久上下文由调用方补。
+fn turn_finish_metrics(result: &ChatResult) -> TurnFinishExtras<'static> {
+    TurnFinishExtras {
+        context_end: crate::agent::context_meter::context_end_tokens(result),
+        generation: result
+            .usage
+            .as_ref()
+            .filter(|usage| usage.generation_tokens > 0 && usage.generation_ms > 0)
+            .map(|usage| (usage.generation_tokens, usage.generation_ms)),
+        ..TurnFinishExtras::default()
+    }
+}
+
 /// 中转侧工具活动的收集:RemoteToolStarted/Finished 的 JSON 载荷折成
 /// ToolFlowCall,失败结果加 "tool error: " 前缀让 SafeToolCall 的 ok 判定
 /// 复用既有规则。

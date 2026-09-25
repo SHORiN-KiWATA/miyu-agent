@@ -1148,3 +1148,110 @@ fn hiding_the_last_turn_drops_it_from_context_but_keeps_the_row() {
     // 一条都不剩时返回 None，不报错。
     assert_eq!(store.hide_last_turn().unwrap(), None);
 }
+
+fn finish_flow(output: &str) -> Vec<ToolFlowRound> {
+    vec![ToolFlowRound {
+        assistant_content: "checking".to_string(),
+        calls: vec![ToolFlowCall {
+            id: "call-1".to_string(),
+            name: "read".to_string(),
+            arguments: "{}".to_string(),
+            output: output.to_string(),
+            started_ms: None,
+            finished_ms: None,
+            sub_trace: None,
+            child_session_id: None,
+        }],
+        ..Default::default()
+    }]
+}
+
+/// 回合收尾一个事务（09-25）：完成标记和锚点、输出速度、工具流、持久上下文一起写。
+#[test]
+fn finish_turn_writes_the_completion_and_its_extras_together() {
+    let (_temp, store) = test_store();
+    store.start_turn("t1", "hello", 999999).unwrap();
+    let flow = finish_flow("final output");
+    let reports = vec!["kept report".to_string()];
+    store
+        .finish_turn(
+            "t1",
+            &TurnCompletion {
+                content: "done",
+                tokens: TurnTokens {
+                    total: 30,
+                    prompt: 20,
+                    cache_read: 10,
+                },
+                ..Default::default()
+            },
+            &TurnFinishExtras {
+                context_end: Some(1234),
+                generation: Some((50, 1000)),
+                tool_flow: Some(&flow),
+                persisted_contexts: &reports,
+            },
+        )
+        .unwrap();
+
+    let turn = store.load_turns().unwrap().pop().unwrap();
+    assert_eq!(turn.status, TurnStatus::Completed);
+    assert_eq!(turn.assistant_content, "done");
+    assert_eq!(turn.token_prompt, 20);
+    assert_eq!(turn.tool_flow[0].calls[0].output, "final output");
+    assert_eq!(turn.tool_reports, reports);
+    assert_eq!(store.latest_context_end_tokens().unwrap(), Some(1234));
+    let generation = store.load_turn_generation(&store.session_id()).unwrap();
+    assert_eq!(generation.get("t1"), Some(&(50, 1000)));
+}
+
+/// 收尾那笔写到一半失败：整笔回滚，这一轮还是「执行中」，流水还在，工具流还是检查点那份，
+/// 持久上下文一条也没进。修前完成标记先单独提交（顺带删掉流水），失败或崩溃在后几笔之间
+/// 就留下「已完成、流水已删、工具流过期」的轮。
+#[test]
+fn a_failed_finish_rolls_the_whole_completion_back() {
+    let (temp, store) = test_store();
+    store.start_turn("t1", "hello", 999999).unwrap();
+    store
+        .set_turn_tool_flow("t1", &finish_flow("checkpoint output"))
+        .unwrap();
+    let conn = rusqlite::Connection::open(temp.path().join("state/conversation.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_final_flow
+         BEFORE UPDATE OF tool_flow ON turns WHEN OLD.status = 'completed'
+         BEGIN SELECT RAISE(ABORT, 'injected finish failure'); END;",
+    )
+    .unwrap();
+    let flow = finish_flow("final output");
+    let reports = vec!["kept report".to_string()];
+
+    let error = store
+        .finish_turn(
+            "t1",
+            &TurnCompletion {
+                content: "done",
+                ..Default::default()
+            },
+            &TurnFinishExtras {
+                context_end: Some(1234),
+                tool_flow: Some(&flow),
+                persisted_contexts: &reports,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("injected finish failure"));
+
+    let turn = store.load_turns().unwrap().pop().unwrap();
+    assert_eq!(turn.status, TurnStatus::Running);
+    assert_eq!(turn.tool_flow[0].calls[0].output, "checkpoint output");
+    assert!(turn.tool_reports.is_empty());
+    let segments: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM turn_journal_segments WHERE turn_id = 't1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(segments, 1, "the journal stays for recovery");
+}

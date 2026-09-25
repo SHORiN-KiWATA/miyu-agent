@@ -210,6 +210,28 @@ impl StateStore {
         )
     }
 
+    /// 完成一轮，收尾要写的几样在同一个事务里一起写（见 `TurnFinishExtras`）。
+    pub fn finish_turn(
+        &self,
+        turn_id: &str,
+        done: &conversation_db::TurnCompletion<'_>,
+        extras: &conversation_db::TurnFinishExtras<'_>,
+    ) -> Result<()> {
+        self.conv_db.finish_turn(turn_id, done, Some(extras))
+    }
+
+    /// 同 `finish_turn`，给重做的那一版修订。
+    pub fn finish_turn_revision(
+        &self,
+        turn_id: &str,
+        revision: i64,
+        done: &conversation_db::TurnCompletion<'_>,
+        extras: &conversation_db::TurnFinishExtras<'_>,
+    ) -> Result<()> {
+        self.conv_db
+            .finish_turn_revision(turn_id, revision, done, Some(extras))
+    }
+
     pub fn append_persisted_contexts(&self, turn_id: &str, reports: &[String]) -> Result<()> {
         self.conv_db.append_tool_reports(turn_id, reports)
     }

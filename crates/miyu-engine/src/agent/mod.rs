@@ -73,8 +73,8 @@ use miyu_core::memory::{
 };
 use miyu_core::persona_hint;
 use miyu_core::state::{
-    QueuedPrompt, QueuedPromptAttachment, RedoCandidate, RedoInputKind, StateStore,
-    TurnRedoCheckpointPayload,
+    QueuedPrompt, QueuedPromptAttachment, RedoCandidate, RedoInputKind, StateStore, TurnCompletion,
+    TurnFinishExtras, TurnRedoCheckpointPayload,
 };
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
