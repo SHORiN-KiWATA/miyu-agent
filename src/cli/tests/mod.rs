@@ -18,6 +18,7 @@ mod lobby_regions;
 mod pop_menu;
 mod replay_pages;
 mod reply_tail;
+mod round_usage;
 mod sandbox_view;
 mod shared;
 mod slash_commands;

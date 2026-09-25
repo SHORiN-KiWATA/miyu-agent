@@ -78,6 +78,7 @@ pub(in crate::cli) fn handle_live_agent_event(
         AgentEvent::RoundUsage {
             round,
             turn,
+            cumulative,
             speed,
             cache_breaks,
             ..
@@ -86,7 +87,10 @@ pub(in crate::cli) fn handle_live_agent_event(
             // 一次模型请求刚结束:立即刷新 footer 计量,不等整个回合。
             // prompt+completion 即该请求结束时的上下文实际占用。
             let context_tokens = round.prompt_tokens.saturating_add(round.completion_tokens);
-            return live.refresh_round_usage(context_tokens, turn, speed);
+            // 这次请求报的会话累计里已经有跑完的前台子代理了：先从实时加数里撤掉。
+            renderer.absorb_settled_subagents();
+            live.set_live_turn_tokens(renderer.running_subagent_tokens());
+            return live.refresh_round_usage(context_tokens, turn, cumulative, speed);
         }
         event => event,
     };

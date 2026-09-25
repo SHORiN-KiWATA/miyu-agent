@@ -945,23 +945,27 @@ impl LiveReplTail {
         })
     }
 
-    /// 回合内一次模型请求结束:用基线+回合累计刷新计量并立即重绘。
+    /// 回合内一次模型请求结束:用这次请求报的回合累计、会话累计刷新计量并立即重绘。
     /// `context_tokens` 取该请求 prompt+completion,即当前上下文占用的
     /// 最新实测;回合结束后外层会用权威数字覆盖(set_footer 清基线)。
     pub(in crate::cli) fn refresh_round_usage(
         &mut self,
         context_tokens: u64,
         turn: TurnTokens,
+        session: TurnTokens,
         speed: GenerationSpeed,
     ) -> Result<()> {
         let base = self
             .round_base_footer
             .get_or_insert_with(|| Box::new(self.footer.clone()));
         let mut display = (**base).clone();
-        display.apply_round_usage(context_tokens, turn, speed);
+        display.apply_round_usage(context_tokens, turn, session, speed);
         // 基线快照拍于回合开始(转轮未起),别让计量刷新把转轮拍灭。
         display.running_spinner = self.footer.running_spinner;
         display.turn_started = self.turn_started;
+        // 跑着的前台子代理那份加数也是现在的，不是拍基线那一刻的：原来这里跟着基线退回旧值，
+        // 要等子代理下一次报数 Σ 才补回来，每次请求结束 Σ 都往下闪一下。
+        display.token_usage.live_extra_tokens = self.footer.token_usage.live_extra_tokens;
         self.footer = display;
         if self.rendered && !self.external_output_active {
             synchronized_terminal_update(CursorAfterUpdate::Shown, || self.redraw())?;

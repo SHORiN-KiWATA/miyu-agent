@@ -8,7 +8,9 @@
   主会话自己的命令还在第一层；
 - 在子代理里按 Ctrl+C：它这一轮连同两个孙代理一起停（用户 09-26：原来孙代理没停下），孙代理
   从任务条上撤掉、库里记成被打断；主会话的命令不受影响；
-- 回主会话，还能接着打字（终端在 raw 里）。
+- 回主会话，还能接着打字（终端在 raw 里）；
+- footer 上的 Σ 在停下那一下不往回掉（09-26：切进一条回合正跑着的会话时本回合算了两遍，
+  跟着看的那一阵虚高，一停又掉回去）。
 
     MIYU_BIN=... MIYU_HOME=~/.cache/miyu-strip-tree/home MIYU_TUI_PORT=18975 STUB_PORT=18976 \\
       MIYU_TUI_RUNTIME=~/.cache/miyu-strip-tree/rt OUT=~/.cache/miyu-strip-tree/out \\
@@ -17,6 +19,7 @@
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -66,6 +69,16 @@ def tree_ready(screen):
         sv.inside_child(screen)
         and all(row_with(screen, name) is not None for name in GRANDCHILDREN)
     )
+
+
+def sigma(screen):
+    """footer 上的 Σ（`Σ900`、`Σ1.3k`），读不到是 None。"""
+    for line in reversed(screen):
+        found = re.search(r"Σ(\d+(?:\.\d+)?)([kM]?)", line)
+        if found:
+            scale = {"": 1, "k": 1_000, "M": 1_000_000}[found.group(2)]
+            return float(found.group(1)) * scale
+    return None
 
 
 def task_states(home):
@@ -118,6 +131,8 @@ def main():
         report["inside_twigs"] = first.startswith("├ ○") and second.startswith("└ ○")
         report["inside_main_command_on_level_one"] = row_with(inside, COMMAND) is not None
 
+        before = sigma(now(sink))
+        report["_sigma_before_stop"] = before
         # 子代理这一轮还在跑（慢命令），Ctrl+C 停它，连两个孙代理一起。
         os.write(master, b"\x03")
         stopped = r.wait_screen(
@@ -138,6 +153,12 @@ def main():
             states.get(name) == "interrupted" for name in GRANDCHILDREN
         )
         report["ctrl_c_leaves_the_main_command"] = row_with(now(sink), COMMAND) is not None
+        h.settle(master, sink, quiet=2.0, timeout=6.0)
+        after = sigma(now(sink))
+        report["_sigma_after_stop"] = after
+        report["sigma_does_not_drop_on_stop"] = (
+            before is not None and after is not None and after >= before
+        )
 
         h.settle(master, sink, quiet=0.6, timeout=4.0)
         row = sv.strip_row(now(sink), sv.UP)

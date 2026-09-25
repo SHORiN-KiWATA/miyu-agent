@@ -332,12 +332,18 @@ impl ReplFooterStatus {
         changed
     }
 
-    /// 回合中途的逐请求刷新:在(回合前的)基线上叠加回合累计。必须作用
-    /// 在基线快照的克隆上,同一回合内可重复调用而不重复相加。
+    /// 回合中途的逐请求刷新。必须作用在基线快照（回合前的 footer）的克隆上，同一回合内
+    /// 可重复调用而不重复相加。
+    ///
+    /// Σ 取 daemon 随这次请求报的会话累计（已落库的各回合 + 本回合至今），不在基线上再加
+    /// 本回合：切进一条回合正跑着的会话时，基线是 daemon 的实时快照，本回合至今已经在里面
+    /// 了，再加一遍就是算两遍——跟着看的那一阵 Σ 虚高，回合一停又「往回掉」（09-26 走查：
+    /// 子代理里 900，Ctrl+C 之后 750，750 才是对的）。老 daemon 不报累计（为 0）时照旧叠加。
     pub(in crate::cli) fn apply_round_usage(
         &mut self,
         context_tokens: u64,
         turn: TurnTokens,
+        session: TurnTokens,
         speed: GenerationSpeed,
     ) {
         let meter = &mut self.token_usage;
@@ -349,6 +355,12 @@ impl ReplFooterStatus {
         if context_tokens > 0 {
             meter.session_tokens = context_tokens;
             meter.session_tokens_unknown = false;
+        }
+        if session.total > 0 && session.total >= turn.total {
+            meter.cumulative_tokens = Some(session.total);
+            meter.cumulative_prompt_tokens = session.prompt;
+            meter.cumulative_cached_tokens = session.cache_read;
+            return;
         }
         let cumulative = meter.cumulative_tokens.unwrap_or(0) + turn.total;
         meter.cumulative_tokens = (cumulative > 0).then_some(cumulative);

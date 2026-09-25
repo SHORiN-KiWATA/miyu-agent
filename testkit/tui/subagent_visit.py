@@ -132,9 +132,9 @@ def main():
         )
         report["_subagent_seconds"] = [seconds_before, seconds_after]
 
-        # 2. 任务条上那一行
+        # 2. 任务条上那一行（09-26 起子代理行首是空心 `○`，命令才是转轮）
         screen = r.wait_screen(
-            master, sink, lambda s: strip_row(s, ROW) is not None and s[strip_row(s, ROW)].lstrip()[:1] in r.BRAILLE, 10.0
+            master, sink, lambda s: strip_row(s, ROW) is not None and s[strip_row(s, ROW)].lstrip()[:1] == "○", 10.0
         )
         report["strip_lists_running_child"] = screen is not None
         if screen is not None:

@@ -1,3 +1,4 @@
+use super::line_diff::{diff_lines, EditLine};
 use super::ToolProgress;
 use anyhow::Result;
 use serde_json::{json, Map, Value};
@@ -213,79 +214,6 @@ fn split_lines(value: &str) -> Vec<String> {
         .collect()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum EditLine<'a> {
-    Context(&'a str),
-    Delete(&'a str),
-    Insert(&'a str),
-}
-
-impl<'a> EditLine<'a> {
-    fn marker(&self) -> char {
-        match self {
-            Self::Context(_) => ' ',
-            Self::Delete(_) => '-',
-            Self::Insert(_) => '+',
-        }
-    }
-
-    fn line(&self) -> &'a str {
-        match self {
-            Self::Context(line) | Self::Delete(line) | Self::Insert(line) => line,
-        }
-    }
-}
-
-fn diff_lines<'a>(before: &'a [String], after: &'a [String]) -> Vec<EditLine<'a>> {
-    if before.len().saturating_mul(after.len()) > 250_000 {
-        return before
-            .iter()
-            .map(|line| EditLine::Delete(line.as_str()))
-            .chain(after.iter().map(|line| EditLine::Insert(line.as_str())))
-            .collect();
-    }
-
-    let rows = before.len() + 1;
-    let cols = after.len() + 1;
-    let mut lcs = vec![0usize; rows * cols];
-    for i in (0..before.len()).rev() {
-        for j in (0..after.len()).rev() {
-            let index = i * cols + j;
-            lcs[index] = if before[i] == after[j] {
-                lcs[(i + 1) * cols + j + 1] + 1
-            } else {
-                lcs[(i + 1) * cols + j].max(lcs[i * cols + j + 1])
-            };
-        }
-    }
-
-    let mut edits = Vec::new();
-    let mut i = 0;
-    let mut j = 0;
-    while i < before.len() && j < after.len() {
-        if before[i] == after[j] {
-            edits.push(EditLine::Context(before[i].as_str()));
-            i += 1;
-            j += 1;
-        } else if lcs[(i + 1) * cols + j] >= lcs[i * cols + j + 1] {
-            edits.push(EditLine::Delete(before[i].as_str()));
-            i += 1;
-        } else {
-            edits.push(EditLine::Insert(after[j].as_str()));
-            j += 1;
-        }
-    }
-    while i < before.len() {
-        edits.push(EditLine::Delete(before[i].as_str()));
-        i += 1;
-    }
-    while j < after.len() {
-        edits.push(EditLine::Insert(after[j].as_str()));
-        j += 1;
-    }
-    edits
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,6 +226,17 @@ mod tests {
         assert!(diff.contains("-two"));
         assert!(diff.contains("+TWO"));
         assert!(diff.contains("+three"));
+    }
+
+    /// 一千多行的文件改一行：diff 只有那一行一块（用户 09-26：原来两边行数一乘过 25 万就算成
+    /// 整份删了再加，抬头写 `+1269 -1285`，点开是整个文件）。
+    #[test]
+    fn a_one_line_edit_in_a_big_file_is_a_one_line_diff() {
+        let before: String = (0..1_300).map(|index| format!("line {index}\n")).collect();
+        let after = before.replace("line 650\n", "changed\n");
+        let diff = unified_diff("big.html", &before, &after);
+        assert_eq!(crate::tools::diff_stat(&diff), Some((1, 1)), "{diff}");
+        assert_eq!(diff.matches("@@ ").count(), 1, "{diff}");
     }
 
     #[test]

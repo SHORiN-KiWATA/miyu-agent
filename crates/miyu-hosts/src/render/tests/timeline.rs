@@ -825,3 +825,42 @@ fn a_tool_still_running_when_the_terminal_is_borrowed_is_not_cut_as_interrupted(
         );
     });
 }
+
+/// 前台子代理跑完（工具有了结果）之后，它烧的那份还留在 Σ 的实时加数里——它的会话已经落盘，
+/// 但 footer 手里的会话累计要等下一次请求报上来才带上它；这时再撤（`absorb_settled_subagents`），
+/// Σ 不闪也不算两遍。同名的又起一个，算新的在跑。
+#[test]
+fn a_finished_subagent_stays_in_the_live_share_until_the_next_session_total() {
+    with_blocks(|| {
+        let mut renderer = timeline_renderer();
+        renderer.use_external_cursor_control();
+        renderer.use_buffered_output();
+        renderer
+            .write_tool_call("subagent", r#"{"description":"查目录","prompt":"去看看"}"#)
+            .unwrap();
+        renderer.write_subagent_status("subagent", child_status("查完了"));
+        renderer
+            .write_tool_result(
+                "subagent",
+                true,
+                "subagent done (tier balanced, session sess_child): 好了",
+            )
+            .unwrap();
+        assert_eq!(
+            renderer.running_subagent_tokens(),
+            150,
+            "跑完当场就撤，Σ 会往下闪"
+        );
+
+        renderer.absorb_settled_subagents();
+        assert_eq!(
+            renderer.running_subagent_tokens(),
+            0,
+            "会话累计里已经有它了"
+        );
+
+        renderer.write_subagent_status("subagent", child_status("又一个"));
+        renderer.absorb_settled_subagents();
+        assert_eq!(renderer.running_subagent_tokens(), 150, "新起的这个还在跑");
+    });
+}

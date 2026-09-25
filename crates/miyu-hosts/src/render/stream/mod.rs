@@ -67,6 +67,10 @@ pub struct StreamRenderer {
     /// 时会话累计从库里重读，加数跟着清掉，不会算两遍。
     /// 记的是**各自的最新值**不是增量，所以并行几个也不会互相叠加出鬼数。
     pub(crate) subagent_tokens: BTreeMap<String, u64>,
+    /// 已经跑完、还留在 `subagent_tokens` 里的前台子代理：它的会话已经落盘，下一次请求报的
+    /// 会话累计里就有它了，到那时才从加数里撤（`absorb_settled_subagents`）。跑完当场就撤
+    /// 的话，下一次请求之前 Σ 会往下闪一下。
+    pub(crate) settled_subagents: std::collections::BTreeSet<String>,
     /// 前台子代理此刻的样子（`subagent.progress`，工具事件名 → 状态）：状态行那一行的
     /// 窥视、词元从这儿取（会话项目第 4 段之二）。
     pub(crate) subagent_status:
@@ -207,6 +211,7 @@ impl StreamRenderer {
             timeline_ends_after_tools: false,
             live_tool_blocks: BTreeMap::new(),
             subagent_tokens: BTreeMap::new(),
+            settled_subagents: std::collections::BTreeSet::new(),
             subagent_status: BTreeMap::new(),
             command_display: None,
             finalizing_for_external_output: false,
@@ -558,6 +563,7 @@ impl StreamRenderer {
         // 这一轮的子代理用量交还给会话累计：回合收尾时调用方会从库里重读 Σ，
         // 那时审计会话已经落盘，实时加数留着就是算两遍。
         self.subagent_tokens.clear();
+        self.settled_subagents.clear();
         self.subagent_status.clear();
         self.mode = None;
         self.show_cursor()?;

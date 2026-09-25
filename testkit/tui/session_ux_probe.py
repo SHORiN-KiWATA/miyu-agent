@@ -144,8 +144,9 @@ def main():
         say(master, sink, h.PROMPT + " STUB_SUBBG")
         screen = r.wait_screen(
             master, sink,
+            # 09-26 起子代理行首是空心 `○`，命令才是转轮。
             lambda s: sv.strip_row(s, sv.ROW) is not None
-            and s[sv.strip_row(s, sv.ROW)].lstrip()[:1] in r.BRAILLE,
+            and s[sv.strip_row(s, sv.ROW)].lstrip()[:1] == "○",
             40.0,
         )
         report["foreground_child_running"] = screen is not None

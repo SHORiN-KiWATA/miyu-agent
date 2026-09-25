@@ -146,6 +146,7 @@ impl StreamRenderer {
             if let Some(session) = miyu_engine::tools::subagent_session_of_output(output) {
                 self.subagent_session(name, &session);
             }
+            self.settle_subagent_tokens(name);
         }
         let status = if ok { "ok" } else { "err" };
         let elapsed = self.finish_subagent_timer(name);

@@ -1014,13 +1014,13 @@ async fn run_remote_chat_inner(
                     // 与进程内那条路同一个口径。
                     let context_tokens = ipc_u64(&usage, "prompt_tokens")
                         .saturating_add(ipc_u64(&usage, "completion_tokens"));
+                    // 这次请求报的会话累计里已经有跑完的前台子代理了：先从实时加数里撤掉。
+                    renderer.absorb_settled_subagents();
+                    live.set_live_turn_tokens(renderer.running_subagent_tokens());
                     live.refresh_round_usage(
                         context_tokens,
-                        TurnTokens {
-                            total: ipc_u64(&data, "turn_total"),
-                            prompt: ipc_u64(&data, "turn_prompt"),
-                            cache_read: ipc_u64(&data, "turn_cache_read"),
-                        },
+                        crate::cli::repl::wake::round_turn_tokens(&data),
+                        crate::cli::repl::wake::round_session_tokens(&data),
                         GenerationSpeed {
                             tokens: ipc_u64(&data, "turn_generation_tokens"),
                             millis: ipc_u64(&data, "turn_generation_ms"),

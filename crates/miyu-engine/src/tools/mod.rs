@@ -30,6 +30,7 @@ pub use mcp::{
     prefetch as prefetch_mcp_listings, retire_changed as retire_changed_mcp_servers,
     shutdown_pool as shutdown_mcp_pool,
 };
+mod line_diff;
 pub mod memes;
 mod memory;
 pub mod net_guard;

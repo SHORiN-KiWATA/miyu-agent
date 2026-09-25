@@ -13,6 +13,8 @@ use miyu_engine::tools::subagent::status::SubagentStatus;
 impl StreamRenderer {
     /// 前台子代理报了一次样子：窥视、词元、子会话。
     pub fn write_subagent_status(&mut self, name: &str, status: SubagentStatus) {
+        // 同名的又起了一个：这份是新的这个在跑，不算跑完的了。
+        self.settled_subagents.remove(name);
         self.subagent_tokens.insert(name.to_string(), status.tokens);
         let session = status.session_id.clone();
         self.subagent_status.insert(name.to_string(), status);
@@ -65,9 +67,24 @@ impl StreamRenderer {
     ///
     /// 会话累计（footer 上的 Σ）要等子代理跑完、它的会话落盘才动；而一个子代理能跑
     /// 好几分钟，那几分钟里 Σ 纹丝不动（用户问：这个 token 消耗记录有每步刷新到会话
-    /// 累计吗）。跑着的时候先把这份加上去，回合收尾时 Σ 从库里重读、这份清零，不会
-    /// 算两遍。
+    /// 累计吗）。跑着的时候先把这份加上去；跑完的留到下一次请求报的会话累计把它带进去
+    /// （`absorb_settled_subagents`），回合收尾时 Σ 从库里重读、这份清零，不会算两遍。
     pub fn running_subagent_tokens(&self) -> u64 {
         self.subagent_tokens.values().copied().sum()
+    }
+
+    /// 这个前台子代理跑完了（工具有了结果）：它的会话已经落盘。
+    pub(crate) fn settle_subagent_tokens(&mut self, name: &str) {
+        if self.subagent_tokens.contains_key(name) {
+            self.settled_subagents.insert(name.to_string());
+        }
+    }
+
+    /// 又一次请求报了会话累计：跑完的子代理已经在里面了，从加数里撤掉（09-26：footer 的
+    /// Σ 改成直接取 daemon 报的会话累计之后，不撤就算两遍）。
+    pub fn absorb_settled_subagents(&mut self) {
+        for name in std::mem::take(&mut self.settled_subagents) {
+            self.subagent_tokens.remove(&name);
+        }
     }
 }
