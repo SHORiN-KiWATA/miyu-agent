@@ -165,6 +165,7 @@ fn the_footer_says_how_deep_into_subagent_sessions_we_are() {
     let visiting = |depth| FooterBadges {
         readonly: false,
         visit_depth: depth,
+        cache_breaks: 0,
     };
 
     assert!(!left(FooterBadges::default(), 120).contains('↳'));
@@ -173,6 +174,7 @@ fn the_footer_says_how_deep_into_subagent_sessions_we_are() {
         FooterBadges {
             readonly: true,
             visit_depth: 2,
+            cache_breaks: 0,
         },
         120,
     );

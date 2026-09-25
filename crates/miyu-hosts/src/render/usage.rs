@@ -39,6 +39,8 @@ pub struct TokenMeter {
     /// 为零就不显示——没测到的速度不能渲染成 0 tok/s。
     pub generation_tokens: u64,
     pub generation_ms: u64,
+    /// 会话树断过几次缓存(09-25,`llm::cache_break`):挂在 Σ 的 C% 后面,没断过不显示。
+    pub cache_breaks: u64,
 }
 
 impl TokenMeter {
@@ -94,6 +96,29 @@ pub(crate) fn cache_suffix(cached: u64, prompt: u64) -> String {
     cache_percent(cached, prompt)
         .map(|percent| format!("(C{percent}%)"))
         .unwrap_or_default()
+}
+
+/// Σ 后面那个括号：`(C81%)`；断过缓存再挂次数，`(C81%·断2)`（09-25）。C% 是「累计缓存读 /
+/// 累计输入」，每一步新追加的内容本来就不在缓存里，看不出缓存有没有被掰断，次数补的是这一块。
+fn cumulative_cache_suffix(meter: &TokenMeter) -> String {
+    let percent = cache_percent(
+        meter.cumulative_cached_tokens,
+        meter.cumulative_prompt_tokens,
+    )
+    .map(|percent| format!("C{percent}%"));
+    let breaks = (meter.cache_breaks > 0).then(|| {
+        if miyu_base::i18n::is_zh() {
+            format!("断{}", meter.cache_breaks)
+        } else {
+            format!("{} miss", meter.cache_breaks)
+        }
+    });
+    let parts: Vec<String> = percent.into_iter().chain(breaks).collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("({})", parts.join("·"))
+    }
 }
 
 pub fn print_token_usage(meter: &TokenMeter, estimated: bool) -> Result<()> {
@@ -166,10 +191,7 @@ pub fn format_token_usage_inline_opts(
         session.push_str(&format!(
             " · Σ{}{}",
             format_compact_count(cumulative_tokens),
-            cache_suffix(
-                meter.cumulative_cached_tokens,
-                meter.cumulative_prompt_tokens
-            ),
+            cumulative_cache_suffix(meter),
         ));
     }
     // 速度紧跟本轮用量之后、上下文表之前:footer 里没有本轮用量,它就打头。

@@ -778,6 +778,8 @@ pub(in crate::cli) async fn follow_wake_run(
             // 直连模式也有(走本地事件),唯独日常的「终端连 daemon」要等整
             // 个回合结束才动。
             "chat.round_usage" => {
+                // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
+                live.cache_breaks = ipc_u64(&data, "cache_breaks");
                 let usage = data.get("usage").cloned().unwrap_or_default();
                 // prompt+completion 即该请求结束时的上下文实际占用,与
                 // 本地事件那条路取同一个口径。

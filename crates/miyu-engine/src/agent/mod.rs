@@ -194,6 +194,9 @@ pub enum AgentEvent {
         /// 刚结束这次请求实际应答的端点,供日志/前端标注(08-24 需求)。
         provider_id: Option<String>,
         model: Option<String>,
+        /// 会话树(这条会话 + 名下子代理)一共断过几次缓存(09-25,`llm::cache_break`),
+        /// footer 挂在 C% 后面。
+        cache_breaks: u64,
     },
     SpinnerTick,
     CompactStart,

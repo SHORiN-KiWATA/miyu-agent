@@ -474,7 +474,7 @@ impl LiveReplTail {
         if let crate::cli::footer::UsagePlacement::Fullscreen { below } = self.usage_placement {
             let width = usize::from(cols);
             let row = if below {
-                crate::cli::footer::repl_usage_line(&self.footer, width)
+                crate::cli::footer::repl_usage_line(&self.footer, self.cache_breaks, width)
             } else {
                 " ".repeat(width)
             };

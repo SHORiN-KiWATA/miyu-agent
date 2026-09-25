@@ -1,3 +1,4 @@
+mod cache_break;
 mod cache_log;
 mod cache_prefix;
 mod openai_compatible;
@@ -5,6 +6,7 @@ pub(crate) mod provider_capabilities;
 pub mod request_log;
 mod request_shape;
 
+pub use cache_break::{note_cache_rebuild, take_cache_breaks, CacheBreak, CacheBreakCause};
 pub use openai_compatible::{
     forget_relay_sessions, remove_antigravity_relay_files, remove_session_thinking_variants,
     retire_relay_processes, shutdown_relay_processes, thinking_variant_options_for_model,

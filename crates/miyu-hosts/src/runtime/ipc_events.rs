@@ -219,6 +219,7 @@ pub(crate) fn decode_ipc_event_at(kind: &str, data: &Value, received_at: Instant
                 estimated: ipc_bool(data, "estimated"),
                 provider_id: ipc_opt_text(data, "provider_id"),
                 model: ipc_opt_text(data, "model"),
+                cache_breaks: ipc_u64(data, "cache_breaks"),
             }
         }
         "context.compact_start" => AgentEvent::CompactStart,
@@ -461,6 +462,7 @@ mod tests {
             "estimated": true,
             "provider_id": "codex",
             "model": "gpt",
+            "cache_breaks": 3,
         });
         let DecodedIpc::Event(AgentEvent::RoundUsage {
             round,
@@ -470,10 +472,12 @@ mod tests {
             estimated,
             provider_id,
             model,
+            cache_breaks,
         }) = decode_ipc_event("chat.round_usage", &data)
         else {
             panic!("chat.round_usage 应当解码成 RoundUsage");
         };
+        assert_eq!(cache_breaks, 3);
         assert_eq!(round.prompt_tokens, 1000);
         assert_eq!(round.completion_tokens, 200);
         assert_eq!(round.cache_read_tokens, 800);

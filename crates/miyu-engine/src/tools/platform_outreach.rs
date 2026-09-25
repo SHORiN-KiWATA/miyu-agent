@@ -11,8 +11,11 @@
 //!
 //! 场所只决定两件事:本地会话(REPL / WebUI / shellhook)看 `platforms.terminal_outreach`
 //! 开关;平台会话(QQ 里,所有触发者都有,不分管理员/群友)带当前会话的账号、不看
-//! 终端开关,发回当前会话仍是 `send_message_to_user`。两边都只在 NapCat 的反向 ws
-//! 连上时注册。
+//! 终端开关,发回当前会话仍是 `send_message_to_user`。
+//!
+//! 配置里开了 QQ 就恒在工具表里,掉线在调用时拦下、明说没连上(09-25)。原来只在 NapCat
+//! 的反向 ws 连上时注册:daemon 一重启、QQ 一重连,工具表就变,所有开着的会话下一次请求
+//! 整条缓存前缀作废(真机日志里单次就是 23.7 万 token)。
 //!
 //! 09-18 之前平台会话没有任何带收件人的发送工具,用户要「发到 xxx 交流群」时她
 //! 只能拿 run_command 去打 NapCat 的 HTTP 口(BUG-14)。
@@ -31,8 +34,7 @@ pub const CONTACTS_TOOL_NAME: &str = "qq_contacts";
 /// 一次列多少条联系人,再多模型也看不过来,让它带关键词再查。
 const CONTACTS_LIMIT: usize = 60;
 
-/// NapCat 的反向 WebSocket 是否已连上(至少一个账号在线)。工具只在连上时
-/// 注册:掉线时模型看不到它,不会对着断线的通道尝试。直发能力经
+/// NapCat 的反向 WebSocket 是否已连上(至少一个账号在线)。直发能力经
 /// `host_ports::QqOutreachPort` 拿,非 daemon 进程里没装端口即视为未连上。
 pub fn qq_connected() -> bool {
     miyu_base::host_ports::qq_outreach_port().is_some_and(|port| port.connected())
@@ -72,7 +74,7 @@ pub fn register(registry: &mut ToolRegistry, config: &AppConfig) {
 }
 
 /// 开发模式的收窄:装了普通版就换成只发管理员的那版,地址簿工具摘掉。
-/// 没装(ws 没连上)就什么都不做——不会凭空多出工具。
+/// 没装(配置里没开)就什么都不做——不会凭空多出工具。
 pub fn restrict_to_admins(registry: &mut ToolRegistry, config: &AppConfig, surface: Surface) {
     if !registry.contains(TOOL_NAME) {
         return;
@@ -192,6 +194,15 @@ fn port() -> Result<Arc<dyn QqOutreachPort>> {
         .context("send_qq_message only works inside the daemon")
 }
 
+/// 连着的端口。工具恒在工具表里,掉线在这儿拦(模块头)。
+fn connected_port(unavailable: &str) -> Result<Arc<dyn QqOutreachPort>> {
+    let port = port()?;
+    if !port.connected() {
+        bail!("QQ is not connected right now (NapCat is offline); {unavailable}");
+    }
+    Ok(port)
+}
+
 fn account_of(surface: Surface) -> Option<i64> {
     match surface {
         Surface::Terminal => None,
@@ -213,7 +224,7 @@ async fn send(arguments: Value, surface: Surface, reach: Reach) -> Result<String
         .get("voice")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let port = port()?;
+    let port = connected_port("nothing was sent")?;
     // 策略按当前配置现算(不是注册那一刻的):配置重载后立刻生效。
     let policy = port.policy();
     if surface == Surface::Terminal && !policy.allowed {
@@ -295,7 +306,7 @@ async fn contacts(arguments: Value, surface: Surface) -> Result<String> {
         .map(str::trim)
         .unwrap_or_default()
         .to_string();
-    let port = port()?;
+    let port = connected_port("the contact list is unavailable")?;
     let policy = port.policy();
     let directory = port.directory(account_of(surface)).await?;
     Ok(render_contacts(&query, &policy.recipients, &directory).to_string())
@@ -655,12 +666,12 @@ mod tests {
         policy: QqOutreachPolicy,
         directory: QqDirectory,
         sent: Arc<Mutex<Vec<(Option<i64>, QqTarget, OutboundMessage)>>>,
+        connected: bool,
     }
 
     impl QqOutreachPort for RecordingPort {
-        /// 报「没连上」:`TurnResources` 的缓存键读这个位,别让并行用例看见抖动。
         fn connected(&self) -> bool {
-            false
+            self.connected
         }
 
         fn policy(&self) -> QqOutreachPolicy {
@@ -687,6 +698,14 @@ mod tests {
     }
 
     fn install(allowed: bool, sent: &Arc<Mutex<Vec<(Option<i64>, QqTarget, OutboundMessage)>>>) {
+        install_port(allowed, true, sent);
+    }
+
+    fn install_port(
+        allowed: bool,
+        connected: bool,
+        sent: &Arc<Mutex<Vec<(Option<i64>, QqTarget, OutboundMessage)>>>,
+    ) {
         miyu_base::host_ports::install_qq_outreach_port(Arc::new(RecordingPort {
             policy: QqOutreachPolicy {
                 allowed,
@@ -694,6 +713,7 @@ mod tests {
             },
             directory: directory(),
             sent: sent.clone(),
+            connected,
         }));
     }
 
@@ -772,6 +792,20 @@ mod tests {
                 .await
                 .is_err()
         );
+
+        // 掉线时（09-25 起工具恒在工具表里，好让缓存前缀不随连接变）：说清楚没连上，一条都不发。
+        install_port(true, false, &sent);
+        for (surface, reach) in [
+            (Surface::Terminal, Reach::Admins),
+            (platform, Reach::Anyone),
+        ] {
+            let error = send(json!({ "text": "x", "to": "老板" }), surface, reach)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("QQ is not connected"), "{error}");
+        }
+        let error = contacts(json!({}), platform).await.unwrap_err();
+        assert!(error.to_string().contains("QQ is not connected"), "{error}");
 
         let sent = sent.lock().unwrap();
         assert_eq!(sent.len(), 4);

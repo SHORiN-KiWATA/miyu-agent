@@ -76,8 +76,13 @@ pub(in crate::cli) fn handle_live_agent_event(
             return Ok(());
         }
         AgentEvent::RoundUsage {
-            round, turn, speed, ..
+            round,
+            turn,
+            speed,
+            cache_breaks,
+            ..
         } => {
+            live.cache_breaks = cache_breaks;
             // 一次模型请求刚结束:立即刷新 footer 计量,不等整个回合。
             // prompt+completion 即该请求结束时的上下文实际占用。
             let context_tokens = round.prompt_tokens.saturating_add(round.completion_tokens);

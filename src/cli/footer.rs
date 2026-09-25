@@ -50,6 +50,8 @@ pub(in crate::cli) struct FooterBadges {
     pub(in crate::cli) readonly: bool,
     /// 切进子代理会话几层了（会话项目第 3 段）：模式标签后面跟「子代理 ↳N」。
     pub(in crate::cli) visit_depth: usize,
+    /// 会话树断过几次缓存（09-25）：用量那一段 Σ 的 C% 后面挂「断N」。
+    pub(in crate::cli) cache_breaks: u64,
 }
 
 impl From<bool> for FooterBadges {
@@ -58,6 +60,7 @@ impl From<bool> for FooterBadges {
         Self {
             readonly,
             visit_depth: 0,
+            cache_breaks: 0,
         }
     }
 }
@@ -105,15 +108,21 @@ pub(in crate::cli) fn usage_fits_on_footer_line(
     footer: &ReplFooterStatus,
     cols: usize,
 ) -> bool {
+    let badges = badges.into();
     let bar = footer_display_width(&input_prompt_bar(mode));
-    let label = footer_mode_segment(mode, badges.into(), false);
+    let label = footer_mode_segment(mode, badges, false);
     let essential = footer_display_width(&repl_footer_left_parts(
         &label,
         &footer.model,
         None,
         footer.thinking.as_deref().unwrap_or_default(),
     ));
-    let usage = footer_display_width(&usage_text_fitting(footer, usize::MAX, 0));
+    let usage = footer_display_width(&usage_text_fitting(
+        footer,
+        badges.cache_breaks,
+        usize::MAX,
+        0,
+    ));
     bar + essential + RUNNING_ALLOWANCE + USAGE_GAP + usage <= cols
 }
 
@@ -401,11 +410,17 @@ pub(in crate::cli) fn repl_footer_line(
     usage: UsagePlacement,
 ) -> String {
     let cols = cols.max(1);
+    let badges = badges.into();
     let bar = input_prompt_bar(mode);
     let bar_width = footer_display_width(&bar);
     let right_plain = match usage {
         UsagePlacement::FooterRight | UsagePlacement::Fullscreen { below: false } => {
-            usage_text_fitting(footer, cols.saturating_sub(bar_width), 24)
+            usage_text_fitting(
+                footer,
+                badges.cache_breaks,
+                cols.saturating_sub(bar_width),
+                24,
+            )
         }
         UsagePlacement::Fullscreen { below: true } => String::new(),
     };
@@ -431,9 +446,13 @@ pub(in crate::cli) fn repl_footer_line(
 }
 
 /// 全屏下一行放不下时 footer 底下那一行：用量右对齐，整行垫满（重画时不先擦）。
-pub(in crate::cli) fn repl_usage_line(footer: &ReplFooterStatus, cols: usize) -> String {
+pub(in crate::cli) fn repl_usage_line(
+    footer: &ReplFooterStatus,
+    cache_breaks: u64,
+    cols: usize,
+) -> String {
     let cols = cols.max(1);
-    let text = usage_text_fitting(footer, cols, 0);
+    let text = usage_text_fitting(footer, cache_breaks, cols, 0);
     if text.is_empty() {
         return " ".repeat(cols);
     }
@@ -454,12 +473,18 @@ fn pad_row(line: &str, cols: usize) -> String {
 /// 用量那串字，按宽度降级：先丢输出速度，再丢累计，最后丢百分比，上下文表撑到最后。
 /// `reserve` 是同一行上还要留给左边的列数（跟在 footer 右端时，模式和模型名至少要
 /// 留出这么宽）。
-fn usage_text_fitting(footer: &ReplFooterStatus, width: usize, reserve: usize) -> String {
+fn usage_text_fitting(
+    footer: &ReplFooterStatus,
+    cache_breaks: u64,
+    width: usize,
+    reserve: usize,
+) -> String {
     // The usage figures carry only the standing gauges — how much context is
     // left, and what the session has cost. The per-turn figure is transient and
     // already has its own home in the `Token:` line printed after each reply.
     let usage = render::TokenMeter {
         turn_tokens: 0,
+        cache_breaks,
         ..footer.token_usage
     };
     let mut text = String::new();

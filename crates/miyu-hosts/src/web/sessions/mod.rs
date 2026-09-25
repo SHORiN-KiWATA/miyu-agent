@@ -610,6 +610,7 @@ pub(in crate::web) fn session_state(
         cumulative_tokens: context.cumulative_tokens,
         cumulative_prompt_tokens: context.cumulative_prompt_tokens,
         cumulative_cache_read_tokens: context.cumulative_cache_read_tokens,
+        cache_breaks: state_store.cache_break_count(&session_id).unwrap_or(0),
         session_id: session_id.to_string(),
         session_name: record
             .as_ref()

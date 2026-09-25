@@ -338,6 +338,14 @@ impl OpenAiCompatibleClient {
                             prefix: Some(&prefix),
                         },
                     );
+                    // 断缓存：本来能读到的有一大截重算了（09-25，见 `cache_break`）。
+                    crate::llm::cache_break::judge(
+                        self.request_scope,
+                        self.log_identity.session(),
+                        turn.as_deref(),
+                        &prefix,
+                        result.usage.as_ref(),
+                    );
                     tracing::debug!(
                         request_id,
                         attempt = attempt + 1,

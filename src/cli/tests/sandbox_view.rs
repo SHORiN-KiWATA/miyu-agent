@@ -18,6 +18,7 @@ fn state(sandbox: Option<&str>, default: bool, readonly: bool) -> ipc::SessionSt
         sandbox_writable: vec!["root".into(), "/tmp".into(), "~/.cargo".into()],
         sandbox_readable: vec!["everything (read-only)".into()],
         mode: "normal".to_string(),
+        cache_breaks: 0,
     }
 }
 

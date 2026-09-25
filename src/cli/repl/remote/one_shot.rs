@@ -1011,6 +1011,8 @@ async fn run_remote_chat_inner(
             // WebUI 没这问题:它自己解 SSE。
             "chat.round_usage" => {
                 if let Some(live) = live.as_deref_mut() {
+                    // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
+                    live.cache_breaks = ipc_u64(&data, "cache_breaks");
                     let usage = data.get("usage").cloned().unwrap_or_default();
                     // prompt+completion 即该请求结束时的上下文实际占用,
                     // 与进程内那条路同一个口径。

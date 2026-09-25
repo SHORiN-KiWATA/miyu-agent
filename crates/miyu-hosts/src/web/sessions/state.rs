@@ -372,6 +372,9 @@ pub(in crate::web) fn session_state_for(
         .sandbox
         .clone()
         .or_else(|| default_root.map(|root| root.to_string_lossy().into_owned()));
+    let cache_breaks = session_store
+        .cache_break_count(&record.session_id)
+        .unwrap_or(0);
     Ok(ipc::SessionState {
         context_tokens: context.tokens,
         context_window: context.window,
@@ -379,6 +382,7 @@ pub(in crate::web) fn session_state_for(
         cumulative_tokens: context.cumulative_tokens,
         cumulative_prompt_tokens: context.cumulative_prompt_tokens,
         cumulative_cache_read_tokens: context.cumulative_cache_read_tokens,
+        cache_breaks,
         mode: super::session_mode_label(&record).to_string(),
         session_id: record.session_id,
         session_name: record.name,

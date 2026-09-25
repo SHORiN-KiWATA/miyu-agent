@@ -665,6 +665,8 @@ impl Compactor {
             transcript = transcript.as_deref().unwrap_or(""),
             "context_rewrite reason=compact"
         );
+        // 下一次主对话请求从折叠处断开是预期重建，不记断缓存（09-25，`llm::cache_break`）。
+        miyu_core::llm::note_cache_rebuild(&self.state.session_id());
         Ok(Some(CompactResult {
             usage: compact_usage,
             usage_estimated,

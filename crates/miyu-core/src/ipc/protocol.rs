@@ -53,6 +53,10 @@ pub struct SessionState {
     /// 车道跟过去。老 daemon 给空串——客户端按当前模式处理。
     #[serde(default)]
     pub mode: String,
+    /// 会话树（这条会话 + 名下子代理）一共断过几次缓存（09-25，`llm::cache_break`）。footer 挂在
+    /// C% 后面；老 daemon 不报就是 0，什么都不挂。
+    #[serde(default)]
+    pub cache_breaks: u64,
 }
 
 /// 输入框右上角那行 `/goal …` 提示要的全部信息。见 [`IpcCommand::GoalStatus`]。

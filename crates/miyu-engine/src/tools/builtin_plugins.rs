@@ -44,12 +44,10 @@ fn reg_memes(registry: &mut ToolRegistry, config: &AppConfig, paths: &MiyuPaths)
     memes::register(registry, config.clone(), paths.clone());
 }
 
-/// 本地会话专属:平台会话有 send_message_to_user。只在 QQ 的 ws 已连上时注册
-/// (TurnResources 的缓存键带了连接位,连上/掉线会各自重建一份)。
+/// 本地会话专属:平台会话有 send_message_to_user。配置里开了就恒在,不看连没连上——
+/// 掉线在调用时拦,工具表不随连接变(09-25,见 `platform_outreach` 模块头)。
 fn reg_platform_outreach(registry: &mut ToolRegistry, config: &AppConfig, _paths: &MiyuPaths) {
-    if platform_outreach::qq_connected() {
-        platform_outreach::register(registry, config);
-    }
+    platform_outreach::register(registry, config);
 }
 
 fn reg_web_images(registry: &mut ToolRegistry, config: &AppConfig, paths: &MiyuPaths) {

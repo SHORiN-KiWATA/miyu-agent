@@ -31,12 +31,7 @@ pub fn register(
     if crate::runtime::voice_port().is_some_and(|port| port.tts_available()) {
         register_voice_message(registry, context.clone());
     }
-    register_outreach(
-        registry,
-        &context,
-        miyu_engine::tools::platform_outreach::qq_connected(),
-        lane,
-    );
+    register_outreach(registry, &context, lane);
     // 搜图的收尾指令分宿主:平台回合里图要由模型显式发,而且发完再写正文就是
     // 第二条消息(用户 09-21)。和 generate_image 一样,平台面换一份结果指令;
     // 工具声明本身一个字节不变,不掰缓存前缀。
@@ -127,14 +122,14 @@ pub fn register(
 /// 群友——用户裁定发消息是基础能力;而且工具面按触发者分脸会掰断缓存前缀。收件人
 /// 范围按模式:普通模式任意好友/群,开发模式只发管理员。只在 QQ 连着时装,免得模型
 /// 对着断线的通道试。`connected` 由调用方传进来,测试里不用去碰进程级的端口。
+/// QQ 会话里发到别的好友/群的工具。不看连没连上:掉线在调用时拦,工具表不随连接变(09-25)。
 pub(crate) fn register_outreach(
     registry: &mut ToolRegistry,
     context: &PlatformTurnContext,
-    connected: bool,
     lane: miyu_base::config::PersonaLane,
 ) {
     // QQ 会话的 platform 记的是协议名 onebot(测试夹具同款)。
-    if context.conversation.platform != "onebot" || !connected {
+    if context.conversation.platform != "onebot" {
         return;
     }
     let account = context.conversation.account_id.parse::<i64>().ok();

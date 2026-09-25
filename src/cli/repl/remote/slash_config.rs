@@ -54,13 +54,26 @@ impl RemoteRepl {
     }
 
     pub(super) async fn cmd_usage(&mut self) -> Result<LoopStep> {
-        let snapshot = StateStore::new(&self.paths)?.usage_snapshot()?;
+        let store = StateStore::new(&self.paths)?;
+        let snapshot = store.usage_snapshot()?;
         let usage = self.footer.token_usage;
         let context = Some((usage.session_tokens, usage.context_window));
-        repl_note(
-            &mut self.live_repl,
-            &format!("{}\n\n", usage_overview_text(&snapshot, context)),
-        )?;
+        let mut text = usage_overview_text(&snapshot, context);
+        // 断缓存按会话树算：切进子代理会话看的时候也是整棵树（09-25）。
+        let root = self
+            .live_repl
+            .visits
+            .first()
+            .map(|parent| parent.session_id.clone())
+            .unwrap_or_else(|| self.active_session_id.clone());
+        let total = store.cache_break_count(&root).unwrap_or(0);
+        let recent = store.recent_cache_breaks(&root, 10).unwrap_or_default();
+        let breaks = cache_breaks_text(total, &recent);
+        if !breaks.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(&breaks);
+        }
+        repl_note(&mut self.live_repl, &format!("{text}\n\n"))?;
         Ok(LoopStep::Continue)
     }
 

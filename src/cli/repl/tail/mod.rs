@@ -260,6 +260,9 @@ pub(in crate::cli) struct LiveReplTail {
     /// 回合里的 `/session` 面板删掉了自己待着的那条会话：`RemoteRepl` 切到兜底会话之后，
     /// 在这一行把面板开回来接着删（09-25）。一次性，用过即清。
     pub(in crate::cli) reopen_session_picker: Option<usize>,
+    /// 这条会话（连同名下子代理）断过几次缓存（09-25，`llm::cache_break`）。会话级状态，
+    /// 不放进每次整份覆盖的 footer：切会话时取快照里的数，每次请求结束取用量事件里的数。
+    pub(in crate::cli) cache_breaks: u64,
     /// 界面上的 Σ 是空闲循环按轮询改的（上次显式刷新之后才读的那份）。主循环整份
     /// 覆盖之前据此把它收回来，见 `ReplFooterStatus::adopt_cumulative`。
     pub(in crate::cli) cumulative_from_poll: bool,
@@ -699,6 +702,7 @@ impl LiveReplTail {
             suppress_switch_note: false,
             session_footer_stale: false,
             reopen_session_picker: None,
+            cache_breaks: 0,
             cumulative_from_poll: false,
             lobby_lane_pending: false,
         })
@@ -780,6 +784,7 @@ impl LiveReplTail {
         crate::cli::footer::FooterBadges {
             readonly: self.editor.readonly,
             visit_depth: self.visits.len(),
+            cache_breaks: self.cache_breaks,
         }
     }
 

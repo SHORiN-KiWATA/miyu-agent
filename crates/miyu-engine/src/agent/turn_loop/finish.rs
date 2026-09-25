@@ -87,6 +87,7 @@ impl Agent {
                 .session_cumulative_token_totals()
                 .unwrap_or_default();
             cumulative.add(turn_tokens);
+            let cache_breaks = self.record_cache_breaks();
             on_event(AgentEvent::RoundUsage {
                 round: Box::new(round),
                 turn: turn_tokens,
@@ -95,10 +96,23 @@ impl Agent {
                 estimated: st.usage_accumulator.estimated,
                 provider_id: result.provider_id.clone(),
                 model: result.model.clone(),
+                cache_breaks,
             })?;
         }
         st.last_round_completed_at = Some(Instant::now());
         Ok(())
+    }
+
+    /// 这次请求判出来的断缓存落库(09-25,`llm::cache_break`),返回会话树一共断过几次。
+    /// 记账失败不算回合失败。
+    fn record_cache_breaks(&self) -> u64 {
+        let session = self.state.session_id();
+        for entry in miyu_core::llm::take_cache_breaks(&session) {
+            if let Err(error) = self.state.record_cache_break(&entry) {
+                tracing::debug!(error = %error, "cache break not recorded");
+            }
+        }
+        self.state.cache_break_count(&session).unwrap_or(0)
     }
 
     /// 模型没有再要工具(或工具关着):`Some(result)` 是回合的最终结果;`None` 表示排队的

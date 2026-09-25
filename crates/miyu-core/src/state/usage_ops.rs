@@ -7,6 +7,27 @@
 use crate::state::*;
 
 impl StateStore {
+    // ---- 断缓存（09-25）----
+    //
+    // 纯转发。SQL 在 `conversation_db/cache_breaks.rs`，判定在 `llm::cache_break`。
+
+    pub fn record_cache_break(&self, entry: &crate::llm::CacheBreak) -> Result<()> {
+        self.conv_db.record_cache_break(entry)
+    }
+
+    /// 会话树（这条会话 + 名下所有子代理）一共断过几次缓存。
+    pub fn cache_break_count(&self, root: &str) -> Result<u64> {
+        self.conv_db.cache_break_count(root)
+    }
+
+    pub fn recent_cache_breaks(
+        &self,
+        root: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::state::CacheBreakRecord>> {
+        self.conv_db.recent_cache_breaks(root, limit)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn record_subagent_usage(
         &self,

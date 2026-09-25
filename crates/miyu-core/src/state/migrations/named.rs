@@ -18,10 +18,33 @@ struct NamedMigration {
     apply: fn(&Connection) -> Result<()>,
 }
 
-const NAMED_MIGRATIONS: &[NamedMigration] = &[NamedMigration {
-    id: "2026-09-24-session-scoped-state",
-    apply: apply_session_scoped_state,
-}];
+const NAMED_MIGRATIONS: &[NamedMigration] = &[
+    NamedMigration {
+        id: "2026-09-24-session-scoped-state",
+        apply: apply_session_scoped_state,
+    },
+    NamedMigration {
+        id: "2026-09-25-cache-breaks",
+        apply: apply_cache_breaks,
+    },
+];
+
+/// 断缓存记录（09-25，见 `llm::cache_break`）：一次一行，挂会话级联删除。
+fn apply_cache_breaks(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cache_breaks (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+             turn_id     TEXT,
+             at          TEXT NOT NULL,
+             lost_tokens INTEGER NOT NULL,
+             cause       TEXT NOT NULL,
+             idle_secs   INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE INDEX IF NOT EXISTS idx_cache_breaks_session ON cache_breaks(session_id, id);",
+    )?;
+    Ok(())
+}
 
 /// 会话级零碎状态入库（会话项目第 1 段）。
 ///

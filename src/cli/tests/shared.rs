@@ -43,6 +43,7 @@ pub(super) fn detached_tail() -> LiveReplTail {
         suppress_switch_note: false,
         session_footer_stale: false,
         reopen_session_picker: None,
+        cache_breaks: 0,
         cumulative_from_poll: false,
         lobby_lane_pending: false,
         jobs: Vec::new(),

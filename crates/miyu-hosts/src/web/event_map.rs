@@ -499,6 +499,7 @@ impl RunEventMapper {
                 estimated,
                 provider_id,
                 model,
+                cache_breaks,
             } => {
                 self.record_live_turn(&round, &cumulative);
                 self.round_endpoint = match (provider_id.as_deref(), model.as_deref()) {
@@ -526,6 +527,8 @@ impl RunEventMapper {
                         "estimated": estimated,
                         "provider_id": provider_id,
                         "model": model,
+                        // 会话树断过几次缓存（09-25），footer 挂在 C% 后面。
+                        "cache_breaks": cache_breaks,
                     }),
                 );
             }

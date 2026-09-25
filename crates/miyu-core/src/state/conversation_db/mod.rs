@@ -1,4 +1,6 @@
 mod attachments;
+mod cache_breaks;
+pub use cache_breaks::CacheBreakRecord;
 mod inline_media;
 pub use attachments::{
     USER_ATTACHMENT_KIND_FILE, USER_ATTACHMENT_KIND_IMAGE, USER_ATTACHMENT_KIND_TEXT,

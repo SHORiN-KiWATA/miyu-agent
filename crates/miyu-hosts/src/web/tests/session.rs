@@ -1134,11 +1134,11 @@ fn terminal_session_mode_flips_the_terminal_session_and_points_the_lane_at_it() 
 }
 
 /// BUG-14(09-18):QQ 里要能「发到别的群/好友」——平台版 `send_qq_message` +
-/// `qq_contacts` 装给所有触发者(群友也有,用户裁定;两张脸一致也不掰缓存),只在
-/// QQ 连着时装;开发模式只有 `send_qq_message` 且只发管理员;终端版在收口函数里
-/// 照旧摘掉(它看终端开关)。
+/// `qq_contacts` 装给所有触发者(群友也有,用户裁定;两张脸一致也不掰缓存);开发模式只有
+/// `send_qq_message` 且只发管理员;终端版在收口函数里照旧摘掉(它看终端开关)。
+/// 09-25 起连没连上都装(掉线在调用时拦):工具表随连接变,会作废所有会话的缓存前缀。
 #[test]
-fn platform_outreach_tools_go_to_everyone_but_need_a_connection() {
+fn platform_outreach_tools_go_to_everyone_whether_or_not_qq_is_connected() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     let mut config = AppConfig::default();
@@ -1155,14 +1155,12 @@ fn platform_outreach_tools_go_to_everyone_but_need_a_connection() {
     assert!(registry.contains(outreach));
     crate::platforms::apply_platform_turn_scope(&mut registry, &config, &paths, &guest, None);
     assert!(!registry.contains(outreach), "终端版在平台会话里要摘掉");
-    crate::platforms::tool::register_outreach(&mut registry, &guest, false, PersonaLane::Active);
-    assert!(!registry.contains(outreach), "QQ 没连着不装");
-    crate::platforms::tool::register_outreach(&mut registry, &guest, true, PersonaLane::Active);
-    assert!(registry.contains(outreach), "群友也有平台版");
+    crate::platforms::tool::register_outreach(&mut registry, &guest, PersonaLane::Active);
+    assert!(registry.contains(outreach), "群友也有平台版，QQ 没连着也在");
     assert!(registry.contains(contacts));
     // 开发模式:只有发 QQ,且收件人是管理员枚举;没有地址簿。
     let mut dev = miyu_engine::tools::ToolRegistry::new();
-    crate::platforms::tool::register_outreach(&mut dev, &guest, true, PersonaLane::Dev);
+    crate::platforms::tool::register_outreach(&mut dev, &guest, PersonaLane::Dev);
     assert!(dev.contains(outreach));
     assert!(!dev.contains(contacts), "开发模式没有地址簿工具");
     // 夹具配置里没配管理员,枚举列不出来;认「没有 kind」这个开发版独有的形状。
@@ -1180,9 +1178,27 @@ fn platform_outreach_tools_go_to_everyone_but_need_a_connection() {
             .unwrap();
     miyu_engine::tools::platform_outreach::register(&mut registry, &config);
     crate::platforms::apply_platform_turn_scope(&mut registry, &config, &paths, &admin, None);
-    crate::platforms::tool::register_outreach(&mut registry, &admin, true, PersonaLane::Active);
+    crate::platforms::tool::register_outreach(&mut registry, &admin, PersonaLane::Active);
     assert!(registry.contains(outreach), "管理员同样有平台版");
     assert!(registry.contains(contacts));
+}
+
+/// 终端这一侧：配置里开了「从终端发到 QQ」和 QQ，就算 NapCat 没连上，本地会话的工具表里也
+/// 有 `send_qq_message`（09-25：原来连上才装，daemon 重启、QQ 重连一次，所有开着的会话下一次
+/// 请求整条缓存前缀作废）。掉线时调用会明说没连上，见 `platform_outreach` 的用例。
+#[test]
+fn terminal_outreach_stays_on_the_tool_face_while_qq_is_offline() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = test_paths(temp.path());
+    let mut config = AppConfig::default();
+    config.tools.enabled = true;
+    config.platforms.terminal_outreach = true;
+    config.platforms.qq.enabled = true;
+    let registry =
+        miyu_engine::tools::build_tool_registry(&config, &paths, PersonaLane::Active, true)
+            .unwrap();
+    assert!(registry.contains(miyu_engine::tools::platform_outreach::TOOL_NAME));
+    assert!(registry.contains(miyu_engine::tools::platform_outreach::CONTACTS_TOOL_NAME));
 }
 
 /// 会话钉的模型被供应商下架/改名之后：退回全局池，并把这份失效的覆盖清掉。
