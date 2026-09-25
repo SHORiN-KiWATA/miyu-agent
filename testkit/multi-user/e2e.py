@@ -178,6 +178,25 @@ def run_turn(client, session_id, text):
     raise AssertionError("turn did not finish")
 
 
+def usage_records():
+    """用量流水的每一笔（只取 `acct`）。09-25 起在 `state/usage.db`（会话项目第 1 段把账本搬进了库），
+    老版本在 `usage-history.jsonl`——两处都认，新旧二进制都能跑。"""
+    db = HOME / "state" / "usage.db"
+    if db.exists():
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            return [{"acct": acct} for (acct,) in con.execute("SELECT acct FROM usage_records")]
+        finally:
+            con.close()
+    history = HOME / "state" / "usage-history.jsonl"
+    if not history.exists():
+        candidates = list(HOME.rglob("usage-history.jsonl"))
+        history = candidates[0] if candidates else history
+    if not history.exists():
+        return []
+    return [json.loads(line) for line in history.read_text().splitlines() if line.strip()]
+
+
 def main():
     if OUT.exists():
         import shutil
@@ -369,11 +388,7 @@ def main():
         check("管理员回合的系统提示词带属主档案、不带成员档案",
               len(admin_prompts) == 1 and "爱丽丝" not in admin_prompts[0], f"{len(admin_prompts)}")
         time.sleep(1.5)
-        history = HOME / "state" / "usage-history.jsonl"
-        if not history.exists():
-            candidates = list(HOME.rglob("usage-history.jsonl"))
-            history = candidates[0] if candidates else history
-        records = [json.loads(line) for line in history.read_text().splitlines() if line.strip()] if history.exists() else []
+        records = usage_records()
         member_records = [record for record in records if record.get("acct")]
         status, me = member.call("GET", "/api/account")
         member_id = me.get("account", {}).get("account_id")

@@ -1188,5 +1188,101 @@
       "lane": "qq-relay"
     }
   ],
-  "known_red": []
+  "known_red": [
+    {
+      "name": "panel_keeps_body",
+      "reason": "回合中反复开 /models、/session 之后思考收成了不止一行（main 8c18c5d5 上同样红，21/23）；同一走查里「面板开着时思考那行还在」09-25 已修",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "readonly_toggle",
+      "reason": "开项目目录（s4）后项目根没进可写区，模型和视图都不知道项目根（main 8c18c5d5 上同样红，main 另多红 s3 两条）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "toast_expiry",
+      "reason": "15 秒内等不到编辑器的 NORMAL 标记（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "two_views",
+      "reason": "09-20 起 miyu 启动就开一条新会话（05e57350），第二个终端不再接进第一个的会话，走查还按 09-19 的口径（main 8c18c5d5 上同样红，6/13）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "rp_interleave",
+      "reason": "桩把思考和正文逐字交替吐（真供应商不这样），正文碎成 5 段；判据是给 MODE=empty 那条回归定的（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "rp_models",
+      "reason": "回合中 /models 选完的回执行没出来（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "oobe_top",
+      "reason": "退出设置时光标复位没落在同步块里（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "webui_markdown",
+      "reason": "页面只注入 app.js、没有定义 t() 的 i18n.js，09-23 网页全量 i18n 之后加载即报 t is not defined（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "webui_vendor_headers",
+      "reason": "网页 09-10 起要登录，等 /api/config 拿到 401 被当成 daemon 没起来（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "settings_provider_rename",
+      "reason": "网页 09-10 起要登录，走查没登录，请求一律 401（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "composer_placeholder",
+      "reason": "网页 09-10 起要登录，走查没登录，请求一律 401（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "cli",
+      "reason": "桩把用量写死成 42/7，压缩前读数是假的 49、压完退回本地估算约 3 万，「压缩后上下文明显变小」判反（opencode 调研 3.7 第 1 条点名的桩假红；main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "subagent_dev",
+      "reason": "开发模式内置提示词 09-24 已清空（afafe349），走查还在找旧的那句（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "fish_accept_line",
+      "reason": "脚本还从 src/shell/fish.rs 读 hook 源码，09-16 拆 crate 后已搬走（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "zsh_accept_line",
+      "reason": "脚本还从 src/shell/zsh.rs 读 hook 源码，09-16 拆 crate 后已搬走（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "multi_user_e2e",
+      "reason": "插件清单多了 skills（09-24 技能并入插件 fa7c9310），走查期望没更新（main 8c18c5d5 上同样红，105/106）；用量改读 usage.db 已在 09-25 修",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "battery_care",
+      "reason": "脚本还指向 src/scripts/personas/default/battery-care，09-23 出厂脚本已并进 src/personas/（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "reddit_search",
+      "reason": "脚本还指向 src/scripts/personas/default/ 下的脚本，09-23 出厂脚本已并进 src/personas/（main 8c18c5d5 上同样红）",
+      "since": "2026-09-25"
+    },
+    {
+      "name": "direct_overlay_keys",
+      "reason": "Esc 那一段验的是直连模式下的子代理浮层：浮层按会话项目第 4 段删除清单去掉了（用户批准），直连模式没有 daemon、切不进子会话，这一段验的东西已不存在（main 上绿）；x 停后台任务那一段照常绿",
+      "since": "2026-09-25"
+    }
+  ]
 }

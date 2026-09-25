@@ -202,6 +202,33 @@ def finish_frame(master, sink, timeout=1.0):
         sink.extend(chunk)
 
 
+# 子代理的会话（会话项目第 3 段）：和 `subagent_visit.py` 同一套判据。
+CHILD_TASK = "来自主会话的任务"
+CHILD_UP = "↑ 主会话"
+CHILD_BADGE = "子代理 ↳1"
+
+
+def in_child_session(screen):
+    """切进了子代理自己的会话：第一句画成「来自主会话的任务」，footer 带徽标，任务条有「↑ 主会话」。"""
+    joined = "\n".join(screen)
+    return CHILD_TASK in joined and CHILD_BADGE in joined and CHILD_UP in joined
+
+
+def back_to_parent(master, sink, timeout=10.0):
+    """`/back` 回主会话；回来了（看得见用户那句、没有徽标和「↑ 主会话」）返回 True。"""
+    os.write(master, b"/back")
+    drain_until(master, sink, "/back", 3.0)
+    os.write(master, b"\r")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        settle(master, sink, quiet=0.4, timeout=1.5)
+        screen = render(bytes(sink))
+        joined = "\n".join(screen)
+        if PROMPT in joined and CHILD_BADGE not in joined and CHILD_UP not in joined:
+            return True
+    return False
+
+
 def drain(master, seconds, sink):
     import select
     deadline = time.time() + seconds
@@ -582,8 +609,10 @@ def main():
         )
         os.write(master, b"\r")
 
-        # item03/06：**跑着的时候**的子代理那一行点开是面板，面板抬头上的
-        # 工具次数与词元要跟着涨（原来只在跑完报一次量，抬头一路停在 0）。
+        # item03/06：**跑着的时候**的子代理那一行点开，切进它自己的会话（会话项目第 3 段，
+        # 原来是盖在正文上的浮层），在那儿看得到它自己的过程；`/back` 回主会话。
+        # 09-25 前这里还按浮层走：点开后按 Esc——新设计下 Esc 只是不看了、人还在子会话里，
+        # 后面三十多条检查全落在子会话上连锁红（红绿账建账时查明）。
         report["item03_live_subagent_opens_panel"] = False
         report["item06_subagent_counts_rise"] = False
         mark_sub = len(sink)
@@ -598,25 +627,26 @@ def main():
             )
             if sub_row is not None:
                 click(master, sink, 5, sub_row, quiet=0.2, timeout=2.0)
+                drain_until(master, sink, CHILD_TASK, 10.0)
+                settle(master, sink, quiet=0.3, timeout=2.0)
                 live_panel = render(bytes(sink))
                 (OUT / "subagent-live.txt").write_text(
                     "\n".join(live_panel), encoding="utf-8"
                 )
-                report["item03_live_subagent_opens_panel"] = any(
-                    "Esc" in line and "关闭" in line for line in live_panel
-                )
+                report["item03_live_subagent_opens_panel"] = in_child_session(live_panel)
+                # 子会话里看得到它自己的过程：它跑的那条命令、它想的那段，一步步长出来。
+                # 换会话会先清屏再按库回放，这里看得到的都是子代理自己的。
                 deadline = time.time() + 12.0
                 while time.time() < deadline:
                     settle(master, sink, quiet=0.3, timeout=1.0)
                     screen_now = "\n".join(render(bytes(sink)))
-                    if re.search(r"工具调用 [1-9]", screen_now):
+                    if "运行命令" in screen_now or "已思考" in screen_now:
                         report["item06_subagent_counts_rise"] = True
                         break
                 (OUT / "subagent-live-counts.txt").write_text(
                     "\n".join(render(bytes(sink))), encoding="utf-8"
                 )
-                os.write(master, b"\x1b")
-                settle(master, sink)
+                back_to_parent(master, sink)
 
         report["reply_seen"] = drain_until(master, sink, "走查的回复", 30.0)
         drain(master, 1.5, sink)
@@ -923,40 +953,31 @@ def main():
                 or re.search(r"\x1b\[38;5;(?:9|1)m[^\n]*运行命令", stream_now)
             )
 
-            # 子代理那一步 → 覆盖层
+            # 子代理那一步 → 切进它的会话（09-25 改，理由同上面 item03）
             sub = find_row("子代理")
             if sub is not None:
                 click(master, sink, 5, sub)
+                drain_until(master, sink, CHILD_TASK, 10.0)
+                settle(master, sink, quiet=0.4, timeout=3.0)
                 panel = render(bytes(sink))
                 (OUT / "subagent-panel.txt").write_text("\n".join(panel), encoding="utf-8")
-                report["subagent_overlay"] = any("Esc" in line for line in panel)
+                report["subagent_overlay"] = in_child_session(panel)
                 report["subagent_inner_timeline"] = any(
-                    ("运行命令" in line or "已思考" in line) for line in panel[1:]
+                    ("运行命令" in line or "已思考" in line) for line in panel
                 )
-                # item17：面板里的一步也该能点开，和主线一套交互
-                # 面板是**贴着底**开的，上面那截还是正文（主线时间线也有
-                # 「运行命令」「已思考」）。从面板自己的页脚往上找，找到的才是
-                # 面板里的步。
-                foot = next(
-                    (i for i, line in enumerate(panel) if "Esc" in line and "关闭" in line),
-                    None,
-                )
-                # 子代理开口说正文之后，前面那几步会收成一行 `⌄ Worked for …`
-                #（和主线一个规矩）——面板里能点开的就是那一行。它还没说话时
-                # 则是平铺的步。两种都认。
-                # 只在面板自己的范围里找（标题栏到页脚之间）：面板上方的主线时间线
-                # 也有「运行命令」「已思考」，扫到那儿点到的是别人的块。收缩行合着
-                # 是 `›`、点开才是 `⌄`（和主线一样），两种都认。
-                top = next(
-                    (i for i, line in enumerate(panel) if "── 子代理" in line),
-                    None,
+                # item17：子会话里的一步也该能点开，和主线一套交互。子代理开口说正文之后，
+                # 前面那几步会收成一行摘要（和主线一个规矩）；还没说话时是平铺的步。两种都认。
+                # 从输入框往上找：任务条、footer 在它底下，不会误点。
+                input_top = next(
+                    (i for i, line in enumerate(panel) if line.startswith(BAR) and PROMPT not in line),
+                    len(panel),
                 )
                 inner = None
-                if foot is not None and top is not None:
-                    for i in range(foot - 1, top, -1):
-                        if any(mark in panel[i] for mark in ("›", "⌄", "运行命令", "已思考")):
-                            inner = i
-                            break
+                for i in range(min(input_top, len(panel)) - 1, -1, -1):
+                    line = panel[i]
+                    if is_fold_summary(line) or "运行命令" in line or "已思考" in line:
+                        inner = i
+                        break
                 report["item17_subagent_step_expands"] = False
                 if inner is not None:
                     before_inner = panel
@@ -966,12 +987,7 @@ def main():
                         "\n".join(after_inner), encoding="utf-8"
                     )
                     report["item17_subagent_step_expands"] = after_inner != before_inner
-                os.write(master, b"\x1b")
-                settle(master, sink)
-                closed = render(bytes(sink))
-                report["subagent_overlay_closes"] = any(
-                    line.startswith(BAR) for line in closed
-                ) and not any("Esc" in line for line in closed)
+                report["subagent_overlay_closes"] = back_to_parent(master, sink)
 
             back = find_last_row("⌄")
             if back is not None:
@@ -1870,8 +1886,8 @@ def main():
         "item05_ctrl_c_keeps_keyboard_mode": "5 取消不翻键盘协议",
         "item05_ctrl_c_keeps_input_clean": "5 取消后输入框没怪字符",
         "item01_reopen_keeps_pre_tool_thought": "1 重开带回工具前那段思考",
-        "item03_live_subagent_opens_panel": "3 跑着的子代理行能开面板",
-        "item06_subagent_counts_rise": "6 面板上的工具次数会涨",
+        "item03_live_subagent_opens_panel": "3 跑着的子代理行点开进它的会话",
+        "item06_subagent_counts_rise": "6 子会话里看得到它自己的过程",
         "item08_job_strip_has_tokens": "8 状态行时间左边有词元数",
         "item08_job_panel_title_refreshes": "8 后台面板抬头的量会刷新",
         "item07_job_panel_step_has_content": "7 面板里工具那步点开有内容",
@@ -1900,7 +1916,7 @@ def main():
         "item05_ctrlc_no_strip_flash": "5 Ctrl+C 停任务不闪状态行",
         "item06_no_clear_while_streaming": "6 输出期间 Ctrl+L 不清屏",
         "item13_no_full_clears_while_streaming": "13 流式输出期间不整屏擦",
-        "subagent_overlay": "13/17 子代理面板打得开",
+        "subagent_overlay": "13/17 点子代理那一步进它的会话",
         "item04_overlay_has_frame": "4 后台面板有圆角框",
         "item05_stop_closes_overlay": "5 停任务后面板自动退",
         "item06_command_glyph_is_dollar": "6 跑命令的图标是 $",
@@ -1911,7 +1927,7 @@ def main():
         "item18_atom_glyph": "18 思考图标是原子",
         "item15_slash_alone_opens_hint": "15 一个 / 就出候选",
         "item16_input_text_selectable": "16 输入框里的字能选",
-        "item17_subagent_step_expands": "17 子代理面板里的步能点开",
+        "item17_subagent_step_expands": "17 子会话里的步能点开",
         "item18_cancel_is_a_toast": "18 已取消是通知",
         "item19_ctrl_c_follows_ladder": "19 Ctrl+C 有优先级",
         "item20_cancel_leaves_no_tag": "20 取消后不留可交互的 tag",
