@@ -62,6 +62,12 @@ SUBAGENT_COMMAND = os.environ.get("STUB_SUBAGENT_COMMAND", TOOL_COMMAND)
 # 只跑一条的话"趁它还活着点开看看"这件事根本来不及做。
 SUBAGENT_BG_COMMAND = os.environ.get("STUB_SUBAGENT_BG_COMMAND", SUBAGENT_COMMAND)
 SUBAGENT_BG_ROUNDS = int(os.environ.get("STUB_SUBAGENT_BG_ROUNDS", "3"))
+# 置 STUB_GRANDCHILDREN=N：后台子代理先派 N 个后台孙代理（`走查孙代理1`…），再跑它自己那几轮
+# 命令。孙代理的 prompt 带 `GRANDCHILD-SENT`、不带 `BGSUB-SENT`，认得出来；它跑一条慢命令
+# （`STUB_GRANDCHILD_COMMAND`）。任务条的「（+N）」、切进子代理后挂在它下面的孙代理、Ctrl+C
+# 连孙代理一起停，都靠它（09-26）。
+GRANDCHILDREN = int(os.environ.get("STUB_GRANDCHILDREN", "0"))
+GRANDCHILD_COMMAND = os.environ.get("STUB_GRANDCHILD_COMMAND", "sleep 90; printf 'GCOUT\\n'")
 # 置 STUB_EXTRA_CALLS='[{"name":"load_tools","arguments":{"names":["x"]}},{"name":"x","arguments":{}}]'：
 # 按顺序再调这几个工具（走查脚本工具的显示名之类，阶段表里没有的都从这儿来）。
 EXTRA_CALLS = json.loads(os.environ.get("STUB_EXTRA_CALLS", "[]"))
@@ -156,12 +162,19 @@ class Handler(BaseHTTPRequestHandler):
             SUBAGENT_MARK.encode() in body and MAIN_MARK.encode() not in body
         )
         inside_bg_subagent = inside_subagent and b"BGSUB-SENT" in body
+        inside_grandchild = (
+            inside_subagent and b"GRANDCHILD-SENT" in body and b"BGSUB-SENT" not in body
+        )
         is_summary = SUMMARY_MARK in body
         if is_summary:
             stage = None
         elif inside_subagent:
+            spawn = GRANDCHILDREN if inside_bg_subagent else 0
             rounds = SUBAGENT_BG_ROUNDS if inside_bg_subagent else 1
-            stage = "tool" if done < rounds else None
+            if done < spawn:
+                stage = "grandchild"
+            else:
+                stage = "tool" if done < spawn + rounds else None
         elif wants_bg_subagent:
             stage = "background_subagent"
         elif wants_usage:
@@ -245,6 +258,13 @@ class Handler(BaseHTTPRequestHandler):
                     "prompt": f"{SUBAGENT_MARK}BGSUB-SENT：跑一条命令看看，然后简单说一句。",
                     "background": True,
                 }, ensure_ascii=False)
+            elif stage == "grandchild":
+                name = "subagent"
+                arguments = json.dumps({
+                    "description": f"走查孙代理{done + 1}",
+                    "prompt": f"{SUBAGENT_MARK}GRANDCHILD-SENT：跑一条慢命令。",
+                    "background": True,
+                }, ensure_ascii=False)
             elif stage == "todo":
                 name = "todowrite"
                 todos = [
@@ -294,7 +314,9 @@ class Handler(BaseHTTPRequestHandler):
                 name = "run_command"
                 # 子代理内层跑的那条要慢一点：面板标题上的工具次数与词元、状态行
                 # 上那串量，都只有在它还跑着的时候才看得见。
-                if inside_bg_subagent:
+                if inside_grandchild:
+                    command = GRANDCHILD_COMMAND
+                elif inside_bg_subagent:
                     command = SUBAGENT_BG_COMMAND
                 elif inside_subagent:
                     command = SUBAGENT_COMMAND

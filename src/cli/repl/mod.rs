@@ -21,6 +21,8 @@ pub(in crate::cli) mod session;
 pub(in crate::cli) mod session_picker;
 /// 任务条：会话行（切进子代理会话、回主会话）与后台任务行。
 pub(in crate::cli) mod strip;
+/// 任务条上列哪些行、按什么顺序、挂在哪一层。
+pub(in crate::cli) mod strip_tree;
 
 pub(super) mod direct;
 pub(super) mod editor;

@@ -43,7 +43,7 @@ fn waiters() -> &'static Mutex<HashMap<String, oneshot::Sender<SubagentTaskState
     WAITERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn resolve_waiter(session_id: &str, state: SubagentTaskState) {
+pub(in crate::web) fn resolve_waiter(session_id: &str, state: SubagentTaskState) {
     if let Some(sender) = waiters().lock().unwrap().remove(session_id) {
         let _ = sender.send(state);
     }

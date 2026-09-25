@@ -339,6 +339,10 @@ impl StateStore {
         self.conv_db.descendant_session_ids(root)
     }
 
+    pub fn descendant_task_states(&self, root: &str) -> Result<Vec<(String, Option<String>)>> {
+        self.conv_db.descendant_task_states(root)
+    }
+
     pub fn pending_child_sessions(&self, parent_session_id: &str) -> Result<i64> {
         self.conv_db.pending_child_sessions(parent_session_id)
     }

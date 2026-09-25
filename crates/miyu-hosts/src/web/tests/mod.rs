@@ -13,4 +13,5 @@ mod restart_resume;
 mod session;
 mod session_delete;
 mod shared;
+mod subagent_tree;
 mod turn;

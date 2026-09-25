@@ -15,17 +15,12 @@ pub(in crate::cli) fn read_live_repl_input(
     // 这个 REPL 的会话：唤醒回合按它认领，输入历史也按它刷新。
     repl_session: Option<&str>,
 ) -> Result<LiveReplOutcome> {
-    let mut raw_mode = if std::mem::take(&mut live.raw_mode_handoff) {
-        LiveRawMode::adopt()
-    } else {
-        let guard = LiveRawMode::start()?;
-        // 全屏：raw 模式断过一段（斜杠命令等 daemon 的那几秒终端在回显模式），
-        // 屏上可能落了回显进来的字符，整屏按缓冲重画一遍把它们盖掉。
-        if crate::cli::repl::tail::screen::in_fullscreen() {
-            live.rendered = false;
-        }
-        guard
-    };
+    let (mut raw_mode, was_cooked) = live.take_raw_guard()?;
+    // 全屏：raw 模式断过一段（斜杠命令等 daemon 的那几秒终端在回显模式），
+    // 屏上可能落了回显进来的字符，整屏按缓冲重画一遍把它们盖掉。
+    if was_cooked && crate::cli::repl::tail::screen::in_fullscreen() {
+        live.rendered = false;
+    }
     if !live.rendered {
         synchronized_terminal_update(CursorAfterUpdate::Shown, || live.resume())?;
     }
@@ -363,10 +358,10 @@ pub(in crate::cli) fn read_live_repl_input(
                 }
                 // Ctrl+C rung 3: the draft was empty and no reply is running, but
                 // this session still has background work — stop that before the
-                // press is allowed to mean "quit". `live.jobs` holds only running
-                // jobs of this session, refreshed on every idle tick. Ctrl+D
-                // (`Exit`) always quits outright.
-                LiveEditorAction::Interrupt if !live.jobs.is_empty() => {
+                // press is allowed to mean "quit". The strip lists that work,
+                // refreshed on every idle tick (in a subagent session: the rows
+                // hanging under it). Ctrl+D (`Exit`) always quits outright.
+                LiveEditorAction::Interrupt if live.has_background_work() => {
                     return Ok(LiveReplOutcome::StopJobs);
                 }
                 // Ctrl+C 的最后一级在全屏下不退出。

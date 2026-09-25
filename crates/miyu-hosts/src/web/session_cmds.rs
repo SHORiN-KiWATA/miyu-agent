@@ -791,10 +791,16 @@ pub(in crate::web) fn subagent_sessions_json(
         .for_session(parent_session_id)
         .child_sessions(parent_session_id)
         .map_err(|error| safe_error_message(&error))?;
+    let jobs = tools::jobs::overview();
+    let descendants: Vec<usize> = children
+        .iter()
+        .map(|overview| running_descendants(state, &overview.record.session_id, &jobs))
+        .collect();
     let manager = state.manager.lock().unwrap();
     let sessions: Vec<Value> = children
         .iter()
-        .map(|overview| {
+        .zip(descendants)
+        .map(|(overview, running_descendants)| {
             let record = &overview.record;
             json!({
                 "session_id": record.session_id,
@@ -808,6 +814,8 @@ pub(in crate::web) fn subagent_sessions_json(
                 "context_tokens": overview.context_tokens,
                 "active_run_id": manager.run_in_session(&record.session_id),
                 "job_id": miyu_engine::tools::subagent::background_job_of(&record.session_id),
+                // 它名下还在跑的后代（孙代理、这一支的后台命令）：任务条折叠行上的「（+N）」。
+                "running_descendants": running_descendants,
                 "created_at": record.created_at,
                 "updated_at": record.updated_at,
             })

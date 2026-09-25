@@ -33,7 +33,7 @@ import round26 as r  # noqa: E402
 
 TITLE = "走查后台子代理"
 TASK = "来自主会话的任务"
-UP = "↑ 主会话"
+UP = "○ 主会话"
 BADGE = "子代理 ↳1"
 # 带上桩认主线的那句（`STUB_MAIN_MARK`，默认「走查一句」）：派完子代理之后主线的消息里也有
 # 子代理的任务（在工具调用的参数里），没有这句，桩会把主回合也当成子代理，让它跑命令、回
@@ -68,7 +68,7 @@ if SUB_THINKING:
 
 
 def strip_row(screen, text):
-    """任务条上那一行（`⠸ 子代理 走查后台子代理` / `↑ 主会话 …`），在屏幕最底下那一截；
+    """任务条上那一行（`○ 子代理 走查后台子代理` / `○ 主会话 …`），在屏幕最底下那一截；
     正文时间线上那一步写成 `子代理·走查后台子代理`，不算。"""
     for index in range(len(screen) - 1, -1, -1):
         line = screen[index]
@@ -83,7 +83,7 @@ def inside_child(screen):
 
 
 def back_in_parent(screen):
-    """回到主会话：没有「子代理 ↳1」、任务条上没有「↑ 主会话」，画面上是主回合的东西（默认档
+    """回到主会话：没有「子代理 ↳1」、任务条上没有「○ 主会话」，画面上是主回合的东西（默认档
     的回复有 250 行，开场白早滚出屏幕了，只认它会漏判）。"""
     joined = "\n".join(screen)
     mine = ASK in joined or "主回合" in joined

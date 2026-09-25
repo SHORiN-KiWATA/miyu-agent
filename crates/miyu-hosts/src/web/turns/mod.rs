@@ -643,6 +643,14 @@ pub(in crate::web) fn cancel_run_and_disarm_goal(state: &DaemonState, run_id: &s
             "goal disarmed after the user cancelled an autonomous round"
         );
     }
+    // 在子代理会话里停：连它名下的孙代理、后台命令一起停（09-26 用户拍板，终端网页同一个
+    // 规矩）。主会话照旧只停这一轮。
+    if is_subagent_session(state, &session_id) {
+        let state = state.clone();
+        tokio::spawn(async move {
+            stop_subagent_subtree(&state, &session_id).await;
+        });
+    }
     true
 }
 

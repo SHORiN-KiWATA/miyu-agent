@@ -53,7 +53,7 @@ fn lines(live: &LiveReplTail) -> Vec<String> {
 #[test]
 fn down_walks_into_the_strip_and_scrolls_it() {
     let mut live = detached_tail();
-    live.jobs = jobs(7);
+    live.set_jobs(jobs(7));
 
     let shown = lines(&live);
     assert_eq!(shown.len(), 1 + STRIP_VISIBLE_ROWS + 1, "{shown:#?}");
@@ -98,7 +98,7 @@ fn down_walks_into_the_strip_and_scrolls_it() {
 #[test]
 fn down_stays_with_the_editor_while_browsing_history_or_mid_input() {
     let mut live = detached_tail();
-    live.jobs = jobs(2);
+    live.set_jobs(jobs(2));
     live.editor.history = vec![ReplHistoryEntry::plain("上一句")];
     live.editor.history_index = 0;
     live.editor.input = "上一句".into();
@@ -148,7 +148,7 @@ fn enter_activates_and_other_keys_leave_the_strip() {
 #[test]
 fn arrows_pick_from_the_command_list() {
     let mut live = detached_tail();
-    live.jobs = jobs(1);
+    live.set_jobs(jobs(1));
     live.editor.input = "/s".into();
     live.editor.cursor = 2;
     let names = miyu_core::slash_commands::repl_command_suggestions("/s");

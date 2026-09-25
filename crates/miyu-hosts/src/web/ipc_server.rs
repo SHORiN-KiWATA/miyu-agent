@@ -230,7 +230,12 @@ async fn dispatch_ipc_connection(
             .await?;
         }
         IpcCommand::StopSessionJobs { session_id } => {
-            let stopped = tools::jobs::stop_session_jobs(&session_id).await;
+            // 子代理会话里闲着按 Ctrl+C（有后台活时那一级）：连它名下的一起停（09-26）。
+            let stopped = if is_subagent_session(&state, &session_id) {
+                stop_subagent_subtree(&state, &session_id).await
+            } else {
+                tools::jobs::stop_session_jobs(&session_id).await
+            };
             state
                 .events
                 .publish("job.acknowledged", json!({ "session_id": session_id }));

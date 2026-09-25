@@ -2,7 +2,7 @@
 //!
 //! 访问不动车道指针：画面、footer、历史、只读和真正换会话是同一套（`present_session`），
 //! 只是不发 `SetReplSession`（它本来也拒子会话）。回去的路记在 `LiveReplTail::visits`：
-//! 任务条第一行「↑ 主会话」、footer 上的「子代理 ↳N」、`/back` 都读它。真正换会话
+//! 任务条第一行「○ 主会话」、footer 上的「子代理 ↳N」、`/back` 都读它。真正换会话
 //! （`/new` `/session` …）时清空。
 
 use super::interactive::{LoopStep, RemoteRepl};
@@ -162,7 +162,37 @@ impl RemoteRepl {
         .await?;
         self.mode = lane;
         self.jobs_shared.set_repl_session(&self.active_session_id);
+        self.refresh_strip_children().await?;
         self.follow_pending = true;
+        Ok(())
+    }
+
+    /// 切进切出之后，这一段树上的子代理表当场拉一份（正在看的这条和父会话的）：轮询一秒一次，
+    /// 等它的话，挂在正在看的这条下面的孙代理要晚一拍才出来（用户 09-25：进去看不到孙代理）。
+    /// 还在攒帧（`present_visit`），任务条补上这几行和切换画面是同一帧。
+    async fn refresh_strip_children(&mut self) -> Result<()> {
+        let Some(feed) = crate::cli::repl::jobs::feed() else {
+            return Ok(());
+        };
+        let parent = self
+            .live_repl
+            .visits
+            .last()
+            .map(|parent| parent.session_id.clone());
+        for owner in std::iter::once(self.active_session_id.clone()).chain(parent) {
+            let rows = tokio::time::timeout(
+                Duration::from_millis(500),
+                crate::cli::repl::strip::fetch_subagent_rows(&self.paths, &owner),
+            )
+            .await;
+            if let Ok(Ok(rows)) = rows {
+                feed.publish_children(&owner, rows);
+            }
+        }
+        let jobs = feed.jobs.lock().unwrap().clone();
+        if self.live_repl.set_jobs(jobs) && !self.live_repl.external_output_active {
+            synchronized_terminal_update(CursorAfterUpdate::Preserve, || self.live_repl.redraw())?;
+        }
         Ok(())
     }
 }

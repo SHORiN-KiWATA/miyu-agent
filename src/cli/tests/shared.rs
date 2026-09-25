@@ -23,7 +23,7 @@ pub(super) fn detached_tail() -> LiveReplTail {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
-        strip_sessions: Vec::new(),
+        strip_items: Vec::new(),
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,

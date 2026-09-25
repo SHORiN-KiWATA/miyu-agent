@@ -220,13 +220,14 @@ def main():
         wait_for("delete-active-picker", lambda actual: picker(actual) and any("PickerDelete" in line for line in actual))
         # One Ctrl+D, gone -- no y/N (user 09-20: "should just delete").
         #
-        # 这一行是**当前会话**，而删掉自己待着的那条现在会当场收面板、落到本
-        # 车道另一条会话上（09-20：留在一条已经不存在的会话上会看见它的正文，
-        # 回车还会跳进终端集成会话）。所以等的是「面板没了」，不是「列表刷新」。
+        # 这一行是**当前会话**，删掉自己待着的那条会当场落到本车道另一条会话上
+        # （09-20：留在一条已经不存在的会话上会看见它的正文，回车还会跳进终端集成
+        # 会话）。面板留着、开在兜底会话上，可以接着删（09-25：原来删完当前会话
+        # 面板就收了）。所以等的是「列表里没它了、面板还在」。
         os.write(master, b"\x04")
         wait_for(
             "delete-active-done",
-            lambda actual: not picker(actual)
+            lambda actual: picker(actual)
             and not any("PickerDelete" in line for line in actual),
         )
         assert not any(
@@ -235,14 +236,11 @@ def main():
         assert not any(
             "终端集成会话" in line for line in lines()
         ), f"Deleting the active session landed on the terminal session. See {h.OUT}"
-        settle("delete-active-settled")
-        # 面板已经收掉了（删的是当前会话，09-20 起会当场离开）：重新打开，
-        # 再按摘要搜回原来那条会话。
-        os.write(master, b"\x15/session\r")
-        wait_for("picker-reopened-after-delete", lambda actual: picker(actual)
-            and not any(
-                "switched to session" in line or "已切换到会话" in line for line in actual
-            ))
+        actual = settle("delete-active-settled")
+        assert picker(actual) and not any(
+            "switched to session" in line or "已切换到会话" in line for line in actual
+        ), f"The picker did not stay open after deleting the active session. See {h.OUT}"
+        # 面板还开着：直接按摘要搜回原来那条会话。
         os.write(master, b"hello")
         wait_for(
             "switch-search",

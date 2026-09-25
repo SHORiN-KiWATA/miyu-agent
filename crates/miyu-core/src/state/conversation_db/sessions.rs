@@ -503,6 +503,27 @@ impl ConversationDb {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// `root` 名下(不含它自己)每一条子代理会话和它的任务状态,先浅后深。任务条上
+    /// 「开发中（+3）」那个数要数其中没到终态的(09-26)。
+    pub fn descendant_task_states(&self, root: &str) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "WITH RECURSIVE tree(session_id, level) AS (
+                 SELECT session_id, 1 FROM sessions
+                  WHERE parent_session_id = ?1 AND kind = 'subagent'
+                 UNION ALL
+                 SELECT child.session_id, tree.level + 1
+                   FROM sessions child JOIN tree ON child.parent_session_id = tree.session_id
+                  WHERE child.kind = 'subagent'
+             )
+             SELECT tree.session_id, sessions.task_state
+               FROM tree JOIN sessions ON sessions.session_id = tree.session_id
+              ORDER BY tree.level ASC, tree.session_id ASC",
+        )?;
+        let rows = stmt.query_map(params![root], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// 直系子代理里还没到终态(running / waiting)的有几条。子代理「任务完成」的判据之一。
     pub fn pending_child_sessions(&self, parent_session_id: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();

@@ -3,8 +3,8 @@
 
 子代理 09-18 起是一条会话。改之前点它只能开一个盖在正文上的浮层；现在点时间线上那一行、
 点任务条上那一行、或者 `/subagent` 挑一条，都是切进那条会话：画面换成它自己的对话
-（第一句画成「来自主会话的任务」），任务条第一行「↑ 主会话」，footer 带「子代理 ↳1」。
-`/back` 或点「↑ 主会话」回去，主会话那一轮接着看。
+（第一句画成「来自主会话的任务」），任务条第一行「○ 主会话」，footer 带「子代理 ↳1」。
+`/back` 或点「○ 主会话」回去，主会话那一轮接着看。
 
     cargo build
     MIYU_HOME=~/.cache/miyu-subagent-visit/home MIYU_TUI_PORT=18661 STUB_PORT=18662 \\
@@ -13,7 +13,7 @@
 
 步骤：说一句 → 主线派一个前台子代理（它跑一条 40 秒的命令）→
 1. 点时间线上子代理那一行 → 在子会话里 → `/back` 回来；
-2. 点任务条上那一行 → 在子会话里 → 点「↑ 主会话」回来；再用方向键 ↓ + 回车进去、
+2. 点任务条上那一行 → 在子会话里 → 点「○ 主会话」回来；再用方向键 ↓ + 回车进去、
    ↓ + 回车回来；
 3. 等整轮跑完 → `/subagent` 挑它 → 在子会话里、看得到它的回复 → 说一句，它接着回 →
    `/back`，主会话里没有这句；
@@ -32,7 +32,8 @@ import round26 as r  # noqa: E402
 
 ROW = "走查子代理"
 TASK = "来自主会话的任务"
-UP = "↑ 主会话"
+# 回主会话那一行。09-26 前是「↑ 主会话」：拿旧二进制量「改前」时用 `STRIP_UP` 换回去。
+UP = os.environ.get("STRIP_UP", "○ 主会话")
 BADGE = "子代理 ↳1"
 REPLY_HEAD = "好的,收到"
 FOLLOW_UP = "子会话里追问一句"
@@ -65,7 +66,7 @@ def row_seconds(screen):
 
 
 def strip_row(screen, text):
-    """任务条上那一行：`⠸ 子代理 走查子代理` / `↑ 主会话 …`，在屏幕最底下那一截。"""
+    """任务条上那一行：`○ 子代理 走查子代理` / `○ 主会话 …`，在屏幕最底下那一截。"""
     for index in range(len(screen) - 1, -1, -1):
         line = screen[index]
         if text in line and f"·{text}" not in line:
@@ -147,7 +148,7 @@ def main():
                 report["up_row_returns"] = screen is not None
                 r.save("visit-up-row", screen or r.LAST["screen"] or [])
 
-        # 2b. 方向键：↓ 停在子代理那一行、回车进去；再 ↓ 停在「↑ 主会话」、回车回来。
+        # 2b. 方向键：↓ 停在子代理那一行、回车进去；再 ↓ 停在「○ 主会话」、回车回来。
         os.write(master, b"\x1b[B")
         h.settle(master, sink, quiet=0.3, timeout=1.5)
         os.write(master, b"\r")

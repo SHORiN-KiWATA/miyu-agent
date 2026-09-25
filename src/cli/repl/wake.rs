@@ -132,15 +132,40 @@ pub(in crate::cli) async fn follow_wake_run(
     // （那一轮刚好没赶上），下面收到第一条事件后补起一次，不会一直没有。
     // 回合中执行斜杠命令要按这个号挂回来（09-20），和 `one_shot.rs` 同一套。
     let mut last_event_id = after.unwrap_or(0);
+    let mut waiting_started = false;
+    if !from_start && !resuming {
+        renderer.start_waiting()?;
+        live.apply_renderer_frame(&mut renderer)?;
+        waiting_started = true;
+    }
+    // 跟着别人起的轮（另一个界面、后台任务唤醒）时，侧栏也该显示「在跑」——
+    // 这条 REPL 自己没起轮，但屏幕上正在流内容，报 idle 是骗人的。守卫在这段
+    // 结束时（跑完 / 脱离 / 中断）报回 idle。
+    let herdr_follow = herdr::TurnGuard::begin(session_id);
+    // 上一段交接过来的 raw 接着用，不另开一把（见 `take_raw_guard`）。原来这里总是
+    // 另开：回合循环切走时交出来的那份没人认领，这把一放终端就回到回显模式，交接标记
+    // 却还立着——回到空闲的会话，输入循环认领它，坐在 cooked 的终端上收不到键（09-26）。
+    let (mut raw, _) = live.take_raw_guard()?;
+    // 这一段不管从哪个口子离开，raw 都交给下一段：切会话、执行命令的那几百毫秒里终端
+    // 要是回到回显模式，敲的键就被回显到屏上（`one_shot.rs` 的 `handoff_raw!` 同理）。
+    macro_rules! handoff_raw {
+        () => {
+            raw.handoff();
+            live.raw_mode_handoff = true;
+        };
+    }
     // 点了任务条上的会话行、时间线上子代理那一行，或者方向键停在会话行上回车（会话项目
     // 第 3 段）：这一轮留在 daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一
     // 条路。
     macro_rules! suspend_for_strip {
         () => {
             if let Some(action) = live.take_strip_action() {
+                // 要切走了：收尾这一帧和后面的清屏回放攒成一帧（09-25，同 `one_shot.rs`）。
+                crate::cli::repl::tail::begin_frame_hold();
                 renderer.finish()?;
                 live.stop_footer_spinner()?;
                 live.apply_renderer_frame(&mut renderer)?;
+                handoff_raw!();
                 return Err(anyhow::Error::new(
                     crate::cli::repl::session::RemoteTurnSuspended {
                         action: crate::cli::repl::session::SuspendedAction::Strip(action),
@@ -152,17 +177,6 @@ pub(in crate::cli) async fn follow_wake_run(
             }
         };
     }
-    let mut waiting_started = false;
-    if !from_start && !resuming {
-        renderer.start_waiting()?;
-        live.apply_renderer_frame(&mut renderer)?;
-        waiting_started = true;
-    }
-    // 跟着别人起的轮（另一个界面、后台任务唤醒）时，侧栏也该显示「在跑」——
-    // 这条 REPL 自己没起轮，但屏幕上正在流内容，报 idle 是骗人的。守卫在这段
-    // 结束时（跑完 / 脱离 / 中断）报回 idle。
-    let herdr_follow = herdr::TurnGuard::begin(session_id);
-    let mut raw = LiveRawMode::start()?;
 
     let mut last_frame_at = std::time::Instant::now();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(33));
@@ -211,6 +225,7 @@ pub(in crate::cli) async fn follow_wake_run(
                             renderer.finish()?;
                             live.stop_footer_spinner()?;
                             live.apply_renderer_frame(&mut renderer)?;
+                            handoff_raw!();
                             return Err(anyhow::Error::new(
                                 crate::cli::repl::session::RemoteTurnSuspended {
                                     action: crate::cli::repl::session::SuspendedAction::SwitchSession(
@@ -376,6 +391,7 @@ pub(in crate::cli) async fn follow_wake_run(
                                         renderer.finish()?;
                                         live.stop_footer_spinner()?;
                                         live.apply_renderer_frame(&mut renderer)?;
+                                        handoff_raw!();
                                         return Err(anyhow::Error::new(
                                             crate::cli::repl::session::RemoteTurnSuspended {
                                                 action: crate::cli::repl::session::SuspendedAction::Command {
@@ -435,7 +451,14 @@ pub(in crate::cli) async fn follow_wake_run(
                             // 续轮在 daemon 里继续跑：用户面对的是一个看起来
                             // 停了、`/goal` 却说「进行中」、还在烧额度的幽灵轮。
                             // 其他后台唤醒保持仅脱离——那些回合不是它发起的。
-                            if label == miyu_engine::tools::goal::GOAL_ROUND_LABEL {
+                            //
+                            // 切进子代理会话时跟着的是子代理自己那一轮，Ctrl+C 也是「停」：
+                            // daemon 按子代理会话的规矩连它名下的孙代理、后台命令一起收
+                            // （09-26 用户拍板）。原来这儿只脱离，子代理和孙代理在 daemon
+                            // 里照跑（用户：Ctrl+C 关掉了子代理，孙代理没停下）。
+                            if label == miyu_engine::tools::goal::GOAL_ROUND_LABEL
+                                || !live.visits.is_empty()
+                            {
                                 let _ = send_ipc_command(
                                     paths,
                                     IpcCommand::Cancel {
@@ -855,8 +878,7 @@ pub(in crate::cli) async fn follow_wake_run(
     live.flush_pending_chunks(&mut renderer)?;
     renderer.finish()?;
     live.apply_renderer_frame(&mut renderer)?;
-    raw.handoff();
-    live.raw_mode_handoff = true;
+    handoff_raw!();
     // Suppress the duplicate DB report for a turn that was rendered live.
     if let Some(turn_id) = turn_id {
         let mut rendered = jobs_shared.rendered_turns.lock().unwrap();

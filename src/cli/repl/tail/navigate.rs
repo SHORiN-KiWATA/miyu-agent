@@ -9,7 +9,6 @@
 //! 排在编辑器前面。
 
 use super::*;
-use crate::cli::repl::strip::STRIP_VISIBLE_ROWS;
 
 /// 一次按键在这儿的着落。
 pub(in crate::cli) enum Navigated {
@@ -62,8 +61,10 @@ impl LiveReplTail {
             return Ok(Navigated::Pass);
         }
         if code == KeyCode::Down && plain && self.may_enter_strip() {
-            self.strip_focus = Some(0);
-            self.strip_scroll = 0;
+            // 露在最上面的那一条，滚动那一截停在原地（在子代理会话里是露着正在看的那条的地方）。
+            let view = self.strip_view();
+            self.strip_scroll = view.scroll;
+            self.strip_focus = view.visible(self.strip_rows().len()).first().copied();
             return Ok(Navigated::Done);
         }
         Ok(Navigated::Pass)
@@ -155,17 +156,15 @@ impl LiveReplTail {
         Ok(match code {
             KeyCode::Down if plain => {
                 let next = (focus + 1).min(len - 1);
+                self.strip_scroll = self.strip_view().scroll_to_show(next, len);
                 self.strip_focus = Some(next);
-                if next >= self.strip_scroll + STRIP_VISIBLE_ROWS {
-                    self.strip_scroll = next + 1 - STRIP_VISIBLE_ROWS;
-                }
                 Navigated::Done
             }
             KeyCode::Up if plain => {
                 match focus.checked_sub(1) {
                     Some(previous) => {
+                        self.strip_scroll = self.strip_view().scroll_to_show(previous, len);
                         self.strip_focus = Some(previous);
-                        self.strip_scroll = self.strip_scroll.min(previous);
                     }
                     None => self.leave_strip(),
                 }

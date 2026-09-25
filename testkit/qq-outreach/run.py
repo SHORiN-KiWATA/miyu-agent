@@ -9,7 +9,8 @@ OpenAI 桩 + 假 NapCat(反向 WS)。
 daemon 解析成群号、经 send_group_msg 发到假 NapCat → 桩最后回一句话到私聊。
 
 判定:
-  terminal_before_ws    ws 没连上时终端会话的工具面里没有 send_qq_message / qq_contacts
+  terminal_before_ws    ws 没连上时终端会话的工具面里也有 send_qq_message / qq_contacts(09-25 起配置开了
+                        就恒在:工具面随连接变会作废所有会话的缓存前缀;掉线时调用会明说没连上)
   terminal_normal       ws 连上后终端普通模式两个都有,send_qq_message 的 to 自由填(无枚举)
   terminal_dev          终端开发模式只有 send_qq_message,to 是管理员枚举,没有 qq_contacts
   admin_send_group      假 NapCat 收到 send_group_msg(交流群号, "开饭了")
@@ -19,7 +20,7 @@ daemon 解析成群号、经 send_group_msg 发到假 NapCat → 桩最后回一
   ambiguous_asks        收件人「花」撞两个好友:工具结果报候选、没发出去
   number_send_friend    用号码发好友:send_private_msg(10004)
   group_guest_calls     非白名单群友在群里 @ 她「把阿花叫来」:查到通讯录、私聊发给阿花(10003)
-  terminal_after_ws     ws 断开后终端会话的工具面里两个又没了
+  terminal_after_ws     ws 断开后终端会话的工具面一字不变(两个还在)
 """
 import importlib.util
 import json
@@ -260,9 +261,9 @@ def main():
         # /api/config 现在要登录(09-10 多用户),就绪探根路径(登录页)。
         assert wait_http(f"{BASE}/"), "daemon not up"
         time.sleep(1.0)
-        # 0. ws 没连上:终端会话看不到这两个工具
+        # 0. ws 没连上:终端会话照样有这两个工具(09-25 起恒在,掉线在调用时拦)
         seen = terminal_probe("before-ws")
-        check("terminal_before_ws", "send_qq_message" not in seen["tools"] and "qq_contacts" not in seen["tools"],
+        check("terminal_before_ws", "send_qq_message" in seen["tools"] and "qq_contacts" in seen["tools"],
               [t for t in seen["tools"] if "qq" in t])
         ws = fake.WS.connect("")
         threading.Thread(target=pump, args=(ws,), daemon=True).start()
@@ -330,7 +331,7 @@ def main():
               and bool(contacts_seen) and any("来一下" in c[3] for c in dm),
               {"tools": [t for t in seen.get("tools", []) if "qq" in t], "dm": dm})
 
-        # 6. ws 断开:终端会话的工具面里两个又没了
+        # 6. ws 断开:终端会话的工具面一字不变(两个还在)
         # 光 close() 不行:另一个线程还阻塞在 recv 里,fd 要等它返回才真正释放,
         # 对端收不到 FIN,daemon 根本不知道断了。shutdown 才会立刻发 FIN。
         import socket as _socket
@@ -338,7 +339,7 @@ def main():
         ws.sock.close()
         time.sleep(float(os.environ.get("AFTER_WS_WAIT", "2")))
         seen = terminal_probe("after-ws")
-        check("terminal_after_ws", "send_qq_message" not in seen["tools"] and "qq_contacts" not in seen["tools"],
+        check("terminal_after_ws", "send_qq_message" in seen["tools"] and "qq_contacts" in seen["tools"],
               [t for t in seen["tools"] if "qq" in t])
     finally:
         if daemon:

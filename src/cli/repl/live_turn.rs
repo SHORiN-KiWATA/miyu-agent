@@ -176,11 +176,7 @@ pub(in crate::cli) async fn run_live_agent_turn(
 ) -> Result<Option<miyu_core::llm::ChatResult>> {
     renderer.use_external_cursor_control();
     renderer.use_buffered_output();
-    let mut raw = if std::mem::take(&mut live.raw_mode_handoff) {
-        LiveRawMode::adopt()
-    } else {
-        LiveRawMode::start()?
-    };
+    let (mut raw, _) = live.take_raw_guard()?;
     live.external_output_active = false;
     if !live.rendered {
         live.resume_at(live.output_cursor)?;

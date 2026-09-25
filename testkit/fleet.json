@@ -84,6 +84,49 @@
       "lane": "tui"
     },
     {
+      "name": "visit_back_midturn",
+      "argv": [
+        "python3",
+        "testkit/tui/visit_back_probe.py"
+      ],
+      "env": {
+        "ENTER_MIDTURN": "1"
+      },
+      "timeout": 300,
+      "lane": "tui"
+    },
+    {
+      "name": "visit_back_idle",
+      "argv": [
+        "python3",
+        "testkit/tui/visit_back_probe.py"
+      ],
+      "env": {
+        "IDLE_PARENT": "1",
+        "WAYS": "click,keys,command"
+      },
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
+      "name": "visit_back_running",
+      "argv": [
+        "python3",
+        "testkit/tui/visit_back_probe.py"
+      ],
+      "timeout": 500,
+      "lane": "tui"
+    },
+    {
+      "name": "strip_tree",
+      "argv": [
+        "python3",
+        "testkit/tui/strip_tree.py"
+      ],
+      "timeout": 400,
+      "lane": "tui"
+    },
+    {
       "name": "bg_visit",
       "argv": [
         "python3",

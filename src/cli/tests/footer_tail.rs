@@ -548,7 +548,7 @@ fn spinner_does_not_resume_tail_during_external_output() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
-        strip_sessions: Vec::new(),
+        strip_items: Vec::new(),
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,
@@ -612,7 +612,7 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
-        strip_sessions: Vec::new(),
+        strip_items: Vec::new(),
         visits: Vec::new(),
         pending_strip_action: None,
         strip_focus: None,
@@ -870,7 +870,10 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
     let row = |metric: Option<&str>| {
         let job = job(metric);
         let lines = crate::cli::repl::strip::strip_lines(
-            &[crate::cli::repl::strip::StripRow::Job(&job)],
+            &[crate::cli::repl::strip::StripItem::Job {
+                job,
+                branch: Default::default(),
+            }],
             0,
             60,
             Default::default(),

@@ -133,14 +133,14 @@ pub(in crate::cli) struct SharedJobsFeed {
     /// were rendered live (their DB report must not print again).
     pub(in crate::cli) followed_runs: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(in crate::cli) rendered_turns: std::sync::Mutex<std::collections::HashSet<String>>,
-    /// 这个 REPL 看着的会话名下还在干活的子代理会话（轮询线程一秒问一次），任务条列
-    /// 它们。见 `strip`。
-    pub(in crate::cli) subagents: std::sync::Mutex<Vec<super::strip::SubagentRow>>,
-    /// 正在访问子会话时它的父会话（访问栈顶）：任务条要列兄弟，轮询线程按它再拉一份
-    /// （09-25）。没在访问就是 `None`。
-    pub(in crate::cli) visit_parent: std::sync::Mutex<Option<String>>,
-    /// 父会话名下还在干活的子代理会话，也就是正在看的这条子会话的兄弟（连同它自己）。
-    pub(in crate::cli) siblings: std::sync::Mutex<Vec<super::strip::SubagentRow>>,
+    /// 访问路径（访问栈，从车道上那条会话往上），栈顶是回去的那条。任务条要列父会话名下的
+    /// 子代理，轮询线程按它再拉一份（09-25）。没在访问就是空的。
+    pub(in crate::cli) visit_path: std::sync::Mutex<Vec<String>>,
+    /// 各条会话名下的子代理会话（什么状态都有，任务条自己挑），按会话号存。轮询线程一秒
+    /// 拉一次正在看的这条和父会话的；访问路径上的都留着——退回上一层那一下，那一层的子代理
+    /// 表就在手里，任务条不空一拍（用户 09-25：切回来时状态行会消失一瞬间）。
+    pub(in crate::cli) children:
+        std::sync::Mutex<std::collections::HashMap<String, Vec<super::strip::SubagentRow>>>,
 }
 
 /// 这个 REPL 进程里那一条。后台面板要读 `trace`，而它拿不到 `SharedJobsFeed` 的
@@ -172,6 +172,24 @@ pub(in crate::cli) struct BackgroundReport {
     pub(in crate::cli) reply: String,
 }
 
+/// 任务条那棵树上的任务：正在看的会话和父会话自己的，以及它们名下的（树根是它们的），
+/// 没挂会话的老任务也留着。任务条第一层只列会话自己的，后代的收进「（+N）」，但切进去那一
+/// 下就要展开——手里先留着，不等下一轮轮询。
+pub(in crate::cli) fn retain_tree_jobs(
+    jobs: &mut Vec<miyu_engine::tools::jobs::JobOverview>,
+    current: &str,
+    parent: Option<&str>,
+) {
+    let in_tree = |session: Option<&str>| {
+        session.is_some_and(|session| session == current || Some(session) == parent)
+    };
+    jobs.retain(|job| {
+        job.session_id.is_none()
+            || in_tree(job.session_id.as_deref())
+            || in_tree(job.root_session_id.as_deref())
+    });
+}
+
 /// Session isolation for the strip: keep only `session`'s jobs (sessionless
 /// jobs stay visible as a legacy fallback; `None` session shows everything).
 pub(in crate::cli) fn retain_session_jobs(
@@ -190,60 +208,55 @@ pub(in crate::cli) fn retain_session_jobs(
 }
 
 impl SharedJobsFeed {
-    /// 换成这个 REPL 现在看着的会话。已经拉回来的任务表里不属于它的当场摘掉：等下一轮
-    /// 轮询（约 1 秒）才换的话，这一秒里状态行上还是上一个会话的后台任务。
+    /// 换成这个 REPL 现在看着的会话，访问路径不动（切进子会话、回去走 `set_scope`）。已经拉
+    /// 回来的任务表里不属于它的当场摘掉：等下一轮轮询（约 1 秒）才换的话，这一秒里状态行上
+    /// 还是上一个会话的后台任务。
     pub(in crate::cli) fn set_repl_session(&self, session: &str) {
+        let path = self.visit_path.lock().unwrap().clone();
+        self.set_scope(session, &path);
+    }
+
+    /// 换任务条看的那一段树：正在看的会话、访问路径（栈底是车道上那条，栈顶是回去的那条）。
+    /// 两样一起换、一起按新的范围摘任务——分两步的话，中间那一步按半新半旧的范围摘，退回主
+    /// 会话时会把主会话自己的任务先摘掉，状态行空一拍（用户 09-25）。
+    pub(in crate::cli) fn set_scope(&self, session: &str, path: &[String]) {
         let mut current = self.repl_session.lock().unwrap();
-        if current.as_deref() == Some(session) {
+        let mut visit_path = self.visit_path.lock().unwrap();
+        if current.as_deref() == Some(session) && visit_path.as_slice() == path {
             return;
         }
         *current = Some(session.to_string());
-        retain_session_jobs(&mut self.jobs.lock().unwrap(), Some(session));
-        // 子代理会话按会话问的，换了会话那一份整个不算数。
-        self.subagents.lock().unwrap().clear();
+        *visit_path = path.to_vec();
+        retain_tree_jobs(
+            &mut self.jobs.lock().unwrap(),
+            session,
+            path.last().map(String::as_str),
+        );
+        // 子代理表只留访问路径上的和这一条的：再往回退都用得上，别的用不上了。
+        self.children
+            .lock()
+            .unwrap()
+            .retain(|owner, _| owner == session || path.contains(owner));
     }
 
-    /// 换了访问的父会话（切进子会话、横着切、回去）。`seed` 是刚知道的一份兄弟（从父会话
-    /// 切进来那一刻，父会话名下的子代理就是兄弟），等下一轮轮询之前先用它，任务条第一帧就
-    /// 列得出兄弟。
-    pub(in crate::cli) fn set_visit_parent(
-        &self,
-        parent: Option<&str>,
-        seed: Vec<super::strip::SubagentRow>,
-    ) {
-        let mut current = self.visit_parent.lock().unwrap();
-        if current.as_deref() == parent {
-            return;
-        }
-        *current = parent.map(str::to_string);
-        *self.siblings.lock().unwrap() = if parent.is_some() { seed } else { Vec::new() };
-    }
-
-    /// 刚拉回来的兄弟放上去；拉的途中访问的父会话换了就作废。
-    pub(in crate::cli) fn publish_siblings(
-        &self,
-        parent: &str,
-        rows: Vec<super::strip::SubagentRow>,
-    ) {
-        if self.visit_parent.lock().unwrap().as_deref() == Some(parent) {
-            *self.siblings.lock().unwrap() = rows;
-        }
-    }
-
-    /// 刚拉回来的子代理会话放上去。拉的途中 REPL 换了会话（切进子会话、回主会话）就
-    /// 作废：按旧会话拉的那份盖上来，任务条上会列出别的会话的子代理。
-    pub(in crate::cli) fn publish_subagents(
+    /// 刚拉回来的 `session` 名下的子代理放上去。它不在这会儿看的那一段树上（拉的途中切走
+    /// 了）就不收：收了也画不出来，只会留在表里。
+    pub(in crate::cli) fn publish_children(
         &self,
         session: &str,
         rows: Vec<super::strip::SubagentRow>,
     ) {
         let current = self.repl_session.lock().unwrap();
-        if current.as_deref() == Some(session) {
-            *self.subagents.lock().unwrap() = rows;
+        let path = self.visit_path.lock().unwrap();
+        if current.as_deref() == Some(session) || path.iter().any(|owner| owner == session) {
+            self.children
+                .lock()
+                .unwrap()
+                .insert(session.to_string(), rows);
         }
     }
 
-    /// 刚拉回来的任务表按这个 REPL 的会话过滤后放上去，返回过滤后的那份。
+    /// 刚拉回来的任务表按这个 REPL 看着的那一段树过滤后放上去，返回过滤后的那份。
     ///
     /// 过滤和写入都在会话锁里做：拉取途中 REPL 换了会话，按旧会话过滤的那份就不会
     /// 盖上来。还不知道自己是哪条会话时一条都不认——原来这时「全都显示」，新开的终端
@@ -253,12 +266,38 @@ impl SharedJobsFeed {
         mut jobs: Vec<miyu_engine::tools::jobs::JobOverview>,
     ) -> Vec<miyu_engine::tools::jobs::JobOverview> {
         let session = self.repl_session.lock().unwrap();
+        let path = self.visit_path.lock().unwrap();
         match session.as_deref() {
-            Some(session) => retain_session_jobs(&mut jobs, Some(session)),
+            Some(session) => retain_tree_jobs(&mut jobs, session, path.last().map(String::as_str)),
             None => jobs.clear(),
         }
         *self.jobs.lock().unwrap() = jobs.clone();
         jobs
+    }
+
+    /// 任务条此刻该列的行（`strip_tree`），会话和子代理表从这儿取。
+    pub(in crate::cli) fn strip_items(
+        &self,
+        parent: Option<&super::strip::ParentRow>,
+        jobs: &[miyu_engine::tools::jobs::JobOverview],
+    ) -> Vec<super::strip::StripItem> {
+        let current = self.repl_session.lock().unwrap().clone();
+        let children = self.children.lock().unwrap();
+        let rows_of = |session: Option<&str>| {
+            session
+                .and_then(|session| children.get(session))
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        };
+        super::strip_tree::strip_items(
+            &super::strip_tree::StripScope {
+                current: current.as_deref(),
+                parent,
+                parent_children: rows_of(parent.map(|parent| parent.session_id.as_str())),
+                children: rows_of(current.as_deref()),
+            },
+            jobs,
+        )
     }
 }
 
@@ -506,30 +545,20 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                 if let Ok(goal) = goal {
                     *feed.goal.lock().unwrap() = goal;
                 }
-                // 这条会话名下的子代理会话：任务条列它们，点进去看（会话项目第 3 段）。
-                // 超时、出错就留着上一份，不清空——清了任务条会闪。
-                let subagents = runtime.block_on(async {
-                    tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
-                        super::strip::fetch_subagent_rows(&paths, session),
-                    )
-                    .await
-                });
-                if let Ok(Ok(rows)) = subagents {
-                    feed.publish_subagents(session, rows);
-                }
-                // 在子会话里：父会话名下的子代理就是兄弟，任务条列它们（09-25）。
-                let parent = feed.visit_parent.lock().unwrap().clone();
-                if let Some(parent) = parent {
-                    let siblings = runtime.block_on(async {
+                // 这条会话名下的子代理会话：任务条列它们，点进去看（会话项目第 3 段）；在子会话
+                // 里还要父会话名下的（兄弟，09-25）。超时、出错就留着上一份，不清空——清了任务
+                // 条会闪。
+                let parent = feed.visit_path.lock().unwrap().last().cloned();
+                for owner in std::iter::once(session).chain(parent.as_deref()) {
+                    let rows = runtime.block_on(async {
                         tokio::time::timeout(
                             std::time::Duration::from_millis(500),
-                            super::strip::fetch_subagent_rows(&paths, &parent),
+                            super::strip::fetch_subagent_rows(&paths, owner),
                         )
                         .await
                     });
-                    if let Ok(Ok(rows)) = siblings {
-                        feed.publish_siblings(&parent, rows);
+                    if let Ok(Ok(rows)) = rows {
+                        feed.publish_children(owner, rows);
                     }
                 }
             }

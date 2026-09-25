@@ -49,6 +49,7 @@ mod session_effort;
 mod sessions;
 mod shared_files;
 mod subagent_host;
+mod subagent_tree;
 #[cfg(test)]
 mod tests;
 mod tty;
@@ -100,6 +101,7 @@ use session_effort::*;
 use sessions::*;
 use shared_files::*;
 use subagent_host::*;
+use subagent_tree::*;
 use tty::*;
 use turns::*;
 use ui_prefs::*;

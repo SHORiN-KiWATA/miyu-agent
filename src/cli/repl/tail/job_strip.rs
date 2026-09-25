@@ -4,7 +4,8 @@
 //! （切进子代理会话、回主会话）。
 
 use super::*;
-use crate::cli::repl::strip::{self, StripAction, StripRow, StripView};
+use crate::cli::repl::strip::{self, StripAction, StripItem, StripView};
+use crate::cli::repl::strip_tree;
 
 /// 下过"停"之后压住状态行多久。守护进程的任务快照一秒轮询一次，留出几轮的余量。
 const SUPPRESS_JOB_FOR: std::time::Duration = std::time::Duration::from_secs(5);
@@ -45,33 +46,69 @@ impl LiveReplTail {
         // 后台子代理**不**在这儿往 Σ 上加：它的审计会话是边跑边写的，守护进程
         // 算出来的会话累计里已经有了，再加一遍就是算两遍。前台那一路才需要补
         // （见 `set_live_turn_tokens`）——回合跑着的时候客户端不会去重读 Σ。
-        let sessions = strip::strip_sessions(self.visits.last());
-        let changed = self.strip_sessions != sessions
-            || self.jobs.len() != jobs.len()
+        let items = match crate::cli::repl::jobs::feed() {
+            Some(feed) => feed.strip_items(self.visits.last(), &jobs),
+            None => strip_tree::strip_items(
+                &strip_tree::StripScope {
+                    parent: self.visits.last(),
+                    ..Default::default()
+                },
+                &jobs,
+            ),
+        };
+        let changed = self.strip_items.len() != items.len()
             || self
-                .jobs
+                .strip_items
                 .iter()
-                .zip(jobs.iter())
-                .any(|(a, b)| a.job_id != b.job_id || a.status != b.status);
+                .zip(items.iter())
+                .any(|(a, b)| a.shape() != b.shape());
         self.jobs = jobs;
-        self.strip_sessions = sessions;
+        self.strip_items = items;
         self.clamp_strip_view();
         self.refresh_job_overlay_title();
         changed
     }
 
-    /// 任务条此刻的每一行：会话行在前，后台任务在后。
-    pub(in crate::cli) fn strip_rows(&self) -> Vec<StripRow<'_>> {
-        strip::strip_rows(&self.strip_sessions, &self.jobs)
+    /// 任务条此刻的每一行，排好序、挂好层（`strip_tree`）。
+    pub(in crate::cli) fn strip_rows(&self) -> &[StripItem] {
+        &self.strip_items
     }
 
-    /// 任务条此刻怎么画（从第几条露起、悬浮、方向键停在哪）。
+    /// 任务条此刻怎么画：在子代理会话里回去那一行钉在顶上；没在用方向键挪的时候，下面那一截
+    /// 停在露出正在看的那条和它名下的地方（用户 09-26），挪的时候跟着方向键走。
     pub(in crate::cli) fn strip_view(&self) -> StripView {
+        let items = self.strip_rows();
         StripView {
-            scroll: self.strip_scroll,
+            scroll: match self.strip_focus {
+                Some(_) => self.strip_scroll,
+                None => strip_tree::home_scroll(items),
+            },
             hovered: self.job_hover,
             focused: self.strip_focus,
+            pinned: strip_tree::pinned_rows(items),
         }
+    }
+
+    /// 这条会话名下还有后台的活（Ctrl+C 的第三级先停它们）：没在访问时任务条上的每一行都是
+    /// 它的；在子代理会话里是挂在它下面的那几行。
+    pub(in crate::cli) fn has_background_work(&self) -> bool {
+        let items = self.strip_rows();
+        match strip_tree::pinned_rows(items) {
+            0 => !items.is_empty(),
+            _ => items.iter().any(|item| item.branch() != strip::Branch::Top),
+        }
+    }
+
+    /// 上面那些活对应的后台任务号（停完先压住，见 `suppress_jobs`）。
+    pub(in crate::cli) fn background_job_ids(&self) -> Vec<String> {
+        let items = self.strip_rows();
+        let visiting = strip_tree::pinned_rows(items) > 0;
+        items
+            .iter()
+            .filter(|item| !visiting || item.branch() != strip::Branch::Top)
+            .filter_map(StripItem::job)
+            .map(|job| job.job_id.clone())
+            .collect()
     }
 
     /// 行数变了（任务跑完、子代理收工）：方向键停的那条、露出来的那一截跟着收回来。
@@ -80,12 +117,8 @@ impl LiveReplTail {
         self.strip_focus = self
             .strip_focus
             .and_then(|focus| (len > 0).then(|| focus.min(len - 1)));
-        let max_scroll = len.saturating_sub(strip::STRIP_VISIBLE_ROWS);
-        self.strip_scroll = self.strip_scroll.min(max_scroll);
         if let Some(focus) = self.strip_focus {
-            if focus < self.strip_scroll {
-                self.strip_scroll = focus;
-            }
+            self.strip_scroll = self.strip_view().scroll_to_show(focus, len);
         }
         self.job_hover = self.job_hover.filter(|index| *index < len);
     }
@@ -116,7 +149,7 @@ impl LiveReplTail {
     /// Lightweight spinner/timer repaint of the job strip only — no full
     /// tail redraw, so it can run at animation frequency without flicker.
     pub(in crate::cli) fn tick_job_strip(&mut self) -> Result<()> {
-        if !self.rendered || (self.jobs.is_empty() && self.strip_sessions.is_empty()) {
+        if !self.rendered || self.strip_items.is_empty() {
             return Ok(());
         }
         // 回合里开着面板时活动区归面板（B4），任务条不在屏上。
@@ -180,11 +213,10 @@ impl LiveReplTail {
         }
         // `strip_lines` 头一行是空的分隔行，任务从第二行起；露不下时最后还有一行「↓ 还有
         // x 个」，它不是哪一条。
-        let window = self.strip_view().window(self.strip_rows().len());
+        let visible = self.strip_view().visible(self.strip_rows().len());
         offset
             .checked_sub(1)
-            .filter(|visible| *visible < window.len())
-            .map(|visible| window.start + visible)
+            .and_then(|slot| visible.get(slot).copied())
     }
 
     /// 在任务条第 `index` 条上点了一下（以后方向键选中回车也走这儿）。返回真表示这一下
@@ -194,8 +226,8 @@ impl LiveReplTail {
     /// - 后台命令：开它的日志面板（只有全屏有面板）。
     pub(in crate::cli) fn activate_strip_row(&mut self, index: usize) -> Result<bool> {
         let (action, job) = match self.strip_rows().get(index) {
-            Some(StripRow::Session(session, _)) => (Some(session.action()), None),
-            Some(StripRow::Job(job)) => (None, Some((*job).clone())),
+            Some(item @ StripItem::Job { job, .. }) => (item.action(), Some(job.clone())),
+            Some(item) => (item.action(), None),
             None => return Ok(false),
         };
         if let Some(action) = action {

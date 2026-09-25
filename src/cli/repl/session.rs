@@ -488,16 +488,13 @@ pub(in crate::cli) async fn present_session(
     // 要等主循环转回顶上、再等下一轮轮询（最多一秒），`/new` 之后大厅里旧任务还挂着
     //（todolist 09-24）。直连模式没有轮询线程，这里是空操作。
     if let Some(feed) = crate::cli::repl::jobs::feed() {
-        // 从父会话切进子会话那一刻，父会话名下的子代理就是兄弟：先拿来垫上（09-25）。
-        let seed = feed.subagents.lock().unwrap().clone();
-        feed.set_visit_parent(
-            live_repl
-                .visits
-                .last()
-                .map(|parent| parent.session_id.as_str()),
-            seed,
-        );
-        feed.set_repl_session(&state.session_id);
+        // 会话和访问路径一起换：访问路径上各层的子代理表留着，切进切出任务条都不空一拍（09-26）。
+        let path: Vec<String> = live_repl
+            .visits
+            .iter()
+            .map(|visit| visit.session_id.clone())
+            .collect();
+        feed.set_scope(&state.session_id, &path);
         live_repl.set_jobs(feed.jobs.lock().unwrap().clone());
     }
     // 换了会话，显示就是这条会话自己的车道：大厅里按 Tab 换的那一下作废。

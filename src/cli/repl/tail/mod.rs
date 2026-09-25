@@ -199,10 +199,10 @@ pub(in crate::cli) struct LiveReplTail {
     pub(in crate::cli) job_strip_rows: u16,
     /// 鼠标正悬在任务条的哪一条上(`strip_rows` 的下标),那一行画成不 dim。
     pub(in crate::cli) job_hover: Option<usize>,
-    /// 任务条上此刻列着的会话行（排在后台任务前面，见 `repl::strip`）。
-    pub(in crate::cli) strip_sessions: Vec<crate::cli::repl::strip::StripSession>,
+    /// 任务条此刻的每一行，排好序、挂好层（见 `repl::strip_tree`）。
+    pub(in crate::cli) strip_items: Vec<crate::cli::repl::strip::StripItem>,
     /// 正在访问的子会话是从哪儿切进来的，一层一行（会话项目第 3 段）。栈顶是任务条
-    /// 第一行「↑ 主会话」回去的地方，层数画在 footer 上。真正换会话（`/new`
+    /// 第一行「○ 主会话」回去的地方，层数画在 footer 上。真正换会话（`/new`
     /// `/session` …）时清空。
     pub(in crate::cli) visits: Vec<crate::cli::repl::strip::ParentRow>,
     /// 点了任务条上的会话行：切进那条子会话，或者回去。事件层做不了换会话，攒在这儿
@@ -211,7 +211,8 @@ pub(in crate::cli) struct LiveReplTail {
     /// 方向键停在任务条的哪一条上（`strip_rows` 的下标）。`None` = 在输入框里。
     /// 见 `navigate`。
     pub(in crate::cli) strip_focus: Option<usize>,
-    /// 任务条从第几条露起（最多露 5 条）。
+    /// 用方向键挪的时候，任务条滚动那一截从第几条露起（最多露 5 条，钉住的不算）。没在挪
+    /// 的时候不看它，停在露出正在看的那条的地方（`strip_view`）。
     pub(in crate::cli) strip_scroll: usize,
     /// 命令候选里方向键挑中的那一条，连同挑的时候输入框里是什么：输入一变就作废。
     pub(in crate::cli) command_pick: Option<(usize, String)>,
@@ -672,7 +673,7 @@ impl LiveReplTail {
             job_strip_start: 0,
             job_strip_rows: 0,
             job_hover: None,
-            strip_sessions: Vec::new(),
+            strip_items: Vec::new(),
             visits: Vec::new(),
             pending_strip_action: None,
             strip_focus: None,
@@ -761,6 +762,25 @@ impl LiveReplTail {
         if std::mem::take(&mut self.raw_mode_handoff) {
             drop(LiveRawMode::adopt());
         }
+    }
+
+    /// 这一段读键要用的 raw 守卫：上一段交接过来的就接着用（不再推一层键盘增强），
+    /// 没有交接才新开一把。第二项为真表示终端刚从 cooked 回到 raw——这之前敲的键
+    /// 被终端回显到了屏上。
+    ///
+    /// 交接是「终端已经在 raw 里」的承诺。承诺落空（中间有人另开一把又放掉了，终端
+    /// 回到了回显模式）就在这儿补开：认领失效交接的输入循环坐在 cooked 的终端上，
+    /// 打字只有回显、一个键也收不到（09-26 用户实测「从子代理切回主会话后不能交互」，
+    /// 输入框里是 Esc 回显出来的 `^[[27u`）。
+    pub(in crate::cli) fn take_raw_guard(&mut self) -> Result<(LiveRawMode, bool)> {
+        if !std::mem::take(&mut self.raw_mode_handoff) {
+            return Ok((LiveRawMode::start()?, true));
+        }
+        if terminal::is_raw_mode_enabled().unwrap_or(true) {
+            return Ok((LiveRawMode::adopt(), false));
+        }
+        tracing::warn!("raw-mode handoff found the terminal cooked; re-enabling raw mode");
+        Ok((LiveRawMode::readopt_cooked()?, true))
     }
 
     /// 换车道:输入框竖条换色、banner 的模式行跟着走。
@@ -1110,6 +1130,16 @@ impl LiveRawMode {
         self.restore_terminal_on_drop = false;
         // handoff 后由下一段 LiveRawMode::adopt 继续持有键盘增强状态
         self.keyboard_enhancement = KeyboardEnhancementState::default();
+    }
+
+    /// 交接过来却是 cooked 的终端（见 `LiveReplTail::take_raw_guard`）：raw 补开，
+    /// 键盘增强按「还压着」接管——中途放掉的那一把只弹了它自己推的那一层。
+    fn readopt_cooked() -> Result<Self> {
+        enable_live_raw_mode()?;
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, EnableBracketedPaste);
+        let _ = execute!(stdout, EnableFocusChange);
+        Ok(Self::adopt())
     }
 }
 

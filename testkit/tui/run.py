@@ -204,18 +204,18 @@ def finish_frame(master, sink, timeout=1.0):
 
 # 子代理的会话（会话项目第 3 段）：和 `subagent_visit.py` 同一套判据。
 CHILD_TASK = "来自主会话的任务"
-CHILD_UP = "↑ 主会话"
+CHILD_UP = "○ 主会话"
 CHILD_BADGE = "子代理 ↳1"
 
 
 def in_child_session(screen):
-    """切进了子代理自己的会话：第一句画成「来自主会话的任务」，footer 带徽标，任务条有「↑ 主会话」。"""
+    """切进了子代理自己的会话：第一句画成「来自主会话的任务」，footer 带徽标，任务条有「○ 主会话」。"""
     joined = "\n".join(screen)
     return CHILD_TASK in joined and CHILD_BADGE in joined and CHILD_UP in joined
 
 
 def back_to_parent(master, sink, timeout=10.0):
-    """`/back` 回主会话；回来了（看得见用户那句、没有徽标和「↑ 主会话」）返回 True。"""
+    """`/back` 回主会话；回来了（看得见用户那句、没有徽标和「○ 主会话」）返回 True。"""
     os.write(master, b"/back")
     drain_until(master, sink, "/back", 3.0)
     os.write(master, b"\r")

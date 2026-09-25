@@ -228,15 +228,12 @@ impl RemoteRepl {
                     //
                     // 光清是不够的：紧接着那次轮询拿到的还是停之前的快照，状态行会
                     // 再冒出来一下——先把这些 id 压住，等轮询里真的没有了再放开。
-                    let stopped_ids: Vec<String> = self
-                        .live_repl
-                        .jobs
-                        .iter()
-                        .map(|job| job.job_id.clone())
-                        .collect();
+                    // 只压这条会话自己的：在子代理会话里，任务条上还列着父会话的命令。
+                    let stopped_ids = self.live_repl.background_job_ids();
                     self.live_repl
                         .suppress_jobs(stopped_ids.iter().map(String::as_str));
-                    self.live_repl.set_jobs(Vec::new());
+                    let jobs = self.live_repl.jobs.clone();
+                    self.live_repl.set_jobs(jobs);
                     repl_note(
                         &mut self.live_repl,
                         &format!(

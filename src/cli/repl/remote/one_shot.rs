@@ -186,11 +186,7 @@ async fn run_remote_chat_inner(
     // interactive: typed input is queued for the running turn, mirroring the
     // direct REPL's input pump.
     let mut raw = match live.as_deref_mut() {
-        Some(live) => Some(if std::mem::take(&mut live.raw_mode_handoff) {
-            LiveRawMode::adopt()
-        } else {
-            LiveRawMode::start()?
-        }),
+        Some(live) => Some(live.take_raw_guard()?.0),
         None => None,
     };
 
