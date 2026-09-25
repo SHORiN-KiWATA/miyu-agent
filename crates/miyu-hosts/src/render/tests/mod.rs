@@ -13,6 +13,7 @@ mod math;
 mod patch;
 mod reasoning;
 mod reasoning_stall;
+mod reply_preview;
 mod shared;
 mod surface;
 mod table;

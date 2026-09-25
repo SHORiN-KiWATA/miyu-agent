@@ -61,6 +61,88 @@ impl MarkdownStreamRenderer {
         output.push_str(&self.line_renderer.flush());
         output
     }
+
+    /// 还没落下的那一截此刻的样子，一项一行（没折行）。正文的活尾巴用（09-25）。
+    ///
+    /// 没有副作用：不画 mermaid 图、不出公式图片、不动任何状态——那几样只在真落下时做。
+    /// 没闭合的代码块按最终那套渲（框宽照整块算，只渲最后 `max_rows` 行），mermaid 也先
+    /// 露源码；没闭合的公式照原样；进行中的表格那一行按表格行渲；还没定下来是不是表格的
+    /// 几行和半行都按普通正文渲。
+    pub(crate) fn pending_preview(&self, max_rows: usize) -> Vec<String> {
+        let state = &self.line_renderer;
+        let partial = Some(preview_tail(&self.buffer)).filter(|line| !line.is_empty());
+        if state.in_code_block {
+            return render_code_block_tail(&state.code_lang, &state.code_buffer, partial, max_rows);
+        }
+        let mut rows = Vec::new();
+        if state.in_math_block {
+            let opener = if state.math_closer == "$$" {
+                "$$"
+            } else {
+                "\\["
+            };
+            rows.push(format!("\x1b[36m{opener}\x1b[0m"));
+            for line in state.math_buffer.iter().map(String::as_str).chain(partial) {
+                rows.push(format!("\x1b[36m{line}\x1b[0m"));
+            }
+            return rows;
+        }
+        rows.extend(
+            state
+                .table_buffer
+                .iter()
+                .map(|line| render_markdown_line(line)),
+        );
+        if let Some(line) = partial {
+            match &state.active_table {
+                Some(table) if looks_like_table_row(line) => {
+                    rows.push(middle_table_border(&table.widths).trim_end().to_string());
+                    let row = parse_table_row(line);
+                    rows.extend(
+                        render_table_row(&row, &table.widths, &table.alignments, false)
+                            .lines()
+                            .map(str::to_string),
+                    );
+                }
+                _ => rows.push(render_markdown_line(line)),
+            }
+        }
+        rows
+    }
+
+    /// 还没落下的那一截的指纹：它没变，活尾巴就不用重算。
+    ///
+    /// 各缓冲只在这一截里往后长，落下一段时渲染器自己把尾巴重画一遍，所以长度加半行的
+    /// 内容就分得清。
+    pub(crate) fn pending_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let state = &self.line_renderer;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.buffer.hash(&mut hasher);
+        (
+            state.in_code_block,
+            state.in_math_block,
+            state.code_buffer.len(),
+            state.table_buffer.len(),
+            state.math_buffer.len(),
+            state.active_table.is_some(),
+        )
+            .hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// 预览只看一行的最后这么多字。模型要是吐一整段不带换行的超长文字（压缩过的代码、
+/// 一大段 JSON），每一拍整段重渲会把一个核吃满——思考滚动窗的 `ThoughtRows` 就是这么
+/// 来的。露出来的只有最后几行，截掉的部分落下时照样整段渲。
+pub(crate) const PREVIEW_LINE_CHARS: usize = 8192;
+
+/// 一行的最后 [`PREVIEW_LINE_CHARS`] 个字（落在字符边界上）。
+pub(crate) fn preview_tail(line: &str) -> &str {
+    match line.char_indices().rev().nth(PREVIEW_LINE_CHARS - 1) {
+        Some((start, _)) if start > 0 => &line[start..],
+        _ => line,
+    }
 }
 
 pub(crate) struct MarkdownLineRenderer {

@@ -1,8 +1,6 @@
 use super::clip_to_display_width;
+use super::live_area::{LiveArea, Rewrite};
 use anyhow::Result;
-use crossterm::cursor::{MoveDown, MoveToColumn, MoveUp};
-use crossterm::terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate};
-use crossterm::{execute, queue};
 use std::io::{self, IsTerminal, Write};
 
 const WIDTH: usize = 7;
@@ -51,17 +49,14 @@ struct ScannerState {
 pub struct WaitSpinner {
     phase: String,
     sub_phase: Option<String>,
-    rendered_line_widths: Vec<usize>,
-    /// 上一帧画出去的每一行（含转义）。行数没变、也没有软折行时只重写变了的行。
-    rendered_lines: Vec<String>,
     style: SpinnerStyle,
     frame: usize,
     /// 块模式上一帧每一行「原样 → 画好的样子」。见 [`WaitSpinner::block_rows`]。
     row_cache: Vec<CachedRow>,
     /// `row_cache` 是按多宽裁的。宽度一变整份作废。
     row_cache_width: usize,
-    /// 上一帧是按多宽的终端出的。全屏下宽度一变就整段重写，不按行比对。
-    rendered_width: usize,
+    /// 画在哪、上一帧画了什么（`live_area`）。
+    area: LiveArea,
 }
 
 /// 块模式的一行：进来时什么样、画出去什么样、占几列。
@@ -82,13 +77,11 @@ impl WaitSpinner {
         Self {
             phase,
             sub_phase: None,
-            rendered_line_widths: Vec::new(),
-            rendered_lines: Vec::new(),
             style,
             frame: 0,
             row_cache: Vec::new(),
             row_cache_width: 0,
-            rendered_width: 0,
+            area: LiveArea::default(),
         }
     }
 
@@ -115,40 +108,7 @@ impl WaitSpinner {
         rows: &[String],
         terminal_width: usize,
     ) -> Result<bool> {
-        let total = self.rendered_lines.len();
-        // 全屏按锚点整段重写（见 `tick_in`），没有「就地交接」这回事；这条路本来
-        // 也只有点不开的面（inline、静态时间线）才走。
-        if rows.is_empty() || rows.len() >= total || crate::render::blocks::enabled() {
-            return Ok(false);
-        }
-        let fits = |width: &usize| *width <= terminal_width;
-        if !self.rendered_line_widths.iter().all(fits) {
-            return Ok(false);
-        }
-        let widths = rows
-            .iter()
-            .map(|row| super::command_ansi_width(row))
-            .collect::<Vec<_>>();
-        if !widths.iter().all(fits) {
-            return Ok(false);
-        }
-        queue!(writer, BeginSynchronizedUpdate, MoveUp((total - 1) as u16))?;
-        for (index, row) in rows.iter().enumerate() {
-            if self.rendered_lines[index] != *row {
-                queue!(writer, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-                write!(writer, "{row}")?;
-            }
-            queue!(writer, MoveDown(1))?;
-        }
-        let back = total - 1 - rows.len();
-        if back > 0 {
-            queue!(writer, MoveDown(back as u16))?;
-        }
-        queue!(writer, EndSynchronizedUpdate)?;
-        writer.flush()?;
-        self.rendered_lines.drain(..rows.len());
-        self.rendered_line_widths.drain(..rows.len());
-        Ok(true)
+        self.area.commit_leading_rows(writer, rows, terminal_width)
     }
 
     /// 画一帧。`synchronized` = 自己裹一对同步输出标记；调用方已经在块里就传假。
@@ -156,72 +116,17 @@ impl WaitSpinner {
         let terminal_width = crate::render::terminal_cols(120);
         let (lines, widths) = self.frame_rows(terminal_width);
         if !lines.is_empty() {
-            let output = lines.join("\n");
-            // live 区里挂着一整段正在长的思考正文时，每帧整片擦了重画既费字节又闪
-            // （用户实测「流式输出的时候一闪一闪的」）：一帧裹进同步输出块，终端一次
-            // 成帧；行数没变或只在末尾长了、又没有软折行，就只重写变了的行、追加新行。
-            let diffable = lines.len() >= self.rendered_lines.len()
-                && self
-                    .rendered_line_widths
-                    .iter()
-                    .chain(widths.iter())
-                    .all(|width| *width <= terminal_width);
-            if crate::render::blocks::enabled() {
-                self.write_anchored(writer, &lines, terminal_width)?;
-            } else {
-                if synchronized {
-                    queue!(writer, BeginSynchronizedUpdate)?;
-                }
-                if diffable {
-                    rewrite_changed_spinner_lines(writer, &self.rendered_lines, &lines)?;
-                } else {
-                    write_spinner_lines(
-                        writer,
-                        &output,
-                        &self.rendered_line_widths,
-                        terminal_width,
-                    )?;
-                }
-                if synchronized {
-                    queue!(writer, EndSynchronizedUpdate)?;
-                }
-            }
-            writer.flush()?;
-            self.rendered_line_widths = widths;
-            self.rendered_lines = lines;
-            self.rendered_width = terminal_width;
+            self.area.paint(
+                writer,
+                lines,
+                widths,
+                terminal_width,
+                synchronized,
+                Rewrite::FromFirstChange,
+            )?;
         }
         let total = total_frames_for_style(self.style);
         self.frame = (self.frame + 1) % total.max(1);
-        Ok(())
-    }
-
-    /// 全屏：回到锚点重写，不数行（见 `blocks::LIVE_REWIND_MARKER`）。
-    ///
-    /// 只重写从第一处变化起的那一截；宽度变了就整段重写——缓冲会按新宽度重排，
-    /// 行和行对不上了。一模一样的一帧一个字节都不发：缓冲不用动，画面也不用重画。
-    /// 不裹同步标记：这些字节进的是全屏的缓冲，不是终端（成帧由画面那一层管）。
-    fn write_anchored(
-        &self,
-        writer: &mut impl Write,
-        lines: &[String],
-        terminal_width: usize,
-    ) -> Result<()> {
-        let same_width = self.rendered_width == terminal_width;
-        if same_width && lines == self.rendered_lines {
-            return Ok(());
-        }
-        let from = if same_width {
-            live_rewrite_from(&self.rendered_lines, lines)
-        } else {
-            0
-        };
-        write!(
-            writer,
-            "{}{}",
-            crate::render::blocks::live_rewind_marker_at(from),
-            lines[from..].join("\n")
-        )?;
         Ok(())
     }
 
@@ -297,24 +202,7 @@ impl WaitSpinner {
     /// 收掉转轮那几行。`synchronized` = 自己裹一对同步输出标记；调用方已经在块里
     /// 就传假（2026 是布尔不是栈，里层的结束会把外层提前结掉）。
     pub fn stop_in(&mut self, writer: &mut impl Write, synchronized: bool) -> Result<()> {
-        if crate::render::blocks::enabled() {
-            // 全屏：回到锚、截掉锚以下、拔锚。一帧都没画过就没有锚可拔。
-            if !self.rendered_lines.is_empty() {
-                write!(writer, "{}", crate::render::blocks::LIVE_END_MARKER)?;
-            }
-        } else {
-            if synchronized {
-                queue!(writer, BeginSynchronizedUpdate)?;
-            }
-            clear_spinner_lines(writer, &self.rendered_line_widths)?;
-            if synchronized {
-                queue!(writer, EndSynchronizedUpdate)?;
-            }
-        }
-        writer.flush()?;
-        self.rendered_line_widths.clear();
-        self.rendered_lines.clear();
-        Ok(())
+        self.area.clear(writer, synchronized)
     }
 }
 
@@ -383,35 +271,6 @@ fn render_block_frame(frame: usize, sub: &str, terminal_width: usize) -> (String
     let count = lines.len().min(u16::MAX as usize) as u16;
     (lines.join("\n"), count)
 }
-
-/// 全屏重写从第几行起：和上一帧第一处不一样的那一行，往前退到它所在块的开头——
-/// 块的起止标记得成对重写，从块中间截的话缓冲里那一块就只剩半截。至少重写上一帧
-/// 的最后一行：缓冲里它后面没有行可以「回到」。
-fn live_rewrite_from(previous: &[String], lines: &[String]) -> usize {
-    if previous.is_empty() {
-        return 0;
-    }
-    let changed = previous
-        .iter()
-        .zip(lines)
-        .position(|(old, new)| old != new)
-        .unwrap_or_else(|| previous.len().min(lines.len()))
-        .min(previous.len() - 1);
-    let mut open = None;
-    for (index, line) in lines[..changed].iter().enumerate() {
-        for (at, _) in line.match_indices(BLOCK_OSC) {
-            if line[at + BLOCK_OSC.len()..].starts_with("-end") {
-                open = None;
-            } else {
-                open = Some(index);
-            }
-        }
-    }
-    open.unwrap_or(changed)
-}
-
-/// 块标记（起始 `miyu-block=` / `miyu-block-open=`，结束 `miyu-block-end`）的共同前缀。
-const BLOCK_OSC: &str = "\x1b]1337;miyu-block";
 
 /// 块模式的一行画成什么样。`glyph` 是这一帧的转轮字形（已上色）。
 fn block_row(line: &str, usable: usize, glyph: &str) -> String {
@@ -570,93 +429,6 @@ fn paint_for_style(text: &str, style: SpinnerStyle) -> String {
     }
 }
 
-fn write_spinner_lines(
-    writer: &mut impl Write,
-    output: &str,
-    previous_widths: &[usize],
-    terminal_width: usize,
-) -> Result<()> {
-    if !previous_widths.is_empty() {
-        clear_spinner_lines_with_writer(writer, previous_widths, terminal_width)?;
-    }
-    let output_lines = output.lines().collect::<Vec<_>>();
-    for (index, line) in output_lines.iter().enumerate() {
-        execute!(writer, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        write!(writer, "{line}")?;
-        if index + 1 < output_lines.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-/// 只重写变了的行：上移到上一帧的第一行，逐行比对，没变的只是路过；比上一帧多
-/// 出来的行用换行往下追加（到了屏底就让终端自己滚）。上一帧是空的时候就是整片
-/// 写一遍。落笔停在最后一行上就行，列不管：转轮期间光标是藏着的，下一帧和收转轮
-/// 都从「上移 + 回到第 0 列」起手——写死一个列号反而把行宽（里面有会变的秒数）
-/// 烤进字节，golden 就抖。
-fn rewrite_changed_spinner_lines(
-    writer: &mut impl Write,
-    previous: &[String],
-    lines: &[String],
-) -> Result<()> {
-    let old_rows = previous.len();
-    let rows = lines.len();
-    if old_rows > 1 {
-        queue!(writer, MoveUp((old_rows - 1) as u16))?;
-    }
-    for (index, line) in lines.iter().enumerate() {
-        let known = index < old_rows;
-        if !known || previous[index] != *line {
-            queue!(writer, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-            write!(writer, "{line}")?;
-        }
-        if index + 1 < rows {
-            if index + 1 < old_rows {
-                queue!(writer, MoveDown(1))?;
-            } else {
-                writeln!(writer)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn clear_spinner_lines(writer: &mut impl Write, widths: &[usize]) -> Result<()> {
-    if widths.is_empty() {
-        return Ok(());
-    }
-    let terminal_width = crate::render::terminal_cols(120);
-    clear_spinner_lines_with_writer(writer, widths, terminal_width)?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn clear_spinner_lines_with_writer(
-    stdout: &mut impl Write,
-    widths: &[usize],
-    terminal_width: usize,
-) -> Result<()> {
-    if widths.is_empty() {
-        return Ok(());
-    }
-    let rows = super::rendered_physical_rows(widths, terminal_width);
-    if rows > 1 {
-        execute!(stdout, MoveUp(rows - 1))?;
-    }
-    for index in 0..rows {
-        execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        if index + 1 < rows {
-            execute!(stdout, MoveDown(1))?;
-        }
-    }
-    if rows > 1 {
-        execute!(stdout, MoveUp(rows - 1))?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,7 +493,7 @@ mod tests {
             commit_text.contains("\x1b[2A") && commit_text.contains("  │ one"),
             "{commit_text:?}"
         );
-        assert_eq!(spinner.rendered_lines.len(), 2);
+        assert_eq!(spinner.area.lines.len(), 2);
         // 下一帧：转轮挪到 two 上，three 没变。
         spinner.set_sub_phase(Some(format!("{BLOCK_MARKER}  │ two\n  │ three")));
         let mut next = Vec::new();
@@ -759,40 +531,6 @@ mod tests {
         assert!(text.contains("  \x1b[2m\x1b[36m│ one"), "{text:?}");
     }
 
-    /// 全屏重写起点：第一处变化；落在一个块中间就退回块头（起止标记得成对重写）；
-    /// 至少重写上一帧的最后一行。
-    #[test]
-    fn a_partial_rewrite_starts_at_the_first_change_but_never_inside_a_block() {
-        let lines = |tail: &str| -> Vec<String> {
-            vec![
-                "  step 0".into(),
-                format!("\x1b]1337;miyu-block=7\x07  step 1"),
-                "  │ out a".into(),
-                format!("  │ {tail}\x1b]1337;miyu-block-end\x07"),
-                "  head".into(),
-            ]
-        };
-        let before = lines("out b");
-        assert_eq!(live_rewrite_from(&before, &lines("out B")), 1, "退到块头");
-        let mut changed_head = before.clone();
-        changed_head[4] = "  head 2".into();
-        assert_eq!(live_rewrite_from(&before, &changed_head), 4);
-        assert_eq!(
-            live_rewrite_from(&before, &before),
-            4,
-            "一样也至少重写最后一行"
-        );
-        let mut longer = before.clone();
-        longer.push("  new".into());
-        assert_eq!(live_rewrite_from(&before, &longer), 4);
-        assert_eq!(
-            live_rewrite_from(&before, &before[..2]),
-            1,
-            "变短：从截断处起"
-        );
-        assert_eq!(live_rewrite_from(&[], &before), 0);
-    }
-
     #[test]
     fn spinner_runs_at_least_twenty_four_frames_per_second() {
         assert!(SPINNER_INTERVAL <= std::time::Duration::from_millis(41));
@@ -802,13 +540,11 @@ mod tests {
         WaitSpinner {
             phase: phase.to_string(),
             sub_phase: sub_phase.map(|s| s.to_string()),
-            rendered_line_widths: Vec::new(),
-            rendered_lines: Vec::new(),
             style,
             frame: 0,
             row_cache: Vec::new(),
             row_cache_width: 0,
-            rendered_width: 0,
+            area: LiveArea::default(),
         }
     }
 
@@ -874,7 +610,7 @@ mod tests {
             SpinnerStyle::Braille,
         );
         let (rendered, _) = render_frame_at_width(0, &spinner, 80);
-        spinner.rendered_line_widths = rendered
+        spinner.area.widths = rendered
             .lines()
             .map(crate::render::command_ansi_width)
             .collect();
@@ -904,28 +640,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn clearing_multiline_spinner_returns_cursor_to_block_top() {
-        let mut output = Vec::new();
-        clear_spinner_lines_with_writer(&mut output, &[20, 20], 80).unwrap();
-        let output = String::from_utf8(output).unwrap();
-
-        assert!(output.starts_with("\x1b[1A"));
-        assert!(output.contains("\x1b[1B"));
-        assert!(output.ends_with("\x1b[1A"));
-    }
-
-    #[test]
-    fn clearing_spinner_counts_soft_wrapped_physical_rows() {
-        let mut output = Vec::new();
-        clear_spinner_lines_with_writer(&mut output, &[100, 20], 40).unwrap();
-        let output = String::from_utf8(output).unwrap();
-
-        assert!(output.starts_with("\x1b[3A"));
-        assert_eq!(output.matches("\x1b[1B").count(), 3);
-        assert!(output.ends_with("\x1b[3A"));
     }
 
     #[test]

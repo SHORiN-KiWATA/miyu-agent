@@ -25,6 +25,7 @@ pub use table::*;
 pub use tool_display::*;
 pub use usage::*;
 
+mod live_area;
 pub mod wait_spinner;
 
 /// 正文能用多宽。
