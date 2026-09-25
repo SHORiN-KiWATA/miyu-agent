@@ -1,4 +1,6 @@
+use super::protocol::format_mcp_result;
 use super::*;
+use serde_json::{json, Value};
 
 #[test]
 fn mcp_error_flag_survives_text_conversion() {
@@ -58,8 +60,8 @@ fn successful_mcp_outputs_keep_their_existing_bytes() {
     );
 }
 
-#[test]
-fn stdio_mcp_tool_failure_is_not_reported_as_success() {
+#[tokio::test]
+async fn stdio_mcp_tool_failure_is_not_reported_as_success() {
     let script = r#"
 import json, sys
 for line in sys.stdin:
@@ -74,22 +76,19 @@ for line in sys.stdin:
 "#;
     let server = McpServerConfig {
         id: "mock-error".into(),
-        display_name: String::new(),
         command: "python3".into(),
         args: vec!["-c".into(), script.into()],
-        env: HashMap::new(),
         timeout_seconds: 5,
-        enabled: true,
-        capabilities: Vec::new(),
+        ..Default::default()
     };
-    let output = call_mcp_tool_inner(
+    let output = call_tool(
         McpToolBinding {
             server,
             tool_name: "fail".into(),
         },
         json!({}),
-        None,
     )
+    .await
     .unwrap();
     let failure: Value =
         serde_json::from_str(&output).expect("stdio tool errors need a failure envelope");

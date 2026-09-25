@@ -32,6 +32,9 @@ pub struct ToolRegistry {
     unregistered_scripts: Vec<UnregisteredScript>,
     skill_catalog_fingerprint: Option<[u8; 32]>,
     script_catalog_fingerprint: Option<[u8; 32]>,
+    /// MCP 服务器握手时给的使用说明（09-25），系统提示词末尾那一段读它
+    /// （`mcp::instructions_section`）。
+    mcp_instructions: Vec<super::mcp::ServerInstructions>,
     /// 兜底超时：工具未声明 timeout_seconds 时生效。None=不兜底（默认构
     /// 造/测试保持旧行为），工厂函数按 config.tools.default_timeout_secs
     /// 注入。防的是 MCP/web/生图这类没有自管超时的工具把回合无限挂死；
@@ -129,6 +132,14 @@ impl ToolRegistry {
 
     pub(crate) fn set_skill_catalog_fingerprint(&mut self, fingerprint: [u8; 32]) {
         self.skill_catalog_fingerprint = Some(fingerprint);
+    }
+
+    pub(crate) fn add_mcp_instructions(&mut self, instructions: super::mcp::ServerInstructions) {
+        self.mcp_instructions.push(instructions);
+    }
+
+    pub(crate) fn mcp_instructions(&self) -> &[super::mcp::ServerInstructions] {
+        &self.mcp_instructions
     }
 
     pub(crate) fn script_catalog_fingerprint(&self) -> Option<[u8; 32]> {

@@ -247,6 +247,9 @@ async fn run_turn_task_inner(
         }
     }
     let _ = member_persona_applied;
+    // MCP 工具清单先异步列好（09-25）：下面建注册表是同步的，缺清单的服务器要现场列，原来
+    // actor 线程得干等最多 20 秒、别的会话跟着卡。这里等的时候 actor 照样干别的。
+    miyu_engine::tools::prefetch_mcp_listings(&config).await;
     let warming = !turn_engine.is_ready();
     if warming {
         turn_engine.set(TurnEngineState::INITIALIZING);

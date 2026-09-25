@@ -378,6 +378,25 @@ impl Agent {
     /// 有整体替换覆盖时:覆盖文本顶掉人格提示词与属主主机环境块;
     /// 运行时追加段与记忆前言照旧。
     fn assemble_system_prompt(&self, persona_prompt: String) -> String {
+        let prompt = self.assemble_base_system_prompt(persona_prompt);
+        // MCP 服务器给的使用说明（09-25）：指令放 system 侧、每次请求重拼（AGENTS §1.4），
+        // 只带这一轮工具面里还有工具的服务器。放在最末尾：前面的段落字节不动。
+        match self.mcp_instructions_section() {
+            Some(section) => format!("{prompt}\n\n{section}"),
+            None => prompt,
+        }
+    }
+
+    fn mcp_instructions_section(&self) -> Option<String> {
+        if !self.core.tools_enabled {
+            return None;
+        }
+        let mut tools = self.tools.lock().unwrap();
+        self.enforce_turn_restrictions(&mut tools);
+        tools::mcp_instructions_section(&tools)
+    }
+
+    fn assemble_base_system_prompt(&self, persona_prompt: String) -> String {
         match &self.input.system_prompt_override {
             Some(override_prompt) => with_memory_preamble(
                 with_runtime_system_context(

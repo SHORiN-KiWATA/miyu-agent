@@ -415,6 +415,56 @@ pub struct McpServerConfig {
     /// 令牌随服务器进程生灭。不认识的 id 记 warn 并忽略。
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// 服务器进程关不关进调用它的会话的沙盒(09-25)。`none` 只对属主会话生效,
+    /// 成员会话照关。
+    #[serde(default, skip_serializing_if = "McpSandbox::is_inherit")]
+    pub sandbox: McpSandbox,
+    /// 在会话沙盒之上再放行可写的目录(`~/` 开头按家目录展开),比如浏览器缓存。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sandbox_writable: Vec<String>,
+    /// 同一会话里连续调用复用同一个进程(09-25):浏览器、数据库这类有状态的服务器
+    /// 靠它记住上一步。关掉就每次调用新起一个。
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub persistent: bool,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            display_name: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            timeout_seconds: default_mcp_timeout(),
+            enabled: true,
+            capabilities: Vec::new(),
+            sandbox: McpSandbox::Inherit,
+            sandbox_writable: Vec::new(),
+            persistent: true,
+        }
+    }
+}
+
+/// MCP 服务器进程关不关进会话的沙盒(09-25)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpSandbox {
+    /// 跟调用它的会话同一个沙盒(和脚本、命令、中转线一样)。
+    #[default]
+    Inherit,
+    /// 不关。只对属主会话生效,成员会话照关。
+    None,
+}
+
+impl McpSandbox {
+    fn is_inherit(&self) -> bool {
+        *self == Self::Inherit
+    }
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

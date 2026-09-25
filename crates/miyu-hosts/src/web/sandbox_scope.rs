@@ -281,6 +281,7 @@ pub(in crate::web) fn readonly_scope(paths: &MiyuPaths, workdir: PathBuf) -> Tur
         writable_summary: vec!["nothing".to_string()],
         readable_summary: vec!["everything".to_string()],
         read_only_mode: true,
+        member: false,
     };
     TurnScope {
         workspace: workdir,
@@ -402,6 +403,7 @@ fn member_scope(
             "system dirs".to_string(),
         ],
         read_only_mode: false,
+        member: true,
     };
     Some(TurnScope {
         workspace,
@@ -510,6 +512,7 @@ pub(in crate::web) fn admin_scope(
         writable_summary,
         readable_summary,
         read_only_mode: false,
+        member: false,
     };
     TurnScope {
         workspace: root,

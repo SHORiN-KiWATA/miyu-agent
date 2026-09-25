@@ -24,6 +24,12 @@ pub mod knowledge_base;
 mod ledger;
 mod load_tools;
 mod mcp;
+pub(crate) use mcp::instructions_section as mcp_instructions_section;
+pub use mcp::{
+    enable_pool as enable_mcp_pool, forget_session as forget_mcp_session,
+    prefetch as prefetch_mcp_listings, retire_changed as retire_changed_mcp_servers,
+    shutdown_pool as shutdown_mcp_pool,
+};
 pub mod memes;
 mod memory;
 pub mod net_guard;
