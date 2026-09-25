@@ -73,7 +73,8 @@ impl Agent {
                 self.compact_tail_budget(window),
                 self.preset_dialogs.len(),
             )
-            .with_extras(self.compact_extras_policy());
+            .with_extras(self.compact_extras_policy())
+            .excluding_running_turn(current_turn_id);
             let mut on_compact_chunk =
                 |chunk: ChatStreamChunk| on_event(AgentEvent::CompactChunk(chunk));
             // No fork here: a fork of an overflowing conversation

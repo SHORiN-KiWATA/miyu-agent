@@ -25,7 +25,7 @@ pub use antigravity::pool::{
 pub use antigravity::remove_relay_files_now as remove_antigravity_relay_files;
 use antigravity::AntigravityRuntime;
 pub use antigravity::BRIDGE_DUPLICATE_TOOLS as ANTIGRAVITY_BRIDGE_DUPLICATE_TOOLS;
-pub use chat::ContentPolicyBlocked;
+pub use chat::{ContentPolicyBlocked, ContextOverflowed};
 use claude_code::ClaudeCodeRuntime;
 pub use claude_code::BRIDGE_DUPLICATE_TOOLS as CLAUDE_CODE_BRIDGE_DUPLICATE_TOOLS;
 pub use cli_relay::forget_relay_sessions;

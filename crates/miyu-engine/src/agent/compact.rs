@@ -85,6 +85,8 @@ pub struct Compactor {
     /// 摘要输出帽。超时按它缩放——生成一万 token 和生成一千 token 不该
     /// 共用一个墙钟预算。
     summary_cap: u32,
+    /// 回合进行中压缩（被动溢出兜底）时，正在跑的那一轮。见 `excluding_running_turn`。
+    running_turn_id: Option<String>,
 }
 
 pub struct CompactResult {
@@ -138,7 +140,18 @@ impl Compactor {
             tool_result_prune: None,
             system_prompt,
             summary_cap,
+            running_turn_id: None,
         }
+    }
+
+    /// 在回合进行中压缩：这一轮在库里还是 running，它自己不折、也不算进保留的尾巴，
+    /// 但落库前「会话没变」的核对仍要算上它。
+    ///
+    /// 被动溢出兜底用。09-24 查出（B1）：原来见到任何 running 轮就拒绝压缩，而兜底
+    /// 恰好发生在自己这一轮里，于是 08-06 加进来的兜底一次都没成功过。
+    pub fn excluding_running_turn(mut self, turn_id: &str) -> Self {
+        self.running_turn_id = Some(turn_id.to_string());
+        self
     }
 
     /// 压后重建材料的产出策略。预算在这里按窗口缩放:窗口是唯一只有
@@ -349,14 +362,18 @@ impl Compactor {
         if turns.is_empty() {
             return Ok(None);
         }
+        let own_turn = |turn: &Turn| self.running_turn_id.as_deref() == Some(turn.turn_id.as_str());
         if turns
             .iter()
-            .any(|turn| turn.status == miyu_core::state::TurnStatus::Running)
+            .any(|turn| turn.status == miyu_core::state::TurnStatus::Running && !own_turn(turn))
         {
             bail!("cannot compact while another conversation turn is running");
         }
 
-        let head: Vec<&Turn> = turns.iter().filter(|turn| !turn.is_summary).collect();
+        let head: Vec<&Turn> = turns
+            .iter()
+            .filter(|turn| !turn.is_summary && !own_turn(turn))
+            .collect();
         if head.is_empty() {
             return Ok(None);
         }

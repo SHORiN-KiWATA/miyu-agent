@@ -174,6 +174,8 @@ impl OpenAiCompatibleClient {
         let mut errors = Vec::new();
         // 这一轮有没有被 agy 的内容策略拦过（见下面 push 失败行那一处）。
         let mut content_policy_blocked = false;
+        // 有端点报了「对话超长」：汇总成一句话之后，被动压缩还要认得出它（09-24 B6）。
+        let mut context_overflow = false;
         let mut order = if let Some(continuation) = continuation {
             let index = endpoints
                 .iter()
@@ -266,24 +268,51 @@ impl OpenAiCompatibleClient {
                 t("LLM endpoint attempt started", "LLM 端点尝试已开始")
             );
             let mut attempt_committed = false;
-            let result = {
-                let buffered = buffered || self.buffered_delivery;
-                let mut attempt_on_chunk = |chunk: ChatStreamChunk| {
-                    if !buffered {
-                        attempt_committed |=
-                            stream_chunk_commits_attempt(&chunk, client.reasoning_visibility);
-                    }
-                    on_chunk(chunk)
+            // 服务端明说「等几秒再来」时原地等一次再打同一端点（09-24 B6）：
+            // 一次几秒的节流不该让单端点整轮失败，也不该把池里的端点关进冷却。
+            let mut waited_retry_after = false;
+            let result = loop {
+                let result = {
+                    let buffered = buffered || self.buffered_delivery;
+                    let mut attempt_on_chunk = |chunk: ChatStreamChunk| {
+                        if !buffered {
+                            attempt_committed |=
+                                stream_chunk_commits_attempt(&chunk, client.reasoning_visibility);
+                        }
+                        on_chunk(chunk)
+                    };
+                    client
+                        .chat_stream_single(
+                            messages.clone(),
+                            tools.clone(),
+                            continuation.map(|continuation| continuation.response_id.as_str()),
+                            &request_id,
+                            &mut attempt_on_chunk,
+                        )
+                        .await
                 };
-                client
-                    .chat_stream_single(
-                        messages.clone(),
-                        tools.clone(),
-                        continuation.map(|continuation| continuation.response_id.as_str()),
-                        &request_id,
-                        &mut attempt_on_chunk,
+                let wait = match &result {
+                    Err(error) if !waited_retry_after && !attempt_committed => {
+                        retry_after_to_honor(error)
+                    }
+                    _ => None,
+                };
+                let Some(wait) = wait else {
+                    break result;
+                };
+                waited_retry_after = true;
+                tracing::warn!(
+                    request_id,
+                    provider = %endpoint.provider.id,
+                    model = %endpoint.provider.default_model,
+                    wait_ms = wait.as_millis(),
+                    "{}",
+                    t(
+                        "LLM endpoint rate limited; waiting as the provider asked, then retrying once",
+                        "LLM 端点被限流；按服务端要求等一会儿再试一次"
                     )
-                    .await
+                );
+                tokio::time::sleep(wait).await;
             };
             match result {
                 Ok(mut result) => {
@@ -379,6 +408,9 @@ impl OpenAiCompatibleClient {
                     // （用户 09-20 拍板「仅 agy 时」）：它的拦截是会话级粘性的，
                     // 别家的内容策略多半是一次性的，不该据此删用户的话。
                     content_policy_blocked |= agy_content_policy_block(&endpoint.provider, &err);
+                    context_overflow |= err
+                        .downcast_ref::<HttpStatusFailure>()
+                        .is_some_and(|failure| failure.kind == HttpFailureKind::ContextOverflow);
                     errors.push(endpoint_failure_line(endpoint, &err, cooldown));
                     if !same_endpoint_retry_allowed(&err) {
                         exhausted.push(endpoint.id());
@@ -404,6 +436,9 @@ impl OpenAiCompatibleClient {
         let message = all_endpoints_failed_message(&errors, &request_id);
         if content_policy_blocked {
             return Err(anyhow::Error::new(ContentPolicyBlocked { message }));
+        }
+        if context_overflow {
+            return Err(anyhow::Error::new(ContextOverflowed { message }));
         }
         bail!("{message}")
     }
@@ -516,6 +551,7 @@ impl OpenAiCompatibleClient {
             .await?;
         let mut status = response.status();
         if !status.is_success() {
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
             // Zen 不走这条:它只放行 stream:true,非流式重试必然再挨一个 403,
             // 白白把端点冷却掉(09-20)。
@@ -549,6 +585,7 @@ impl OpenAiCompatibleClient {
                         .consume_chat_completion_response(response, on_chunk)
                         .await;
                 }
+                let retry_after = parse_retry_after(response.headers());
                 let retry_body = response.text().await.unwrap_or_default();
                 tracing::debug!(
                     request_id,
@@ -559,7 +596,11 @@ impl OpenAiCompatibleClient {
                         "非流式配额兼容重试返回 HTTP 错误"
                     )
                 );
-                return self.bail_chat_completion_failure(retry_status.as_u16(), &retry_body);
+                return self.bail_chat_completion_failure(
+                    retry_status.as_u16(),
+                    &retry_body,
+                    retry_after,
+                );
             }
             if stream_options_unsupported(status.as_u16(), &body) {
                 request.stream_options = None;
@@ -577,6 +618,7 @@ impl OpenAiCompatibleClient {
                         .consume_chat_completion_stream(response, on_chunk)
                         .await;
                 }
+                let retry_after = parse_retry_after(response.headers());
                 let body = response.text().await.unwrap_or_default();
                 if let Some(result) = self
                     .try_zen_chat_completion_compat_retry(
@@ -591,7 +633,7 @@ impl OpenAiCompatibleClient {
                 {
                     return Ok(result);
                 }
-                return self.bail_chat_completion_failure(status.as_u16(), &body);
+                return self.bail_chat_completion_failure(status.as_u16(), &body, retry_after);
             }
             if let Some(result) = self
                 .try_zen_chat_completion_compat_retry(
@@ -606,7 +648,7 @@ impl OpenAiCompatibleClient {
             {
                 return Ok(result);
             }
-            return self.bail_chat_completion_failure(status.as_u16(), &body);
+            return self.bail_chat_completion_failure(status.as_u16(), &body, retry_after);
         }
 
         self.consume_chat_completion_stream(response, on_chunk)
@@ -679,6 +721,23 @@ impl std::fmt::Display for ContentPolicyBlocked {
 }
 
 impl std::error::Error for ContentPolicyBlocked {}
+
+/// 所有端点都没跑通，而且其中有端点明确报了「对话超出上下文窗口」。
+///
+/// 汇总成一句话之后，原来的类型化失败就没了；被动压缩（`is_context_overflow_error`）
+/// 靠它认，不用再从裁短过的报文里找措辞（09-24 B6）。
+#[derive(Debug)]
+pub struct ContextOverflowed {
+    pub message: String,
+}
+
+impl std::fmt::Display for ContextOverflowed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ContextOverflowed {}
 
 /// 一条端点的失败理由裁到能读的长度。
 ///

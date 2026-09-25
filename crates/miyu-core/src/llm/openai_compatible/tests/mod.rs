@@ -13,6 +13,7 @@ mod endpoint_retry;
 mod error_text;
 mod extra_body;
 mod failover;
+mod failure_classes;
 mod responses;
 mod shared;
 mod thinking;
