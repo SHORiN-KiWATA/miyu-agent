@@ -6617,16 +6617,22 @@
     call: "__subtool_call__",
     result: "__subtool_result__",
     stats: "__subagent_stats__",
+    // daemon 的中继发这个(`显示串\t数\t人话`);直连模式的老 runner 发上面那个 stats。
+    metric: "__subagent_metric__",
     detach: "__subagent_detach__",
     brief: "__subagent_brief__"
   };
+  // 认不出的老标记(`__subagent_reasoning_done__`、`__subtool_preparing__`……)一律吞掉:
+  // 落进 plain 分支就原样写进窥视那一行(09-25 走查抓到 `__subagent_metric__` 漏在卡片上)。
+  const UNKNOWN_SUBAGENT_MARKER = /^__sub[a-z_]*__/;
 
   // 子代理任务简介 DOM(展开区最上方):标题 + 整段 prompt。前台从工具参数直接建;
   // 后台经 __subagent_brief__ marker 建(后台事件流里没有参数,09-12 #9)。
   function buildSubagentBrief(title, prompt) {
-    const t = String(title || "").trim();
+    // 别叫 t:会遮住翻译函数 t(),标题空着时下面那句 t("任务 prompt") 就抛 TypeError。
+    const heading = String(title || "").trim();
     const p = String(prompt || "").trim();
-    if (!t && !p) return null;
+    if (!heading && !p) return null;
     // prompt 做成默认收起的可展开 tag:子代理自动展开活区域时整段 prompt 会刷屏,
     // 收成一行「任务标题」,想看再点开(用户反馈)。
     const brief = document.createElement("details");
@@ -6643,7 +6649,7 @@
     );
     const label = document.createElement("span");
     label.className = "subagent-brief-name";
-    label.textContent = t || t("任务 prompt");
+    label.textContent = heading || t("任务 prompt");
     summary.append(marker, label);
     brief.appendChild(summary);
     if (p) {
@@ -6685,6 +6691,10 @@
       }
     }
     if (text.startsWith(SUBAGENT_MARKERS.stats)) return { kind: "stats", text: text.slice(SUBAGENT_MARKERS.stats.length).trim() };
+    if (text.startsWith(SUBAGENT_MARKERS.metric)) {
+      const [tokens = ""] = text.slice(SUBAGENT_MARKERS.metric.length).split("\t");
+      return { kind: "metric", tokens: tokens.replace(/\s+/g, "") };
+    }
     if (text.startsWith(SUBAGENT_MARKERS.brief)) {
       try {
         const p = JSON.parse(text.slice(SUBAGENT_MARKERS.brief.length));
@@ -6694,6 +6704,7 @@
       }
     }
     if (text.startsWith(SUBAGENT_MARKERS.detach)) return { kind: "plain", text: text.slice(SUBAGENT_MARKERS.detach.length).trim() };
+    if (UNKNOWN_SUBAGENT_MARKER.test(text)) return { kind: "ignored" };
     return { kind: "plain", text: text.trim() };
   }
 
@@ -6829,6 +6840,16 @@
 
   function renderSubagentProgress(sink, message) {
     const ev = parseSubagentEvent(message);
+    if (ev.kind === "ignored") return;
+    if (ev.kind === "metric") {
+      // daemon 模式下子代理的词元只从这儿来:只喂卡片上那个小标。输入框的「累计」那套
+      // (liveSubagentTokens 的 done/基线)是照直连模式的 stats 写的,接上可能重复计。
+      if (ev.tokens) {
+        sink.tokenText = ev.tokens;
+        if (sink.taskToken) sink.taskToken.textContent = sink.tokenText;
+      }
+      return;
+    }
     if (ev.kind === "stats") {
       // stats 文本形如「工具调用 3 次　消耗词元 ≈1.2k」/「tool calls: 3　token cost: 1.2k」,
       // 每步更新一次。抠出 token 数(可能带 ≈ 前缀),喂给任务条那行的 token 显示(09-12 item 4)。

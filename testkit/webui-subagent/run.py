@@ -8,13 +8,14 @@
 沙箱 daemon + repl-smoke 的桩（主线派一个前台子代理，子代理跑一条 15 秒的命令）+ Playwright：
 - 接口：子会话的回合、上下文、待办都能取（改前 404），回合接口报它是子会话、父会话是谁；
   `/api/sessions/{id}/subagents` 列得出它；
-- 网页：子代理那张卡片认出子会话（实时那条标记），点抬头换到子会话，输入框上方挂「↑ 主会话」，
-  第一句画成「来自主会话的任务」；点「↑ 主会话」回来；
+- 网页：子代理那张卡片认出子会话（实时那条标记），卡片上的词元小标有数，点抬头换到子会话，
+  输入框上方挂「↑ 主会话」，第一句画成「来自主会话的任务」；点「↑ 主会话」回来；
 - 这一轮跑完、刷新之后（卡片是回看画的）照样点得进去，看得到子代理的回复；
-- `__subagent_session__` 那条标记不漏到页面上。
+- 老标记中继的标记（`__subagent_session__`、`__subagent_metric__` 等）一条都不漏到页面上。
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,7 +44,32 @@ BASE = f"http://127.0.0.1:{PORT}"
 ENV = dict(os.environ, MIYU_HOME=str(HOME), XDG_RUNTIME_DIR=str(RUNTIME))
 TASK_TEXT = "子代理走查任务"
 REPLY_HEAD = "好的,收到"
-MARKER = "__subagent_session__"
+# 老标记中继的那几种（`__subagent_session__`、`__subagent_metric__`、`__subtool_preparing__`
+# ……）：哪一种漏到页面上都不对。
+MARKER = re.compile(r"__sub[a-z_]*__")
+# 漏出来的标记只在窥视那一行上闪一下就被下一条盖掉，取一次样抓不稳（09-25 修复前也绿过一次）：
+# 页面里挂一个观察者，出现过就记下。
+WATCH_LEAKS = """
+() => {
+  window.__markerLeaks = [];
+  const scan = (text) => {
+    const hits = String(text || "").match(/__sub[a-z_]*__/g);
+    if (hits) window.__markerLeaks.push(...hits);
+  };
+  new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type === "characterData") scan(mutation.target.textContent);
+      for (const node of mutation.addedNodes) scan(node.textContent);
+    }
+  }).observe(document.body, { subtree: true, childList: true, characterData: true });
+}
+"""
+
+
+def leaks(page):
+    seen = set(page.evaluate("() => window.__markerLeaks || []"))
+    seen.update(MARKER.findall(page.text_content("body") or ""))
+    return sorted(seen)
 
 RESULTS = []
 
@@ -138,6 +164,7 @@ def main():
             page.goto(BASE)
             authlib.ui_login(page)
             page.wait_for_timeout(1500)
+            page.evaluate(WATCH_LEAKS)
             api("POST", "/api/turns", {"content": "走查一句", "session_id": parent_id})
 
             child = wait_until(lambda: (children(parent_id) or [None])[0], 30)
@@ -161,7 +188,19 @@ def main():
             except Exception:
                 linked = False
             check("实时那张子代理卡片认出了子会话", linked)
-            check("标记没漏到页面上", MARKER not in (page.text_content("body") or ""))
+            # daemon 发的词元标记（`__subagent_metric__`）网页原来不认：小标一直空着，标记本身
+            # 漏进窥视那一行。
+            token = page.locator(".tool-card.is-task .tool-task-token").first
+            try:
+                page.wait_for_function(
+                    "el => el && el.textContent.trim().length > 0", arg=token.element_handle(), timeout=15000
+                )
+                token_text = token.text_content().strip()
+            except Exception:
+                token_text = ""
+            check("实时卡片上有子代理的词元数", bool(token_text), token_text)
+            leaked = leaks(page)
+            check("标记没漏到页面上", not leaked, ", ".join(leaked))
             page.screenshot(path=str(OUT / "01-parent-live.png"))
             if linked:
                 card.locator(":scope > .tool-head").click()
@@ -217,7 +256,8 @@ def main():
                     ok = False
                 check("刷新后点进子会话，看得到它的回复", ok)
                 page.screenshot(path=str(OUT / "03-child-saved.png"))
-            check("标记始终没漏到页面上", MARKER not in (page.text_content("body") or ""))
+            # 刷新之后观察者没了，重挂一个也只看得到回看那一截：这一项查的是回看画出来的样子。
+            check("回看的页面上也没有标记", not MARKER.search(page.text_content("body") or ""))
             browser.close()
     finally:
         if daemon:
