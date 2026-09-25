@@ -286,10 +286,7 @@ pub(in crate::web) async fn stream_job_wake_to_origin_tty(
             }
         };
         last_id = record.id;
-        let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
-            continue;
-        };
-        if data.get("run_id").and_then(Value::as_str) != Some(wake.run_id.as_str()) {
+        if record.run_id.as_deref() != Some(wake.run_id.as_str()) {
             if !state
                 .manager
                 .lock()
@@ -310,6 +307,9 @@ pub(in crate::web) async fn stream_job_wake_to_origin_tty(
                 break;
             }
         }
+        let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
+            continue;
+        };
         let terminal = matches!(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"

@@ -109,8 +109,9 @@ use crate::runtime::{
     ActorCommand, AdminFailure, AnswerFailure, ApiError, ContextSnapshot, DaemonState, EventHub,
     EventRecord, IpcRunGuard, LoginFailure, ManagerState, PlatformPersonaResetError,
     PromptDocument, PromptDocuments, QuestionBroker, RedoWebPrompt, RunInfo, RunOperation,
-    SafeQueuedPrompt, SafeUserAttachment, StoreRegistry, ThinkingVariantUpdate, TurnEngineState,
-    TurnResourceCache, TurnUpdateMode, TurnUpdateReceipt, TurnUpdateRequest, WebAuth, WebIdentity,
+    SafeQueuedPrompt, SafeUserAttachment, SharedEvent, StoreRegistry, ThinkingVariantUpdate,
+    TurnEngineState, TurnResourceCache, TurnUpdateMode, TurnUpdateReceipt, TurnUpdateRequest,
+    WebAuth, WebIdentity,
 };
 use anyhow::{bail, Context, Result};
 use axum::body::Bytes;

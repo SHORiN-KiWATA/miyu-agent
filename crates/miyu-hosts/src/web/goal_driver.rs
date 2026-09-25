@@ -17,16 +17,6 @@
 use crate::web::*;
 use miyu_engine::tools::goal;
 
-fn event_field(record: &EventRecord, field: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(&record.data)
-        .ok()
-        .and_then(|data| {
-            data.get(field)
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-}
-
 /// 订阅事件流，在每次回合结束时看看要不要接着开一轮。
 pub(in crate::web) fn spawn_goal_round_driver(state: DaemonState) {
     let mut receiver = state.events.subscribe_live();
@@ -39,8 +29,9 @@ pub(in crate::web) fn spawn_goal_round_driver(state: DaemonState) {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
-            let session_id = || event_field(&record, "session_id");
-            let run_id = || event_field(&record, "run_id").unwrap_or_default();
+            // 路由字段发布时就取好了（`EventRecord::run_id` / `session_id`）。
+            let session_id = || record.session_id.clone();
+            let run_id = || record.run_id.clone().unwrap_or_default();
             match record.kind.as_str() {
                 // 这一轮调过工具 = 真的在干活。判据取事件而不是回查库：
                 // 驱动器本来就在订阅事件流，查库要把整个会话的回合读出来。
