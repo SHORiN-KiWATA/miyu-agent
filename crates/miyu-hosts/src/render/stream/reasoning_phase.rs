@@ -207,6 +207,12 @@ impl StreamRenderer {
         if self.spinner_frozen && self.wait_spinner.is_some() {
             return Ok(());
         }
+        self.paint_spinner()
+    }
+
+    /// 按当前状态画一帧（到了间隔才画）。`tick_spinner` 的本体；开提问面板时绕过冻结画
+    /// 最后一帧也走它。
+    pub(crate) fn paint_spinner(&mut self) -> Result<()> {
         let now = std::time::Instant::now();
         self.settle_stalled_reasoning(now)?;
         let should_tick = self

@@ -274,11 +274,14 @@ impl StreamRenderer {
         let lone = current_is_empty && (!steps.is_empty() || self.timeline.committed > 0);
         let mut lines = thread(steps);
         if lone {
-            // 转轮在左边距、连线照常延续：`⠋ │`。
-            lines.push(format!(
-                "{}{RAIL}",
+            // 转轮在左边距、连线照常延续：`⠋ │`。提问面板开着时转轮冻住，这一格留空
+            //（只留连线），面板收掉再接着转。
+            let marker = if self.spinner_frozen {
+                crate::render::wait_spinner::BLOCK_MARKER_IDLE
+            } else {
                 crate::render::wait_spinner::BLOCK_MARKER
-            ));
+            };
+            lines.push(format!("{marker}{RAIL}"));
         }
         if lines.is_empty() {
             return (String::new(), None);
@@ -429,7 +432,10 @@ impl StreamRenderer {
         let width = crate::render::command_terminal_width();
         // 顺序即优先级：准备态 → 正在跑的工具 → 正在想。准备态排最前，
         // 因为它一定会被后面两者之一替换掉，本来就是个占位。
-        let current: Vec<LiveRow> = if let Some((glyph, prepare)) = self.timeline_preparing_line() {
+        // 提问面板开着（`spinner_frozen`）：没什么在跑，不画「正在做」的那一行。
+        let current: Vec<LiveRow> = if self.spinner_frozen {
+            Vec::new()
+        } else if let Some((glyph, prepare)) = self.timeline_preparing_line() {
             // 准备态还没有内容可展开（参数才刚开始流），不替用户开。
             vec![LiveRow {
                 line: format!("{glyph} {prepare}"),

@@ -42,8 +42,15 @@ fn the_question_panel_freezes_the_spinner_instead_of_erasing_it() {
     renderer.tick_spinner().unwrap();
     assert!(renderer.wait_spinner.is_some(), "准备问题时转轮在跑");
 
+    // 真机上开面板那一刻「在想」的计时刚被置上（走查截屏里冻住的是「思考中 · 3ms」）。
+    renderer.reasoning_started_at = Some(std::time::Instant::now());
+    let _ = renderer.take_output_frame();
     renderer.prepare_for_panel().unwrap();
+    let frame = String::from_utf8_lossy(&renderer.take_output_frame()).into_owned();
 
+    // 开面板这一帧：不挂「准备问题」，也不换成一行冻住的「思考中」——她在等人回答。
+    assert!(!frame.contains("准备问题"), "{frame:?}");
+    assert!(!frame.contains("思考中"), "{frame:?}");
     // 转轮那块还在：全屏下「已思考」那几行就画在里面，收掉就一起没了。
     assert!(renderer.wait_spinner.is_some(), "开面板不能把转轮那块收掉");
     // 「准备问题」那一行清掉了（④）。

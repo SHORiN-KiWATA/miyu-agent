@@ -384,23 +384,32 @@ impl StreamRenderer {
     /// 的那一步会被记成红色的「已中断」，而真结果回来时又记一次（09-19 在
     /// shellhook 里实测过一次发图两行报错）。
     pub fn prepare_for_panel(&mut self) -> Result<()> {
-        // 「准备问题 / 准备编辑」是转轮画的那一行：清掉状态、按新状态立刻重画一次（④，
-        // 09-24 goal_question 走查），已经跑完的那几步（「已思考 · …」）原样留着。然后冻住
-        // 转轮（`spinner_frozen`）：面板开着时她在等人回答，没什么在跑。
+        // 面板开着时她在等人回答，没什么在跑：清掉「准备问题 / 准备编辑」（④，09-24
+        // goal_question 走查），按「面板开着」重画最后一帧，然后冻住转轮（`spinner_frozen`）。
+        // 全屏下这一帧只剩已经跑完的那几步（「已思考 · …」），不挂转轮那一行
+        // （`timeline_waiting` / `timeline_live` 看这个标记）；行内那一行换成等待文案。
         //
         // 集成时先取过「整块转轮收掉」（`stop_waiting`）：转轮是不动了，可全屏下时间线
         // 那几行就画在转轮那块里，「已思考」跟着一起没了——正是 09-20 修过的「面板一开，
         // 刚才的过程就没了」（09-25 红绿账 panel_keeps_body 抓到，会话分支上就红）。
-        let was_preparing = self.preparing_question_started_at.take().is_some()
-            | self.tool_preparing.take().is_some();
+        self.preparing_question_started_at = None;
+        self.tool_preparing = None;
         self.tool_preparing_since = None;
         self.clear_reply_tail()?;
-        if was_preparing && self.wait_spinner.is_some() {
-            self.set_waiting_phase(self.waiting_phase_text());
-            self.last_tick = None;
-            self.tick_spinner()?;
-        }
         self.spinner_frozen = true;
+        if self.wait_spinner.is_some() {
+            if self.timeline_enabled() {
+                if self.timeline_waiting().1.is_none() {
+                    // 时间线上一步都还没有（没想就直接问）：没什么可留的，转轮直接收掉。
+                    self.stop_spinner()?;
+                    return self.show_cursor();
+                }
+            } else {
+                self.set_waiting_phase(self.waiting_phase_text());
+            }
+            self.last_tick = None;
+            self.paint_spinner()?;
+        }
         self.show_cursor()?;
         Ok(())
     }
