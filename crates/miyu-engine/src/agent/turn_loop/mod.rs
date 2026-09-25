@@ -21,6 +21,7 @@ mod repeat_gate;
 mod round_request;
 mod round_state;
 mod stream;
+mod subagent_feed;
 mod tool_call;
 mod tool_exec;
 

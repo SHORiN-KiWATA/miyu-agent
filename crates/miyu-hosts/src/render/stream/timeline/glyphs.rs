@@ -123,11 +123,6 @@ pub fn step_rows(step: &Step, id: Option<u64>) -> String {
     row
 }
 
-/// 这一步点开之后是什么样。三处共用（主线、两块面板）。
-pub fn step_detail_lines(step: &Step) -> Vec<String> {
-    step_detail(step)
-}
-
 /// 收缩行点开是什么样：抬头（`›` 翻成 `⌄`）、连线、各步同一列，不缩进不铺底
 ///（用户拿主线那份对比：「这个才是正确的」）。
 ///

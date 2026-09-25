@@ -40,7 +40,6 @@ window.MIYU_I18N_EN = Object.freeze({
   "/models 端点": "/models endpoint",
   "/sandbox 绑定后根之外还能写的目录(构建缓存)": "Directories still writable outside the /sandbox root (build caches).",
   "/sandbox 绑定后根之外还能读的目录或文件(工具链);~/.ssh 这类别放": "Directories or files outside the root that stay readable once /sandbox is bound (toolchains); keep things like ~/.ssh out.",
-  "0 = 不回放": "0 = do not replay.",
   "0 = 不限": "0 = unlimited.",
   "0 = 不限制": "0 = no limit.",
   "0 = 安全页上限;不能超过安全页上限": "0 = the safety page limit; cannot exceed it.",
@@ -2430,7 +2429,6 @@ window.MIYU_I18N_EN = Object.freeze({
   "重建": "Reindex",
   "重建失败:{message}": "Reindex failed: {message}",
   "重建语义索引": "Rebuild semantic index",
-  "重开 TUI 回放的轮数": "Turns replayed when reopening the TUI",
   "重新换算": "Recalculate",
   "重新生成": "Regenerate",
   "重新生成回复": "Regenerate reply",
@@ -2541,4 +2539,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "（空消息）": "(empty message)",
   "，": ", ",
   "；只锁写，读不设限（~/.ssh 与 API key 也读得到）": "; writes are locked, reads are not (~/.ssh and API keys stay readable)",
+  "打开子代理的会话": "Open the subagent's session",
+  "主会话": "Main session",
+  "来自主会话的任务": "Task from the main session",
 });

@@ -166,6 +166,11 @@ impl TurnJournalSink {
                     message,
                 })
             }
+            // 子代理那一行的样子只给实时界面看，不进流水（子会话里的过程在它自己那儿）。
+            event @ AgentEvent::SubagentProgress { .. } => {
+                self.flush(on_event)?;
+                on_event(event)
+            }
             AgentEvent::CommandOutput {
                 call_id,
                 name,

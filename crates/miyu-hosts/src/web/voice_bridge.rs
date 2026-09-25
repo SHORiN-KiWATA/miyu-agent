@@ -265,7 +265,7 @@ pub(crate) async fn handle_voice_attach(
         tokio::select! {
             signal = rx.recv() => {
                 let Some((kind, data)) = signal else { break };
-                miyu_core::ipc::send(stream, &miyu_core::ipc::Frame::Event { id: 0, kind: kind.to_string(), data }).await?;
+                miyu_core::ipc::send(stream, &miyu_core::ipc::Frame::Event { id: 0, kind: kind.to_string(), data, at_ms: None }).await?;
             }
             frame = miyu_core::ipc::receive::<miyu_core::ipc::Frame>(stream) => {
                 let Ok(Some(miyu_core::ipc::Frame::Event { kind, data, .. })) = frame else {
@@ -912,6 +912,7 @@ pub(crate) async fn handle_start_dictation(
                         id: 0,
                         kind: "voice.dictation".to_string(),
                         data: json!({ "text": text }),
+                        at_ms: None,
                     }).await?;
                 }
                 Some(DictationRelay::Ended) | None => {
@@ -919,6 +920,7 @@ pub(crate) async fn handle_start_dictation(
                         id: 0,
                         kind: "voice.dictation_ended".to_string(),
                         data: json!({}),
+                        at_ms: None,
                     }).await;
                     break;
                 }
@@ -982,6 +984,7 @@ pub(crate) async fn handle_voice_status(
             id: 0,
             kind: "voice.status".to_string(),
             data: status(state),
+            at_ms: None,
         },
     )
     .await?;

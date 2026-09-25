@@ -12,7 +12,7 @@ use crate::state::conversation_db::*;
 /// `turns` 的固定列序。`map_turn_row` 是按位置读的,顺序一改全库跟着错——
 /// AGENTS §3.1 点名的最脆弱处。原来这串在本文件里抄了 7 份,新加一个查询就是
 /// 第 8 份;收成一份,谁都别再手抄。
-const TURN_COLUMNS: &str = "turn_id, seq, user_content, display_content, user_timestamp, assistant_content,
+pub(super) const TURN_COLUMNS: &str = "turn_id, seq, user_content, display_content, user_timestamp, assistant_content,
                     assistant_reasoning, assistant_provider_id, assistant_model, assistant_timestamp, status, tool_reports, hidden, is_summary, owner_pid,
                     token_total, token_usage_estimated, revision, context_messages, token_prompt, token_cache_read, tool_flow";
 

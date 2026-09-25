@@ -21,11 +21,12 @@ impl StreamRenderer {
         let answered = matches!(response, QuestionResponse::Answered(_));
         // 面板开着的那段时间也算进这一段过程里：人在那儿看题、想答案，那就是
         // 这一轮真正花掉的时间。不算的话收缩行会写成光秃秃的 `1 tool`。
+        let now = self.event_now();
         let waited = self
             .preparing_question_started_at
-            .map(|at| at.elapsed())
+            .map(|at| now.saturating_duration_since(at))
             .unwrap_or_default();
-        self.timeline.note_start_since(waited);
+        self.timeline.note_start_since(waited, now);
         let headline = request
             .questions
             .first()

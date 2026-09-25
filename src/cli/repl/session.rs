@@ -214,6 +214,9 @@ pub(in crate::cli) enum SuspendedAction {
     /// 动 footer / 历史 / 车道，只有 `RemoteRepl` 做得了。换走之后这一轮不再
     /// 跟——它在 daemon 里继续跑，属于原来那条会话。
     SwitchSession(ipc::SessionState),
+    /// 回合跑着时点了任务条上的会话行（会话项目第 3 段）：切进子代理会话、或者回去，
+    /// 和 `/session` 挑了别的会话一样要 `RemoteRepl` 来做，换走之后这一轮不再跟。
+    Strip(crate::cli::repl::strip::StripAction),
 }
 
 impl std::fmt::Display for RemoteTurnSuspended {
@@ -329,8 +332,9 @@ pub(in crate::cli) fn session_is_empty(paths: &MiyuPaths, session_id: &str) -> b
     StateStore::new(paths).is_ok_and(|store| store.session_is_empty(session_id))
 }
 
-/// 全屏：把这条会话最近几轮（`display.repl_replay_turns`）按当前宽度重画到正文
-/// 顶上。换会话、撤销之后都走它——画布已经擦过了，屏上只该有库里现在还有的东西。
+/// 回放这条会话最近一屏，按当前宽度重画到正文顶上。全屏往上翻到顶会再往前补，
+/// 见 `replay_screen_page`。启动、换会话、撤销之后都走它：画布已经擦过了，屏上
+/// 只该有库里现在还有的东西。
 pub(in crate::cli) fn replay_recent_turns(
     config: &AppConfig,
     mode: PersonaLane,
@@ -339,31 +343,45 @@ pub(in crate::cli) fn replay_recent_turns(
 ) -> Result<()> {
     // 换到这条会话：上一条会话那一轮的用时不再挂在输入框旁边（09-24）。
     live_repl.clear_turn_clock();
-    if config.display.repl_replay_turns == 0 {
-        return Ok(());
-    }
-    match store.session_replay(config.display.repl_replay_turns) {
-        Ok(replays) if !replays.is_empty() => {
-            let (cols, _) = terminal::size().unwrap_or((80, 24));
-            let cols = crate::cli::content_viewport()
-                .map(|(cols, _)| cols)
-                .unwrap_or(cols);
-            let endpoint_line = crate::cli::model_cmds::show_mixed_model_endpoint(
-                &crate::cli::model_cmds::session_scoped_config(store, config),
-                true,
-            );
-            let frame = session_replay_frame(
-                &replays,
-                mode,
-                config,
-                usize::from(cols.max(1)),
-                endpoint_line,
-            )?;
-            live_repl.apply_output_frame(&frame)?;
+    // 混合模型池的「本次供应商 / 模型」按会话的池判（BUG-05）。
+    let endpoint_line = crate::cli::model_cmds::show_mixed_model_endpoint(
+        &crate::cli::model_cmds::session_scoped_config(store, config),
+        true,
+    );
+    let page = crate::cli::history_replay::replay_screen_page(
+        store,
+        None,
+        mode,
+        config,
+        crate::cli::history_replay::replay_viewport(),
+        endpoint_line,
+    );
+    let older = match page {
+        Ok(Some(page)) => {
+            live_repl.apply_output_frame(&page.frame)?;
+            page.older
         }
-        Ok(_) => {}
-        Err(error) => tracing::debug!(error = %error, "session replay unavailable"),
-    }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(error = %error, "session replay unavailable");
+            None
+        }
+    };
+    // 全屏往上翻到顶再往前补；取页的时候按那一刻的正文区排。
+    let (store, config) = (store.clone(), config.clone());
+    let loader: crate::cli::repl::tail::screen::OlderPageLoader = Box::new(move |before| {
+        crate::cli::history_replay::replay_screen_page(
+            &store,
+            Some(before),
+            mode,
+            &config,
+            crate::cli::history_replay::replay_viewport(),
+            endpoint_line,
+        )
+    });
+    live_repl.set_older_pages(
+        older.map(|before| crate::cli::repl::tail::screen::OlderPages::new(before, loader)),
+    );
     Ok(())
 }
 
@@ -401,7 +419,56 @@ pub(in crate::cli) fn redraw_after_undo(
     replay_recent_turns(config, mode, &store, live_repl)
 }
 
+/// 真正换会话：换画面，再把车道指针指过去。之前切进过的子会话都不算了，任务条上那行
+/// 「↑ 主会话」和 footer 上的层数跟着清掉。
+#[allow(clippy::too_many_arguments)]
 pub(in crate::cli) async fn apply_repl_session_switch(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    mode: PersonaLane,
+    state: &ipc::SessionState,
+    active_session_id: &mut String,
+    history: &mut Vec<ReplHistoryEntry>,
+    live_repl: &mut LiveReplTail,
+    footer: &mut ReplFooterStatus,
+    cumulative_tokens: &mut TurnTokens,
+) -> Result<()> {
+    live_repl.visits.clear();
+    present_session(
+        paths,
+        config,
+        mode,
+        state,
+        active_session_id,
+        history,
+        live_repl,
+        footer,
+        cumulative_tokens,
+    )
+    .await?;
+    // Every REPL session change funnels through here, so this is the one place
+    // the REPL lane needs to be remembered. Best effort: losing the write only
+    // means the next REPL starts on the terminal session.
+    let _ = await_in_lobby(
+        live_repl,
+        send_ipc_admin(
+            paths,
+            IpcCommand::SetReplSession {
+                target: miyu_core::ipc::SessionRef::Id {
+                    id: state.session_id.clone(),
+                },
+            },
+        ),
+    )
+    .await;
+    Ok(())
+}
+
+/// 把这个 REPL 换到 `state` 这条会话上：任务条、历史、只读、画布、回放、排队、footer。
+/// 不动车道指针——切进子代理会话（会话项目第 3 段）只走这一半，`SetReplSession` 本来
+/// 也拒子会话。
+#[allow(clippy::too_many_arguments)]
+pub(in crate::cli) async fn present_session(
     paths: &MiyuPaths,
     config: &AppConfig,
     mode: PersonaLane,
@@ -434,8 +501,9 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     live_repl.editor.cursor = 0;
     // 只读是会话自己的开关(09-23),换到哪个会话就显示哪个会话的。
     live_repl.set_readonly(state.sandbox_readonly);
-    // 每一次换会话都经过这里:空会话挂 banner、Tab 可换车道,非空就钉死。
-    let empty = session_is_empty(paths, &state.session_id);
+    // 每一次换会话都经过这里:空会话挂 banner、Tab 可换车道,非空就钉死。子代理会话
+    // 从来不是大厅：刚建好、第一轮还没落行的那一瞬也不是。
+    let empty = live_repl.visits.is_empty() && session_is_empty(paths, &state.session_id);
     live_repl.set_session_empty(config, paths, empty);
     // 全屏：换会话就换画布。上一个会话的正文整个丢掉，目标会话最近几轮回放到
     // 屏顶——新会话就是一张空画布（大厅），切回旧会话能看到它的对话（用户实测：
@@ -473,21 +541,6 @@ pub(in crate::cli) async fn apply_repl_session_switch(
     footer.update_thinking_variant(thinking_summary.as_deref());
     footer.update_context_window(state.context_window, state.context_window_assumed);
     live_repl.refresh_footer(footer.clone())?;
-    // Every REPL session change funnels through here, so this is the one place
-    // the REPL lane needs to be remembered. Best effort: losing the write only
-    // means the next REPL starts on the terminal session.
-    let _ = await_in_lobby(
-        live_repl,
-        send_ipc_admin(
-            paths,
-            IpcCommand::SetReplSession {
-                target: miyu_core::ipc::SessionRef::Id {
-                    id: state.session_id.clone(),
-                },
-            },
-        ),
-    )
-    .await;
     Ok(())
 }
 
@@ -940,6 +993,35 @@ pub(in crate::cli) async fn repl_fallback_session_state(
     .map(|(state, _)| state))
 }
 
+/// `/session` 面板里列哪些会话。列不出来（IPC 出错已经说过了）、或者一条都没有（说一声）
+/// 就是 `None`。空闲时的面板和回合里开的面板（B4）共用。
+pub(in crate::cli) async fn session_picker_entries(
+    paths: &MiyuPaths,
+    live: &mut LiveReplTail,
+    mode: PersonaLane,
+) -> Result<Option<Vec<SessionListEntry>>> {
+    let Some((_, data)) = repl_ipc_admin(
+        paths,
+        live,
+        IpcCommand::ListSessions {
+            mode: repl_list_mode(mode),
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let entries = repl_visible_entries(&data, mode);
+    if entries.is_empty() {
+        repl_note(
+            live,
+            &format!("\x1b[2m{}\x1b[0m\n", t("no sessions", "没有会话")),
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(entries))
+}
+
 /// Runs the interactive session picker inside the REPL, servicing Ctrl+D
 /// deletions in place. Returns the session state to switch to — a fallback
 /// session when the REPL's own session was one of the ones deleted, so backing
@@ -955,25 +1037,9 @@ pub(in crate::cli) async fn repl_pick_session(
     // 分支），所以循环里不再有「我的会话已经没了但还在挑」这个状态——原来
     // 那个 `lost_active` 标记随之消失。
     loop {
-        let Some((_, data)) = repl_ipc_admin(
-            paths,
-            live,
-            IpcCommand::ListSessions {
-                mode: repl_list_mode(mode),
-            },
-        )
-        .await?
-        else {
+        let Some(entries) = session_picker_entries(paths, live, mode).await? else {
             return Ok(None);
         };
-        let entries = repl_visible_entries(&data, mode);
-        if entries.is_empty() {
-            repl_note(
-                live,
-                &format!("\x1b[2m{}\x1b[0m\n", t("no sessions", "没有会话")),
-            )?;
-            return Ok(None);
-        }
         let picked = if live.screen.is_some() {
             super::session_picker::pick(live, &entries, active_session_id, cursor)
         } else {

@@ -7,6 +7,7 @@
 //! 打一遍」——过滤要在流式条件下做，所以得记住最长的部分匹配前缀
 //! （`longest_sent_meme_prefix_suffix`），不能等看完整段。
 
+mod event_clock;
 mod reasoning_phase;
 pub(crate) mod surface;
 pub mod timeline;
@@ -65,6 +66,10 @@ pub struct StreamRenderer {
     /// 时会话累计从库里重读，加数跟着清掉，不会算两遍。
     /// 记的是**各自的最新值**不是增量，所以并行几个也不会互相叠加出鬼数。
     pub(crate) subagent_tokens: BTreeMap<String, u64>,
+    /// 前台子代理此刻的样子（`subagent.progress`，工具事件名 → 状态）：状态行那一行的
+    /// 窥视、词元从这儿取（会话项目第 4 段之二）。
+    pub(crate) subagent_status:
+        BTreeMap<String, miyu_engine::tools::subagent::status::SubagentStatus>,
     pub(crate) reasoning_mode: ReasoningDisplayMode,
     pub(crate) tool_call_mode: ToolCallDisplayMode,
     pub(crate) plain: bool,
@@ -127,8 +132,8 @@ pub struct StreamRenderer {
     pub(crate) custom_waiting_phase: Option<String>,
     /// 全屏：自动压缩时流进来的摘要先攒着，压完收成一块（`finish_compact`）。
     pub(crate) compact_text: String,
-    /// 上一次把子代理面板重灌是什么时候。见 `refresh_subagent_panels`。
-    pub(crate) last_subagent_refresh: Option<std::time::Instant>,
+    /// 正在喂的这个事件是什么时候发生的（`event_clock.rs`）。
+    pub(crate) event_clock: Option<std::time::Instant>,
     pub(crate) preparing_question_started_at: Option<std::time::Instant>,
     /// Phase text and start time for the "still receiving arguments" hint.
     /// Sticky like `preparing_question_started_at` and for the same reason:
@@ -152,8 +157,6 @@ pub struct StreamRenderer {
     pub(crate) stream_control: TerminalControlState,
     /// 全屏下这一段连续过程的时间线。inline 模式全程为空。
     pub(crate) timeline: timeline::Timeline,
-    /// 每个子代理的内层流水账，按工具名归档。点开覆盖层看的就是这个。
-    pub(crate) subagent_logs: BTreeMap<String, timeline::SubagentLog>,
     /// 「正在进行」那一行的块 id。每帧重发标记但**id 不变**，否则每 tick
     /// 都会在登记处攒一个新块。想完/跑完就清掉。
     pub(crate) live_block: Option<u64>,
@@ -196,6 +199,7 @@ impl StreamRenderer {
             timeline_ends_after_tools: false,
             live_tool_blocks: BTreeMap::new(),
             subagent_tokens: BTreeMap::new(),
+            subagent_status: BTreeMap::new(),
             command_display: None,
             finalizing_for_external_output: false,
             summary_line_active: false,
@@ -206,7 +210,7 @@ impl StreamRenderer {
             last_tick: None,
             custom_waiting_phase: None,
             compact_text: String::new(),
-            last_subagent_refresh: None,
+            event_clock: None,
             preparing_question_started_at: None,
             tool_preparing: None,
             tool_preparing_since: None,
@@ -214,7 +218,6 @@ impl StreamRenderer {
             sent_meme_filter: SentMemeStreamFilter::default(),
             stream_control: TerminalControlState::default(),
             timeline: timeline::Timeline::default(),
-            subagent_logs: BTreeMap::new(),
             live_block: None,
         }
     }
@@ -373,17 +376,14 @@ impl StreamRenderer {
     /// 的那一步会被记成红色的「已中断」，而真结果回来时又记一次（09-19 在
     /// shellhook 里实测过一次发图两行报错）。
     pub fn prepare_for_panel(&mut self) -> Result<()> {
-        // 「准备问题 / 准备编辑」是转轮画的那一行。面板一开 tick 就停了，只清状态不重画
-        // 的话，面板开着的整段时间上面都挂着一行过时的「⠋ 准备问题 · <1ms」（09-24，
-        // goal_question 走查）。清掉之后按新状态立刻重画一次，别的活动行照旧留着。
-        let was_preparing = self.preparing_question_started_at.take().is_some()
-            | self.tool_preparing.take().is_some();
+        self.preparing_question_started_at = None;
+        self.tool_preparing = None;
         self.tool_preparing_since = None;
-        if was_preparing && self.wait_spinner.is_some() {
-            self.set_waiting_phase(self.waiting_phase_text());
-            self.last_tick = None;
-            self.tick_spinner()?;
-        }
+        // 面板开着时她在等人回答，没什么在跑：转轮停下，答完 `start_waiting` 再起。原来
+        // 面板一开回合循环就停了，转轮自然不动；面板改成活动区上的层之后循环照转
+        // （会话项目第 3 段，B4），不停的话「准备问题」会一直挂在面板上头（④ 同一处的
+        // 修法是清状态后重画一次，层上的转轮照样会动，集成时取这一版）。
+        self.stop_waiting()?;
         self.show_cursor()?;
         Ok(())
     }
@@ -526,6 +526,7 @@ impl StreamRenderer {
         // 这一轮的子代理用量交还给会话累计：回合收尾时调用方会从库里重读 Σ，
         // 那时审计会话已经落盘，实时加数留着就是算两遍。
         self.subagent_tokens.clear();
+        self.subagent_status.clear();
         self.mode = None;
         self.show_cursor()?;
         Ok(())
@@ -670,8 +671,9 @@ impl StreamRenderer {
             .find(|(name, stats)| is_command_tool(name) && !stats.settled())
             .map(|(name, _)| name.clone());
         if let Some(name) = name {
+            let now = self.event_now();
             let stats = self.tool_stats_entry(&name);
-            stats.elapsed = stats.started_at.map(|at| at.elapsed());
+            stats.elapsed = stats.started_at.map(|at| now.saturating_duration_since(at));
             stats.detail = detail;
             stats.tail = tail;
         }

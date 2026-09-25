@@ -362,7 +362,16 @@ fn effort_in_a_session_pins_that_session_only() {
     let mut global = miyu_core::llm::ThinkingVariantPreferences::load(&paths);
     global.set(&provider_id, &model, Some("low".to_string()));
     global.save(&paths).unwrap();
-    let scope = miyu_core::llm::ThinkingVariantScope::Session("sess_a");
+    // 钉子存在会话库里(09-24 入库),得是库里真有的会话。
+    let store = StateStore::new(&paths).unwrap();
+    let sess_a = store
+        .create_session("miyu", "a", "user", None)
+        .unwrap()
+        .session_id;
+    let scope = miyu_core::llm::ThinkingVariantScope::Session {
+        store: &store,
+        session_id: &sess_a,
+    };
     let pinned = || {
         miyu_core::llm::ThinkingVariantPreferences::load_scoped(&paths, scope)
             .selected(&provider_id, &model)
@@ -375,7 +384,7 @@ fn effort_in_a_session_pins_that_session_only() {
         &mut client,
         Some("high"),
         "/effort",
-        VariantScope::Session("sess_a"),
+        VariantScope::Session(&sess_a),
         |_| unreachable!("a named level needs no menu"),
     )
     .unwrap();
@@ -394,7 +403,7 @@ fn effort_in_a_session_pins_that_session_only() {
         &mut client,
         None,
         "/effort",
-        VariantScope::Session("sess_a"),
+        VariantScope::Session(&sess_a),
         |mut menu| {
             let text = menu.lines(80, 12).join("\n");
             let text = strip_terminal_control_sequences(&text);
@@ -422,7 +431,7 @@ fn effort_in_a_session_pins_that_session_only() {
         &mut client,
         Some("default"),
         "/effort",
-        VariantScope::Session("sess_a"),
+        VariantScope::Session(&sess_a),
         |_| unreachable!("a named level needs no menu"),
     )
     .unwrap();

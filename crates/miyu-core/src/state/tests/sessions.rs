@@ -378,7 +378,7 @@ fn an_estimated_subagent_run_never_reaches_the_cache_denominator() {
 }
 
 #[test]
-fn subagent_audit_sessions_are_hidden_and_expire() {
+fn subagent_sessions_stay_out_of_the_session_list() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path())).unwrap();
     store.adopt_sessions_for_persona("miyu").unwrap();
@@ -415,30 +415,6 @@ fn subagent_audit_sessions_are_hidden_and_expire() {
     let record = store.session_record(&audit.session_id).unwrap().unwrap();
     assert_eq!(record.kind, "subagent");
     assert_eq!(record.parent_session_id.as_deref(), Some(&*parent));
-
-    // Fresh audit survives cleanup; a backdated one is removed with its
-    // turns (FK cascade).
-    assert_eq!(store.delete_subagent_sessions_older_than(7).unwrap(), 0);
-    store
-        .conv_db()
-        .record_subagent_usage(&audit.session_id, None, None, None, 0, 0, 0, 0)
-        .unwrap();
-    // Backdate updated_at directly.
-    store.conv_db().touch_session(&audit.session_id).unwrap();
-    let backdated = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
-    // No public API to backdate; use a raw update via the test-only conv_db handle.
-    {
-        use rusqlite::params;
-        let db_path = temp.path().join("state").join("conversation.db");
-        let conn = rusqlite::Connection::open(db_path).unwrap();
-        conn.execute(
-            "UPDATE sessions SET updated_at = ?1 WHERE session_id = ?2",
-            params![backdated, audit.session_id],
-        )
-        .unwrap();
-    }
-    assert_eq!(store.delete_subagent_sessions_older_than(7).unwrap(), 1);
-    assert!(store.session_record(&audit.session_id).unwrap().is_none());
 }
 
 #[test]

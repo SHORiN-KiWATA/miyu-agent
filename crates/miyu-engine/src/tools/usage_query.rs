@@ -120,7 +120,7 @@ pub fn register_session(registry: &mut ToolRegistry, session: SessionUsageFn) {
 
 pub fn register(
     registry: &mut ToolRegistry,
-    history_file: PathBuf,
+    state_dir: PathBuf,
     config: miyu_base::config::AppConfig,
 ) {
     registry.register(
@@ -129,9 +129,9 @@ pub fn register(
             DESCRIPTION,
             parameters(),
             move |arguments| {
-                let history_file = history_file.clone();
+                let state_dir = state_dir.clone();
                 let config = config.clone();
-                async move { query(arguments, history_file, config).await }
+                async move { query(arguments, state_dir, config).await }
             },
         )
         .with_display_name(miyu_base::i18n::text("Token usage", "词元用量")),
@@ -140,7 +140,7 @@ pub fn register(
 
 async fn query(
     arguments: Value,
-    history_file: PathBuf,
+    state_dir: PathBuf,
     config: miyu_base::config::AppConfig,
 ) -> Result<String> {
     let range_key = arguments
@@ -151,7 +151,7 @@ async fn query(
     let range = miyu_core::state::UsageRange::parse(&range_key);
     let stats = tokio::task::spawn_blocking(move || {
         let price = miyu_base::models_cache::pricing_resolver(&config);
-        usage::usage_stats(&history_file, range, &price)
+        usage::ledger(&state_dir)?.stats(range, &price, None)
     })
     .await
     .context("usage stats task panicked")??;
@@ -276,7 +276,7 @@ mod tests {
     #[tokio::test]
     async fn agent_registry_tool_reports_usage() {
         let temp = tempfile::tempdir().unwrap();
-        let history = temp.path().join("usage-history.jsonl");
+        let history = temp.path().to_path_buf();
         usage::record_usage(
             &history,
             &Usage {
@@ -321,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn judge_usage_renders_as_a_platform_sub_item() {
         let temp = tempfile::tempdir().unwrap();
-        let history = temp.path().join("usage-history.jsonl");
+        let history = temp.path().to_path_buf();
         let record = |kind: Option<&str>, prompt: u64| {
             usage::record_usage(
                 &history,
@@ -365,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn the_session_tool_reports_this_conversation() {
         let temp = tempfile::tempdir().unwrap();
-        let history = temp.path().join("usage-history.jsonl");
+        let history = temp.path().to_path_buf();
         let mut registry = ToolRegistry::new();
         let session: SessionUsageFn = std::sync::Arc::new(|| {
             Some(SessionUsage {
@@ -403,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn the_two_scopes_are_two_separate_tools() {
         let temp = tempfile::tempdir().unwrap();
-        let history = temp.path().join("usage-history.jsonl");
+        let history = temp.path().to_path_buf();
         let mut registry = ToolRegistry::new();
         register(
             &mut registry,

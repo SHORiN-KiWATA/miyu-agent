@@ -24,7 +24,7 @@ pub fn register(
     jobs::register_management(registry);
     // 编辑器只留 apply_patch(聚合增/改/删,diff 渲染载体)。
     apply_patch::register(registry);
-    todowrite::register(registry, paths.clone());
+    todowrite::register(registry, config.clone(), paths.clone());
     goal::register(registry, config.clone(), paths.clone());
     web::register_fetch(registry);
     if subsystems.voice {

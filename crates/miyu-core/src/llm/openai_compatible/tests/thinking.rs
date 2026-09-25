@@ -48,8 +48,7 @@ fn client_constructors_restore_saved_thinking_variants() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
-            .unwrap(),
+        thinking_variant_preferences_file(&paths),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -80,8 +79,7 @@ fn saving_thinking_variants_preserves_inactive_models_and_clears_unset_active_mo
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
-            .unwrap(),
+        thinking_variant_preferences_file(&paths),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -128,8 +126,7 @@ fn staged_thinking_variant_update_merges_only_the_edited_inactive_model() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
-            .unwrap(),
+        thinking_variant_preferences_file(&paths),
         serde_json::to_string(&concurrent).unwrap(),
     )
     .unwrap();
@@ -152,8 +149,7 @@ fn malformed_thinking_variant_state_is_not_overwritten() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     std::fs::create_dir_all(&paths.state_dir).unwrap();
-    let path = thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
-        .unwrap();
+    let path = thinking_variant_preferences_file(&paths);
     std::fs::write(&path, "{not-json").unwrap();
     let mut preferences = ThinkingVariantPreferences::load(&paths);
     preferences.set("provider", "model", Some("high".to_string()));
@@ -178,8 +174,7 @@ fn thinking_variant_preferences_follow_provider_renames() {
         ..ThinkingVariantPreferences::default()
     };
     std::fs::write(
-        thinking_variant_preferences_file(&paths, crate::llm::ThinkingVariantScope::Global)
-            .unwrap(),
+        thinking_variant_preferences_file(&paths),
         serde_json::to_string(&preferences).unwrap(),
     )
     .unwrap();
@@ -419,13 +414,21 @@ fn variant_extra_body_merges_nested_reasoning_fields() {
 }
 
 /// 会话级档位（09-24：effort 做成会话级）：钉在这个会话那份上、盖住全局；别的会话照旧
-/// 跟着全局；全局那份不动；删会话连文件一起删；会话 id 拼不出别的路径。退回「只有全局
-/// 一份」这条会红。
+/// 跟着全局；全局那份不动；删会话连它那份一起删（09-24 起存在会话库里）；会话 id 拼
+/// 不出别的路径。退回「只有全局一份」这条会红。
 #[test]
 fn a_session_pin_overrides_the_global_level_for_that_session_only() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path());
     std::fs::create_dir_all(&paths.state_dir).unwrap();
+    let store = crate::state::StateStore::new(&paths).unwrap();
+    let session = |name: &str| {
+        store
+            .create_session("miyu", name, "user", None)
+            .unwrap()
+            .session_id
+    };
+    let (sess_a, sess_b, sess_c) = (session("a"), session("b"), session("c"));
     let mut provider = test_provider("custom", "https://example.com/v1");
     provider.default_model = "reasoning-model".to_string();
     provider.models = vec![provider.default_model.clone()];
@@ -441,22 +444,25 @@ fn a_session_pin_overrides_the_global_level_for_that_session_only() {
     let mut global = ThinkingVariantPreferences::load(&paths);
     global.set(&provider.id, &model, Some("high".to_string()));
     global.save(&paths).unwrap();
-    let scope = crate::llm::ThinkingVariantScope::Session("sess_a");
+    let scope = crate::llm::ThinkingVariantScope::Session {
+        store: &store,
+        session_id: &sess_a,
+    };
     let mut pinned = ThinkingVariantPreferences::load_scoped(&paths, scope);
     pinned.set(&provider.id, &model, Some("low".to_string()));
     pinned.save_scoped(&paths, scope).unwrap();
 
     let client_for = |session: &str| {
         let mut client = OpenAiCompatibleClient::from_config(&config, &paths).unwrap();
-        client.apply_session_thinking_variants(&paths, session);
+        client.apply_session_thinking_variants(&store, session);
         client
     };
     assert_eq!(
-        client_for("sess_a").selected_thinking_variant_id(),
+        client_for(&sess_a).selected_thinking_variant_id(),
         Some("low")
     );
     assert_eq!(
-        client_for("sess_b").selected_thinking_variant_id(),
+        client_for(&sess_b).selected_thinking_variant_id(),
         Some("high"),
         "an unpinned session follows the global level"
     );
@@ -466,7 +472,10 @@ fn a_session_pin_overrides_the_global_level_for_that_session_only() {
     );
 
     // 选「默认」是钉成模型默认档：全局设了 high 也不带（用户 09-24），不是回到跟随全局。
-    let default_scope = crate::llm::ThinkingVariantScope::Session("sess_c");
+    let default_scope = crate::llm::ThinkingVariantScope::Session {
+        store: &store,
+        session_id: &sess_c,
+    };
     let mut model_default = ThinkingVariantPreferences::load_scoped(&paths, default_scope);
     model_default.set(
         &provider.id,
@@ -474,20 +483,17 @@ fn a_session_pin_overrides_the_global_level_for_that_session_only() {
         Some(crate::llm::MODEL_DEFAULT_PIN.to_string()),
     );
     model_default.save_scoped(&paths, default_scope).unwrap();
-    assert_eq!(client_for("sess_c").selected_thinking_variant_id(), None);
+    assert_eq!(client_for(&sess_c).selected_thinking_variant_id(), None);
 
-    crate::llm::remove_session_thinking_variants(&paths, "sess_a");
+    store.delete_session(&sess_a).unwrap();
     assert_eq!(
-        client_for("sess_a").selected_thinking_variant_id(),
-        Some("high")
+        ThinkingVariantPreferences::load_session(&store, &sess_a).selected(&provider.id, &model),
+        None,
+        "删会话没把它钉的档位一起删"
     );
     for bad in ["", "../escape", "a/b", "sess a"] {
         assert!(
-            thinking_variant_preferences_file(
-                &paths,
-                crate::llm::ThinkingVariantScope::Session(bad)
-            )
-            .is_err(),
+            super::super::protocol::legacy_session_preferences_file(&paths, bad).is_err(),
             "{bad:?}"
         );
     }

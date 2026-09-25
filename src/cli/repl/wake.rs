@@ -132,6 +132,26 @@ pub(in crate::cli) async fn follow_wake_run(
     // （那一轮刚好没赶上），下面收到第一条事件后补起一次，不会一直没有。
     // 回合中执行斜杠命令要按这个号挂回来（09-20），和 `one_shot.rs` 同一套。
     let mut last_event_id = after.unwrap_or(0);
+    // 点了任务条上的会话行、时间线上子代理那一行，或者方向键停在会话行上回车（会话项目
+    // 第 3 段）：这一轮留在 daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一
+    // 条路。
+    macro_rules! suspend_for_strip {
+        () => {
+            if let Some(action) = live.take_strip_action() {
+                renderer.finish()?;
+                live.stop_footer_spinner()?;
+                live.apply_renderer_frame(&mut renderer)?;
+                return Err(anyhow::Error::new(
+                    crate::cli::repl::session::RemoteTurnSuspended {
+                        action: crate::cli::repl::session::SuspendedAction::Strip(action),
+                        run_id: run_id.to_string(),
+                        last_event_id,
+                        session_id: session_id.to_string(),
+                    },
+                ));
+            }
+        };
+    }
     let mut waiting_started = false;
     if !from_start && !resuming {
         renderer.start_waiting()?;
@@ -173,6 +193,49 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                     let event = event::read()?;
                     crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
+                    // 回合里开着的面板（B4）：按键归它，正文照流。面板里挑了别的会话
+                    // 就借暂离那条路把它带回 `RemoteRepl` 去切。
+                    if live.turn_panel_takes(&event) {
+                        use crate::cli::repl::midturn_panel::{turn_panel_event, HostedPanel};
+                        let mut scope = crate::cli::repl::midturn_panel::TurnScope {
+                            session_id,
+                            run_id,
+                            renderer: &mut renderer,
+                            herdr: Some(&herdr_follow),
+                        };
+                        if let Some(HostedPanel::SwitchSession(state)) =
+                            turn_panel_event(paths, live, &event, &mut scope).await?
+                        {
+                            renderer.finish()?;
+                            live.stop_footer_spinner()?;
+                            live.apply_renderer_frame(&mut renderer)?;
+                            return Err(anyhow::Error::new(
+                                crate::cli::repl::session::RemoteTurnSuspended {
+                                    action: crate::cli::repl::session::SuspendedAction::SwitchSession(
+                                        state,
+                                    ),
+                                    run_id: run_id.to_string(),
+                                    last_event_id,
+                                    session_id: session_id.to_string(),
+                                },
+                            ));
+                        }
+                        continue;
+                    }
+                    // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
+                    // 任务条上回车是点那一行，不是发消息。
+                    if matches!(
+                        live.navigate_key(&event)?,
+                        crate::cli::repl::tail::Navigated::Done
+                    ) {
+                        suspend_for_strip!();
+                        if !live.external_output_active {
+                            synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                                live.redraw()
+                            })?;
+                        }
+                        continue;
+                    }
                     // 斜杠命令在**编辑器处理回车之前**拦：编辑器一旦处理
                     // Enter 就会清空缓冲区，「输入原样留着」就成了空话——
                     // 显示滞留旧文本，下一次按键才暴露缓冲区其实已经空了。
@@ -286,33 +349,11 @@ pub(in crate::cli) async fn follow_wake_run(
                                     // `one_shot.rs` 那条泵同一份处理。
                                     DuringTurn::Panel if live.screen.is_some() => {
                                         live.editor.clear();
-                                        use crate::cli::repl::midturn_panel::{
-                                            host_panel, HostedPanel,
-                                        };
-                                        match host_panel(
-                                            paths,
-                                            live,
-                                            &mut renderer,
-                                            command,
-                                            session_id,
+                                        crate::cli::repl::midturn_panel::open_turn_panel(
+                                            paths, live, command, session_id,
                                         )
-                                        .await?
-                                        {
-                                            HostedPanel::Stayed => continue,
-                                            HostedPanel::SwitchSession(state) => {
-                                                renderer.finish()?;
-                                                live.stop_footer_spinner()?;
-                                                live.apply_renderer_frame(&mut renderer)?;
-                                                return Err(anyhow::Error::new(
-                                                    crate::cli::repl::session::RemoteTurnSuspended {
-                                                        action: crate::cli::repl::session::SuspendedAction::SwitchSession(state),
-                                                        run_id: run_id.to_string(),
-                                                        last_event_id,
-                                                        session_id: session_id.to_string(),
-                                                    },
-                                                ));
-                                            }
-                                        }
+                                        .await?;
+                                        continue;
                                     }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
@@ -341,6 +382,7 @@ pub(in crate::cli) async fn follow_wake_run(
                     if live.handle_screen_event(&event)? {
                         // 浮层里按了 x：跟着别处起的回合时也当场停（见 `job_stop`）。
                         stop_pending_job(paths, jobs_feed, live).await?;
+                        suspend_for_strip!();
                         continue;
                     }
                     match live.editor.handle_event(event, paths, true)? {
@@ -424,12 +466,16 @@ pub(in crate::cli) async fn follow_wake_run(
             }
         };
         drop(recv);
-        if let Some(IpcFrame::Event { id, .. }) = &frame {
+        if let Some(IpcFrame::Event { id, at_ms, .. }) = &frame {
             last_event_id = *id;
+            // 事件时钟停在这个事件上，直到下一个事件（补发的一轮按事件自己的时刻掐表）。
+            renderer.set_event_clock(crate::cli::repl::live_turn::event_instant(*at_ms));
         }
         let Some(IpcFrame::Event { kind, data, .. }) = frame else {
             break;
         };
+        // 这一帧发生的时刻（事件时钟），思考几种事件的 `received_at` 用它。
+        let event_at = renderer.event_now();
         match kind.as_str() {
             "turn.started" => {
                 turn_id = Some(ipc_text(&data, "turn_id").to_string());
@@ -449,6 +495,10 @@ pub(in crate::cli) async fn follow_wake_run(
                     } else if let Some(attempt) = miyu_core::state::service_restart_attempt(&said) {
                         // daemon 重启后接着跑的这一轮（09-24）：一行提示，不是谁说的话。
                         live.show_restart_notice(attempt)?;
+                    } else if turn_from_parent(paths, turn_id.as_deref()) {
+                        // 切进子会话时它正跑着第一轮：开头那句是主会话派的任务（会话项目
+                        // 第 3 段），和回放画成同一块。
+                        live.show_parent_task(&said, config.display.cross_session_preview_lines)?;
                     } else if !said.trim().is_empty() {
                         let cols = crate::cli::terminal_cols();
                         let mut echo = submitted_echo_lines(live.mode(), &said, cols).join("\r\n");
@@ -473,6 +523,31 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                 }
             }
+            // 事件环追不回这一轮的开头时，daemon 从库里的流水补一份到现在为止的样子
+            //（会话项目第 3 段）。按回放那一套画出来，之后的实时事件接着往下写。
+            "turn.catchup" => {
+                turn_id = Some(ipc_text(&data, "turn_id").to_string());
+                let replay = data
+                    .get("replay")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                if let Some(replay) = replay {
+                    let (cols, _) = crate::cli::history_replay::replay_viewport();
+                    let frame = crate::cli::history_replay::session_replay_frame(
+                        std::slice::from_ref(&replay),
+                        live.mode(),
+                        &config,
+                        cols,
+                        false,
+                    )?;
+                    live.apply_output_frame(&frame)?;
+                }
+                if !waiting_started {
+                    renderer.start_waiting()?;
+                    live.apply_renderer_frame(&mut renderer)?;
+                    waiting_started = true;
+                }
+            }
             "assistant.delta" => handle_live_agent_event(
                 live,
                 &mut renderer,
@@ -493,28 +568,28 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.reset" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_start" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_end" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartEnd {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.title" => handle_live_agent_event(
@@ -556,6 +631,15 @@ pub(in crate::cli) async fn follow_wake_run(
                     call_id: ipc_text(&data, "tool_id").to_string(),
                     name: ipc_text(&data, "name").to_string(),
                     message: ipc_text(&data, "message").to_string(),
+                },
+            )?,
+            "subagent.progress" => handle_live_agent_event(
+                live,
+                &mut renderer,
+                AgentEvent::SubagentProgress {
+                    call_id: ipc_text(&data, "tool_id").to_string(),
+                    name: ipc_text(&data, "name").to_string(),
+                    status: miyu_hosts::runtime::subagent_status_from(&data),
                 },
             )?,
             "tool.output" => handle_live_agent_event(
@@ -692,7 +776,7 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             // daemon 自己开的轮里模型也会提问（目标续轮最常见）。这一条以前
@@ -714,7 +798,22 @@ pub(in crate::cli) async fn follow_wake_run(
                 )
                 .await?;
             }
+            // 别处先答了 / 关了这一轮正开着的那道题（另一个终端、网页）。
+            "question.answered" | "question.closed" => {
+                crate::cli::repl::question_flow::settle_question_layer(
+                    live,
+                    &mut renderer,
+                    &kind,
+                    &data,
+                    Some(&herdr_follow),
+                )?;
+            }
             "run.completed" | "run.failed" | "run.cancelled" => {
+                crate::cli::repl::question_flow::abandon_question_layer(
+                    live,
+                    &mut renderer,
+                    Some(&herdr_follow),
+                )?;
                 break;
             }
             _ => {}
@@ -737,6 +836,13 @@ pub(in crate::cli) async fn follow_wake_run(
         rendered.insert(turn_id);
     }
     Ok(())
+}
+
+/// 这一轮是不是主会话派给子代理的任务（子会话的第一轮）。读不到库就当不是。
+fn turn_from_parent(paths: &MiyuPaths, turn_id: Option<&str>) -> bool {
+    turn_id.is_some_and(|turn_id| {
+        StateStore::new(paths).is_ok_and(|store| store.turn_from_parent(turn_id).unwrap_or(false))
+    })
 }
 
 /// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。

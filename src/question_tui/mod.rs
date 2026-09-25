@@ -1,7 +1,10 @@
 mod draw;
 mod edit;
+mod panel;
+pub use draw::BAR as QUESTION_BAR;
 pub(in crate::question_tui) use draw::*;
 pub(in crate::question_tui) use edit::*;
+pub use panel::{QuestionPanel, QuestionView};
 
 use anyhow::{bail, Result};
 use crossterm::cursor::{Hide, MoveTo, Show};
@@ -97,7 +100,7 @@ pub fn ask_watched(
         .unwrap_or(12);
     reserve_space(panel_lines)?;
     let mut session = QuestionSession::start(panel_lines)?;
-    let mut state = QuestionState::new(request);
+    let mut panel = QuestionPanel::new(request.clone())?;
 
     loop {
         if let Some(outcome) = watch.as_deref_mut().and_then(|watch| watch()) {
@@ -109,13 +112,8 @@ pub fn ask_watched(
             }
             return Ok(Asked::Elsewhere(outcome));
         }
-        if state
-            .cancel_armed_until
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            state.cancel_armed_until = None;
-        }
-        draw(&mut session, request, &mut state, &mut scroll)?;
+        panel.expire_cancel();
+        draw(&mut session, &mut panel, &mut scroll)?;
 
         if !event::poll(Duration::from_millis(100))? {
             continue;
@@ -129,7 +127,7 @@ pub fn ask_watched(
                     event::MouseEventKind::ScrollDown => Some(3),
                     _ => None,
                 },
-                Event::Key(key) if key.kind == KeyEventKind::Press && !state.editing => {
+                Event::Key(key) if key.kind == KeyEventKind::Press && !panel.editing() => {
                     match key.code {
                         KeyCode::PageUp => Some(-10),
                         KeyCode::PageDown => Some(10),
@@ -144,86 +142,19 @@ pub fn ask_watched(
             }
         }
         match event {
-            Event::Resize(_, rows) => {
-                session.resize_to_terminal(rows);
-                continue;
-            }
-            Event::Paste(text) if state.editing => {
-                insert_text(&mut state.edit_buffer, &mut state.edit_cursor, &text);
-            }
-            Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+            Event::Resize(_, rows) => session.resize_to_terminal(rows),
+            Event::Paste(text) => panel.on_paste(&text),
+            Event::Key(key) => match panel.on_key(key)? {
+                Some(QuestionResponse::Answered(answers)) => {
+                    session.finish_answered(request, &answers, leave_summary)?;
+                    return Ok(Asked::Here(QuestionResponse::Answered(answers)));
                 }
-                if matches!(key.code, KeyCode::Char('c'))
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                Some(other) => {
                     session.finish_cancelled()?;
-                    return Ok(Asked::Here(QuestionResponse::Cancelled));
+                    return Ok(Asked::Here(other));
                 }
-                if state.editing {
-                    if handle_editing_key(request, &mut state, key)? && !request.needs_review() {
-                        if let Some(answers) = submitted_answers(request, &state)? {
-                            session.finish_answered(request, &answers, leave_summary)?;
-                            return Ok(Asked::Here(QuestionResponse::Answered(answers)));
-                        }
-                    }
-                    continue;
-                }
-
-                if key.code == KeyCode::Esc {
-                    if state
-                        .cancel_armed_until
-                        .is_some_and(|deadline| Instant::now() < deadline)
-                    {
-                        session.finish_cancelled()?;
-                        return Ok(Asked::Here(QuestionResponse::Cancelled));
-                    }
-                    state.cancel_armed_until = Some(Instant::now() + CANCEL_CONFIRM_WINDOW);
-                    continue;
-                }
-                state.cancel_armed_until = None;
-
-                if state.on_confirm(request) {
-                    match key.code {
-                        KeyCode::Left | KeyCode::Char('h') => state.previous_tab(request),
-                        KeyCode::Right | KeyCode::Char('l') => state.next_tab(request),
-                        KeyCode::Enter => {
-                            if let Some(answers) = submitted_answers(request, &state)? {
-                                session.finish_answered(request, &answers, leave_summary)?;
-                                return Ok(Asked::Here(QuestionResponse::Answered(answers)));
-                            }
-                            state.go_to_first_unanswered(request);
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-
-                let question = &request.questions[state.tab];
-                match key.code {
-                    KeyCode::Left | KeyCode::Char('h') => state.previous_tab(request),
-                    KeyCode::Right | KeyCode::Char('l') => state.next_tab(request),
-                    KeyCode::Up | KeyCode::Char('k') => state.previous_option(question),
-                    KeyCode::Down | KeyCode::Char('j') => state.next_option(question),
-                    KeyCode::Tab | KeyCode::Char(' ') if question.multiple => {
-                        state.toggle_current(request)?;
-                    }
-                    KeyCode::Enter if question.multiple => {
-                        state.activate_current(request)?;
-                    }
-                    KeyCode::Enter => {
-                        state.activate_current(request)?;
-                        if !request.needs_review() {
-                            if let Some(answers) = submitted_answers(request, &state)? {
-                                session.finish_answered(request, &answers, leave_summary)?;
-                                return Ok(Asked::Here(QuestionResponse::Answered(answers)));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
+                None => {}
+            },
             _ => {}
         }
     }

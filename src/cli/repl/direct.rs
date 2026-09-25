@@ -406,6 +406,8 @@ pub(in crate::cli) async fn run_direct_repl(
             let jobs_feed = JobsFeed::Local(Some(state.session_id().to_string()));
             let input = match read_live_repl_input(live, paths, &jobs_feed, None)? {
                 LiveReplOutcome::Exit | LiveReplOutcome::FollowWake { .. } => None,
+                // 直连模式没有 daemon，也就没有子代理会话：任务条上不会有会话行。
+                LiveReplOutcome::Strip(_) => continue,
                 // Direct mode owns its jobs in-process: the `Local` feed stops
                 // them here rather than through the daemon.
                 LiveReplOutcome::StopJob { job_id } => {

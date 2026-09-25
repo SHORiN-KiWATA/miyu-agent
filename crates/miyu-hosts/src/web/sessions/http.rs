@@ -170,6 +170,20 @@ pub(in crate::web) async fn update_session_http(
     Ok(Json(json!({})).into_response())
 }
 
+/// 这条会话名下的子代理会话（会话项目第 4 段）。和终端任务条读的是同一份（IPC
+/// `ListSubagentSessions`）。
+pub(in crate::web) async fn session_subagents_http(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    require_viewable_web_session(&state, &headers, &session_id)?;
+    subagent_sessions_json(&state, &session_id)
+        .map(Json)
+        .map_err(session_api_error)
+}
+
 /// 某个会话当前的待办清单。
 ///
 /// WebUI 侧边有一块常驻面板显示它。工具事件只在 `todowrite` 跑的那一刻发生
@@ -180,55 +194,36 @@ pub(in crate::web) async fn session_todos_http(
     Path(session_id): Path<String>,
 ) -> std::result::Result<Json<Value>, ApiError> {
     require_auth(&headers, &state)?;
-    require_local_web_session(&state, &headers, &session_id)?;
-    let todos = tools::session_todos(&state.paths, &session_id);
+    require_viewable_web_session(&state, &headers, &session_id)?;
+    let store = state.stores.for_session(&session_id);
+    let todos = tools::session_todos(&store, &session_id);
     Ok(Json(json!({ "todos": todos })))
 }
 
 /// Read-only snapshot of one session's conversation for per-view browsing:
 /// turns, queued follow-ups, and its currently running turns. Does not touch
 /// the global current-session pointer.
+/// 网页按页取回合（会话项目第 2 段）。给了 `limit` 只取 `before` 之前的那一页；
+/// 没给照旧整段：刷新之前就开着的老页面还是这么取。
+#[derive(Deserialize, Default)]
+pub(in crate::web) struct TurnsQuery {
+    #[serde(default)]
+    before: Option<i64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 pub(in crate::web) async fn session_turns_http(
     State(state): State<DaemonState>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
+    Query(query): Query<TurnsQuery>,
 ) -> std::result::Result<Response, ApiError> {
     require_auth(&headers, &state)?;
-    require_local_web_session(&state, &headers, &session_id)?;
+    let record = require_viewable_web_session(&state, &headers, &session_id)?;
     let store = state.stores.for_session(&session_id).pinned(&session_id);
-    let mut assets_by_turn = HashMap::<String, Vec<ImageAsset>>::new();
-    for asset in store.load_image_assets().map_err(ApiError::internal)? {
-        assets_by_turn
-            .entry(asset.turn_id.clone())
-            .or_default()
-            .push(asset);
-    }
-    let mut artifacts_by_turn = HashMap::<String, Vec<ArtifactAsset>>::new();
-    for artifact in store.load_artifact_assets().map_err(ApiError::internal)? {
-        artifacts_by_turn
-            .entry(artifact.turn_id.clone())
-            .or_default()
-            .push(artifact);
-    }
-    let generation_by_turn = store
-        .load_turn_generation(&session_id)
+    let page = safe_turn_page(&store, &session_id, query.before, query.limit)
         .map_err(ApiError::internal)?;
-    let turns: Vec<SafeTurn> = store
-        .load_turns()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .filter(|turn| !turn.is_summary)
-        .map(|turn| {
-            let assets = assets_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let artifacts = artifacts_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let mut safe = SafeTurn::from_turn(turn, assets, artifacts);
-            if let Some((tokens, millis)) = generation_by_turn.get(&safe.id) {
-                safe.generation_tokens = *tokens;
-                safe.generation_ms = *millis;
-            }
-            safe
-        })
-        .collect();
     let running_target = store
         .running_turn_queue_target()
         .map_err(ApiError::internal)?;
@@ -267,9 +262,20 @@ pub(in crate::web) async fn session_turns_http(
     } else {
         None
     };
+    // 子代理会话（会话项目第 4 段）：网页据此在顶上挂「↑ 主会话」。
+    let parent = record
+        .parent_session_id
+        .as_deref()
+        .and_then(|parent_id| store.session_record(parent_id).ok().flatten())
+        .map(|parent| json!({ "session_id": parent.session_id, "name": parent.name }));
     let mut response = Json(json!({
         "session_id": session_id,
-        "turns": turns,
+        "session_kind": record.kind,
+        "parent": parent,
+        "turns": page.turns,
+        "older": page.older,
+        "tokens_before": page.tokens_before,
+        "first_user_content": page.first_user_content,
         "queued_prompts": queued_prompts,
         "running_turn_id": running_target.as_ref().map(|target| target.turn_id.as_str()),
         "runs": runs,
@@ -331,7 +337,7 @@ pub(in crate::web) async fn session_context_http(
     Path(session_id): Path<String>,
 ) -> std::result::Result<Json<serde_json::Value>, ApiError> {
     require_auth(&headers, &state)?;
-    require_local_web_session(&state, &headers, &session_id)?;
+    require_viewable_web_session(&state, &headers, &session_id)?;
     let snapshot = session_state_for(&state, &session_id).map_err(ApiError::internal)?;
     // 沙盒三件顺路带上:WebUI 的 `/sandbox`(不带参数)就靠这条看根与放行摘要。
     // 会话累计也带上:WebUI 换会话后「累计」要按这条会话的权威值(含子代理花销)

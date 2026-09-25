@@ -1,5 +1,56 @@
 //! 几个测试文件共用的构造辅助。
+use crate::cli::repl::editor::LiveReplEditor;
 use crate::cli::*;
+
+/// 一个没上屏的活动区：只测它的记账（任务条、访问栈），不往终端写字。
+pub(super) fn detached_tail() -> LiveReplTail {
+    let config = AppConfig::default();
+    LiveReplTail {
+        editor: LiveReplEditor::new(PersonaLane::Active, Vec::new()),
+        queued: Vec::new(),
+        pending_chunks: Vec::new(),
+        footer: ReplFooterStatus::from_config(&config, 0, TurnTokens::default()),
+        round_base_footer: None,
+        footer_offset: None,
+        row_memo: Default::default(),
+        usage_placement: UsagePlacement::FooterRight,
+        footer_spinner_last: None,
+        turn_started: None,
+        goal_hint_drawn: String::new(),
+        output_cursor: (0, 0),
+        tail_start: 0,
+        tail_rows: 0,
+        job_strip_start: 0,
+        job_strip_rows: 0,
+        job_hover: None,
+        strip_sessions: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
+        strip_focus: None,
+        strip_scroll: 0,
+        command_pick: None,
+        turn_panel: None,
+        last_mouse_move: None,
+        pending_stop_job: None,
+        input_cursor: (0, 0),
+        rendered: false,
+        external_output_active: false,
+        raw_mode_handoff: false,
+        screen: None,
+        banner: None,
+        banner_rows: 0,
+        lobby_panel_rows: 0,
+        suppress_switch_note: false,
+        session_footer_stale: false,
+        cumulative_from_poll: false,
+        lobby_lane_pending: false,
+        jobs: Vec::new(),
+        suppressed_jobs: std::collections::HashMap::new(),
+        live_turn_tokens: 0,
+        job_spinner: 0,
+        job_spinner_started: std::time::Instant::now(),
+    }
+}
 
 pub(super) fn sample_pop_turn(status: TurnStatus) -> Turn {
     Turn {

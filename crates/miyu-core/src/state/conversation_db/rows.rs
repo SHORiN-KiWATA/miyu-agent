@@ -146,18 +146,58 @@ pub(crate) fn store_replay_journal(tx: &Transaction, turn_id: &str) -> Result<()
     if entries.is_empty() {
         return Ok(());
     }
-    // Whole-turn budget: drop the oldest entries, so what survives is the tail
-    // the user was actually looking at when the turn ended.
-    let mut encoded = serde_json::to_string(&entries)?;
-    while encoded.len() > REPLAY_JOURNAL_MAX_CHARS && entries.len() > 1 {
-        entries.remove(0);
-        encoded = serde_json::to_string(&entries)?;
+    // Whole-turn budget for the tool and thinking entries: drop the oldest of
+    // them, so what survives is the tail the user was actually looking at when
+    // the turn ended. Prose is exempt — it is what the user reads, and a long
+    // reply used to come back cut at 2048 chars (09-25).
+    let mut used: usize = entries.iter().map(budget_cost).sum();
+    let mut index = 0;
+    while used > REPLAY_JOURNAL_MAX_CHARS && index < entries.len() {
+        let cost = budget_cost(&entries[index]);
+        if cost == 0 {
+            index += 1;
+            continue;
+        }
+        used -= cost;
+        entries.remove(index);
     }
+    let encoded = serde_json::to_string(&entries)?;
     tx.execute(
         "UPDATE turns SET replay_journal = ?1 WHERE turn_id = ?2",
         params![encoded, turn_id],
     )?;
     Ok(())
+}
+
+/// 一条回放条目占整轮预算多少：正文不占（见 `store_replay_journal`）。
+fn budget_cost(entry: &ReplayEntry) -> usize {
+    match entry {
+        ReplayEntry::Text { .. } => 0,
+        other => serde_json::to_string(other).map_or(0, |json| json.len()),
+    }
+}
+
+/// 09-25 之前存下的快照把正文截在 `REPLAY_ENTRY_MAX_CHARS` 字、后面补一个「…」。最后一段
+/// 正文就是这一轮交出去的回复时，`assistant_content` 里有全文，照它补回来；认不出来的
+/// （截的是中间正文、几段连着的正文拼在一起）原样留着。
+pub(crate) fn heal_clipped_reply(replay: &mut TurnReplay) {
+    let Some(ReplayEntry::Text { text }) = replay.entries.last_mut() else {
+        return;
+    };
+    let Some(kept) = text.strip_suffix('…') else {
+        return;
+    };
+    if kept.chars().count() != REPLAY_ENTRY_MAX_CHARS {
+        return;
+    }
+    let full = if replay.interrupted {
+        interrupted_prefix(&replay.assistant_content)
+    } else {
+        replay.assistant_content.clone()
+    };
+    if full.len() > kept.len() && full.starts_with(kept) {
+        *text = full;
+    }
 }
 
 /// 流水账收成回放条目。只读——中断轮的快照当场没落下时，回放那条路拿它
@@ -212,10 +252,11 @@ pub(crate) fn replay_entries_from_journal(
     let mut prev_at = turn_started;
     let mut reasoning_from: Option<chrono::DateTime<chrono::Utc>> = None;
     let mut text = String::new();
+    // 正文不截：它就是人要读的那部分（见 `store_replay_journal`）。
     let flush_text = |entries: &mut Vec<ReplayEntry>, text: &mut String| {
         if !text.trim().is_empty() {
             entries.push(ReplayEntry::Text {
-                text: truncate_chars_owned(text, REPLAY_ENTRY_MAX_CHARS),
+                text: std::mem::take(text),
             });
         }
         text.clear();

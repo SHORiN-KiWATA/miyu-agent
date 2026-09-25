@@ -625,8 +625,10 @@ impl OpenAiCompatibleClient {
                         .consume_chat_completion_stream(response, on_chunk)
                         .await;
                 }
+                // 这一次重发的 Retry-After（① B6）：和别的重发出口同一口径。
+                let retry_after = parse_retry_after(response.headers());
                 let body = response.text().await.unwrap_or_default();
-                return self.bail_chat_completion_failure(status.as_u16(), &body);
+                return self.bail_chat_completion_failure(status.as_u16(), &body, retry_after);
             }
             if stream_options_unsupported(status.as_u16(), &body) {
                 request.stream_options = None;

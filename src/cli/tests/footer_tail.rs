@@ -63,6 +63,7 @@ fn live_frame_uses_the_gap_only_for_a_terminating_newline() {
 fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
     let config = AppConfig::default();
     let wake = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "[后台任务完成] 子代理完成 82bea3 · 后台测试A".to_string(),
         assistant_content: "跑完了。".to_string(),
         entries: Vec::new(),
@@ -71,8 +72,10 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
     };
     let typed = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "帮我改一下 README".to_string(),
         assistant_content: "改好了。".to_string(),
         entries: Vec::new(),
@@ -81,6 +84,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
     };
 
     let frame = session_replay_frame(&[wake], PersonaLane::Active, &config, 80, false).unwrap();
@@ -103,6 +107,7 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
 fn replayed_turns_keep_the_mixed_pool_endpoint_line() {
     let config = AppConfig::default();
     let answered = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "第一句走查".to_string(),
         assistant_content: "回放里的回复".to_string(),
         assistant_provider_id: Some("stub".to_string()),
@@ -543,6 +548,13 @@ fn spinner_does_not_resume_tail_during_external_output() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_sessions: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
+        strip_focus: None,
+        strip_scroll: 0,
+        command_pick: None,
+        turn_panel: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -598,6 +610,13 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_sessions: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
+        strip_focus: None,
+        strip_scroll: 0,
+        command_pick: None,
+        turn_panel: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -620,21 +639,34 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_spinner_started: std::time::Instant::now(),
     };
 
-    for (kind, text) in [
+    // 每一片带着它所在事件的时刻；并成一段后留第一片的（思考转正文就是正文第一片到的那一刻）。
+    let base = std::time::Instant::now();
+    for (index, (kind, text)) in [
         (ChatStreamKind::Reasoning, "one"),
         (ChatStreamKind::Reasoning, " two"),
         (ChatStreamKind::Content, "answer"),
         (ChatStreamKind::Content, " text"),
-    ] {
-        live.queue_stream_chunk(ChatStreamChunk {
-            kind,
-            text: text.to_string(),
-        });
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        live.queue_stream_chunk(
+            ChatStreamChunk {
+                kind,
+                text: text.to_string(),
+            },
+            Some(base + std::time::Duration::from_secs(index as u64)),
+        );
     }
 
     assert_eq!(live.pending_chunks.len(), 2);
-    assert_eq!(live.pending_chunks[0].text, "one two");
-    assert_eq!(live.pending_chunks[1].text, "answer text");
+    assert_eq!(live.pending_chunks[0].0.text, "one two");
+    assert_eq!(live.pending_chunks[0].1, Some(base));
+    assert_eq!(live.pending_chunks[1].0.text, "answer text");
+    assert_eq!(
+        live.pending_chunks[1].1,
+        Some(base + std::time::Duration::from_secs(2))
+    );
     live.discard_pending_chunks();
     assert!(live.pending_chunks.is_empty());
 }
@@ -829,9 +861,16 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
         log_path: None,
         metric: metric.map(str::to_string),
         metric_tokens: None,
+        child_session_id: None,
     };
     let row = |metric: Option<&str>| {
-        let lines = crate::cli::repl::jobs::background_job_lines(&[job(metric)], 0, 60, None);
+        let job = job(metric);
+        let lines = crate::cli::repl::strip::strip_lines(
+            &[crate::cli::repl::strip::StripRow::Job(&job)],
+            0,
+            60,
+            Default::default(),
+        );
         strip_terminal_control_sequences(&lines[1])
             .trim_end()
             .to_string()
@@ -871,6 +910,7 @@ fn the_job_panel_title_carries_the_token_figure() {
         log_path: None,
         metric: None,
         metric_tokens: None,
+        child_session_id: None,
     };
     assert_eq!(job_panel_title(&job), "走查后台子代理 · running");
     job.metric = Some("≈3.1K".into());

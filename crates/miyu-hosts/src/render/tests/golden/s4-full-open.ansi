@@ -35,8 +35,8 @@
   [2m[90m┃[0m [2m[90m要不要提交：先看看[0m
 
 ]1337;miyu-live-rewind[2m[36m[2m  │[0m[0m
-[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR> ·  提示词 · 去看看那个目录里有什么]1337;miyu-block-end[0m]1337;miyu-live-end[?2026h[2m  │[0m
-]1337;miyu-block=<ID>[2m  󰚩 子代理 · <DUR>[0m]1337;miyu-block-end
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰚩 子代理 · <DUR>]1337;miyu-block-end[0m]1337;miyu-live-end[?2026h[2m  │[0m
+]1337;miyu-block=<ID>[2m  󰚩 子代理 · 450 · <DUR>[0m]1337;miyu-block-end
 [?2026l]1337;miyu-live-rewind[2m[36m[2m  │[0m[0m
 [2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end
   跑完了，结果如上。

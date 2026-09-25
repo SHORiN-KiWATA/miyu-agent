@@ -8,18 +8,33 @@ use crate::question_tui::*;
 
 pub(in crate::question_tui) const MAX_PANEL_LINES: u16 = 16;
 
-pub(in crate::question_tui) const BAR: &str = "\x1b[1m\x1b[35m┃\x1b[0m";
+pub const BAR: &str = "\x1b[1m\x1b[35m┃\x1b[0m";
 
 pub(in crate::question_tui) const ANSWERED_BAR: &str = "\x1b[2m\x1b[90m┃\x1b[0m";
 
-pub(in crate::question_tui) fn draw(
-    session: &mut QuestionSession,
+/// 面板这一刻的内容：抬头（问题正文）、选项、底下的说明，外加光标该落哪儿。只读状态，
+/// 不碰终端。
+pub(in crate::question_tui) struct Sections {
+    top: Vec<String>,
+    body: Vec<String>,
+    footer: Vec<String>,
+    focused_body_index: Option<usize>,
+    edit_body_index: Option<usize>,
+    /// 光标所在列（从行首竖条算起）。
+    edit_cursor_x: usize,
+}
+
+impl Sections {
+    pub(in crate::question_tui) fn line_count(&self) -> usize {
+        self.top.len() + self.body.len() + self.footer.len()
+    }
+}
+
+pub(in crate::question_tui) fn sections(
     request: &QuestionRequest,
-    state: &mut QuestionState,
-    scroll: &mut Option<&mut dyn FnMut(isize, u16)>,
-) -> Result<()> {
-    let (cols, rows) = terminal::size().unwrap_or((80, 24));
-    let content_width = (cols as usize).saturating_sub(3).max(1);
+    state: &QuestionState,
+    content_width: usize,
+) -> Sections {
     let mut top_lines = Vec::new();
     let mut body_lines = Vec::new();
     let mut footer_lines = Vec::new();
@@ -161,26 +176,45 @@ pub(in crate::question_tui) fn draw(
         ));
     }
 
-    let max_content_lines = session.panel_lines as usize;
-    let layout = panel_layout(
-        top_lines.len(),
-        body_lines.len(),
-        footer_lines.len(),
-        max_content_lines,
+    Sections {
+        top: top_lines,
+        body: body_lines,
+        footer: footer_lines,
         focused_body_index,
+        edit_body_index,
+        edit_cursor_x: edit_cursor_column.saturating_add(edit_cursor_offset),
+    }
+}
+
+/// 最多 `max_lines` 行的样子：选项多了按选中项滚，顶上的空行不画。
+pub(in crate::question_tui) fn view(
+    request: &QuestionRequest,
+    state: &mut QuestionState,
+    content_width: usize,
+    max_lines: usize,
+) -> QuestionView {
+    let parts = sections(request, state, content_width);
+    let layout = panel_layout(
+        parts.top.len(),
+        parts.body.len(),
+        parts.footer.len(),
+        max_lines,
+        parts.focused_body_index,
         state.scroll_starts[state.tab],
     );
     state.scroll_starts[state.tab] = layout.body_start;
-    let visible_lines: Vec<&String> = top_lines
+    let visible_lines: Vec<&String> = parts
+        .top
         .iter()
         .skip(layout.top_start)
         .chain(
-            body_lines
+            parts
+                .body
                 .iter()
                 .skip(layout.body_start)
                 .take(layout.body_capacity),
         )
-        .chain(footer_lines.iter().skip(layout.footer_start))
+        .chain(parts.footer.iter().skip(layout.footer_start))
         .collect();
     // 顶上那几行空的不画：布局按"最多能放多少"切，切出来常常开头就是空行，
     // 而面板是贴着底往上长的——空行于是变成框顶上多出来的一条空带。
@@ -188,11 +222,41 @@ pub(in crate::question_tui) fn draw(
         .iter()
         .take_while(|line| line.trim().is_empty())
         .count();
-    let visible_lines: Vec<&String> = visible_lines.into_iter().skip(lead).collect();
+    let cursor = parts
+        .edit_body_index
+        .filter(|index| {
+            state.editing
+                && *index >= layout.body_start
+                && *index < layout.body_start.saturating_add(layout.body_capacity)
+        })
+        .map(|index| {
+            (
+                (layout.top_budget + index - layout.body_start).saturating_sub(lead),
+                parts.edit_cursor_x,
+            )
+        });
+    QuestionView {
+        lines: visible_lines
+            .into_iter()
+            .skip(lead)
+            .map(|line| truncate_width(line, content_width))
+            .collect(),
+        cursor,
+    }
+}
+
+pub(in crate::question_tui) fn draw(
+    session: &mut QuestionSession,
+    panel: &mut QuestionPanel,
+    scroll: &mut Option<&mut dyn FnMut(isize, u16)>,
+) -> Result<()> {
+    let (cols, rows) = terminal::size().unwrap_or((80, 24));
+    let content_width = (cols as usize).saturating_sub(3).max(1);
+    let view = panel.view(content_width, session.panel_lines as usize);
     // 先清旧面板，再让正文按实际高度重排，最后画新面板。
     // 清屏范围不能用高度上限，否则短问题仍会抹掉上方正文。
     session.clear()?;
-    let height = u16::try_from(visible_lines.len()).unwrap_or(MAX_PANEL_LINES);
+    let height = u16::try_from(view.lines.len()).unwrap_or(MAX_PANEL_LINES);
     let base = if crate::cli::in_fullscreen() {
         let geometry = (cols, rows, height);
         if session.geometry != Some(geometry) {
@@ -207,14 +271,14 @@ pub(in crate::question_tui) fn draw(
     };
     session.anchor_y = base;
     session.painted_rows = height;
-    for (row, line) in visible_lines.iter().enumerate() {
+    for (row, line) in view.lines.iter().enumerate() {
         queue!(
             session.stdout,
             MoveTo(0, base.saturating_add(row as u16)),
             Clear(ClearType::CurrentLine),
             crossterm::style::Print(BAR),
             crossterm::style::Print(" "),
-            crossterm::style::Print(truncate_width(line, content_width))
+            crossterm::style::Print(line)
         )?;
     }
     if crate::cli::in_fullscreen() {
@@ -224,26 +288,17 @@ pub(in crate::question_tui) fn draw(
             Clear(ClearType::CurrentLine)
         )?;
     }
-    if state.editing {
-        if let Some(index) = edit_body_index.filter(|index| {
-            *index >= layout.body_start
-                && *index < layout.body_start.saturating_add(layout.body_capacity)
-        }) {
-            let row = (layout.top_budget + index - layout.body_start).saturating_sub(lead);
-            let cursor_x = edit_cursor_column.saturating_add(edit_cursor_offset);
-            queue!(
-                session.stdout,
-                MoveTo(
-                    cursor_x.min(cols.saturating_sub(1) as usize) as u16,
-                    base.saturating_add(row as u16)
-                ),
-                Show
-            )?;
-        } else {
-            queue!(session.stdout, Show)?;
-        }
-    } else {
-        queue!(session.stdout, Hide)?;
+    match view.cursor {
+        Some((row, column)) => queue!(
+            session.stdout,
+            MoveTo(
+                column.min(cols.saturating_sub(1) as usize) as u16,
+                base.saturating_add(row as u16)
+            ),
+            Show
+        )?,
+        None if panel.editing() => queue!(session.stdout, Show)?,
+        None => queue!(session.stdout, Hide)?,
     }
     session.stdout.flush()?;
     Ok(())

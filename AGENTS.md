@@ -51,9 +51,17 @@ docs/中有过去所有的计划和文档，可以自行按需阅读。
 
 ## 3. 数据库与状态
 
-3.1 迁移只在 MIGRATIONS 末尾追加、纯增量（不回填不删列）；改 Turn 字段必须同步所有固定列序 SELECT 与 map_turn_row（全库最脆弱处）。
+3.1 迁移只在 MIGRATIONS 末尾追加、纯增量（不回填不删列）。**只加表、加索引的改动走 `state/migrations/named.rs` 的命名迁移**（09-24 起）：它不动 user_version，老版本程序照样能开库，分支之间也不撞号；只有改老列、重建表才走版本号迁移。改 Turn 字段必须同步所有固定列序 SELECT 与 map_turn_row（全库最脆弱处）；界面用的按页查询（`conversation_db/pages.rs`）也要同步检查。
 3.2 追加型数据用自增子表，别塞 turns 的 JSON 数组列（读改写全量=O(N²) 写放大）。
 3.3 **DB 备份用 VACUUM INTO，禁止 fs::copy 活库**（打开再 close 会丢本进程的 POSIX 常驻锁——08-21 conversation.db 损坏根因）；db/-wal/-shm 三件同进退；手工查活库一律 `mode=ro&immutable=1` 或拷副本；quick_check 不过就别跑 vacuum。
+
+3.4 **会话级状态进会话库，别再在 `state/` 下按会话 id 开文件**（09-24 会话项目第 1 段）：
+- 待办、提示词指纹、思考档位钉存 `session_values`，终端上键历史存 `repl_history`，都挂 sessions 表级联删除；
+- 以前按会话 id 命名的文件，删会话时没人清（实测 todos 11/11、repl-history 127/129 是孤儿）；
+- 删会话走 `StateStore::delete_session`，库外的 spill、compact、老文件它会一起清。
+3.5 **开库**：
+- 客户端（终端、一次性命令、守护进程里临时开库的工具）用 `StateStore::new`：进程内共用一个连接，库是当前版本就不跑体检。只有守护进程开主库、开成员库时用 `open_maintained` / `open_member`，体检和回收空闲页只在那里做。
+- 用量账本是机器级的独立库 `state/usage.db`（`usage::ledger`），不进会话库。
 
 ## 4. 平台 / QQ
 

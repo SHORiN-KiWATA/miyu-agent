@@ -99,6 +99,20 @@ impl ReplHistoryEntry {
 /// turn uses, so tool blocks and prose come out identical — and re-wrapped for
 /// the terminal's *current* width, which a saved byte transcript could not do.
 /// Turns older than the transcript column fall back to prompt + final reply.
+/// 主会话派给子代理的任务，也就是子会话的第一轮（会话项目第 3 段）。它不是这个会话里
+/// 谁敲的话，画成和跨会话消息同一种块：一行抬头，底下几行预览，点开看全文。回放和
+/// 切进子会话时挂上它正在跑的第一轮，都走这里。
+pub(super) fn write_parent_task(frame: &mut Vec<u8>, body: &str, preview: usize) -> Result<()> {
+    frame.push(b'\n');
+    render::timeline::write_cross_session_message(
+        frame,
+        t("task from the main session", "来自主会话的任务"),
+        body,
+        preview,
+    )?;
+    Ok(())
+}
+
 pub(super) fn session_replay_frame(
     replays: &[miyu_core::state::TurnReplay],
     mode: PersonaLane,
@@ -116,6 +130,12 @@ pub(super) fn session_replay_frame(
         if replay.display_content.starts_with("[目标续轮]") {
             // 目标续轮什么都不画——实时渲染也不打表头。一个长任务几十轮，
             // 每轮一行只会把真正的输出挤散。
+        } else if replay.from_parent {
+            write_parent_task(
+                &mut frame,
+                &replay.display_content,
+                config.display.cross_session_preview_lines,
+            )?;
         } else if let Some(message) =
             miyu_core::state::parse_cross_session_message(&replay.display_content)
         {
@@ -297,6 +317,82 @@ pub(super) fn session_replay_frame(
         }
     }
     Ok(frame)
+}
+
+/// 回放的一页：最近几轮拼成的一帧，外加往前翻的游标。
+pub(super) struct ReplayScreenPage {
+    pub(super) frame: Vec<u8>,
+    /// 更早的还有：下一页从这一轮往前取（`before_seq`）。
+    pub(super) older: Option<i64>,
+}
+
+/// 一次向库里要多少轮来挑。铺满一屏通常用不了这么多，多要几轮省得来回查。
+const REPLAY_FETCH_TURNS: usize = 20;
+
+/// 回放一页：`before` 之前最近的几轮，铺满 `rows` 行就停，至少一轮。
+///
+/// 以前固定回放 `display.repl_replay_turns` 轮（默认 3），毛病有三个：长回合三轮
+/// 就好几屏，短回合三轮又填不满一屏，而且往上再也翻不到更早的。现在按屏算，
+/// 全屏往上翻到顶再补下一页（会话项目第 2 段；用户 09-24 定：全屏完整回放，
+/// 非全屏只印最近一屏）。
+///
+/// 每轮单独渲染再拼起来：`session_replay_frame` 每轮用一个新的渲染器，只往帧
+/// 后面追加，没有跨轮的状态，拼起来和一起渲染是同一串字节。
+pub(super) fn replay_screen_page(
+    store: &StateStore,
+    before: Option<i64>,
+    mode: PersonaLane,
+    config: &AppConfig,
+    (cols, rows): (usize, usize),
+    endpoint_line: bool,
+) -> Result<Option<ReplayScreenPage>> {
+    let batch = store.replay_page(before, REPLAY_FETCH_TURNS)?;
+    let mut sections = Vec::new();
+    let mut filled = 0;
+    for turn in batch.turns.iter().rev() {
+        let section = session_replay_frame(
+            std::slice::from_ref(turn),
+            mode,
+            config,
+            cols,
+            endpoint_line,
+        )?;
+        filled += rendered_rows(&section, cols);
+        sections.push(section);
+        if filled >= rows {
+            break;
+        }
+    }
+    if sections.is_empty() {
+        return Ok(None);
+    }
+    let first_shown = batch.turns.len() - sections.len();
+    let older = if first_shown > 0 {
+        Some(batch.turns[first_shown].seq)
+    } else {
+        batch.older
+    };
+    Ok(Some(ReplayScreenPage {
+        frame: sections.into_iter().rev().flatten().collect(),
+        older,
+    }))
+}
+
+/// 这一段画出来占几行：喂进同宽的终端模拟器数一数，软折行照算。
+fn rendered_rows(frame: &[u8], cols: usize) -> usize {
+    let mut term = crate::cli::repl::tail::screen::term::Term::default();
+    term.set_content_cols(cols);
+    term.set_cols(cols);
+    term.feed(frame);
+    term.line_count()
+}
+
+/// 回放按多大的屏来排：全屏是正文区，inline 是整个终端。
+pub(super) fn replay_viewport() -> (usize, usize) {
+    let (cols, rows) = crate::cli::content_viewport()
+        .or_else(|| terminal::size().ok())
+        .unwrap_or((80, 24));
+    (usize::from(cols.max(1)), usize::from(rows.max(1)))
 }
 
 /// Queues a submission for the turn currently running in the daemon, using

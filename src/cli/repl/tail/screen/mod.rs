@@ -21,6 +21,8 @@ pub(in crate::cli) mod ansi;
 pub(in crate::cli) mod cells;
 mod draw;
 pub(in crate::cli) mod expand;
+mod older;
+pub(in crate::cli) use older::{OlderPageLoader, OlderPages};
 pub(in crate::cli) mod overlay;
 mod question_panel;
 pub(in crate::cli) mod select;
@@ -160,20 +162,7 @@ pub(in crate::cli) struct Screen {
     /// 「默认开着」的块里已经替用户开过的那些。见 `expand::seed_open`——
     /// 活动区每 tick 重写同样的标记，不记着的话用户收起来下一帧就被顶开。
     open_seeded: std::collections::HashSet<u64>,
-    /// `展开思考内容` / `展开工具内容`。
-    ///
-    /// 后台任务面板是从**日志/标记流**攒步的，手上没有配置入口（渲染统一那份
-    /// 报告 §2.4 记着这个缺口），于是同一件事在前台面板跟着开关走、在后台面板
-    /// 永远收着（用户 09-17：「子代理浮层中的流式输出不受我们之前做的三个开关
-    /// 影响」）。由 REPL 每轮把当前配置交进来。
-    display_expand: (bool, bool),
-    /// `过程收起成一行摘要`。同 `display_expand`。
-    display_fold: bool,
-    /// `命令显示行数`：命令那一步抬头底下露几行命令。同 `display_expand`。
-    display_command_lines: usize,
-    /// `思考滚动窗行数`：面板里正在想的那一步底下露最近几行。同 `display_expand`。
-    display_thought_lines: usize,
-    /// 盖在正文上的详情面板（子代理）。开着时正文与活动区都不画。
+    /// 盖在正文上的日志面板（后台命令）。开着时正文与活动区都不画。
     overlay: Option<overlay::Overlay>,
     /// 鼠标停在哪一块上。可交互的东西要看得出来「这里能点」。
     hover: Option<u64>,
@@ -188,6 +177,8 @@ pub(in crate::cli) struct Screen {
     toast: Option<toast::Toast>,
     /// Ctrl+L 顶上去的那一屏：视口至少能滚到这一行。
     floor: usize,
+    /// 回放没画到的更早那部分，往上翻到顶时再补。见 `older`。
+    older: Option<OlderPages>,
     /// 每一屏幕行上一帧画的是什么（行号 + 版本 + 装饰）。见 `row_key`。
     row_keys: Vec<Option<(usize, u64, u64)>>,
     /// 斜杠命令候选（浮在输入框上方）。空 = 不显示。
@@ -306,10 +297,6 @@ impl Screen {
             view_index: std::cell::RefCell::new(None),
             seed_stamp: None,
             open_seeded: std::collections::HashSet::new(),
-            display_expand: (false, false),
-            display_fold: true,
-            display_command_lines: 8,
-            display_thought_lines: 10,
             overlay: None,
             hover: None,
             input_rows: Vec::new(),
@@ -317,6 +304,7 @@ impl Screen {
             input_dragging: false,
             toast: None,
             floor: 0,
+            older: None,
             row_keys: Vec::new(),
             command_hint: Vec::new(),
             hint_dismissed: false,
@@ -656,6 +644,8 @@ impl Screen {
     /// 这里是 `/reset`、`/new` 回到大厅——旧对话已经不属于这个会话了，留着的话
     /// 下一句话会接在它后面、出现在屏底而不是屏顶（09-14 用户实测）。
     pub(in crate::cli) fn wipe_transcript(&mut self) {
+        // 上一条会话还没画的更早部分跟着一起丢：换了会话再往上翻，不能补出别的会话来。
+        self.older = None;
         self.term = Term::default();
         self.term.set_cols(usize::from(self.cols));
         self.scroll = 0;

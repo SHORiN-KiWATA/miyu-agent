@@ -13,12 +13,15 @@ pub(crate) const PENDING_PLACEHOLDER: &str = "<system-reminder>上一轮prompt�
 pub(crate) const INTERRUPTED_TEXT: &str =
     "<system-reminder>上一轮prompt已被中断，除非用户重新要求否则不要处理上一轮的prompt</system-reminder>";
 
-/// Budget for a finished turn's display transcript. Generous enough for a
-/// normal turn's prose plus a handful of tool blocks, small enough that a
-/// session's worth of them stays cheap to load.
+/// Budget for the tool and thinking entries of a finished turn's display
+/// transcript: enough for a handful of tool blocks, small enough that a page
+/// of turns stays cheap to load. Prose does not count against it and is kept
+/// whole (a long reply used to replay cut at 2048 chars, 09-25).
 pub(crate) const REPLAY_JOURNAL_MAX_CHARS: usize = 8 * 1024;
 
-/// Per-entry clamp so one runaway tool result cannot eat the whole budget.
+/// Per-entry clamp for tool arguments and output, so one runaway tool result
+/// cannot eat the whole budget. Before 09-25 it clamped prose too; snapshots
+/// from then are healed on read (`heal_clipped_reply`).
 pub(crate) const REPLAY_ENTRY_MAX_CHARS: usize = 2 * 1024;
 
 /// 思考正文进回放时的上限。比别的条目紧：一轮可能想好几段，而整份流水账只有
@@ -613,8 +616,12 @@ pub struct PlatformMemeRefCount {
 
 /// One replayable turn: the prompt echo plus either its ordered transcript or,
 /// for turns predating the transcript column, just the final reply.
-#[derive(Clone, Debug, Default)]
+/// 可序列化：跑着的那一轮由 daemon 经 IPC 补给挂上来的终端（`turn.catchup`）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TurnReplay {
+    /// 这一轮在会话里的序号。往前翻页时拿它当游标（`session_replay_page` 的
+    /// `before_seq`）。
+    pub seq: i64,
     /// What the user saw as the prompt — or, for a wake turn, the
     /// `[后台任务完成] …` headline.
     pub display_content: String,
@@ -632,4 +639,8 @@ pub struct TurnReplay {
     /// 这一轮被中断了（Ctrl+C／断线）。回放时照画它说到一半的话，尾巴上那段给
     /// 模型看的 `<system-reminder>` 去掉，末尾标一行「已中断」。
     pub interrupted: bool,
+    /// 主会话派给子代理的任务（子代理会话的第一轮）。回放时画成「来自主会话的任务」
+    /// 那一块，不是用户气泡。老 daemon 补过来的没有这一项，当 false。
+    #[serde(default)]
+    pub from_parent: bool,
 }

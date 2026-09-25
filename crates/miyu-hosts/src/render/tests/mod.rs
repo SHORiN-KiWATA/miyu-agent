@@ -7,6 +7,7 @@ mod command;
 mod command_step;
 mod cross_session;
 mod diagram_style;
+mod event_clock;
 mod golden;
 mod markdown;
 mod math;

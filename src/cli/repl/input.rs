@@ -197,6 +197,9 @@ pub(in crate::cli) fn read_live_repl_input(
             if let Some(job_id) = live.pending_stop_job.take() {
                 return Ok(LiveReplOutcome::StopJob { job_id });
             }
+            if let Some(action) = live.take_strip_action() {
+                return Ok(LiveReplOutcome::Strip(action));
+            }
             if live.set_jobs(jobs_feed.current()) || cumulative_changed || lane_counted {
                 synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
             } else {
@@ -268,6 +271,15 @@ pub(in crate::cli) fn read_live_repl_input(
             }
             // 全屏下先给视口一次机会（回翻、滚轮）；inline 下这里是空操作。
             if live.handle_screen_event(&event)? {
+                continue;
+            }
+            // 方向键先看命令候选和任务条（会话项目第 3 段）。任务条上回车点的是会话行
+            // 的话，下一拍空闲时取走（`take_strip_action`）。
+            if matches!(
+                live.navigate_key(&event)?,
+                crate::cli::repl::tail::Navigated::Done
+            ) {
+                redraw_pending = true;
                 continue;
             }
             // 又打字了：候选面板可以重新弹出来（Esc 只关「当时那一串」）。
@@ -449,8 +461,9 @@ pub(in crate::cli) fn read_repl_input(
             rendered_rows,
             &mut Vec::new(),
             mode,
-            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切。
-            false,
+            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切,也没有子代理会话。
+            crate::cli::footer::FooterBadges::default(),
+            None,
             input,
             cursor,
             raw_pasted_lines,
@@ -933,8 +946,10 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     // 输入区不在正文缓冲里，不记下来就没法知道某一格上是什么字。
     drawn: &mut Vec<(u16, String)>,
     mode: PersonaLane,
-    // 只读模式开着(09-23):状态行模式标签后面跟「只读」。
-    readonly: bool,
+    // 只读模式开着(09-23)、切进子代理会话几层(会话项目第 3 段):叠在状态行模式标签上。
+    badges: crate::cli::footer::FooterBadges,
+    // 命令候选里方向键挑中的那一条(见 `tail::navigate`)。
+    command_pick: Option<usize>,
     input: &str,
     cursor: usize,
     raw_pasted_lines: usize,
@@ -1029,7 +1044,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
             Print(&prompt_prefix),
             Print(format!(
                 "\x1b[2m{}\x1b[0m",
-                repl_command_suggestions_line(&suggestions, suggestion_width)
+                repl_command_suggestions_line(&suggestions, suggestion_width, command_pick)
             ))
         )?;
         footer_row = None;
@@ -1038,7 +1053,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
         queue!(
             stdout,
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
-            Print(repl_footer_line(mode, readonly, footer, cols, usage))
+            Print(repl_footer_line(mode, badges, footer, cols, usage))
         )?;
         if show_hint {
             row_offset = row_offset.saturating_add(1);

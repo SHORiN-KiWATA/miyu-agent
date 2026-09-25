@@ -108,8 +108,8 @@ impl RemoteRepl {
                 .await?;
                 // 换过去那条会话要是有正在跑的回合，挂上去跟着看——换会话的
                 // 回放不收正在跑的轮，不挂的话那一轮在屏幕上就没了（09-20，
-                // 和 `/dev` `/normal` 同一个毛病）。
-                self.follow_active_run_here().await?;
+                // 和 `/dev` `/normal` 同一个毛病）。主循环回到顶上时挂。
+                self.follow_pending = true;
                 repl_note(
                     &mut self.live_repl,
                     &format!("{}\n", t("configuration reloaded", "配置已重新加载")),

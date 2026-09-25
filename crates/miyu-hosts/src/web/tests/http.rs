@@ -70,12 +70,18 @@ fn clearing_usage_history_keeps_the_cumulative_ledger() {
             },
         )
         .unwrap();
-    assert!(store.usage_history_file().exists());
+    let details = |store: &StateStore| {
+        store
+            .usage_details_for_account(10, None, None, None, None)
+            .unwrap()
+            .len()
+    };
+    assert_eq!(details(&store), 1);
     let before = store.usage_snapshot().unwrap().total_tokens;
     assert!(before > 0, "累计账应已记上");
 
     store.clear_usage_history().unwrap();
-    assert!(!store.usage_history_file().exists(), "明细应被清空");
+    assert_eq!(details(&store), 0, "明细应被清空");
     assert_eq!(
         store.usage_snapshot().unwrap().total_tokens,
         before,

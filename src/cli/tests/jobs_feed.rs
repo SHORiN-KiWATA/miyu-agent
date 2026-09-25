@@ -19,6 +19,7 @@ fn job(id: &str, session: Option<&str>, root: Option<&str>) -> JobOverview {
         log_path: None,
         metric: None,
         metric_tokens: None,
+        child_session_id: None,
     }
 }
 

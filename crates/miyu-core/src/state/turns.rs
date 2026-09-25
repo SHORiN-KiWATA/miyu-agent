@@ -22,6 +22,7 @@ impl StateStore {
             queue_session_id: self.queue_session_id.clone(),
             queue_owner_pid: self.queue_owner_pid,
             usage_account: self.usage_account.clone(),
+            legacy_home: self.legacy_home.clone(),
         }
     }
 

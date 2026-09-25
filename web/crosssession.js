@@ -219,6 +219,8 @@ window.MiyuCrossSession = (() => {
 
   /// 收到的那条:铃铛 + 「从 xxx 收到消息」,底下一条竖线串着正文。先露 N 行,
   /// 点一下看全文,再点收回去。
+  /// `attributes.headline` / `icon`:别的「不是谁敲的话」借这一块的样子(子代理会话的
+  /// 第一轮是主会话派的任务,会话项目第 4 段),换一句抬头、换一个图标。
   function createReceived(message, attributes = {}) {
     const node = document.createElement("div");
     node.className = "xs-message";
@@ -226,9 +228,11 @@ window.MiyuCrossSession = (() => {
     if (attributes.followupId) node.dataset.followupId = attributes.followupId;
     const head = document.createElement("div");
     head.className = "xs-head";
-    if (typeof deps.makeIconSlot === "function") head.appendChild(deps.makeIconSlot("bell"));
+    if (typeof deps.makeIconSlot === "function") {
+      head.appendChild(deps.makeIconSlot(attributes.icon || "bell"));
+    }
     const label = document.createElement("span");
-    label.textContent = t("从 {name}（{id}）收到消息", {
+    label.textContent = attributes.headline || t("从 {name}（{id}）收到消息", {
       name: message.fromName || shortId(message.fromSession),
       id: shortId(message.fromSession)
     });

@@ -17,6 +17,7 @@ use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
+mod edges;
 mod live;
 
 /// 一格。宽字符占两格，第二格是 `continuation`，画的时候跳过。
@@ -274,36 +275,6 @@ impl Term {
     /// 光标当前在第几行——活动区要接在正文后面画。
     pub(in crate::cli) fn cursor_row(&self) -> usize {
         self.archive.len() + self.row
-    }
-
-    /// 丢掉最早的 `count` 行。历史留存上限用它。
-    pub(in crate::cli) fn drop_front(&mut self, count: usize) {
-        let from_archive = count.min(self.archive.len());
-        self.archive.drain(..from_archive);
-        let rest = count - from_archive;
-        if rest > 0 {
-            let rest = rest.min(self.lines.len());
-            self.lines.drain(..rest);
-            self.wraps.drain(..rest.min(self.wraps.len()));
-            let rest = rest.min(self.stamps.len());
-            self.stamps.drain(..rest);
-            self.row = self.row.saturating_sub(rest);
-        }
-        // 整块都被丢掉的就不留了，点不开也没内容可给。
-        self.blocks.retain(|block| block.start >= count);
-        for block in &mut self.blocks {
-            block.start -= count;
-            block.end -= count;
-        }
-        self.turn_starts.retain(|start| *start >= count);
-        for start in &mut self.turn_starts {
-            *start -= count;
-        }
-        self.compact_starts.retain(|start| *start >= count);
-        for start in &mut self.compact_starts {
-            *start -= count;
-        }
-        self.live_anchor = self.live_anchor.map(|anchor| anchor.saturating_sub(count));
     }
 
     /// 最后一轮从第几行开始（并把这个标记拿掉）。没有标记就 `None`。

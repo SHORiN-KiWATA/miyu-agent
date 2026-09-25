@@ -63,8 +63,6 @@ pub const DEV_PROMPT_FILE: &str = "dev-prompt.md";
 /// 现在默认为空(用户:「让开发模式的提示词为空,但是还是可以修改的」);老文件里
 /// 恰好是这一行、从没改过的,读到当没写。
 pub const LEGACY_DEV_SYSTEM_PROMPT: &str = "You are a helpful software engineer assistant.";
-/// Replay redraws whole turns, so a large value floods the screen on startup.
-pub const MAX_REPL_REPLAY_TURNS: usize = 20;
 pub const CURRENT_CONFIG_VERSION: u32 = 6;
 
 /// dev 会话的保留人格 scope:dev 会话全部挂在它名下,借现有按人格隔离机制白拿

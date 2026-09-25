@@ -79,34 +79,8 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
     // screen yet (`rendered == false`), so `apply_output_frame` writes the
     // frame raw and re-reads the cursor — no layout budget applies and the
     // frame can be arbitrarily long.
-    if config.display.repl_replay_turns > 0 {
-        let replay_store = StateStore::new(paths)?.pinned(&active_session_id);
-        match replay_store.session_replay(config.display.repl_replay_turns) {
-            Ok(replays) if !replays.is_empty() => {
-                // 全屏下按正文区的宽度排，不是整屏：左右各两列边距，按整屏排出来
-                // 的东西会比可视区宽、被缓冲硬折一次。
-                let (cols, _) = terminal::size().unwrap_or((80, 24));
-                let cols = crate::cli::content_viewport()
-                    .map(|(cols, _)| cols)
-                    .unwrap_or(cols);
-                // 混合模型池的「本次供应商 / 模型」按会话的池判(BUG-05)。
-                let endpoint_line = show_mixed_model_endpoint(
-                    &crate::cli::model_cmds::session_scoped_config(&replay_store, &config),
-                    true,
-                );
-                let frame = session_replay_frame(
-                    &replays,
-                    mode,
-                    &config,
-                    usize::from(cols.max(1)),
-                    endpoint_line,
-                )?;
-                live_repl.apply_output_frame(&frame)?;
-            }
-            Ok(_) => {}
-            Err(error) => tracing::debug!(error = %error, "session replay unavailable"),
-        }
-    }
+    let replay_store = StateStore::new(paths)?.pinned(&active_session_id);
+    crate::cli::repl::session::replay_recent_turns(&config, mode, &replay_store, &mut live_repl)?;
 
     // 这条会话钉的模型被供应商下架了：daemon 已经退回全局池并把覆盖清掉，得说
     // 一声——不说的话 footer 上的模型悄悄换了人，看着像自己乱跳。放在回放之后，
@@ -145,6 +119,7 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
         jobs_shared,
         jobs_feed,
         follow_depth: 0,
+        follow_pending: false,
         lane_context: Default::default(),
     };
     let outcome = repl.run().await;
@@ -168,6 +143,9 @@ pub(super) struct RemoteRepl {
     pub(super) cumulative_tokens: TurnTokens,
     /// 「换会话后挂上它正在跑的那一轮」嵌了几层（见 `follow_active_run_here`）。
     pub(super) follow_depth: u8,
+    /// 刚换过会话，它正在跑的那一轮还没挂上（会话项目第 3 段）。主循环回到顶上时挂，
+    /// 不在换会话的地方就地挂：回合中点任务条来回切，就地挂会一层套一层。
+    pub(super) follow_pending: bool,
     pub(super) footer: ReplFooterStatus,
     pub(super) live_repl: LiveReplTail,
     pub(super) jobs_shared: std::sync::Arc<SharedJobsFeed>,
@@ -189,6 +167,13 @@ impl RemoteRepl {
         loop {
             // Keep the poll thread's session filter in step with /new & /session.
             self.jobs_shared.set_repl_session(&self.active_session_id);
+            // 回合在面板开着时跑完了（B4）：面板接着开，这会儿没有正文在流，照空闲时那套挑。
+            self.finish_turn_panel().await?;
+            // 跟着看的中途又换了会话（切进子会话、回去），换过去那条的轮接着挂。
+            while std::mem::take(&mut self.follow_pending) {
+                self.follow_active_run_here().await?;
+                self.finish_turn_panel().await?;
+            }
             // Σ：空闲时轮询只改界面上那份（上次显式刷新之后才开读的，见
             // `footer_generation`），这儿不收回来就被下面的整份覆盖盖回旧值，下一次
             // 轮询才又改回来——屏上先回到老数再加上去（用户 09-23）。放在追 footer
@@ -301,6 +286,10 @@ impl RemoteRepl {
                     self.toggle_lobby_lane(next)?;
                     continue;
                 }
+                LiveReplOutcome::Strip(action) => {
+                    self.perform_strip_action(action).await?;
+                    continue;
+                }
             };
             self.mode = next_mode;
             let input = input.trim();
@@ -317,6 +306,8 @@ impl RemoteRepl {
                 slash_command,
                 Some(
                     ReplSlashCommand::Session
+                        | ReplSlashCommand::Subagent
+                        | ReplSlashCommand::Back
                         | ReplSlashCommand::Dev
                         | ReplSlashCommand::Normal
                         | ReplSlashCommand::Exit
@@ -435,7 +426,41 @@ impl RemoteRepl {
                 self.switch_to_session(&state).await?;
                 Ok(LoopStep::Continue)
             }
+            // 面板开着时点了子代理那一行：面板是给原来那条会话开的，跟着换过去就落到别的
+            // 会话头上了。丢掉；没答的提问，挂回那一轮时会随补放再弹出来。
+            SuspendedAction::Strip(action) => {
+                self.live_repl.turn_panel = None;
+                self.perform_strip_action(action).await
+            }
         }
+    }
+
+    /// 回合在面板开着时跑完了，面板还在活动区上：接着挑完，结果照回合里那样落地。提问面板
+    /// 回合收尾时已经收掉了（没人再等那个答案），这里碰不到。
+    async fn finish_turn_panel(&mut self) -> Result<()> {
+        let Some(mut panel) = self.live_repl.turn_panel.take() else {
+            return Ok(());
+        };
+        if matches!(
+            panel,
+            crate::cli::repl::midturn_panel::TurnPanel::Question(_)
+        ) {
+            return Ok(());
+        }
+        let done = crate::cli::repl::panel::pick(&mut self.live_repl, &mut panel)?;
+        let session_id = self.active_session_id.clone();
+        let outcome = crate::cli::repl::midturn_panel::finish_turn_panel(
+            &self.paths,
+            &mut self.live_repl,
+            panel,
+            done,
+            &session_id,
+        )
+        .await?;
+        if let crate::cli::repl::midturn_panel::HostedPanel::SwitchSession(state) = outcome {
+            self.switch_to_session(&state).await?;
+        }
+        Ok(())
     }
 
     /// 回合中寄宿的 `/models` 面板改了会话模型（09-20）：活动区那份 footer 已经
@@ -471,6 +496,8 @@ impl RemoteRepl {
             ReplSlashCommand::History => self.cmd_history().await?,
             ReplSlashCommand::New => self.cmd_new(command_args).await?,
             ReplSlashCommand::Session => self.cmd_session(command_args).await?,
+            ReplSlashCommand::Subagent => self.cmd_subagent().await?,
+            ReplSlashCommand::Back => self.cmd_back().await?,
             ReplSlashCommand::Dev => self.cmd_lane(PersonaLane::Dev, command_args).await?,
             ReplSlashCommand::Normal => self.cmd_lane(PersonaLane::Active, command_args).await?,
             ReplSlashCommand::Rename => self.cmd_rename(command_args).await?,

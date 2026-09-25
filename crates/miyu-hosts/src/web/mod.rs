@@ -30,6 +30,7 @@ mod cross_session;
 mod dashboards;
 mod dto;
 mod event_map;
+mod follow_catchup;
 mod goal_driver;
 mod link_preview;
 mod member_persona;
@@ -170,6 +171,8 @@ const LINKCARDS_JS: &str = include_str!("../../../../web/linkcards.js");
 const TODOS_JS: &str = include_str!("../../../../web/todos.js");
 // 跨会话消息(09-23):在线登记心跳与消息外壳的显示。
 const CROSS_SESSION_JS: &str = include_str!("../../../../web/crosssession.js");
+// 子代理的会话(会话项目第 4 段):卡片点进子会话、子会话里回主会话。
+const SUBAGENTS_JS: &str = include_str!("../../../../web/subagents.js");
 // 侧栏会话批量删除(09-24):选择模式与操作栏。
 const SESSION_SELECT_JS: &str = include_str!("../../../../web/sessionselect.js");
 // 聊天正文选中文字的右键菜单(2026-09-14)。

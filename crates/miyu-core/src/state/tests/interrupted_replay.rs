@@ -7,25 +7,7 @@
 
 use super::shared::*;
 use crate::state::*;
-use std::path::{Path, PathBuf};
-
-/// 沙箱里的会话库。按人分库之后路径由布局推导，测试直接找文件更省事。
-fn find_db(dir: &Path) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_db(&path) {
-                return Some(found);
-            }
-        } else if path
-            .file_name()
-            .is_some_and(|name| name == "conversation.db")
-        {
-            return Some(path);
-        }
-    }
-    None
-}
+use std::path::Path;
 
 /// 再开一段流水账。真实场景里这是排队消息被消费时切的（`consume_queued_prompts`）——
 /// 后台任务的报告插进正在跑的那一轮就会切一段。这里直接插行，免得为了造一个段

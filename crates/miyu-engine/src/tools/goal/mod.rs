@@ -27,7 +27,7 @@ use super::{ToolRegistry, ToolSpec};
 use anyhow::{bail, Result};
 use miyu_base::paths::MiyuPaths;
 use miyu_base::workspace::{self, TurnOrigin};
-use miyu_core::state::{GoalDenied, GoalRecord, StateStore};
+use miyu_core::state::{GoalDenied, GoalRecord};
 use serde_json::{json, Value};
 
 /// 模型自报受阻的机械下限：同一阻塞至少要熬过这么多连续自动轮才收。
@@ -42,17 +42,6 @@ pub const BLOCKED_AFTER_CONSECUTIVE_ROUNDS: i64 = 3;
 /// 的回合），但**不该像后台唤醒那样打一行表头**：长任务会连着跑几十轮，每轮
 /// 顶一行只会把真正的输出挤散。REPL 和 WebUI 都拿这个常量识别它。
 pub const GOAL_ROUND_LABEL: &str = "goal-round";
-
-/// 成员的目标要落进他自己的会话库(`home/<用户>/conversation.db`),否则挂进
-/// 管理员库时外键 `goals.session_id → sessions.session_id` 对不上(成员会话不在
-/// 管理员的 sessions 表)→ create/edit 一律 `FOREIGN KEY constraint failed`。
-/// 与 kb_root_for / artifacts_root 同口径:member_home_dir() 是 Some 就开那家的库。
-fn store_for(config: &miyu_base::config::AppConfig, paths: &MiyuPaths) -> Result<StateStore> {
-    match config.member_home_dir() {
-        Some(home) => StateStore::open_at_home(paths, &home),
-        None => StateStore::new(paths),
-    }
-}
 
 fn session_for_call() -> Result<String> {
     workspace::try_session()
@@ -165,7 +154,8 @@ async fn run_goal_action(
 ) -> Result<String> {
     let session = session_for_call()?;
     let origin = workspace::current_turn_origin();
-    let store = store_for(config, paths)?;
+    // 成员的目标要落进他自己的会话库，否则 `goals.session_id` 的外键对不上。
+    let store = super::session_store::store_for(config, paths)?;
     // 省略 action 按读处理：get 是唯一无副作用的动作，猜错了也只是多读一次。
     let action = meaningful_text(args.get("action").and_then(Value::as_str)).unwrap_or("get");
     let objective = meaningful_text(args.get("objective").and_then(Value::as_str));

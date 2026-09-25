@@ -79,16 +79,6 @@ impl SurfaceCaps {
     }
 }
 
-/// 两个子代理面板共用的能力位：面板自带登记处（每一步都能点开），内容整块重灌
-/// 而不是逐步落地，段末自己写收缩行。
-#[cfg(test)]
-pub const PANEL_CAPS: SurfaceCaps = SurfaceCaps {
-    expandable: true,
-    commit_immediately: false,
-    fold: true,
-    detail: DetailPlacement::Behind,
-};
-
 impl crate::render::StreamRenderer {
     /// 这个面能做什么。**只由「能不能点开」和「收不收段」两位决定**——
     /// 显示档位一位都不参与（见模块头）。

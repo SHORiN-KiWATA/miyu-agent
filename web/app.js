@@ -163,6 +163,7 @@
     "tool.started",
     "tool.preparing",
     "tool.progress",
+    "subagent.progress",
     "tool.output",
     "tool.image",
     "tool.artifact",
@@ -404,7 +405,9 @@
     backgroundJobs: new Map(),
     jobsStripOpen: localStorage.getItem("miyu.web.jobsStripOpen") === "1",
     expandedJobs: new Set(),
-    jobStreamSinks: new Map(),
+    // 后台子代理任务此刻的样子(`job.progress` 里收好的窥视、词元、子会话,会话项目第 4 段
+    // 之二):任务条那一行取它画,点它打开子会话。
+    subagentJobs: new Map(),
     commandLogs: new Map(),
     commandPeekLine: new Map(),
     commandPeekTimers: new Map(),
@@ -417,6 +420,11 @@
     replayResyncCount: 0,
     replayResyncAt: 0,
     turns: [],
+    // 按页取回合（会话项目第 2 段）：往前翻的游标、前面那些回合的用量合计、会话第一句。
+    turnsOlder: null,
+    turnsBase: null,
+    firstUserContent: "",
+    loadingOlderTurns: false,
     queuedPrompts: [],
     models: [],
     persona: {
@@ -2401,7 +2409,7 @@
     const snippet = firstLine(liveContent || assistant || lastFollowup?.content || lastTurn?.user_content || "");
     const timestamp = liveContent ? live?.startedAt : lastTurn?.assistant_timestamp || lastFollowup?.submitted_at || lastTurn?.user_timestamp;
     return {
-      title: firstLine(firstTurn?.user_content) || t("当前对话"),
+      title: firstLine(state.firstUserContent || firstTurn?.user_content) || t("当前对话"),
       snippet: snippet || (lastTurn?.status === "running" ? t("正在回复") : t("对话已开始")),
       timestamp
     };
@@ -2918,7 +2926,7 @@
       elements.conversationStage?.classList.add("is-switching");
     }
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${TURN_PAGE_SIZE}`);
       const payload = await response.json();
       if (generation !== state.viewLoadGeneration) return;
       applySessionView(payload);
@@ -2977,6 +2985,8 @@
     // refreshSessionContext 取回。
     if (state.viewSessionId !== sessionId) resetSessionCumulative();
     state.viewSessionId = sessionId;
+    // 子代理的会话:输入框上方挂「↑ 主会话」(会话项目第 4 段)。
+    window.MiyuSubagents?.viewed(payload);
     // 记住浏览位置，刷新后回到这里而不是跳去终端车道（见 preferredBootSession）。
     if (!isTerminalSession(sessionId)) safeStorageSet(VIEW_SESSION_KEY, sessionId);
     if (state.sessionModelOverrideFor !== sessionId) {
@@ -2992,6 +3002,7 @@
     state.turns = Array.isArray(payload?.turns)
       ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
       : [];
+    applyTurnPageMeta(payload);
     state.queuedPrompts = Array.isArray(payload?.queued_prompts) ? payload.queued_prompts : [];
     state.redoCandidate = payload?.redo_candidate && typeof payload.redo_candidate === "object"
       ? payload.redo_candidate
@@ -3011,6 +3022,72 @@
     updateConversationChrome();
     updateControlState();
     scheduleViewSync();
+    fillViewWithOlderTurns();
+  }
+
+  // 按页取回合带回来的三样（会话项目第 2 段）。整段取（老接口）时都是空的：
+  // 没有更早的、从零累计、标题用第一轮。
+  function applyTurnPageMeta(payload) {
+    const older = payload?.older;
+    state.turnsOlder = Number.isFinite(older) ? older : null;
+    const base = payload?.tokens_before;
+    state.turnsBase = base && typeof base === "object"
+      ? { total: asFiniteNumber(base.total), prompt: asFiniteNumber(base.prompt), cached: asFiniteNumber(base.cache_read) }
+      : null;
+    state.firstUserContent = typeof payload?.first_user_content === "string" ? payload.first_user_content : "";
+  }
+
+  // 往上翻到顶再补更早的一页。补进来之后按离底部的距离把滚动位置拉回原处，
+  // 看到的内容不动。
+  async function loadOlderTurns() {
+    const sessionId = state.viewSessionId;
+    const before = state.turnsOlder;
+    if (!sessionId || before === null || state.loadingOlderTurns || state.viewLoading) return;
+    state.loadingOlderTurns = true;
+    try {
+      const response = await apiRequest(
+        `/api/sessions/${encodeURIComponent(sessionId)}/turns?before=${encodeURIComponent(before)}&limit=${TURN_PAGE_SIZE}`
+      );
+      const payload = await response.json();
+      if (state.viewSessionId !== sessionId || state.turnsOlder !== before) return;
+      const older = Array.isArray(payload?.turns)
+        ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
+        : [];
+      const known = new Set(state.turns.map((turn) => String(turn?.id)));
+      state.turns = older.filter((turn) => !known.has(String(turn?.id))).concat(state.turns);
+      applyTurnPageMeta(payload);
+      const scroller = elements.chatScroll;
+      const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+      renderConversation();
+      state.programmaticScroll = true;
+      scroller.scrollTop = scroller.scrollHeight - fromBottom;
+    } catch (error) {
+      if (error.status === 401) showBlockedState(true);
+    } finally {
+      state.loadingOlderTurns = false;
+    }
+    fillViewWithOlderTurns();
+  }
+
+  // 一页铺不满对话区就没法往上滚，也就永远等不到「翻到顶」：还有更早的就接着补。
+  function fillViewWithOlderTurns() {
+    const scroller = elements.chatScroll;
+    if (state.turnsOlder === null || !scroller) return;
+    if (scroller.scrollHeight <= scroller.clientHeight) loadOlderTurns();
+  }
+
+  // 运行中每秒同步只取最近一页：往上翻补进来的更早几页留着，按这一页最早那轮的
+  // 序号切开，前面的旧页接上这一页。
+  function mergeLatestTurnPage(current, page, payload) {
+    if (!page.length) {
+      applyTurnPageMeta(payload);
+      return page;
+    }
+    const first = asFiniteNumber(page[0]?.seq);
+    const kept = current.filter((turn) => asFiniteNumber(turn?.seq) < first);
+    // 更早的那几页已经在手上：游标和累计基数还是它们的，只有全靠这一页时才换。
+    if (!kept.length) applyTurnPageMeta(payload);
+    return kept.concat(page);
   }
 
   function findUnclaimedRunningTurn() {
@@ -3103,12 +3180,12 @@
           tool_id: call?.id, name: call?.name,
           display_name: call?.display_name, arguments: call?.arguments,
         });
-        if (isSubagentTool(call?.name) && Array.isArray(call?.sub_trace)) {
-          for (const marker of call.sub_trace) {
-            handleToolEvent("tool.progress", live, {
-              tool_id: call?.id, name: call?.name, message: String(marker),
-            });
-          }
+        // 在跑的前台子代理:检查点里记着它的子会话(会话项目第 4 段之二),刷新之后卡片照样
+        // 点得进去。
+        if (isSubagentTool(call?.name) && call?.child_session_id) {
+          handleToolEvent("subagent.progress", live, {
+            tool_id: call?.id, name: call?.name, session_id: call.child_session_id,
+          });
         }
         const output = String(call?.output || "");
         // 有真实输出 = 这次调用已完成才收尾;检查点里在跑的那次 output 是空的(或
@@ -5186,6 +5263,16 @@
       notice.appendChild(label);
       return notice;
     }
+    // 子代理会话的第一轮是主会话派的任务(会话项目第 4 段):和终端一样画成「来自主会话
+    // 的任务」那一块,露几行、点开看全文,不是用户气泡。
+    if (attributes.fromParent && window.MiyuCrossSession) {
+      return window.MiyuCrossSession.createReceived({ body: rawContent }, {
+        headline: t("来自主会话的任务"),
+        icon: "arrow-down",
+        timestamp,
+        turnId: attributes.turnId
+      });
+    }
     // 另一个会话里的 AI 发来的那条(09-23):铃铛 + 「从 xxx 收到消息」,底下露正文。
     // 实时插进来的、唤醒起的一轮、刷新回看都走这里。
     const crossSession = window.MiyuCrossSession?.parse(rawContent);
@@ -6533,16 +6620,22 @@
     call: "__subtool_call__",
     result: "__subtool_result__",
     stats: "__subagent_stats__",
+    // daemon 的中继发这个(`显示串\t数\t人话`);直连模式的老 runner 发上面那个 stats。
+    metric: "__subagent_metric__",
     detach: "__subagent_detach__",
     brief: "__subagent_brief__"
   };
+  // 认不出的老标记(`__subagent_reasoning_done__`、`__subtool_preparing__`……)一律吞掉:
+  // 落进 plain 分支就原样写进窥视那一行(09-25 走查抓到 `__subagent_metric__` 漏在卡片上)。
+  const UNKNOWN_SUBAGENT_MARKER = /^__sub[a-z_]*__/;
 
   // 子代理任务简介 DOM(展开区最上方):标题 + 整段 prompt。前台从工具参数直接建;
   // 后台经 __subagent_brief__ marker 建(后台事件流里没有参数,09-12 #9)。
   function buildSubagentBrief(title, prompt) {
-    const t = String(title || "").trim();
+    // 别叫 t:会遮住翻译函数 t(),标题空着时下面那句 t("任务 prompt") 就抛 TypeError。
+    const heading = String(title || "").trim();
     const p = String(prompt || "").trim();
-    if (!t && !p) return null;
+    if (!heading && !p) return null;
     // prompt 做成默认收起的可展开 tag:子代理自动展开活区域时整段 prompt 会刷屏,
     // 收成一行「任务标题」,想看再点开(用户反馈)。
     const brief = document.createElement("details");
@@ -6559,7 +6652,7 @@
     );
     const label = document.createElement("span");
     label.className = "subagent-brief-name";
-    label.textContent = t || t("任务 prompt");
+    label.textContent = heading || t("任务 prompt");
     summary.append(marker, label);
     brief.appendChild(summary);
     if (p) {
@@ -6601,6 +6694,10 @@
       }
     }
     if (text.startsWith(SUBAGENT_MARKERS.stats)) return { kind: "stats", text: text.slice(SUBAGENT_MARKERS.stats.length).trim() };
+    if (text.startsWith(SUBAGENT_MARKERS.metric)) {
+      const [tokens = ""] = text.slice(SUBAGENT_MARKERS.metric.length).split("\t");
+      return { kind: "metric", tokens: tokens.replace(/\s+/g, "") };
+    }
     if (text.startsWith(SUBAGENT_MARKERS.brief)) {
       try {
         const p = JSON.parse(text.slice(SUBAGENT_MARKERS.brief.length));
@@ -6610,15 +6707,8 @@
       }
     }
     if (text.startsWith(SUBAGENT_MARKERS.detach)) return { kind: "plain", text: text.slice(SUBAGENT_MARKERS.detach.length).trim() };
+    if (UNKNOWN_SUBAGENT_MARKER.test(text)) return { kind: "ignored" };
     return { kind: "plain", text: text.trim() };
-  }
-
-  function subagentPeekLine(ev) {
-    if (ev.kind === "reasoning") return ev.text;
-    if (ev.kind === "content") return ev.text;
-    if (ev.kind === "call") return t("调用 {name}{subject}", {name: ev.name, subject: ev.subject ? " · " + ev.subject : ""});
-    if (ev.kind === "result") return t("{name} {status}", {name: ev.name, status: ev.ok ? t("完成") : t("出错")});
-    return ev.text || "";
   }
 
   // 子过程时间线:子代理自己的思考与工具流,复用主对话同一套渲染——proc-line
@@ -6729,22 +6819,26 @@
     mutate();
     if (c && atBottom) c.scrollTop = c.scrollHeight;
   }
-  function subAutoScroll(sink) {
-    // 内容已经加完了才调它(工具卡/结果那种低频路径):当前离底 <30 就跟,否则不动。
-    const c = subScrollContainer(sink);
-    if (!c) return;
-    if (c.scrollHeight - c.scrollTop - c.clientHeight < 30) c.scrollTop = c.scrollHeight;
-  }
   // 往子过程区加一个块(思考块头/工具卡)必须走「加之前先量在不在底,加完只在原本
   // 贴底时才拉回底」——直接 procLineAttach 会把容器撑高却不滚,一次没滚就把整条贴底
   // 跟随链打断,之后逐 token 的 subStickBottom 全测得「改前不在底」再不跟(#159/#160,
-  // 前台后台同此)。subAutoScroll 是「加完再量」,块一高就已经离底 >30px 也修不回来。
+  // 前台后台同此)。「加完再量」那种跟法(原来的 subAutoScroll,09-25 删了)块一高就已经离底 >30px,修不回来。
   function subAttach(sink, el) {
     subStickBottom(sink, () => procLineAttach(sink.blocks, el));
   }
 
   function renderSubagentProgress(sink, message) {
     const ev = parseSubagentEvent(message);
+    if (ev.kind === "ignored") return;
+    if (ev.kind === "metric") {
+      // daemon 模式下子代理的词元只从这儿来:只喂卡片上那个小标。输入框的「累计」那套
+      // (liveSubagentTokens 的 done/基线)是照直连模式的 stats 写的,接上可能重复计。
+      if (ev.tokens) {
+        sink.tokenText = ev.tokens;
+        if (sink.taskToken) sink.taskToken.textContent = sink.tokenText;
+      }
+      return;
+    }
     if (ev.kind === "stats") {
       // stats 文本形如「工具调用 3 次　消耗词元 ≈1.2k」/「tool calls: 3　token cost: 1.2k」,
       // 每步更新一次。抠出 token 数(可能带 ≈ 前缀),喂给任务条那行的 token 显示(09-12 item 4)。
@@ -6896,25 +6990,6 @@
         subAttach(sink, card);
       }
     }
-  }
-
-  // 后台子代理的子过程流:一个 job 一份,持久存在 state.jobStreamSinks 里
-  // (任务条整条重建时面板 DOM 也不丢),点开对应任务条那行时挂到它下面。
-  function jobStreamSink(jobId) {
-    let sink = state.jobStreamSinks.get(jobId);
-    if (!sink) {
-      const panel = document.createElement("div");
-      panel.className = "job-stream-panel";
-      const blocks = document.createElement("div");
-      blocks.className = "sub-blocks assistant-blocks";
-      panel.appendChild(blocks);
-      // taskPeek / taskToken 由 renderJobsStrip 每次重建时挂到当前那行的窥视/
-      // token 元素上(09-12 用户要回行窥视:跑到工具显示工具、跑到思考窥思考;
-      // token 每步更新)。标题本身仍保持完整、不被窥视替换。
-      sink = { panel, blocks, taskPeek: null, taskToken: null, tokenText: "", think: null, thinkAccum: "", pendingCall: null, peekLine: "", usageKey: "job:" + jobId };
-      state.jobStreamSinks.set(jobId, sink);
-    }
-    return sink;
   }
 
   function createReasoningBlock(text, title = t("已思考"), live = false, summaryOnly = false, withWindow = false) {
@@ -7259,7 +7334,8 @@
       turnId,
       inputId: turnId,
       revisionTarget: candidate && String(candidate.input_id) === turnId ? candidate : null,
-      attachments: turn?.attachments
+      attachments: turn?.attachments,
+      fromParent: turn?.from_parent === true
     });
 
     /*
@@ -7375,9 +7451,10 @@
     // 每条回合的「累计」=会话里到它为止的顺序求和(与 run.completed 里 daemon 报的口径一致)
     state.cumulativeByTurn = new Map();
     {
-      let total = 0;
-      let prompt = 0;
-      let cached = 0;
+      // 按页取时手上只有最近几页：从前面那些回合的合计接着算。
+      let total = state.turnsBase?.total || 0;
+      let prompt = state.turnsBase?.prompt || 0;
+      let cached = state.turnsBase?.cached || 0;
       for (const turn of state.turns) {
         total += asFiniteNumber(turn?.token_total);
         prompt += asFiniteNumber(turn?.token_prompt);
@@ -8597,6 +8674,7 @@
       title.insertBefore(seconds, summary);
     }
     head.addEventListener("click", () => {
+      if (window.MiyuSubagents?.openFromCard(card)) return;
       const collapsed = card.classList.toggle("collapsed");
       head.setAttribute("aria-expanded", String(!collapsed));
       railSnapFit(card);
@@ -8657,6 +8735,12 @@
     fold.className = "tool-fold";
     fold.appendChild(body);
     card.append(head, fold);
+    if (isSubagentTool(name)) {
+      window.MiyuSubagents?.link(
+        card,
+        call?.child_session_id || window.MiyuSubagents.sessionOfOutput(output)
+      );
+    }
     // 命令那几行排在抬头和展开区之间——和实时那条同一个次序。
     if (commandRows) {
       card.insertBefore(commandRows.preview, fold);
@@ -9048,6 +9132,8 @@
       collapseTimer: null
     };
     head.addEventListener("click", () => {
+      // 子代理是一条会话:认得它的会话就打开它,不再原地展开(会话项目第 4 段)。
+      if (window.MiyuSubagents?.openFromCard(card)) return;
       const collapsed = card.classList.toggle("collapsed");
       head.setAttribute("aria-expanded", String(!collapsed));
       // 收起子代理状态行时,把里面已展开的思考/工具也一并收起,下次展开是干净的
@@ -9264,11 +9350,29 @@
         tool.progressDetail.wrapper.hidden = false;
       }
       updateToolSummary(tool);
+    } else if (name === "subagent.progress" && tool.isTask) {
+      // 子代理此刻的样子(会话项目第 4 段之二):窥视、词元、子会话。子会话里的过程在它自己
+      // 那儿,卡片点下去打开它,父会话这边只画标题行这一行。
+      if (data?.session_id) window.MiyuSubagents?.link(tool.card, String(data.session_id));
+      const peek = String(data?.peek || "");
+      if (peek) {
+        tool.peekLine = peek;
+        if (tool.taskPeek) setReasoningPeek(tool.taskPeek, peek);
+      }
+      const tokens = String(data?.tokens_label || "");
+      if (tokens) {
+        tool.tokenText = tokens;
+        if (tool.taskToken) tool.taskToken.textContent = tokens;
+      }
+      if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress" && tool.isTask) {
-      // 子代理:标题行单行窥视 + 展开后的子过程时间线,不再用带底色的方块。
-      // (实时 token 汇进「累计」的逻辑统一在 renderSubagentProgress 的 stats 分支里,
-      // 前台工具卡与后台任务条同源,见 #131。)
-      renderSubagentProgress(tool, String(data?.message || ""));
+      // 子代理的过程在它自己的会话里,窥视、词元、会话走 `subagent.progress`(会话项目第 4 段
+      // 之二)。这条通道上只剩「交到后台了」那一句:当成窥视挂在标题行上。
+      const message = String(data?.message || "").replace(/^__subagent_detach__/, "").trim();
+      if (message && !message.startsWith("__")) {
+        tool.peekLine = message;
+        if (tool.taskPeek) setReasoningPeek(tool.taskPeek, message);
+      }
       if (!tool.finished) updateToolStatus(tool, t("运行中"), "loader-circle");
     } else if (name === "tool.progress") {
       let message = String(data?.message || "");
@@ -9340,6 +9444,7 @@
         if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       }
       const output = String(data?.output || "");
+      if (tool.isTask) window.MiyuSubagents?.link(tool.card, window.MiyuSubagents.sessionOfOutput(output));
       // 跨会话发话:抬头右边补上对方报的会话名(侧栏里不一定认得它)。
       if (window.MiyuCrossSession?.isSendTool(tool.name)) {
         const target = window.MiyuCrossSession.targetName(output);
@@ -10124,12 +10229,7 @@
         state.jobsStripOpen = !state.jobsStripOpen;
         // 收起「后台任务 ×N」合并行时,把里面所有已展开的状态行 + 思考/工具卡
         // 一并收起(09-12 #15),不留展开残留。
-        if (!state.jobsStripOpen) {
-          state.expandedJobs.clear();
-          for (const sink of state.jobStreamSinks.values()) {
-            sink.panel?.querySelectorAll("details[open]").forEach((d) => { d.open = false; });
-          }
-        }
+        if (!state.jobsStripOpen) state.expandedJobs.clear();
         localStorage.setItem("miyu.web.jobsStripOpen", state.jobsStripOpen ? "1" : "0");
         renderJobsStrip();
       });
@@ -10191,11 +10291,15 @@
       row.append(makeJobSpinner(), label, token, time, peekSlot, stop);
 
       if (isSubagent) {
-        const sink = jobStreamSink(jid);
-        sink.taskPeek = peek;
-        sink.taskToken = token;
-        if (sink.peekLine) setReasoningPeek(peek, sink.peekLine);
-        if (sink.tokenText) token.textContent = sink.tokenText;
+        // 窥视、词元取 `job.progress` 里收好的那份(会话项目第 4 段之二)。
+        const status = state.subagentJobs.get(jid) || {};
+        status.peekEl = peek;
+        status.tokenEl = token;
+        if (job.child_session_id) status.session = String(job.child_session_id);
+        state.subagentJobs.set(jid, status);
+        if (status.peek) setReasoningPeek(peek, status.peek);
+        if (status.tokens) token.textContent = status.tokens;
+        else if (job.metric) token.textContent = String(job.metric);
       } else {
         // 后台命令没有进度流,但有输出日志(#120):把日志尾行当窥视,轮询刷新;
         // 先用已缓存的尾行填上(重建行时不闪)。
@@ -10208,14 +10312,15 @@
       row.setAttribute("aria-expanded", String(expanded));
       row.addEventListener("click", (event) => {
         if (event.target.closest(".job-chip-stop")) return;
+        // 后台子代理:打开它的会话(和终端任务条口径一致),过程在那儿看。子会话还没建好
+        // (刚派出去那一瞬)就什么都不做。
+        if (isSubagent) {
+          const session = state.subagentJobs.get(jid)?.session;
+          if (session) window.MiyuSubagents?.open(session);
+          return;
+        }
         if (state.expandedJobs.has(jid)) {
           state.expandedJobs.delete(jid);
-          // 收起状态行时,把里面已展开的思考/工具卡也一并收起(09-12 #5),
-          // 下次展开是收起态,而不是保留上次的展开。
-          const sink = state.jobStreamSinks.get(jid);
-          if (sink?.panel) {
-            sink.panel.querySelectorAll("details[open]").forEach((d) => { d.open = false; });
-          }
         } else {
           state.expandedJobs.add(jid);
         }
@@ -10225,16 +10330,12 @@
       const wrap = document.createElement("div");
       wrap.className = "job-chip-wrap";
       wrap.appendChild(row);
-      if (expanded) {
-        if (isSubagent) {
-          wrap.appendChild(jobStreamSink(jid).panel);
-        } else {
-          const entry = commandLogPanel(jid);
-          wrap.appendChild(entry.panel);
-          refreshCommandLog(jid);
-          if (job.running && !entry.timer) {
-            entry.timer = setInterval(() => refreshCommandLog(jid), 1500);
-          }
+      if (expanded && !isSubagent) {
+        const entry = commandLogPanel(jid);
+        wrap.appendChild(entry.panel);
+        refreshCommandLog(jid);
+        if (job.running && !entry.timer) {
+          entry.timer = setInterval(() => refreshCommandLog(jid), 1500);
         }
       } else if (!isSubagent) {
         const entry = state.commandLogs.get(jid);
@@ -10278,27 +10379,10 @@
       for (const job of data?.jobs || []) {
         const jid = String(job.job_id);
         state.backgroundJobs.set(jid, { ...job, receivedAt: Date.now() });
-        // 刷新后子代理展开区是空的(子过程只在内存里,#9)。补拉这个任务到目前为止的
-        // 原始标记流回放进它的 sink,展开就能看到之前的思考/工具/正文;之后的实时进度
-        // 继续往同一个 sink 追加。每个 sink 只回放一次。
-        if (job.kind === "subagent" || job.kind === "dev") seedJobTrace(jid);
       }
       renderJobsStrip();
     } catch {
       /* daemon may predate the jobs API */
-    }
-  }
-
-  async function seedJobTrace(jid) {
-    const sink = jobStreamSink(jid);
-    if (sink.__replayed) return;
-    sink.__replayed = true;
-    try {
-      const data = await (await apiRequest(`/api/jobs/${encodeURIComponent(jid)}/trace`)).json();
-      for (const marker of data?.trace || []) renderSubagentProgress(sink, String(marker));
-      if ((data?.trace || []).length) renderJobsStrip();
-    } catch {
-      sink.__replayed = false; /* 拉失败下次再试 */
     }
   }
 
@@ -10722,7 +10806,7 @@
       return;
     }
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${TURN_PAGE_SIZE}`);
       const payload = await response.json();
       if (state.viewSessionId !== sessionId || state.viewLoading) return;
       const runs = (Array.isArray(payload?.runs) ? payload.runs : []).filter((run) => run?.run_id);
@@ -10733,7 +10817,11 @@
         : null;
       if (state.liveRuns.size === 0) {
         const nextTurns = Array.isArray(payload?.turns)
-          ? payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq))
+          ? mergeLatestTurnPage(
+            state.turns,
+            payload.turns.sort((a, b) => asFiniteNumber(a?.seq) - asFiniteNumber(b?.seq)),
+            payload
+          )
           : state.turns;
         const turnsChanged = JSON.stringify(nextTurns) !== JSON.stringify(state.turns);
         const nextCandidate = payload?.redo_candidate && typeof payload.redo_candidate === "object"
@@ -10783,7 +10871,8 @@
     }
     const sessionId = state.viewSessionId;
     try {
-      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns`);
+      // 正在跑的那一轮总在最近几轮里，不用整段拉。
+      const response = await apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=5`);
       const payload = await response.json();
       if (state.viewSessionId !== sessionId || state.liveRuns.get(live.runId) !== live || live.userRendered) return;
       const turn = Array.isArray(payload?.turns) ? payload.turns.find((item) => String(item?.id) === String(turnId)) : null;
@@ -10873,7 +10962,7 @@
     else if (name === "generation.superseded") resetSupersededGeneration(live);
     else if (name.startsWith("reasoning.")) handleReasoningEvent(name, live, data);
     else if (name === "queue.consumed") consumeLiveQueue(live, data);
-    else if (name.startsWith("tool.")) handleToolEvent(name, live, data);
+    else if (name.startsWith("tool.") || name === "subagent.progress") handleToolEvent(name, live, data);
     else if (name === "question.requested") {
       clearPreparingTool(live);
       createQuestion(live, data);
@@ -10955,11 +11044,14 @@
     }
     if (name === "job.progress") {
       const jobId = String(data?.job_id || "");
-      const message = String(data?.message || "");
-      if (jobId && message) {
-        // 后台子代理的实时进度:喂给该 job 的子过程流(与前台子代理工具行同款
-        // 解析后渲进该 job 的子过程时间线(展开时可见,持久累积)。
-        renderSubagentProgress(jobStreamSink(jobId), message);
+      if (jobId && (data?.peek || data?.tokens_label || data?.child_session_id)) {
+        const status = state.subagentJobs.get(jobId) || {};
+        if (data.peek) status.peek = String(data.peek);
+        if (data.tokens_label) status.tokens = String(data.tokens_label);
+        if (data.child_session_id) status.session = String(data.child_session_id);
+        state.subagentJobs.set(jobId, status);
+        if (status.peekEl && status.peek) setReasoningPeek(status.peekEl, status.peek);
+        if (status.tokenEl && status.tokens) status.tokenEl.textContent = status.tokens;
       }
       return;
     }
@@ -10970,14 +11062,14 @@
       const entry = state.liveSubagentTokens.get("job:" + jobId);
       if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       state.expandedJobs.delete(jobId);
-      state.jobStreamSinks.delete(jobId);
+      state.subagentJobs.delete(jobId);
       if (state.backgroundJobs.delete(jobId)) renderJobsStrip();
       return;
     }
     if (name === "job.acknowledged") {
       const jobId = String(data?.job_id || "");
       state.expandedJobs.delete(jobId);
-      state.jobStreamSinks.delete(jobId);
+      state.subagentJobs.delete(jobId);
       if (state.backgroundJobs.delete(jobId)) renderJobsStrip();
       return;
     }
@@ -11176,6 +11268,9 @@
   }
 
   const VIEW_SESSION_KEY = "miyu.web.viewSession";
+  // 一次取多少轮：首屏、切会话、运行中每秒同步都只要最近这一页，往上翻到顶再补
+  //（会话项目第 2 段；以前每次都整段拉，最重的会话一次约 3 MB）。
+  const TURN_PAGE_SIZE = 30;
 
   /// 页面加载后该打开哪个会话。
   ///
@@ -11265,7 +11360,10 @@
         queued_prompts: snapshot?.queued_prompts,
         running_turn_id: snapshot?.running_turn_id,
         runs: allRuns.filter((run) => String(run.session_id) === String(state.currentSessionId)),
-        redo_candidate: snapshot?.redo_candidate
+        redo_candidate: snapshot?.redo_candidate,
+        older: snapshot?.older,
+        tokens_before: snapshot?.tokens_before,
+        first_user_content: snapshot?.first_user_content
       });
       if (state.liveRuns.size === 0) {
         state.lastEventId = state.latestEventId;
@@ -13774,6 +13872,8 @@
       }
       state.nearBottom = isNearBottom();
       if (programmatic) return;
+      // 翻到顶了，更早的还在库里：往前补一页（会话项目第 2 段）。
+      if (elements.chatScroll.scrollTop < 200) loadOlderTurns();
       if (!state.followOutput && isAtBottom()) {
         state.followOutput = true;
         elements.jumpBottomButton.hidden = true;
@@ -13867,6 +13967,7 @@
       previewLines: () => state.display?.cross_session_preview_lines ?? 10
     });
     window.MiyuCrossSession?.startPresence(() => (state.blocked ? null : state.viewSessionId));
+    window.MiyuSubagents?.init({ open: (sessionId) => openSessionView(sessionId) });
     window.MiyuSessionSelect?.init({
       render: renderSessionList,
       listedIds: () => state.sessions

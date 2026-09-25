@@ -19,6 +19,8 @@ mod log;
 /// 过程协议（标签清单、行解析、标记解析）。格式由**写的这一侧**定，读的那一侧
 /// （后台面板）对着同一份。
 pub mod protocol;
+/// 前台子代理的进度收成状态行要的三样（会话项目第 4 段之二）。
+pub mod status;
 
 use self::audit::*;
 use self::background::run_mirrored_child;
@@ -43,6 +45,21 @@ fn background_children() -> &'static Mutex<HashMap<String, String>> {
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 这个子会话是哪个后台任务的镜像（后台子代理才有）。任务条按它把子会话那一行和
+/// 同一件事的后台任务行合成一行（会话项目第 3 段）。
+pub fn background_job_of(session_id: &str) -> Option<String> {
+    background_children()
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(job_id, child)| (child == session_id).then(|| job_id.clone()))
+}
+
+/// 这个后台任务镜像的是哪条子会话（子会话还没建好就没有）。
+pub fn child_session_of_job(job_id: &str) -> Option<String> {
+    background_children().lock().unwrap().get(job_id).cloned()
+}
+
 fn resolve_child_session(id: &str) -> String {
     background_children()
         .lock()
@@ -52,50 +69,38 @@ fn resolve_child_session(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// 前台子代理的原始进度标记流,按工具调用 id 暂存。回合收尾 derive_tool_flow 时取走
-/// 挂到那次调用上落库,网页端刷新/回看时回放子过程时间线(#9:刷新丢内容)。
-/// 进程内、封顶,取走即清;后台子代理走 jobs 的 trace,不走这。
-fn subagent_traces() -> &'static Mutex<HashMap<String, Vec<String>>> {
-    static TRACES: std::sync::OnceLock<Mutex<HashMap<String, Vec<String>>>> =
+/// 前台子代理调用 → 它的子会话。回合收尾 `derive_tool_flow` 时取走、挂到那一步上
+/// （`ToolFlowCall.child_session_id`），前端据它把状态行 / 卡片链到那条会话。
+///
+/// 原来这里暂存的是整条标记流（`sub_trace`），网页回看时在父会话里把子代理的过程再画
+/// 一遍。子代理 09-18 起是一条会话，过程在它自己那里，这里只留会话 id（会话项目第 4 段
+/// 之二）。进程内，取走即清。
+fn subagent_sessions() -> &'static Mutex<HashMap<String, String>> {
+    static SESSIONS: std::sync::OnceLock<Mutex<HashMap<String, String>>> =
         std::sync::OnceLock::new();
-    TRACES.get_or_init(|| Mutex::new(HashMap::new()))
+    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-const MAX_CALL_TRACE: usize = 4000;
-
-/// 一条子代理进度标记(`__subagent_*` / `__subtool_*`)入某次调用的缓冲。
-pub fn record_subagent_trace(call_id: &str, marker: &str) {
-    if call_id.is_empty() {
+/// 这次调用的子会话到了。
+pub fn record_subagent_session(call_id: &str, session_id: &str) {
+    if call_id.is_empty() || session_id.is_empty() {
         return;
     }
-    let mut map = subagent_traces().lock().unwrap();
-    let buf = map.entry(call_id.to_string()).or_default();
-    buf.push(marker.to_string());
-    if buf.len() > MAX_CALL_TRACE {
-        let overflow = buf.len() - MAX_CALL_TRACE;
-        buf.drain(0..overflow);
-    }
-}
-
-/// 取走某次调用的标记流(回合最终落库时用,取完清掉,避免长会话堆积)。
-pub fn take_subagent_trace(call_id: &str) -> Vec<String> {
-    subagent_traces()
+    subagent_sessions()
         .lock()
         .unwrap()
-        .remove(call_id)
-        .unwrap_or_default()
+        .insert(call_id.to_string(), session_id.to_string());
 }
 
-/// 只读某次调用的标记流,不清空。回合中途的检查点(`checkpoint_tool_flow`)用它:
-/// 检查点在一个回合里会跑多次,若也用 `take` 会把标记流提前抽干,等回合收尾真正
-/// 落库时(`stream.rs`)就只剩空的了(#5a:前台子代理刷新丢子过程的真因)。
-pub fn peek_subagent_trace(call_id: &str) -> Vec<String> {
-    subagent_traces()
-        .lock()
-        .unwrap()
-        .get(call_id)
-        .cloned()
-        .unwrap_or_default()
+/// 取走这次调用的子会话（回合最终落库时用，取完清掉）。
+pub fn take_subagent_session(call_id: &str) -> Option<String> {
+    subagent_sessions().lock().unwrap().remove(call_id)
+}
+
+/// 只读不清：回合中途的检查点（`checkpoint_tool_flow`）会跑好几次，用 `take` 的话等回合
+/// 收尾真正落库时就没了。
+pub fn peek_subagent_session(call_id: &str) -> Option<String> {
+    subagent_sessions().lock().unwrap().get(call_id).cloned()
 }
 
 /// 一条进度是不是子代理子过程标记(据此决定要不要留进 trace)。
@@ -574,6 +579,23 @@ fn format_child_outcome(
             Ok(output)
         }
     }
+}
+
+/// 子代理工具结果里的子会话 id：前台跑完是 `subagent <状态> (tier …, session <id>): …`
+/// 那一行，追话排进去了是 JSON 的 `session_id`。后台刚派出去时子会话还没建，结果里没有，
+/// 返回 `None`。回放没有派出去时报的那条标记，界面靠它把时间线上那一行链到子会话
+/// （会话项目第 3 段）。形状由 `format_child_outcome` 定，两边一起改。
+pub fn subagent_session_of_output(output: &str) -> Option<String> {
+    let output = output.trim_start();
+    let id = if output.starts_with('{') {
+        let value: Value = serde_json::from_str(output).ok()?;
+        value.get("session_id")?.as_str()?.to_string()
+    } else {
+        let head = output.lines().next()?.strip_prefix("subagent ")?;
+        let (_, rest) = head.split_once(", session ")?;
+        rest.split(')').next()?.trim().to_string()
+    };
+    (!id.is_empty()).then_some(id)
 }
 
 /// 一次子代理运行的结果。

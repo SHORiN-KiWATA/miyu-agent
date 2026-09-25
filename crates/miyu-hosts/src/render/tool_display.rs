@@ -159,10 +159,11 @@ pub(crate) fn inline_tool_subject(name: &str) -> bool {
 // 工具调用的可读摘要已归位到 `miyu_engine::tools::tool_display`(它是工具层的事实,
 // 渲染层只是消费者)。这条再导出保持 `crate::render::{tool_subject, tool_peek, …}`
 // 老路径不变(09-16)。
-pub(crate) use miyu_engine::tools::{redact_sensitive_inline, tool_peek, tool_subject};
-// 这两件只有渲染层的测试还在按老路径调,生产构建里没有调用方。
+pub(crate) use miyu_engine::tools::{redact_sensitive_inline, tool_subject};
+// 这几件只有渲染层的测试还在按老路径调,生产构建里没有调用方(`tool_peek` 原来喂
+// 子代理浮层的参数窥视,09-25 浮层退役)。
 #[cfg(test)]
-pub(crate) use miyu_engine::tools::{args_peek, safe_inline_subject};
+pub(crate) use miyu_engine::tools::{args_peek, safe_inline_subject, tool_peek};
 
 pub(crate) fn readable_tool_name(name: &str) -> String {
     miyu_engine::tools::readable_tool_name(name)

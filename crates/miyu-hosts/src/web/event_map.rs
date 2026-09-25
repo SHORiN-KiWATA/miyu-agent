@@ -218,6 +218,26 @@ impl RunEventMapper {
                     }),
                 );
             }
+            AgentEvent::SubagentProgress {
+                call_id,
+                name,
+                status,
+            } => {
+                // 前台子代理那一行（会话项目第 4 段之二）：它在干什么、烧了多少、是哪条会话。
+                let (tool_id, tool_name) = self.tool_identity(&call_id, &name);
+                self.publish(
+                    "subagent.progress",
+                    json!({
+                        "run_id": self.run_id,
+                        "tool_id": tool_id,
+                        "name": tool_name,
+                        "peek": status.peek,
+                        "tokens_label": status.tokens_label,
+                        "tokens": status.tokens,
+                        "session_id": status.session_id,
+                    }),
+                );
+            }
             AgentEvent::CommandOutput {
                 call_id,
                 name,

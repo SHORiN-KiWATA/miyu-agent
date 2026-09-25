@@ -40,12 +40,16 @@ mod registry;
 mod relay_tests;
 mod scripts;
 mod session_scope;
+mod session_store;
 pub use session_scope::{apply_session_kind_scope, apply_turn_restrictions};
 mod skills;
 pub mod subagent;
 /// 渲染层要认它:认不出的子代理标记不能原样打到屏幕上(hosts 那边的兜底分支)。
-pub use subagent::{is_subagent_marker, SUBAGENT_SESSION_EXCLUDED, SUBAGENT_SESSION_MARKER};
-pub(crate) use subagent::{peek_subagent_trace, record_subagent_trace, take_subagent_trace};
+pub use subagent::{
+    is_subagent_marker, subagent_session_of_output, SUBAGENT_SESSION_EXCLUDED,
+    SUBAGENT_SESSION_MARKER,
+};
+pub(crate) use subagent::{peek_subagent_session, record_subagent_session, take_subagent_session};
 pub use voice_chat::TOOL_NAME as END_VOICE_CHAT_TOOL;
 pub mod subagent_runner;
 mod todowrite;

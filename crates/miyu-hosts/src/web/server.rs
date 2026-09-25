@@ -13,7 +13,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     tools::jobs::init(&paths);
     // 子代理断点续传落盘目录(09-12):检查点写盘,daemon 重启后 resume_id 仍有效。
     tools::subagent_runner::init_checkpoint_dir(&paths);
-    let state_store = StateStore::new(&paths)?;
+    let state_store = StateStore::open_maintained(&paths)?;
     state_store.init_files()?;
     // 子代理会话化(09-18):上个进程里没跑完的子代理任务标 interrupted,不自动续——
     // 用户到任务条里点进去回复即续。成员库在第一次打开时各标各的(StoreRegistry)。
@@ -331,6 +331,15 @@ pub(in crate::web) async fn follow_run(
             }
         };
         if record.kind == "resync_required" {
+            // 事件环追不回这一轮的开头：回合还在跑，就从库里的流水补到现在，再接实时。
+            if let Some((resume_at, catchup)) =
+                follow_catchup::catch_up_from_journal(state, &run_id)
+            {
+                ipc::send(stream, &catchup).await?;
+                subscription = state.events.subscribe_after(resume_at);
+                last_id = resume_at;
+                continue;
+            }
             ipc::send(
                 stream,
                 &IpcFrame::error("Miyu core event history was exhausted"),
@@ -375,6 +384,7 @@ pub(in crate::web) async fn follow_run(
                 id: record.id,
                 kind: record.kind,
                 data,
+                at_ms: Some(record.at_ms),
             },
         )
         .await?;
@@ -417,6 +427,7 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
         .route("/crosssession.js", get(crosssession_js_asset))
+        .route("/subagents.js", get(subagents_js_asset))
         .route("/sessionselect.js", get(sessionselect_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))
         .route("/highlight.js", get(highlight_js_asset))
@@ -707,6 +718,10 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         )
         .route("/api/sessions/{session_id}/turns", get(session_turns_http))
         .route("/api/sessions/{session_id}/todos", get(session_todos_http))
+        .route(
+            "/api/sessions/{session_id}/subagents",
+            get(session_subagents_http),
+        )
         .route("/api/sessions/{session_id}/goal", get(session_goal_http))
         .route(
             "/api/sessions/{session_id}/context",
@@ -757,7 +772,6 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/api/usage/clear", post(usage_clear_web))
         .route("/api/jobs/{job_id}", delete(stop_job_http))
         .route("/api/jobs/{job_id}/log", get(job_log_http))
-        .route("/api/jobs/{job_id}/trace", get(job_trace_http))
         // OneBot v11 reverse-WS endpoint: NapCat connects here as a WS
         // client. Gated by platforms.qq config, not web auth.
         .route("/ws", get(platforms::onebot::onebot_ws_on_web_port))
@@ -933,39 +947,9 @@ pub(in crate::web) async fn bootstrap(
         .is_none()
         .then_some(running_target.as_ref())
         .flatten();
-    let mut assets_by_turn = HashMap::<String, Vec<ImageAsset>>::new();
-    for asset in store.load_image_assets().map_err(ApiError::internal)? {
-        assets_by_turn
-            .entry(asset.turn_id.clone())
-            .or_default()
-            .push(asset);
-    }
-    let mut artifacts_by_turn = HashMap::<String, Vec<ArtifactAsset>>::new();
-    for artifact in store.load_artifact_assets().map_err(ApiError::internal)? {
-        artifacts_by_turn
-            .entry(artifact.turn_id.clone())
-            .or_default()
-            .push(artifact);
-    }
-    let generation_by_turn = store
-        .load_turn_generation(&current_session)
+    // 首屏只给最近一页，往上翻到顶再补（会话项目第 2 段）。
+    let page = safe_turn_page(&store, &current_session, None, Some(WEB_TURN_PAGE))
         .map_err(ApiError::internal)?;
-    let turns = store
-        .load_turns()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .filter(|turn| !turn.is_summary)
-        .map(|turn| {
-            let assets = assets_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let artifacts = artifacts_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let mut safe = SafeTurn::from_turn(turn, assets, artifacts);
-            if let Some((tokens, millis)) = generation_by_turn.get(&safe.id) {
-                safe.generation_tokens = *tokens;
-                safe.generation_ms = *millis;
-            }
-            safe
-        })
-        .collect();
     let usage = state
         .state_store
         .usage_snapshot()
@@ -1011,7 +995,10 @@ pub(in crate::web) async fn bootstrap(
         active_run_id,
         running_turn_id,
         external_queue_available,
-        turns,
+        turns: page.turns,
+        older: page.older,
+        tokens_before: page.tokens_before,
+        first_user_content: page.first_user_content,
         queued_prompts,
         models: safe_models(&config),
         display: web_display_config(&config),

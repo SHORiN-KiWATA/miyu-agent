@@ -271,8 +271,12 @@ def scenario_interrupt(report):
         text = "\n".join(after)
         report["r26_03_no_inline_card"] = "×1" not in text and "↳" not in text
         (h.OUT / "round26-interrupt-raw.bin").write_bytes(bytes(sink))
-        # 收缩行：`› Worked for … · 1 tool`（打断得快的话没有秒数，只剩计数）
-        head = max((i for i, l in enumerate(after) if "›" in l and "tool" in l), default=None)
+        # 收缩行：09-24 起按类写——跑过命令是 `› Ran 1 command · … · 1 err · 220ms`，没跑命令才是
+        # `› Worked for … · 1 tool`（打断得快的话没有秒数，只剩计数）。
+        head = max(
+            (i for i, l in enumerate(after) if "›" in l and any(word in l for word in ("command", "tool", "edit"))),
+            default=None,
+        )
         report["r26_03_timeline_folded"] = head is not None
         if head is None:
             return
@@ -300,25 +304,17 @@ def scenario_interrupt(report):
         stop(tui, daemon, stub)
 
 
-TITLE_SECS = re.compile(r"走查子代理 · ([0-9.]+)s")
-
-
-def panel_rows(screen):
-    """面板那一段：标题栏（`── 子代理·…`）到页脚（`Esc 关闭`）之间。"""
-    top = next((i for i, l in enumerate(screen) if "── 子代理" in l), None)
-    bottom = next((i for i, l in enumerate(screen) if "Esc" in l and "关闭" in l), None)
-    if top is None or bottom is None:
-        return None, []
-    return top, screen[top + 1:bottom]
+ROW_SECS = re.compile(r"运行命令 · ([0-9.]+)s")
 
 
 def scenario_panel_spinner(report):
-    """子代理浮层开着的时候：正在跑的那一行左边距上的转轮真的在转，标题上的秒数
-    真的在走（用户实测：浮层没有转轮、`准备执行 · 0.0s` 不动）。"""
+    """点跑着的子代理那一行：切进它的会话（会话项目第 3 段；原来开一块浮层，09-25 退役），
+    里面正在跑的那条命令左边距上的转轮真的在转、秒数真的在走（用户实测过浮层上的转轮
+    不动、`准备执行 · 0.0s` 不动——同一件事在子会话里照样要成立）。"""
     stub, daemon, tui, master, sink = start({
         "STUB_REASONING": "1",
         "STUB_SUBAGENT": "1",
-        # 内层那条命令要慢：面板只有在它还跑着的时候才有东西可转。
+        # 内层那条命令要慢：只有它还跑着的时候才有东西可转。
         "STUB_SUBAGENT_COMMAND": "sleep 8; printf 'SUBOUT\\n'",
         "STUB_REASONING_TEXT": "想一下。",
         "STUB_CHUNK_SLEEP": "0.05",
@@ -339,35 +335,35 @@ def scenario_panel_spinner(report):
         row = next(i for i, l in enumerate(screen) if is_running_row(l, "走查子代理"))
         h.click(master, sink, 5, row, quiet=0.3, timeout=1.0)
 
-        def running_in_panel(s):
-            _, rows = panel_rows(s)
-            return any(is_running_row(l, "运行命令") for l in rows)
+        def running_in_child(s):
+            joined = "\n".join(s)
+            return "子代理 ↳1" in joined and any(is_running_row(l, "运行命令") for l in s)
 
-        first = wait_screen(master, sink, running_in_panel, 15.0)
-        report["r26_05_panel_shows_running_row"] = first is not None
+        first = wait_screen(master, sink, running_in_child, 15.0)
+        report["r26_05_click_enters_the_child_with_its_running_row"] = first is not None
         if first is None:
             save("panel-spinner-open", LAST["screen"] or [])
             return
         save("panel-spinner-a", first)
-        # 隔半秒再看一眼：转轮换了帧、标题上的秒数涨了。
+        # 隔半秒再看一眼：转轮换了帧、那一行上的秒数涨了。
         h.drain(master, 0.5, sink)
         second = h.render(bytes(sink))
         save("panel-spinner-b", second)
-        top_a, rows_a = panel_rows(first)
-        top_b, rows_b = panel_rows(second)
-        run_a = next((l for l in rows_a if is_running_row(l, "运行命令")), "")
-        run_b = next((l for l in rows_b if is_running_row(l, "运行命令")), "")
-        report["r26_05_panel_spinner_animates"] = bool(run_a) and bool(run_b) and (
+        run_a = next((l for l in first if is_running_row(l, "运行命令")), "")
+        run_b = next((l for l in second if is_running_row(l, "运行命令")), "")
+        report["r26_05_running_row_spinner_animates"] = bool(run_a) and bool(run_b) and (
             run_a.lstrip()[0] != run_b.lstrip()[0]
         )
-        secs_a = TITLE_SECS.search(first[top_a] if top_a is not None else "")
-        secs_b = TITLE_SECS.search(second[top_b] if top_b is not None else "")
-        report["r26_05_panel_title_ticks"] = bool(secs_a and secs_b) and float(
+        secs_a = ROW_SECS.search(run_a)
+        secs_b = ROW_SECS.search(run_b)
+        report["r26_05_running_row_seconds_tick"] = bool(secs_a and secs_b) and float(
             secs_b.group(1)
         ) > float(secs_a.group(1))
-        # 跑着的那一行尾巴上不挂 ok；转轮在左边距、图标还在它右边。
+        # 转轮在左边距、图标还在它右边。
         report["r26_05_running_row_has_logo"] = " $ " in run_a[:8] if run_a else False
-        os.write(master, b"\x1b")
+        os.write(master, b"/back")
+        h.drain_until(master, sink, "/back", 3.0)
+        os.write(master, b"\r")
         h.drain_until(master, sink, "走查的回复", 40.0)
     finally:
         stop(tui, daemon, stub)

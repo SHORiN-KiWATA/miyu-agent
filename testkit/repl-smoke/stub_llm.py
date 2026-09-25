@@ -19,6 +19,9 @@ REPLY = os.environ.get(
     "STUB_REPLY",
     "好的,收到。这是一段用于走查的回复,分块吐出来好让 footer 量得出每秒 token。",
 )
+# 置 STUB_SUBAGENT_REPLY 让子代理的最终回复和主线分开:默认两边吐同一段 REPLY,
+# 切进子会话看的时候就分不清画面上那段是子代理自己说的、还是主回合串进来的(09-25)。
+SUBAGENT_REPLY = os.environ.get("STUB_SUBAGENT_REPLY")
 # 默认不发思考:老的走查脚本按「回复就是全部输出」断言。置 STUB_REASONING=1
 # 才多吐一段 reasoning_content,给全屏 TUI 的「点击展开」测具用。
 REASONING = os.environ.get("STUB_REASONING")
@@ -338,12 +341,13 @@ class Handler(BaseHTTPRequestHandler):
                                                   REASONING_TEXT[start:start + CHUNK_CHARS]},
                                         "finish_reason": None}]})
                 time.sleep(CHUNK_SLEEP)
-        for start in range(0, len(REPLY), CHUNK_CHARS):
+        reply = SUBAGENT_REPLY if (SUBAGENT_REPLY and inside_subagent) else REPLY
+        for start in range(0, len(reply), CHUNK_CHARS):
             self._sse({"choices": [{"index": 0,
-                                    "delta": {"content": REPLY[start:start + CHUNK_CHARS]},
+                                    "delta": {"content": reply[start:start + CHUNK_CHARS]},
                                     "finish_reason": None}]})
             time.sleep(CHUNK_SLEEP)
-        completion = max(1, len(REPLY) // 2)
+        completion = max(1, len(reply) // 2)
         # prompt 用量随对话长度涨（每条 user 消息算 5 个）：撤销/弹出之后 footer 的
         # 上下文读数才有得变，走查看得出「即时刷新」。
         user_turns = body.count(b'"role":"user"') + body.count(b'"role": "user"')

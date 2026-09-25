@@ -221,7 +221,7 @@ impl StreamRenderer {
         // 收成 `Worked for …` 之后用的还是同一个，展开状态跟着走。
         let mut steps: Vec<String> = self.timeline.steps[self.timeline.committed..]
             .iter()
-            .map(|step| step_rows(step, step.overlay.or(step.block)))
+            .map(|step| step_rows(step, step.block))
             .collect();
         let current_is_empty = current.is_empty();
         for LiveRow {
@@ -312,7 +312,7 @@ impl StreamRenderer {
                 return;
             }
             match self.live_block {
-                Some(id) => blocks::update(id, String::new(), lines),
+                Some(id) => blocks::update(id, lines),
                 None => self.live_block = blocks::register(lines),
             }
             return;
@@ -326,13 +326,23 @@ impl StreamRenderer {
             if lines.is_empty() {
                 continue;
             }
-            match self.live_tool_blocks.get(&name).copied() {
-                Some(id) => blocks::update(id, String::new(), lines),
-                None => {
-                    if let Some(id) = blocks::register(lines) {
-                        self.live_tool_blocks.insert(name, id);
-                    }
+            let id = match self.live_tool_blocks.get(&name).copied() {
+                Some(id) => {
+                    blocks::update(id, lines);
+                    Some(id)
                 }
+                None => {
+                    let id = blocks::register(lines);
+                    if let Some(id) = id {
+                        self.live_tool_blocks.insert(name.clone(), id);
+                    }
+                    id
+                }
+            };
+            // 子代理那一行点下去切进它的会话（会话项目第 3 段）：块先登记、会话后到，或者
+            // 反过来，两种次序都在这儿对上。
+            if let (Some(id), Some(session)) = (id, self.subagent_session_of(&name)) {
+                blocks::link_session(id, session);
             }
         }
     }
@@ -567,14 +577,9 @@ impl StreamRenderer {
                 let line = crate::render::clip_to_display_width(&line, step_width());
                 // logo 留在自己那一列，转轮另落在左边距上。
                 let line = format!("{} {line}", tool_glyph(name));
-                // 子代理优先进面板；面板还没登记出来就先退回它自己那一块，
-                // 别让这一行变成点不开的死行。
-                let own = self.live_tool_blocks.get(name).copied();
-                let target = if subagent {
-                    self.subagent_overlay_id(name).or(own)
-                } else {
-                    own
-                };
+                // 点这一行就是点它自己那一块；子代理那一块链着它的会话（见
+                // `refresh_live_blocks`），点下去切进去。
+                let target = self.live_tool_blocks.get(name).copied();
                 // 跑着的时候底下也是**命令本身**,和跑完落下来的那几行同一份,
                 // 于是前后不跳版。输出点开才看;设 0 就一行都不露。
                 let tail = if crate::render::is_command_tool(name) {

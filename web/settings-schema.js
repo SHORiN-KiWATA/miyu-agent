@@ -256,17 +256,6 @@
           default: 10,
         },
         {
-          path: "display.repl_replay_turns",
-          label: t("重开 TUI 回放的轮数"),
-          hint: t("0 = 不回放"),
-          kind: "number",
-          integer: true,
-          min: 0,
-          max: 20,
-          unit: t("轮"),
-          default: 3,
-        },
-        {
           path: "terminal_session_mode",
           label: t("终端集成会话默认模式"),
           hint: t("shell 无缝对话 / 单次命令那条会话跑普通还是开发模式;改完重载配置即生效"),

@@ -32,18 +32,38 @@ pub(in crate::web) fn install_background_job_hook(state: &DaemonState) {
             json!({ "job": overview, "session_id": overview.session_id }),
         );
     }));
-    // 后台子代理的实时进度上 SSE:网页端据 job_id 把它渲进任务条那个任务的
-    // 子过程流(点开后台子代理即可看流式,与前台子代理工具行同款)。
+    // 后台子代理的实时进度上 SSE。标记在这儿收成任务条那一行要的三样(窥视、词元、
+    // 子会话,会话项目第 4 段之二,`tools::subagent::status`):网页不解析标记,点那一行
+    // 打开子会话。节流窗里的、不是子代理标记的,不发。
     let progress_state = state.clone();
+    let feeds: Arc<Mutex<HashMap<String, tools::subagent::status::SubagentStatusFeed>>> =
+        Arc::default();
+    let finished_feeds = feeds.clone();
     tools::jobs::set_progress_hook(Arc::new(move |job_id, message| {
-        let session_id = tools::jobs::job_session_id(job_id);
+        let absorbed = feeds
+            .lock()
+            .unwrap()
+            .entry(job_id.to_string())
+            .or_default()
+            .absorb(message);
+        let tools::subagent::status::Absorbed::Report { status, .. } = absorbed else {
+            return;
+        };
         progress_state.events.publish(
             "job.progress",
-            json!({ "job_id": job_id, "message": message, "session_id": session_id }),
+            json!({
+                "job_id": job_id,
+                "session_id": tools::jobs::job_session_id(job_id),
+                "peek": status.peek,
+                "tokens_label": status.tokens_label,
+                "child_session_id": status.session_id,
+            }),
         );
     }));
     let hook_state = state.clone();
     tools::jobs::set_completion_hook(Arc::new(move |completion| {
+        // 跑完了，它那份进度状态不再用得着。
+        finished_feeds.lock().unwrap().remove(&completion.job_id);
         let state = hook_state.clone();
         tokio::spawn(async move {
             handle_job_completion(state, completion).await;
