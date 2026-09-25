@@ -207,6 +207,13 @@ pub(in crate::cli) struct Screen {
     banner_shown: Option<BannerRows>,
     /// 大厅里浮层(斜杠命令候选)的落点:(顶行, 左列)。None = 贴正文底部。
     float_anchor: Option<(u16, u16)>,
+    /// 这一帧 `paint` 整行擦写过、或被浮层盖过的屏幕行（每帧从头记）。活动区和大厅
+    /// 面板叠在正文层上面：这些行上的它们已经被擦掉，这一帧得重画；别的行上原样
+    /// 留着，内容没变就不用重画（09-25，大厅每拍不再先擦再写）。
+    touched: Vec<bool>,
+    /// 屏上整片失效一次（强制全量重画、让出/拿回屏幕、清屏）就 +1。叠在上面的那几层
+    /// 拿它判断自己画过的东西还在不在。
+    repaint_epoch: u64,
 }
 
 /// 诊断用：当前进程的 RSS（KB）。
@@ -317,6 +324,8 @@ impl Screen {
             banner: None,
             banner_shown: None,
             float_anchor: None,
+            touched: Vec::new(),
+            repaint_epoch: 0,
         })
     }
 
@@ -704,6 +713,28 @@ impl Screen {
     fn invalidate(&mut self) {
         self.painted.clear();
         self.force = true;
+        self.repaint_epoch = self.repaint_epoch.wrapping_add(1);
+    }
+
+    /// 这一帧 `paint` 有没有整行擦写过（或拿浮层盖过）`rows` 里的哪一行。叠在正文层
+    /// 上面的活动区、大厅面板靠它决定这一帧要不要重画自己。
+    pub(in crate::cli) fn touched_any(&self, rows: std::ops::Range<u16>) -> bool {
+        rows.into_iter()
+            .any(|row| self.touched.get(usize::from(row)).copied().unwrap_or(false))
+    }
+
+    /// 屏上整片失效的次数。见 `repaint_epoch` 字段。
+    pub(in crate::cli) fn repaint_epoch(&self) -> u64 {
+        self.repaint_epoch
+    }
+
+    /// 记下这一帧整行擦写过第 `row` 行。
+    fn touch(&mut self, row: u16) {
+        let slot = usize::from(row);
+        if self.touched.len() <= slot {
+            self.touched.resize(slot + 1, false);
+        }
+        self.touched[slot] = true;
     }
 
     fn body_height(&self, tail_height: u16) -> u16 {

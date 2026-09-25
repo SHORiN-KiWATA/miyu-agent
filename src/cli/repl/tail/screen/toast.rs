@@ -102,7 +102,7 @@ impl Screen {
     /// 屏幕上最空的一块。
     pub(in crate::cli) fn paint_toast(
         &mut self,
-        stdout: &mut crate::cli::repl::tail::TermOut,
+        stdout: &mut impl std::io::Write,
         body: u16,
     ) -> anyhow::Result<()> {
         let Some(toast) = &self.toast else {
@@ -159,7 +159,7 @@ impl Screen {
     /// 画候选面板。浮在输入框上方——和通知条（右上角）各占各的地方，不打架。
     pub(in crate::cli) fn paint_command_hint(
         &mut self,
-        stdout: &mut crate::cli::repl::tail::TermOut,
+        stdout: &mut impl std::io::Write,
         body: u16,
     ) -> anyhow::Result<()> {
         if self.command_hint.is_empty() {
@@ -175,7 +175,7 @@ impl Screen {
     /// 浮层的通用画法：细线框 + 暗色，贴着正文底部。
     fn paint_float(
         &mut self,
-        stdout: &mut crate::cli::repl::tail::TermOut,
+        stdout: &mut impl std::io::Write,
         body: u16,
         lines: &[String],
     ) -> anyhow::Result<()> {
@@ -189,7 +189,7 @@ impl Screen {
     /// 在指定行画一个浮层框，左对齐或右对齐。
     fn paint_float_at(
         &mut self,
-        stdout: &mut crate::cli::repl::tail::TermOut,
+        stdout: &mut impl std::io::Write,
         top: u16,
         lines: &[String],
         align: FloatAlign,
@@ -250,8 +250,10 @@ impl Screen {
             Clear(ClearType::UntilNewLine),
             Print(format!("{dim}╰{}╯{reset}", "─".repeat(inner)))
         )?;
-        // 盖住的那几行下一帧要重画——浮层消失之后不能留个洞。
+        // 盖住的那几行下一帧要重画——浮层消失之后不能留个洞。这一帧它们也算擦写过
+        // （浮层从左列一路擦到行尾）。
         for offset in 0..height {
+            self.touch(top + offset);
             let row = usize::from(top + offset);
             if let Some(slot) = self.painted.get_mut(row) {
                 slot.clear();

@@ -156,7 +156,20 @@ impl Screen {
     }
 
     pub(in crate::cli) fn paint(&mut self, tail_height: u16) -> Result<u16> {
+        let mut stdout = crate::cli::repl::tail::term_out();
+        self.paint_into(&mut stdout, tail_height)
+    }
+
+    /// `paint` 的本体：往给定的 writer 写（测试拿缓冲区收这一帧的字节）。
+    pub(in crate::cli) fn paint_into(
+        &mut self,
+        stdout: &mut impl std::io::Write,
+        tail_height: u16,
+    ) -> Result<u16> {
         let body = self.prepare_frame(tail_height);
+        // 这一帧整行擦写过哪些行，从头记（见 `touched`）。
+        self.touched.clear();
+        self.touched.resize(usize::from(self.rows), false);
         if self.suspended {
             return Ok(body);
         }
@@ -209,7 +222,6 @@ impl Screen {
         }
         self.row_keys.resize(usize::from(body), None);
 
-        let mut stdout = crate::cli::repl::tail::term_out();
         if std::env::var_os("MIYU_SCREEN_TRACE").is_some() {
             queue!(
                 stdout,
@@ -225,6 +237,7 @@ impl Screen {
             // 逐行重画盖不住那些残留，只能整屏擦一次。
             queue!(stdout, Clear(ClearType::All))?;
             self.needs_clear = false;
+            self.touched.fill(true);
         }
         // 正文顶部对齐（`top_pad` = 0）。
         if let Some(banner) = self.banner.clone() {
@@ -249,6 +262,8 @@ impl Screen {
                     shown.text.get(slot).map(String::as_str).unwrap_or("") == self.painted[slot]
                 });
                 match base {
+                    // 按格子补丁只写变了的星星、不擦行尾（`cells`），叠在这一行上的
+                    // 输入框和面板原样留着，不算擦写过。
                     Some(shown) => queue!(
                         stdout,
                         Print(super::cells::patch_row(
@@ -257,18 +272,21 @@ impl Screen {
                             y,
                         ))
                     )?,
-                    None => queue!(
-                        stdout,
-                        MoveTo(0, y),
-                        Clear(ClearType::UntilNewLine),
-                        Print(line)
-                    )?,
+                    None => {
+                        queue!(
+                            stdout,
+                            MoveTo(0, y),
+                            Clear(ClearType::UntilNewLine),
+                            Print(line)
+                        )?;
+                        self.touch(y);
+                    }
                 }
                 self.painted[slot] = line.to_string();
             }
             self.banner_shown = Some(banner);
-            self.paint_toast(&mut stdout, body)?;
-            self.paint_command_hint(&mut stdout, body)?;
+            self.paint_toast(stdout, body)?;
+            self.paint_command_hint(stdout, body)?;
             stdout.flush()?;
             return Ok(body);
         }
@@ -311,13 +329,19 @@ impl Screen {
                 Clear(ClearType::UntilNewLine),
                 Print(&line)
             )?;
+            self.touch(y);
             self.painted[usize::from(y)] = line;
         }
-        self.paint_toast(&mut stdout, body)?;
-        self.paint_command_hint(&mut stdout, body)?;
+        self.paint_toast(stdout, body)?;
+        self.paint_command_hint(stdout, body)?;
 
         stdout.flush()?;
         Ok(body)
+    }
+
+    /// 输入区里有没有选区。反显是另写的一笔，活动区按行记账得知道。
+    pub(in crate::cli) fn has_input_selection(&self) -> bool {
+        self.input_selection.is_some()
     }
 
     /// 输入区里被选中的那几行反白重画一遍。

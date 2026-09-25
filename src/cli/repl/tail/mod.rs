@@ -11,6 +11,7 @@
 // 活动区还用着一批留在 cli::mod 的东西（footer 结构、队列渲染、job 条）。
 mod frame;
 mod queue;
+mod row_memo;
 pub(in crate::cli) mod screen;
 mod update;
 
@@ -218,6 +219,8 @@ pub(in crate::cli) struct LiveReplTail {
     pub(in crate::cli) banner_rows: u16,
     /// Bottom space temporarily reserved for a lobby selector.
     pub(in crate::cli) lobby_panel_rows: u16,
+    /// 活动区上一帧每一行写了什么（全屏下只重写变了的行，见 `row_memo`）。
+    pub(in crate::cli) row_memo: row_memo::RowMemo,
     /// 空会话按 Tab 换车道:下一次会话切换不打「已切换到会话」——用户看到的是
     /// 模式行变色,不是换会话。一次性,用过即清。
     pub(in crate::cli) suppress_switch_note: bool,
@@ -654,6 +657,7 @@ impl LiveReplTail {
             banner: None,
             banner_rows: 0,
             lobby_panel_rows: 0,
+            row_memo: row_memo::RowMemo::default(),
             suppress_switch_note: false,
             session_footer_stale: false,
             cumulative_from_poll: false,
@@ -876,6 +880,8 @@ impl LiveReplTail {
             self.usage_placement,
         );
         let input_cursor = self.input_cursor;
+        // 这一行绕开活动区的账直接写：记账作废，下一帧照写。
+        self.row_memo.forget_row(row);
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
             let mut stdout = term_out();
             queue!(stdout, MoveTo(0, row), Print(line))?;
@@ -1026,6 +1032,10 @@ impl LiveReplTail {
             .saturating_add(self.tail_rows)
             .saturating_sub(rows);
         let input_cursor = self.input_cursor;
+        // 这几行绕开活动区的账直接写：记账作废，下一帧照写。
+        for offset in 0..rows {
+            self.row_memo.forget_row(start.saturating_add(offset));
+        }
         // Lines are padded to the full terminal width, so plain overwrites
         // suffice — no Clear, no intermediate blank state. The synchronized
         // block keeps the cursor hop invisible over slow links (SSH).
@@ -1130,6 +1140,8 @@ impl LiveReplTail {
             self.usage_placement,
         );
         let input_cursor = self.input_cursor;
+        // 这一行绕开活动区的账直接写：记账作废，下一帧照写。
+        self.row_memo.forget_row(row);
         synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
             let mut stdout = term_out();
             queue!(stdout, MoveTo(0, row), Print(line))?;

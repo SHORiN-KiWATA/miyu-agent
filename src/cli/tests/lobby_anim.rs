@@ -35,6 +35,7 @@ fn lobby_tail(banner: Option<BannerScene>) -> LiveReplTail {
         banner,
         banner_rows: 0,
         lobby_panel_rows: 0,
+        row_memo: Default::default(),
         suppress_switch_note: false,
         session_footer_stale: false,
         cumulative_from_poll: false,

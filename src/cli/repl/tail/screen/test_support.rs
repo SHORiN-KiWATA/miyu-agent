@@ -42,6 +42,8 @@ impl Screen {
             banner: None,
             banner_shown: None,
             float_anchor: None,
+            touched: Vec::new(),
+            repaint_epoch: 0,
         }
     }
 

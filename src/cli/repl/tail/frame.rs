@@ -348,7 +348,9 @@ impl LiveReplTail {
         let output_row = placement.output_row;
         let tail_start = placement.tail_start;
 
-        let mut stdout = term_out();
+        // 活动区这一帧的字节先攒在缓冲里：全屏下按行和上一帧比，只写变了的行
+        // （`row_memo`）。原来每一帧都整块先擦再写，不支持同步输出的终端上就是一闪。
+        let mut stdout: Vec<u8> = Vec::new();
         let box_left = box_left(layout_box);
         match layout_box {
             // 窄框只擦自己那一段,两侧的星空归 banner。
@@ -383,7 +385,6 @@ impl LiveReplTail {
             queue!(stdout, MoveTo(box_left, row), Clear(ClearType::CurrentLine))?;
             row = row.saturating_add(1);
         }
-        stdout.flush()?;
 
         let mut input_row = row;
         let mut rendered_rows = 0u16;
@@ -419,11 +420,7 @@ impl LiveReplTail {
             self.usage_placement,
         )?;
         self.footer_offset = footer_row.map(|abs| abs.saturating_sub(tail_start));
-        if let Some(screen) = &mut self.screen {
-            screen.set_input_rows(drawn_input);
-            // 反显盖在输入框**之上**：输入框刚画完，这会儿盖才不会被它冲掉。
-            screen.paint_input_selection()?;
-        }
+        let input_rows: Vec<u16> = drawn_input.iter().map(|(row, _)| *row).collect();
         // The editor is back on screen: the cursor must be visible no
         // matter which path hid it (e.g. a question prompt suspended the
         // editor with the cursor hidden and then exited early). This is
@@ -451,7 +448,6 @@ impl LiveReplTail {
         // 状态行在屏幕上的位置：点它要能对上是哪一个后台任务。
         self.job_strip_start = input_row.saturating_add(rendered_rows);
         self.job_strip_rows = job_rows;
-        let mut stdout = term_out();
         if !job_lines.is_empty() {
             let mut job_row = input_row.saturating_add(rendered_rows);
             for line in &job_lines {
@@ -480,13 +476,39 @@ impl LiveReplTail {
                 Print(row)
             )?;
         }
+        let bytes = match &self.screen {
+            Some(screen) => {
+                let epoch = screen.repaint_epoch();
+                self.row_memo.diff(&stdout, epoch, |row| {
+                    screen.touched_any(row..row.saturating_add(1))
+                })
+            }
+            None => stdout,
+        };
+        let mut stdout = term_out();
+        stdout.write_all(&bytes)?;
+        if let Some(screen) = &mut self.screen {
+            if screen.has_input_selection() {
+                // 反显盖在输入框**之上**，而且是另写的一笔：这几行屏上已经不是账上
+                // 记的样子，下一帧照写（反显撤掉时才擦得掉）。
+                for row in &input_rows {
+                    self.row_memo.forget_row(*row);
+                }
+            }
+            screen.set_input_rows(drawn_input);
+            screen.paint_input_selection()?;
+        }
         // 一帧的收尾**永远**是把光标放回输入位置：在这之前画的东西（状态行、
         // 反显）都会把光标带走。原来只有「有后台任务」那条分支才收尾，于是
         // 没有任务时光标停在最后一次绘制落笔的地方——输入法的预编辑框就浮在
         // 那儿。这一句不能挪进任何 if 里。
         queue!(stdout, MoveTo(self.input_cursor.0, self.input_cursor.1))?;
         stdout.flush()?;
-        execute!(stdout, crossterm::cursor::Show)?;
+        // 大厅里开着面板时光标归面板管（整帧收尾是藏起来的）：这里亮一下、块尾
+        // 再藏，不支持同步输出的终端上光标每拍闪一次。
+        if self.lobby_panel_rows == 0 {
+            execute!(stdout, crossterm::cursor::Show)?;
+        }
         self.output_cursor = (output_col, output_row);
         self.tail_start = tail_start;
         self.tail_rows = total_rows;
