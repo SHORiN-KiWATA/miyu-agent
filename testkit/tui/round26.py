@@ -499,11 +499,13 @@ def scenario_compact(report):
         row = next((i for i, l in enumerate(screen) if "上下文已压缩" in l and l.lstrip().startswith("›")), None)
         report["r26_09_compact_result_is_a_fold"] = row is not None
         if row is not None:
-            before = sum(1 for l in screen if "走查的回复" in l)
+            # 展开之后多出来的是摘要本身。桩对摘要请求回的是一份照模板写的摘要（09-25 起
+            # 不照模板写的摘要不落库），认它自己的那句，不认普通回复。
+            before = sum(1 for l in screen if "走查用的摘要" in l)
             h.click(master, sink, 3, row, quiet=0.3, timeout=2.0)
             opened = h.render(bytes(sink))
             save("compact-open", opened)
-            after = sum(1 for l in opened if "走查的回复" in l)
+            after = sum(1 for l in opened if "走查用的摘要" in l)
             report["r26_09_compact_summary_expands"] = after > before
     finally:
         stop(tui, daemon, stub)
