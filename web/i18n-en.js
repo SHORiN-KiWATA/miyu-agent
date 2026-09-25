@@ -2542,4 +2542,12 @@ window.MIYU_I18N_EN = Object.freeze({
   "打开子代理的会话": "Open the subagent's session",
   "主会话": "Main session",
   "来自主会话的任务": "Task from the main session",
+  "沙盒": "Sandbox",
+  "跟会话一样": "Same as the session",
+  "不关（只对属主会话生效）": "None (owner sessions only)",
+  "服务器进程关进调用它的会话的沙盒；成员会话永远关着。": "The server process runs inside the calling session's sandbox. Member sessions always stay confined.",
+  "额外可写目录": "Extra writable folders",
+  "在会话沙盒之上再放行可写的目录，比如浏览器缓存。": "Folders the server may also write to, on top of the session sandbox, such as a browser cache.",
+  "保持运行": "Keep running",
+  "同一会话里连续调用复用同一个进程，有状态的服务器能记住上一步。": "Calls in the same session reuse one process, so stateful servers remember earlier steps.",
 });

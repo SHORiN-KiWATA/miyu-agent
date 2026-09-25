@@ -49,7 +49,7 @@ daemon,daemon 按令牌找授权集(`host_ports::host_query::answer_host_query`)
 
 - 能力词表:`host_ports::HOST_CAPABILITIES`(与 PM 的 `requires-capabilities`、脚本头部 `Capabilities:` 同一张表)。
 - 授权来源:脚本头部 `Capabilities:` ∩ 词表,且只给 `Trust: owner` 的脚本(`Trust: external` 的脚本也会在不可信场所跑,不给);
-  MCP 服务器按 `mcp.servers[].capabilities` ∩ 词表,令牌随服务器进程生灭(`tools::mcp::McpSession` 持守卫)。
+  MCP 服务器按 `mcp.servers[].capabilities` ∩ 词表,令牌随服务器进程生灭(`tools::mcp::connection::McpConnection` 持守卫;09-25 起 daemon 里的进程按会话常驻,令牌活到进程被回收)。
 - 脱敏:摘要里没有 api_key、base_url、超时、额外请求体;返回的是 DTO,不是配置对象,也不会返回任何能反向拿到运行时的句柄。
 - 错误码:`permission_denied`(令牌不认识/作废/能力不在集里)、`unknown_method`、`invalid_argument`、`not_found`、`unavailable`(daemon 不在)。
 - 作用域:以 daemon 当前全局配置为准(与脚本所在回合同一份);成员私有人格的按人视图未做。

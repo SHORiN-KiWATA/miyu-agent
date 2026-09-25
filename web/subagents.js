@@ -71,7 +71,7 @@ window.MiyuSubagents = (() => {
       return;
     }
     bar.dataset.sessionId = parent.session_id;
-    bar.textContent = `↑ ${t("主会话")} · ${parent.name || t("新会话")}`;
+    bar.textContent = "↑ " + t("主会话") + " · " + (parent.name || t("新会话"));
     bar.hidden = false;
   }
 

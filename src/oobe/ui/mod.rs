@@ -712,6 +712,7 @@ mod feature_tests {
                 timeout_seconds: 30,
                 enabled: true,
                 capabilities: Vec::new(),
+                ..Default::default()
             },
             McpServerConfig {
                 id: "bare".into(),
@@ -722,6 +723,7 @@ mod feature_tests {
                 timeout_seconds: 30,
                 enabled: true,
                 capabilities: Vec::new(),
+                ..Default::default()
             },
             McpServerConfig {
                 id: "off".into(),
@@ -732,6 +734,7 @@ mod feature_tests {
                 timeout_seconds: 30,
                 enabled: false,
                 capabilities: Vec::new(),
+                ..Default::default()
             },
         ];
         let mut app = App::new(config.clone(), paths.clone());

@@ -532,7 +532,7 @@ pub(in crate::web) async fn handle_session_command(
                 .for_session(&record.session_id)
                 .delete_session(&record.session_id)
                 .map_err(|error| safe_error_message(&error));
-            miyu_core::llm::forget_relay_sessions(&record.session_id);
+            crate::web::forget_session_processes(&record.session_id);
             release_admin(&state.manager);
             result?;
             // 这个会话钉住的思考档位（09-24）跟着会话走。

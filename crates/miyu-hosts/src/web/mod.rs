@@ -322,6 +322,13 @@ impl From<UserAttachment> for SafeUserAttachment {
     }
 }
 
+/// 一条会话清空或删掉了：它名下常驻的外部进程一并忘掉——中转线 CLI 的续传映射、
+/// MCP 服务器进程（09-25）。原来只有前一样，各处各调一遍；合成一处，免得再加一种时漏掉几处。
+pub(in crate::web) fn forget_session_processes(session_id: &str) {
+    miyu_core::llm::forget_relay_sessions(session_id);
+    miyu_engine::tools::forget_mcp_session(session_id);
+}
+
 // ── spawn_actor ──
 
 impl DaemonState {}

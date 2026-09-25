@@ -755,7 +755,7 @@ pub(in crate::web) async fn teardown_subagent_tree(state: &DaemonState, root: &s
             stop_session_runs(state, id, Duration::from_secs(5)).await;
         }
         tools::jobs::stop_session_jobs(id).await;
-        miyu_core::llm::forget_relay_sessions(id);
+        crate::web::forget_session_processes(id);
         let child_store = state.stores.for_session(id);
         if let Err(error) = child_store.delete_session(id) {
             tracing::warn!(session = %id, error = %error, "failed to delete a subagent session");

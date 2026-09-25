@@ -68,6 +68,9 @@ pub struct SandboxPolicy {
     /// 用户按 Tab 切的「只读模式」(09-23):哪儿都不许写。只影响报错措辞——
     /// 模型撞上的是「只读模式开着」,不是「出了工作区」,后者会让它去换个目录再试。
     pub read_only_mode: bool,
+    /// 成员会话的策略(09-25):属主给单件工具开的口子对它一律无效(MCP 服务器的
+    /// `sandbox = "none"` 就是一例)。
+    pub member: bool,
 }
 
 /// 进程内工具(read/edit/glob/grep/print_image/看图……)读路径前过一遍:
@@ -280,6 +283,30 @@ pub fn confine(command: &mut tokio::process::Command) {
         unsafe {
             command.pre_exec(move || rules.apply());
         }
+    }
+}
+
+/// 按给定的策略约束一个子进程,不读任务上的那一份(09-25):MCP 服务器进程在自己的
+/// 线程上起,调用方的策略由它带过来。`extra_rw` 在策略之上再放行可写(不存在的跳过)。
+/// HOME 照策略换(和 [`confine`] 一样)。
+pub fn confine_with(
+    command: &mut tokio::process::Command,
+    policy: &SandboxPolicy,
+    extra_rw: &[PathBuf],
+) {
+    let mut extended = policy.clone();
+    for path in extra_rw {
+        if path.exists() && !extended.read_write.iter().any(|p| p == path) {
+            extended.read_write.push(path.clone());
+        }
+    }
+    for (key, value) in child_env(&extended, false) {
+        command.env(key, value);
+    }
+    let rules = Rules::prepare(&extended, &program_and_args(command));
+    // SAFETY: 同 confine。
+    unsafe {
+        command.pre_exec(move || rules.apply());
     }
 }
 

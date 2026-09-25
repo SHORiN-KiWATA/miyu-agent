@@ -182,6 +182,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     spawn_restart_resumes(&state);
     // 脚本查宿主信息的一次性令牌只由 daemon 签发。
     crate::runtime::enable_host_grants();
+    // MCP 服务器进程常驻只在 daemon 里开（09-25）：单次 CLI 每次调用照旧新起、用完就收。
+    miyu_engine::tools::enable_mcp_pool();
     voice_bridge::spawn_if_enabled(&state);
     // 目标续轮驱动器。启动时故意**不**恢复任何自动续跑：目标还在库里，但
     // 「是否自动跑」驻内存、重启即失，必须由人 `/goal resume` 重新授权。
@@ -249,6 +251,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     voice_bridge::shutdown();
     // 常驻的 agy 进程各在自己的进程组里,不收就成孤儿。
     miyu_core::llm::shutdown_relay_processes().await;
+    // 常驻的 MCP 服务器进程同样各在自己的进程组里：关 stdin、SIGTERM、SIGKILL 依次收。
+    miyu_engine::tools::shutdown_mcp_pool().await;
     state.platforms.qq_listener.shutdown(&state).await;
     ipc_task.abort();
     let _ = ipc_task.await;
