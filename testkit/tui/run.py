@@ -962,8 +962,10 @@ def main():
                 panel = render(bytes(sink))
                 (OUT / "subagent-panel.txt").write_text("\n".join(panel), encoding="utf-8")
                 report["subagent_overlay"] = in_child_session(panel)
+                # 它说过话之后，前面那几步收成一行摘要（和主线一个规矩），摘要也算。
                 report["subagent_inner_timeline"] = any(
-                    ("运行命令" in line or "已思考" in line) for line in panel
+                    ("运行命令" in line or "已思考" in line or is_fold_summary(line))
+                    for line in panel
                 )
                 # item17：子会话里的一步也该能点开，和主线一套交互。子代理开口说正文之后，
                 # 前面那几步会收成一行摘要（和主线一个规矩）；还没说话时是平铺的步。两种都认。
@@ -1486,11 +1488,10 @@ def main():
                 + bytes(sink)[mark_bgsub:].decode("utf-8", "replace")[-4000:],
                 encoding="utf-8",
             )
-            # item07：后台子代理的面板里，工具那一步点开要**有东西**。
-            #
-            # 原来只有"抬头被裁过"时才把抬头补进详情，于是短命令点开就是一条
-            # 空带子（用户实测：浮层里这些工具展开都没内容）。现在抬头无条件
-            # 给全，工具真吐出来的东西也跟着进来。
+            # item07：后台子代理那一行点开，切进它自己的会话（会话项目第 3 段，原来是浮层），
+            # 它跑完的那条命令点开要**有东西**（用户原来的抱怨：浮层里这些工具展开都没内容）。
+            # 原来的 item08「面板抬头的量跟着涨」、item02「面板外滚轮翻正文」验的是浮层本身，
+            # 浮层删了就撤掉（量改挂在任务条那一行上，item08_job_strip_has_tokens 验它）。
             report["item07_job_panel_step_has_content"] = False
             # 从**下往上**找：正文里那条时间线上也有一行写着它（「已后台运行
             # xxxx」），从上往下找会点到那一行去（实测就这么错了一轮）。
@@ -1509,102 +1510,36 @@ def main():
             )
             if sub_strip is not None:
                 click(master, sink, 4, sub_strip, quiet=0.2, timeout=1.5)
-                panel_now = render(bytes(sink))
-
-                # item08：面板抬头上那串量要**跟着涨**。抬头是点开那一刻定下来
-                # 的，之后没人改过——于是「消耗词元」一直停在点开时的数
-                #（用户实测：后台子代理浮层上方的 token 计数没有动态刷新）。
-                # 趁**刚点开**就测：等下面那些步骤走完，任务多半已经收工、
-                # 面板也自己退场了。
-                title_of = lambda rows: next(
-                    (
-                        line
-                        for line in rows
-                        if "走查后台子代理" in line and "running" in line
-                    ),
-                    "",
-                )
-                first_title = title_of(panel_now)
-                deadline_title = time.time() + 20.0
-                report["item08_job_panel_title_refreshes"] = False
-                while time.time() < deadline_title:
-                    settle(master, sink, quiet=0.3, timeout=1.5)
-                    now_title = title_of(render(bytes(sink)))
-                    if now_title and first_title and now_title != first_title:
-                        report["item08_job_panel_title_refreshes"] = True
-                        break
-                (OUT / "bgsub-title.txt").write_text(
-                    f"{first_title}\n{title_of(render(bytes(sink)))}\n", encoding="utf-8"
-                )
-
-                # item02：滚轮在**面板外面**要翻正文，不是翻面板。判据只看正文
-                # ——面板自己的范围指示会随日志增长自己动，拿它当对照不可靠。
-                report["item02_wheel_outside_scrolls_body"] = None
-                panel_now = render(bytes(sink))
-                panel_top = next(
-                    (i for i, line in enumerate(panel_now) if "走查后台子代理" in line),
-                    None,
-                )
-                if panel_top is not None and panel_top >= 3:
-                    above_before = "\n".join(panel_now[: panel_top - 1])
-                    wheel(master, sink, 10, panel_top - 2, up=True)
-                    above_after = "\n".join(render(bytes(sink))[: panel_top - 1])
-                    (OUT / "wheel-outside.txt").write_text(
-                        f"{above_before}\n===\n{above_after}\n", encoding="utf-8"
-                    )
-                    report["item02_wheel_outside_scrolls_body"] = (
-                        above_before != above_after
-                    )
-
-                # 要一条**跑完的**：还在跑的那一步日志里只有 `[工具]`，输出要等
-                # `[结果]` 之后才写。量报从第一轮就有了，比工具结束早得多，所以
-                # 不能一看到量就点。
+                drain_until(master, sink, CHILD_TASK, 10.0)
+                # 要一条**跑完的**命令：还在跑的那一步点开只有命令本身。它开口说过话之后
+                # 这些步会收进一行摘要里，那就先把摘要点开再找。
                 step_row = None
                 deadline_step = time.time() + 20.0
+                panel_now = render(bytes(sink))
                 while time.time() < deadline_step and step_row is None:
                     settle(master, sink, quiet=0.2, timeout=1.5)
                     panel_now = render(bytes(sink))
-                    foot_row = next(
+                    if not in_child_session(panel_now):
+                        break
+                    step_row = next(
                         (
                             i
-                            for i, line in enumerate(panel_now)
-                            if "Esc" in line and "关闭" in line
+                            for i in range(len(panel_now) - 1, -1, -1)
+                            if "运行命令" in panel_now[i] and "运行中" not in panel_now[i]
                         ),
                         None,
                     )
-                    if foot_row is None:
-                        break
-                    # 跑完的那一步：`运行命令 · … · cmd`，尾巴上不再盖 ok（主线也不
-                    # 盖），认「有命令、不在跑」。它开口说过话之后这些步会收进
-                    # `› Worked for …` 里，那就先把收缩行点开再找。
-                    def finished_command_row(lines):
-                        for i in range(foot_row - 1, max(foot_row - 25, 0), -1):
-                            if "运行命令" in lines[i] and "运行中" not in lines[i]:
-                                return i
-                        return None
-
-                    step_row = finished_command_row(panel_now)
                     if step_row is None:
                         fold_row = next(
                             (
                                 i
-                                for i in range(foot_row - 1, max(foot_row - 25, 0), -1)
-                                if panel_now[i].lstrip().startswith("›")
+                                for i in range(len(panel_now) - 1, -1, -1)
+                                if is_fold_summary(panel_now[i])
                             ),
                             None,
                         )
                         if fold_row is not None:
                             click(master, sink, 6, fold_row, quiet=0.2, timeout=1.5)
-                            panel_now = render(bytes(sink))
-                            foot_row = next(
-                                (
-                                    i
-                                    for i, line in enumerate(panel_now)
-                                    if "Esc" in line and "关闭" in line
-                                ),
-                                foot_row,
-                            )
-                            step_row = finished_command_row(panel_now)
                 (OUT / "bgsub-panel.txt").write_text(
                     "\n".join(panel_now), encoding="utf-8"
                 )
@@ -1617,8 +1552,7 @@ def main():
                     report["item07_job_panel_step_has_content"] = any(
                         "BGOUT走查输出" in line for line in opened_step
                     )
-                os.write(master, b"\x1b")
-                settle(master, sink, quiet=0.2, timeout=1.5)
+                back_to_parent(master, sink)
 
             # 收摊。Ctrl+C 是有梯子的：这一轮还在输出时，第一下停的是**这一轮**，
             # 任务要第二下。不停干净的话，后面那条 Ctrl+L 会因为"还在输出"被挡
@@ -1856,14 +1790,12 @@ def main():
         "input_selection_copies": True,
         "item09_selection_survives_mouseup": True,
         "item03_overlay_is_shorter": True,
-        "item02_wheel_outside_scrolls_body": True,
         "item05_ctrl_c_keeps_keyboard_mode": True,
         "item05_ctrl_c_keeps_input_clean": True,
         "item01_reopen_keeps_pre_tool_thought": True,
         "item03_live_subagent_opens_panel": True,
         "item06_subagent_counts_rise": True,
         "item08_job_strip_has_tokens": True,
-        "item08_job_panel_title_refreshes": True,
         "item07_job_panel_step_has_content": True,
         "models_picker_opens": True,
         "item04_esc_claims_no_model_change": True,
@@ -1889,7 +1821,6 @@ def main():
         "item03_live_subagent_opens_panel": "3 跑着的子代理行点开进它的会话",
         "item06_subagent_counts_rise": "6 子会话里看得到它自己的过程",
         "item08_job_strip_has_tokens": "8 状态行时间左边有词元数",
-        "item08_job_panel_title_refreshes": "8 后台面板抬头的量会刷新",
         "item07_job_panel_step_has_content": "7 面板里工具那步点开有内容",
         "models_picker_opens": "4 /models 选择器开得出来",
         "item04_esc_claims_no_model_change": "4 Esc 取消不报已更新",
@@ -1910,7 +1841,6 @@ def main():
         "item12_edit_shows_diff": "12 改文件展开有 diff",
         "item01_overlay_height_is_fixed": "1 面板高度不跟内容",
         "item03_overlay_is_shorter": "3 面板矮了三分之一",
-        "item02_wheel_outside_scrolls_body": "2 面板外滚轮翻正文",
         "item02_input_keeps_up": "2 输出期间鼠标不堵队",
         "item05_strip_stays_gone": "5 停任务后状态行不回闪",
         "item05_ctrlc_no_strip_flash": "5 Ctrl+C 停任务不闪状态行",
