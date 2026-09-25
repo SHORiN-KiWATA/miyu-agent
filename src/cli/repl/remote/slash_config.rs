@@ -228,6 +228,9 @@ impl RemoteRepl {
 
     pub(super) async fn cmd_config(&mut self) -> Result<LoopStep> {
         crate::config_tui::run(&self.paths)?;
+        // 设置界面退出时把终端切回了 cooked：当场回到 raw，交给下一次读键。下面重载配置
+        // 要等 daemon 回话，这段里敲的回车在 cooked 下会变成换行（见 `hand_off_raw_now`）。
+        self.live_repl.hand_off_raw_now()?;
         // 设置界面退出时画面原样留着、光标藏着：在一个同步块里把 REPL
         // 整屏画回来，光标直接出现在输入框，中间不经过左上角。
         if crate::cli::in_fullscreen() {

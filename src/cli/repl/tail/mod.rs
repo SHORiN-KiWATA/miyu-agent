@@ -760,6 +760,18 @@ impl LiveReplTail {
         }
     }
 
+    /// 现在就进 raw、交给下一段读键接手（`take_raw_guard` 认领，不再推第二层键盘增强）。
+    ///
+    /// 给自己开关终端模式的全屏程序用：设置界面退出时把终端切回了 cooked，REPL 还要等
+    /// daemon 重载配置那不到一秒才回去读键——这一段里敲的回车被终端换成换行，读回来是
+    /// Ctrl+J，在输入框里换了一行而不是发出去（09-26 走查 `expand_switches`）。
+    pub(in crate::cli) fn hand_off_raw_now(&mut self) -> Result<()> {
+        let (mut guard, _) = self.take_raw_guard()?;
+        guard.handoff();
+        self.raw_mode_handoff = true;
+        Ok(())
+    }
+
     /// 交出去的 raw 模式没人接（发完一句紧接着退出了）：收回来按正常路子关掉，
     /// 别把用户的 shell 留在 raw 模式里。
     pub(in crate::cli) fn release_raw_handoff(&mut self) {

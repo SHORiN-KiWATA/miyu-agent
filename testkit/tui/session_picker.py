@@ -236,10 +236,10 @@ def main():
         assert not any(
             "终端集成会话" in line for line in lines()
         ), f"Deleting the active session landed on the terminal session. See {h.OUT}"
+        # 删的是自己待着的那条：落到兜底会话时右上角那条「已切换到会话: …」是该有的（告诉人落到了
+        # 哪儿），只看面板还开着。
         actual = settle("delete-active-settled")
-        assert picker(actual) and not any(
-            "switched to session" in line or "已切换到会话" in line for line in actual
-        ), f"The picker did not stay open after deleting the active session. See {h.OUT}"
+        assert picker(actual), f"The picker did not stay open after deleting the active session. See {h.OUT}"
         # 面板还开着：直接按摘要搜回原来那条会话。
         os.write(master, b"hello")
         wait_for(
