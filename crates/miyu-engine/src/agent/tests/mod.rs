@@ -8,6 +8,7 @@ mod compact_extras;
 mod context;
 mod context_meter;
 mod input;
+mod instruction_source;
 mod prompt;
 mod queue_journal;
 mod reasoning;

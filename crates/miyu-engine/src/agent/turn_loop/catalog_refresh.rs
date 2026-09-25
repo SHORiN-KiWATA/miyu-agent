@@ -67,7 +67,7 @@ impl Agent {
     }
 
     /// 这一轮发给模型的工具定义:工具关着或复读保险丝熔断时一个不给。
-    pub(super) fn round_tool_definitions(
+    pub(in crate::agent) fn round_tool_definitions(
         &self,
         withhold: bool,
     ) -> Vec<miyu_core::llm::ToolDefinition> {

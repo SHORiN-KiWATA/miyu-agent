@@ -201,8 +201,8 @@ impl Agent {
             // repeat adds nothing and is skipped — the associative-memory
             // dedup reasoning. State snapshots (the WebUI artifact manifest)
             // are skipped when the most recent visible copy is byte-identical
-            // (`STATE_SNAPSHOT_TAGS`). Everything else ("this turn is system
-            // triggered", identity warnings, moderation prechecks) refers to
+            // (`HostSnapshot`, an instruction source). Everything else ("this
+            // turn is system triggered", identity warnings, moderation prechecks) refers to
             // the CURRENT turn, so an identical old fossil is no substitute
             // and those blocks are always sent.
             let fresh = self
@@ -212,10 +212,8 @@ impl Agent {
                 .filter(|block| {
                     let standing = block.starts_with(STANDING_ADVISORY_PREFIX)
                         && turn_context_block_visible(&messages, block);
-                    let unchanged_snapshot = STATE_SNAPSHOT_TAGS.iter().any(|tag| {
-                        block.starts_with(tag)
-                            && latest_visible_snapshot(&messages, tag) == Some(block.as_str())
-                    });
+                    let unchanged_snapshot = HostSnapshot::of(block)
+                        .is_some_and(|snapshot| project(&snapshot, messages).is_none());
                     !(standing || unchanged_snapshot)
                 })
                 .cloned()
