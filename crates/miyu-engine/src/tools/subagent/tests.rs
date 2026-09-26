@@ -230,41 +230,6 @@ fn subagent_excludes_itself_by_its_current_name() {
     assert!(SUBAGENT_EXCLUDED.contains(&"subagent"));
 }
 
-/// 后台子代理起在 `tokio::spawn` 的新任务上,回合的 task-local 到那儿
-/// 全空了:成员的后台子代理会因此跑在 Landlock 之外,工具的工作目录
-/// 也退回 daemon 的 cwd。这条钉住「抓下来再套回去」。
-#[tokio::test]
-async fn background_scope_is_carried_across_the_spawn() {
-    let workspace = std::path::PathBuf::from("/tmp/miyu-subagent-scope");
-    let session: std::sync::Arc<str> = "sess_probe".into();
-    let (bare, restored) = miyu_base::workspace::with_workspace(
-        workspace.clone(),
-        miyu_base::workspace::with_session(session.clone(), async {
-            let carried_workspace = miyu_base::workspace::try_workspace();
-            let carried_session = miyu_base::workspace::try_session();
-            tokio::spawn(async move {
-                let bare = (
-                    miyu_base::workspace::try_workspace(),
-                    miyu_base::workspace::try_session(),
-                );
-                let restored = with_turn_scope(None, carried_workspace, carried_session, async {
-                    (
-                        miyu_base::workspace::try_workspace(),
-                        miyu_base::workspace::try_session(),
-                    )
-                })
-                .await;
-                (bare, restored)
-            })
-            .await
-            .unwrap()
-        }),
-    )
-    .await;
-    assert_eq!(bare, (None, None), "裸 spawn 本就看不见回合作用域");
-    assert_eq!(restored, (Some(workspace), Some(session)));
-}
-
 /// 写日志这一侧只会写 `LOG_TAGS` 里的标签——清单与实际输出对得上。
 ///
 /// 读的那一侧按标签分支，认不出的行会掉进「无标签续行」。所以这张清单不能
@@ -346,47 +311,37 @@ fn every_marker_writes_a_tag_from_the_list() {
     assert!(missing.is_empty(), "清单里这些标签没人写: {missing:?}");
 }
 
-/// 界面从子代理的结果里认出子会话（会话项目第 3 段）：回放时时间线上那一行靠它链到
-/// 子会话。认的就是 `format_child_outcome` 写出来的那几种形状。
+/// 界面从子代理的结果里认出子会话（会话项目第 3 段）：回放时时间线上那一行靠它链到子会话。
+/// 派出去的回执和追话的回执都带 `session_id`；老回合里前台跑完的那种文本照样认。
 #[test]
 fn the_child_session_is_read_back_from_the_tool_output() {
+    // 老回合里存着的前台结论（09-26 之前），原样。
     let finished = |state: &str| {
-        format_child_outcome(
-            "查日志",
-            ModelTier::Standard,
-            miyu_base::host_ports::ChildOutcome::Finished(miyu_base::host_ports::ChildTaskResult {
-                session_id: "sess_child1".to_string(),
-                state: state.to_string(),
-                final_text: "查完了 (session 在正文里也不算)".to_string(),
-                turns: 1,
-                total_tokens: 10,
-                provider_id: None,
-                model: None,
-            }),
+        format!(
+            "subagent {state} (tier standard, session sess_child1): 查日志\nstats: {{\"turns\":1}}\nresult:\n查完了 (session 在正文里也不算)"
         )
-        .unwrap()
     };
     assert_eq!(
-        subagent_session_of_output(&finished("done")).as_deref(),
+        subagent_session_of_output(&finished("completed")).as_deref(),
         Some("sess_child1")
     );
     assert_eq!(
         subagent_session_of_output(&finished("interrupted")).as_deref(),
         Some("sess_child1")
     );
-    let queued = format_child_outcome(
-        "查日志",
-        ModelTier::Standard,
-        miyu_base::host_ports::ChildOutcome::Queued {
-            session_id: "sess_child2".to_string(),
-        },
-    )
-    .unwrap();
+    let queued = queued_followup_receipt("sess_child2").unwrap();
     assert_eq!(
         subagent_session_of_output(&queued).as_deref(),
         Some("sess_child2")
     );
-    // 后台刚派出去：结果里只有任务 id，子会话还没建。
+    assert_eq!(
+        subagent_session_of_output(
+            r#"{"ok":true,"kind":"background_subagent","job_id":"a1b2c3","session_id":"sess_child3"}"#
+        )
+        .as_deref(),
+        Some("sess_child3")
+    );
+    // 09-26 之前后台刚派出去的回执：只有任务 id，子会话还没建。
     assert_eq!(
         subagent_session_of_output(r#"{"ok":true,"kind":"background_subagent","job_id":"a1b2c3"}"#),
         None
@@ -505,4 +460,110 @@ fn a_long_thought_keeps_only_its_tail() {
         .unwrap_or_else(|| feed.status().peek.clone());
     assert!(peek.ends_with("最后一句"), "{peek}");
     assert!(peek.chars().count() <= 240);
+}
+
+/// 并发按父会话算（用户 09-26）：同一个会话的名额用完就排队，别的会话不受影响，放掉一个就轮到
+/// 排着的。
+#[tokio::test]
+async fn subagent_slots_are_counted_per_parent_session() {
+    use std::time::Duration;
+    let first = super::slots::slots_for("sess_slots_test_a", 1);
+    let held = super::slots::take_slot(first.clone(), "job_slots_a1").await;
+    let queued = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(first.clone(), "job_slots_a2"),
+    )
+    .await;
+    assert!(queued.is_err(), "同一个会话第二个该排队");
+    let other = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(
+            super::slots::slots_for("sess_slots_test_b", 1),
+            "job_slots_b1",
+        ),
+    )
+    .await;
+    assert!(other.is_ok(), "别的会话不受影响");
+    drop(held);
+    let after = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(first, "job_slots_a3"),
+    )
+    .await;
+    assert!(after.is_ok(), "放掉一个就轮到排着的");
+}
+
+/// 追已有子代理的话：排不进去（它闲着，或者恰好在「跑着吗」问完之后收了尾）就另起后台那一轮，
+/// 绝不在父回合这一步里把整轮跑完（09-26 审查：原来先问 `is_running` 再 `continue_child`，两步之间
+/// 子会话收尾的话，`continue_child` 就在工具调用里起新一轮、等到终态）。
+///
+/// 假宿主排队时子会话已经闲了；它的 `continue_child` 永远不返回——工具调用里要是直接等它，
+/// 这条就卡到超时。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_followup_that_cannot_be_queued_runs_in_the_background() {
+    use futures_util::future::BoxFuture;
+    use miyu_base::host_ports::{
+        ChildOutcome, ContinueChildRequest, CreateChildRequest, SubagentHostPort, WatchChildRequest,
+    };
+
+    struct IdleByNow;
+    impl SubagentHostPort for IdleByNow {
+        fn create_child(&self, _request: CreateChildRequest) -> Result<String> {
+            unreachable!("a follow-up reuses its child session")
+        }
+        fn queue_followup(
+            &self,
+            _parent_session: &str,
+            _child_session: &str,
+            _message: &str,
+        ) -> BoxFuture<'static, Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn continue_child(
+            &self,
+            _request: ContinueChildRequest,
+        ) -> BoxFuture<'static, Result<ChildOutcome>> {
+            Box::pin(std::future::pending())
+        }
+        fn watch_child(
+            &self,
+            _request: WatchChildRequest,
+        ) -> BoxFuture<'static, Result<ChildOutcome>> {
+            unreachable!()
+        }
+    }
+
+    static JOBS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    JOBS.get_or_init(|| {
+        let temp = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        crate::tools::jobs::init(&test_paths(temp.path()));
+    });
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let params = SubagentParams {
+        description: "追话".to_string(),
+        prompt: "再查一样".to_string(),
+        session_id: Some("sess_idle_child".to_string()),
+        resume_id: None,
+        max_steps: 0,
+        tier: ModelTier::Standard,
+        dev: false,
+    };
+    let reply = tokio::time::timeout(
+        Duration::from_secs(5),
+        miyu_base::workspace::with_session(
+            "sess_followup_parent".into(),
+            run_via_host(
+                Arc::new(IdleByNow),
+                params,
+                4,
+                crate::tools::ToolProgress::new(sender),
+            ),
+        ),
+    )
+    .await
+    .expect("the follow-up must not wait for a child turn inside the tool call")
+    .unwrap();
+    let receipt: Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(receipt["kind"], "background_subagent", "{reply}");
+    assert_eq!(receipt["session_id"], "sess_idle_child", "{reply}");
 }

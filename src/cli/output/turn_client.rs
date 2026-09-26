@@ -43,6 +43,22 @@ pub enum TurnOutcome {
     },
 }
 
+/// 一轮收场：终态，加这一轮在 daemon 事件流里收到的第一个号——一次性命令接着等子代理
+/// 时，凭它认出「这一轮之后起的轮」（09-26）。
+pub struct RunEnd {
+    pub outcome: TurnOutcome,
+    pub first_event_id: Option<u64>,
+}
+
+impl RunEnd {
+    fn early(outcome: TurnOutcome) -> Self {
+        Self {
+            outcome,
+            first_event_id: None,
+        }
+    }
+}
+
 impl TurnOutcome {
     pub fn failed(kind: ErrorKind, message: impl Into<String>, session_id: Option<String>) -> Self {
         TurnOutcome::Failed {
@@ -88,9 +104,9 @@ pub async fn run_turn(
     paths: &MiyuPaths,
     request: TurnRequest,
     policy: QuestionPolicy,
-    mut cancel: Option<CancelSignal>,
-    mut emit: impl FnMut(PublicEvent),
-) -> Result<TurnOutcome> {
+    cancel: Option<CancelSignal>,
+    emit: impl FnMut(PublicEvent),
+) -> Result<RunEnd> {
     let started_at = Instant::now();
     let images = image_attachments(&request.images)?;
     let mut stream = ipc::connect(&paths.ipc_socket()).await?;
@@ -118,13 +134,115 @@ pub async fn run_turn(
             } else {
                 ErrorKind::TurnFailed
             };
-            return Ok(TurnOutcome::failed(kind, message, request.session_id));
+            return Ok(RunEnd::early(TurnOutcome::failed(
+                kind,
+                message,
+                request.session_id,
+            )));
         }
         other => bail!("Miyu core returned an unexpected response: {other:?}"),
     };
+    let run = RunContext {
+        paths,
+        run_id,
+        session_id: request.session_id,
+        started_at,
+        deadline: request.timeout.map(|timeout| started_at + timeout),
+        policy,
+    };
+    drive_run(run, stream, cancel, emit).await
+}
 
-    let deadline = request.timeout.map(|timeout| started_at + timeout);
-    let mut session_id = request.session_id.clone();
+/// 跟一轮已经起了的，事件照样交给 `emit`（一次性命令等子代理时，报告叫醒的那几轮，
+/// 09-26）。`after` = 从这个事件号之后补，这一轮挂上去之前就跑完了也补得全；没有就从
+/// 这一轮开头补。`deadline` 是整条命令的，不是这一轮的。
+#[allow(clippy::too_many_arguments)]
+pub async fn follow_run(
+    paths: &MiyuPaths,
+    run_id: &str,
+    session_id: &str,
+    after: Option<u64>,
+    policy: QuestionPolicy,
+    cancel: Option<CancelSignal>,
+    deadline: Option<Instant>,
+    emit: impl FnMut(PublicEvent),
+) -> Result<RunEnd> {
+    let started_at = Instant::now();
+    let mut stream = ipc::connect(&paths.ipc_socket()).await?;
+    ipc::send(
+        &mut stream,
+        &IpcRequest::new(IpcCommand::FollowRun {
+            run_id: run_id.to_string(),
+            from_start: after.is_none(),
+            after,
+        }),
+    )
+    .await?;
+    let Some(first) = ipc::receive::<IpcFrame>(&mut stream).await? else {
+        bail!("Miyu core closed the connection before attaching to the turn");
+    };
+    let run_id = match first {
+        IpcFrame::Accepted { run_id, .. } => run_id,
+        IpcFrame::Error { message, .. } => {
+            return Ok(RunEnd::early(TurnOutcome::failed(
+                ErrorKind::TurnFailed,
+                message,
+                Some(session_id.to_string()),
+            )));
+        }
+        other => bail!("Miyu core returned an unexpected response: {other:?}"),
+    };
+    let run = RunContext {
+        paths,
+        run_id,
+        session_id: Some(session_id.to_string()),
+        started_at,
+        deadline,
+        policy,
+    };
+    drive_run(run, stream, cancel, emit).await
+}
+
+/// 收帧那一段里不随帧变的东西。
+struct RunContext<'a> {
+    paths: &'a MiyuPaths,
+    run_id: String,
+    session_id: Option<String>,
+    started_at: Instant,
+    deadline: Option<Instant>,
+    policy: QuestionPolicy,
+}
+
+/// 一轮受理之后：收帧、翻成对外事件，直到终态。
+async fn drive_run(
+    run: RunContext<'_>,
+    stream: tokio::net::UnixStream,
+    cancel: Option<CancelSignal>,
+    emit: impl FnMut(PublicEvent),
+) -> Result<RunEnd> {
+    let mut first_event_id = None;
+    let outcome = drive_frames(run, stream, cancel, emit, &mut first_event_id).await?;
+    Ok(RunEnd {
+        outcome,
+        first_event_id,
+    })
+}
+
+async fn drive_frames(
+    run: RunContext<'_>,
+    mut stream: tokio::net::UnixStream,
+    mut cancel: Option<CancelSignal>,
+    mut emit: impl FnMut(PublicEvent),
+    first_event_id: &mut Option<u64>,
+) -> Result<TurnOutcome> {
+    let RunContext {
+        paths,
+        run_id,
+        mut session_id,
+        started_at,
+        deadline,
+        policy,
+    } = run;
     let mut content = String::new();
     let cancel_and_finish = |kind: ErrorKind, message: &str, session_id: Option<String>| {
         let run_id = run_id.clone();
@@ -172,7 +290,10 @@ pub async fn run_turn(
             ));
         };
         let (kind, data) = match frame {
-            IpcFrame::Event { kind, data, .. } => (kind, data),
+            IpcFrame::Event { id, kind, data, .. } => {
+                first_event_id.get_or_insert(id);
+                (kind, data)
+            }
             IpcFrame::Error { message, .. } => {
                 return Ok(TurnOutcome::failed(
                     ErrorKind::TurnFailed,

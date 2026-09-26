@@ -504,6 +504,7 @@ pub async fn spawn_background_subagent<F>(
     title: Option<&str>,
     description: &str,
     dev: bool,
+    session_id: Option<&str>,
     progress: &ToolProgress,
     build: impl FnOnce(String, PathBuf) -> F,
 ) -> Result<String>
@@ -517,13 +518,19 @@ where
         "__subagent_detach__{} {job_id}",
         miyu_base::i18n::text("Running in background:", "已后台运行")
     ));
-    Ok(serde_json::to_string_pretty(&json!({
+    // 09-26 起子代理只在后台跑：回执带上子会话 id（先建好的，续话、界面链接都认它）。说明
+    // 写清别等、别轮询，派完该干别的干别的、没事就结束这一轮，跑完会带着结论叫醒。
+    let mut receipt = json!({
         "ok": true,
         "kind": "background_subagent",
         "job_id": job_id,
         "log": log_path.display().to_string(),
-        "note": "Subagent detached to the background. Query with job(action=status) (the log holds its progress); never assume its result before it finishes — you will be woken automatically when it completes."
-    }))?)
+        "note": "The subagent runs in the background. Do not wait for it or poll job(action=status): carry on with other work or end your turn. You are woken with its final message when its whole task finishes."
+    });
+    if let Some(session_id) = session_id {
+        receipt["session_id"] = json!(session_id);
+    }
+    Ok(serde_json::to_string_pretty(&receipt)?)
 }
 
 /// 只登记、不出工具回执的那一半，返回 (job_id, 日志路径)。daemon 重启后把子代理挂回

@@ -158,6 +158,7 @@ async fn background_subagent_lifecycle() {
             Some("子代理测试"),
             "描述文本",
             false,
+            Some("sess_child_1"),
             &test_progress(),
             |_job_id, log_path| async move {
                 let _ = std::fs::write(&log_path, "工作中\n");
@@ -170,6 +171,8 @@ async fn background_subagent_lifecycle() {
     .unwrap();
     let job_id = spawned["job_id"].as_str().unwrap().to_string();
     assert_eq!(spawned["kind"], "background_subagent");
+    // 09-26 起子代理只在后台跑：子会话先建好，回执带着它的 id（续话、界面链接都认它）。
+    assert_eq!(spawned["session_id"], "sess_child_1");
     await_terminal(&job_id).await;
     let status: Value =
         serde_json::from_str(&job_status(json!({"job_id": job_id})).await.unwrap()).unwrap();

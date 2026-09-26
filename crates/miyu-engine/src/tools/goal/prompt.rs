@@ -63,7 +63,8 @@ pub fn goal_round_prompt(goal: &GoalRecord, full: bool) -> String {
          while the session is idle; the objective may be unrelated to the messages above.\n\
          Objective: {}  ·  Round {} of {}\n\n\
          Make one concrete step of progress now. Never spend a round only reporting that you are \
-         waiting — end the goal instead. Ending your reply without calling tools or goal \
+         waiting — end the goal instead. If you dispatched subagents, just end the round: the \
+         next one starts when their reports wake you. Ending your reply without calling tools or goal \
          just starts another round, so once the objective is verifiably done, state the outcome \
          AND call complete. Both calls below are complete as written; do not read the goal or \
          load tools first.\n\

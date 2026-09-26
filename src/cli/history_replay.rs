@@ -237,6 +237,8 @@ pub(super) fn session_replay_frame(
                 text: content,
             })?;
         } else {
+            // 提问那一步的题目：结果到了，照它和答案把一问一答画出来（和实时那一轮同一条路）。
+            let mut asked: Option<miyu_base::question::QuestionRequest> = None;
             for entry in &replay.entries {
                 match entry {
                     ReplayEntry::Text { text } => renderer.write_chunk(ChatStreamChunk {
@@ -253,7 +255,11 @@ pub(super) fn session_replay_frame(
                         ));
                     }
                     ReplayEntry::ToolCall { name, arguments } => {
-                        renderer.write_tool_call(name, arguments)?
+                        if name == "ask_question" {
+                            asked = miyu_base::question::QuestionRequest::parse(arguments).ok();
+                        }
+                        renderer.write_tool_call(name, arguments)?;
+                        renderer.replay_patch_detail(name, arguments);
                     }
                     ReplayEntry::ToolResult {
                         name,
@@ -261,6 +267,20 @@ pub(super) fn session_replay_frame(
                         output,
                         elapsed_ms,
                     } => {
+                        if name == "ask_question" {
+                            let response = miyu_base::question::response_from_tool_output(output);
+                            if let (Some(request), Some(response)) = (asked.take(), response) {
+                                crate::cli::repl::question_flow::record_exchange(
+                                    &mut renderer,
+                                    &request,
+                                    &response,
+                                )?;
+                                // 提问那一步上面已经画完了。再按普通工具记一笔用时的话，它是静默工具、
+                                // 结果不收尾，会多出一个「已中断」的提问步（流水里带着面板开着的用时）。
+                                continue;
+                            }
+                        }
+                        renderer.replay_command_output(name, output)?;
                         renderer.replay_tool_elapsed(
                             name,
                             std::time::Duration::from_millis(*elapsed_ms),

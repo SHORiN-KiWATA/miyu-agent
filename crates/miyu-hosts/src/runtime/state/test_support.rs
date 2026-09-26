@@ -18,6 +18,7 @@ impl DaemonState {
             runs_changed: Arc::new(tokio::sync::Notify::new()),
             compact_requests: HashMap::new(),
             live_turns: HashMap::new(),
+            recent_wakes: Default::default(),
         }));
         let (actor_tx, _actor_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, _shutdown_rx) = broadcast::channel(1);

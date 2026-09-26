@@ -1,4 +1,5 @@
 mod command;
+pub use command::split_command_text;
 mod files;
 use command::*;
 // claude_code 复用同一套进程组击杀语义,不再抄一份。
@@ -368,6 +369,36 @@ mod tests {
             }
             Ok(())
         })
+    }
+
+    /// 结果文本拆回 stdout / stderr（回放用）：和拼它的 `command_text` 是一对，状态标记不算输出。
+    #[test]
+    fn command_text_splits_back_into_its_streams() {
+        use std::os::unix::process::ExitStatusExt;
+        let exited = |code: i32| std::process::ExitStatus::from_raw(code << 8);
+        let split = |status, stdout: &str, stderr: &str| {
+            command::split_command_text(&command::command_text(
+                status,
+                stdout.as_bytes().to_vec(),
+                stderr.as_bytes().to_vec(),
+            ))
+        };
+        let pair = |stdout: &str, stderr: &str| (stdout.to_string(), stderr.to_string());
+        assert_eq!(
+            split(exited(0), "out\n第二行\n", ""),
+            pair("out\n第二行", "")
+        );
+        assert_eq!(split(exited(0), "out", "err"), pair("out", "err"));
+        assert_eq!(
+            split(exited(3), "", "走查用的报错\n"),
+            pair("", "走查用的报错")
+        );
+        assert_eq!(split(exited(0), "", ""), pair("", ""));
+        assert_eq!(split(exited(1), "", ""), pair("", ""));
+        assert_eq!(
+            split(std::process::ExitStatus::from_raw(9), "partial", ""),
+            pair("partial", "")
+        );
     }
 
     #[tokio::test]

@@ -19,10 +19,9 @@
 
 use crate::cli::args::TurnOptions;
 use crate::cli::exit_code::{exit_code_for, usage_error, EXIT_SESSION_NOT_FOUND, EXIT_USAGE};
+use crate::cli::output::conclusion::run_turn_to_conclusion;
 use crate::cli::output::event::{ErrorKind, PublicEvent};
-use crate::cli::output::turn_client::{
-    answer_question, run_turn, QuestionPolicy, TurnOutcome, TurnRequest,
-};
+use crate::cli::output::turn_client::{answer_question, QuestionPolicy, TurnOutcome, TurnRequest};
 use crate::cli::repl::session::discard_ephemeral_session;
 use crate::cli::session_cmds::session_op_json;
 use crate::cli::turn_request::{build_overrides, resolve_turn_session};
@@ -217,7 +216,9 @@ async fn start_message(
     let task = tokio::spawn(async move {
         let emit_out = out.clone();
         let emit_id = id.clone();
-        let outcome = run_turn(
+        // 派了子代理就等它们的报告回完再收这一条（09-26）：阅后即焚的会话马上就删了，
+        // 不等的话子代理跟着被停，结论永远回不来。
+        let outcome = run_turn_to_conclusion(
             &paths,
             turn,
             QuestionPolicy::External,

@@ -8,8 +8,11 @@ mod one_shot;
 mod slash_config;
 mod slash_context;
 mod slash_session;
+/// 一次性命令等子代理：报告叫醒的那几轮接着画（09-26）。
+mod subagent_follow;
 mod submit;
 /// 切进子代理会话、回去（会话项目第 3 段）。
 mod visit;
 pub(in crate::cli) use interactive::*;
 pub(in crate::cli) use one_shot::*;
+pub(in crate::cli) use subagent_follow::follow_subagent_reports;

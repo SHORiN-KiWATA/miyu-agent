@@ -150,17 +150,18 @@ pub(in crate::cli) async fn run_chat_with_images_and_options(
             Some(create_ephemeral_session(paths, ephemeral_mode(mode)).await?)
         }
     };
-    match try_run_remote_chat(
+    match run_one_shot_remote(
         paths,
-        None,
-        &message,
+        RemoteTurnSource::Start {
+            message: &message,
+            images: &images,
+            session_override,
+            overrides,
+            stays_to_follow: true,
+        },
         None,
         plain,
         mode,
-        &images,
-        session_override,
-        None,
-        overrides,
     )
     .await?
     {
@@ -172,6 +173,40 @@ pub(in crate::cli) async fn run_chat_with_images_and_options(
     }
 }
 
+/// 一次性回合跑完之后。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::cli) enum AfterTurn {
+    /// 当场退出。shellhook 走这条：子代理的报告回来时 daemon 往提示符上回写。
+    Exit,
+    /// 留在前台，等这一轮派出去的子代理全部收尾，报告叫醒的那几轮照样画出来再退出
+    /// （09-26 起子代理只在后台跑）。
+    AwaitSubagents,
+}
+
+/// 一次性回合走 daemon：起一轮画完；指纹里说了要留下（`stays_to_follow`）就接着等
+/// 子代理的报告。直连模式下 daemon 连不上时是 `None`，由调用方退回进程内。
+async fn run_one_shot_remote(
+    paths: &MiyuPaths,
+    source: RemoteTurnSource<'_>,
+    show_reasoning: Option<bool>,
+    plain: bool,
+    mode: PersonaLane,
+) -> Result<Option<RemoteTurnSummary>> {
+    let awaits_subagents = matches!(
+        source,
+        RemoteTurnSource::Start {
+            stays_to_follow: true,
+            ..
+        }
+    );
+    let summary = run_remote_turn(paths, None, source, show_reasoning, plain, mode, None).await?;
+    if let (Some(summary), true) = (&summary, awaits_subagents) {
+        follow_subagent_reports(paths, summary, show_reasoning, plain, mode).await?;
+    }
+    Ok(summary)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(in crate::cli) async fn run_chat_with_options(
     paths: &MiyuPaths,
     message: String,
@@ -180,6 +215,7 @@ pub(in crate::cli) async fn run_chat_with_options(
     mode: PersonaLane,
     session: TurnSession,
     overrides: Option<miyu_core::ipc::TurnOverrides>,
+    after: AfterTurn,
 ) -> Result<()> {
     let message = append_stdin_if_piped(message).await;
     if message.is_empty() {
@@ -195,17 +231,18 @@ pub(in crate::cli) async fn run_chat_with_options(
         };
         // Not `?`-through: the throwaway session has to be torn down on the
         // failure path too, otherwise a cancelled turn leaves it behind.
-        let outcome = try_run_remote_chat(
+        let outcome = run_one_shot_remote(
             paths,
-            None,
-            &message,
+            RemoteTurnSource::Start {
+                message: &message,
+                images: &[],
+                session_override: session_override.clone(),
+                overrides: overrides.clone(),
+                stays_to_follow: after == AfterTurn::AwaitSubagents,
+            },
             show_reasoning,
             plain,
             mode,
-            &[],
-            session_override.clone(),
-            None,
-            overrides.clone(),
         )
         .await;
         if session == TurnSession::Ephemeral {

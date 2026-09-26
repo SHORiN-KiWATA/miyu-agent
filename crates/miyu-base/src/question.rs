@@ -259,6 +259,31 @@ pub fn closed_tool_output() -> String {
     .unwrap_or_else(|_| "{\"status\":\"closed\"}".to_string())
 }
 
+/// 从提问工具的输出认回当时的结果（回放用，09-26）：和 [`answered_tool_output`]、
+/// [`closed_tool_output`]、[`unavailable_tool_output`] 是一对，拼和拆认同一份字段。认不出来
+/// （老格式、被截断）交回 `None`。
+pub fn response_from_tool_output(output: &str) -> Option<QuestionResponse> {
+    let value: serde_json::Value = serde_json::from_str(output).ok()?;
+    match value.get("status")?.as_str()? {
+        "answered" => value
+            .get("answers")?
+            .as_array()?
+            .iter()
+            .map(|entry| serde_json::from_value::<Vec<String>>(entry.get("answers")?.clone()).ok())
+            .collect::<Option<QuestionAnswers>>()
+            .map(QuestionResponse::Answered),
+        "closed" => Some(QuestionResponse::Closed),
+        "unavailable" => Some(QuestionResponse::Unavailable(
+            value
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        )),
+        _ => None,
+    }
+}
+
 pub fn assistant_exchange_text(exchange: &QuestionExchange) -> String {
     let mut output = String::from("Clarification questions:");
     for (index, question) in exchange.questions.iter().enumerate() {
@@ -326,6 +351,24 @@ mod tests {
                 custom: true,
             }],
         }
+    }
+
+    #[test]
+    fn tool_outputs_read_back_as_the_response_they_carry() {
+        let exchange = QuestionExchange::new(request(), vec![vec!["全部".to_string()]]).unwrap();
+        assert_eq!(
+            response_from_tool_output(&answered_tool_output(&exchange)),
+            Some(QuestionResponse::Answered(vec![vec!["全部".to_string()]]))
+        );
+        assert_eq!(
+            response_from_tool_output(&closed_tool_output()),
+            Some(QuestionResponse::Closed)
+        );
+        assert_eq!(
+            response_from_tool_output(&unavailable_tool_output("no tty")),
+            Some(QuestionResponse::Unavailable("no tty".to_string()))
+        );
+        assert_eq!(response_from_tool_output("not json"), None);
     }
 
     #[test]

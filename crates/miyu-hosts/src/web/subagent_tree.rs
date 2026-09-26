@@ -36,6 +36,24 @@ pub(in crate::web) fn running_descendants(
     agents + commands
 }
 
+/// 这条会话还有没收尾的子代理吗：它名下在跑的后台子代理镜像任务，或者还没到终态（在跑、等
+/// 后台）的子会话。`/goal` 据此不续轮，等汇报回来（09-26）。
+pub(in crate::web) fn has_pending_subagents(state: &DaemonState, session_id: &str) -> bool {
+    let mirrors = tools::jobs::overview().iter().any(|job| {
+        job.running
+            && job.session_id.as_deref() == Some(session_id)
+            && matches!(job.kind.as_str(), "subagent" | "dev")
+    });
+    mirrors
+        || state
+            .stores
+            .for_session(session_id)
+            .child_sessions(session_id)
+            .unwrap_or_default()
+            .iter()
+            .any(|child| is_pending(child.record.task_state.as_deref()))
+}
+
 /// 这条会话是子代理会话吗。查不到记录的一律当不是：停止的规矩只在认得出时才放宽。
 pub(in crate::web) fn is_subagent_session(state: &DaemonState, session_id: &str) -> bool {
     state
@@ -59,6 +77,55 @@ pub(in crate::web) async fn stop_subagent_subtree(state: &DaemonState, root: &st
     let (stopped, descendants) = stop_subtree_jobs(state, root).await;
     settle_subtree_runs(state, root, &descendants).await;
     stopped
+}
+
+/// 一轮被停时，连这一轮派出去的子代理一起停（09-26：子代理只在后台跑之后，派完那一轮就收尾、
+/// 子代理自己在后台跑；按 Ctrl+C 停那一轮，它刚派出去的不能还接着跑）。先停它们在这条会话名下
+/// 的镜像任务（标成「已停止」，收尾时不叫醒谁），再停各自名下的整棵树。返回停了几个子代理。
+pub(in crate::web) async fn stop_children_of_turn(
+    state: &DaemonState,
+    session_id: &str,
+    turn_id: &str,
+) -> usize {
+    let children: Vec<String> = state
+        .stores
+        .for_session(session_id)
+        .child_sessions(session_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|child| child.record.spawned_by_turn.as_deref() == Some(turn_id))
+        .map(|child| child.record.session_id)
+        .collect();
+    if children.is_empty() {
+        return 0;
+    }
+    let mirrors: Vec<String> = tools::jobs::overview()
+        .into_iter()
+        .filter(|job| {
+            job.running
+                && job
+                    .child_session_id
+                    .as_ref()
+                    .is_some_and(|child| children.contains(child))
+        })
+        .map(|job| job.job_id)
+        .collect();
+    futures_util::future::join_all(mirrors.iter().map(|job_id| tools::jobs::stop_job(job_id)))
+        .await;
+    // 子代理自己那一轮也得停：`stop_subagent_subtree` 只收后代的轮（它原来的两个场景里，根自己
+    // 的轮要么已经在停、要么本来就闲着）。
+    futures_util::future::join_all(children.iter().map(|child| async move {
+        stop_session_runs(state, child, Duration::from_secs(5)).await;
+        stop_subagent_subtree(state, child).await;
+    }))
+    .await;
+    tracing::info!(
+        session = %session_id,
+        turn = %turn_id,
+        children = children.len(),
+        "stopped the subagents a cancelled turn dispatched"
+    );
+    children.len()
 }
 
 /// 第一段：树上所有会话的后台任务一起停，返回停了几个和名下的后代会话（从浅到深）。

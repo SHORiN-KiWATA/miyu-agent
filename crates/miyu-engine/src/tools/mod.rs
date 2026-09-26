@@ -13,7 +13,7 @@ mod compose_providers;
 mod cross_hints;
 pub mod cross_session;
 mod default_tools;
-pub use default_tools::TOOL_SUMMARY_PREFIX;
+pub use default_tools::{split_command_text, TOOL_SUMMARY_PREFIX};
 pub(crate) mod exchange_rate;
 pub mod goal;
 mod html_conversion;

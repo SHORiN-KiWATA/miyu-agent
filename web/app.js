@@ -452,10 +452,8 @@
     // 「未读」才是——产生于回合结束，消失于用户切进那个会话。
     unreadSessions: new Set(),
     liveRuns: new Map(),
-    // 输入框「累计」合成用(#131):cumulativeBase = 后端给的会话实时累计基线;
-    // liveSubagentTokens = 正在跑的子代理各自的实时 token 估算,按 tool_id 存。
+    // 输入框「累计」(#131):后端给的会话实时累计基线。
     cumulativeBase: null,
-    liveSubagentTokens: new Map(),
     sessionMenuFor: null,
     sessionRenaming: null,
     sessionDragId: null,
@@ -1897,7 +1895,6 @@
   // 换会话时把「累计」按会话记的几样清零（见 applySessionView）。
   function resetSessionCumulative() {
     state.cumulativeBase = null;
-    state.liveSubagentTokens.clear();
     state.context.cumulative_tokens = 0;
     state.context.cumulative_prompt_tokens = 0;
     state.context.cumulative_cache_read_tokens = 0;
@@ -3137,14 +3134,7 @@
   // 流式时完全一致——尤其正在跑的那次子代理调用不喂 tool.finished,留着让实时续。
   function seedLiveFromPersistedTurn(live, turn) {
     ensureLiveArticle(live);
-    // 播种是回放历史,不该喂「累计」的实时子代理估算(否则已完成子代理会和后端基线
-    // 重复计;#131)。置旗让 tool.progress 里那段 liveSubagentTokens 更新跳过。
-    state.seedingLive = true;
-    try {
-      seedLiveRounds(live, turn);
-    } finally {
-      state.seedingLive = false;
-    }
+    seedLiveRounds(live, turn);
     // 播种是一次性灌进一大坨,子过程区停在顶部;若不拉到底,后续实时更新的
     // subStickBottom 会「测得改前不在底」→ 从此不再跟随(#159 刷新后不自动向下滚)。
     // 排在播种自身的 rAF 之后再拉一次底,让在跑的子代理接着贴底跟随。
@@ -6824,8 +6814,7 @@
     const ev = parseSubagentEvent(message);
     if (ev.kind === "ignored") return;
     if (ev.kind === "metric") {
-      // daemon 模式下子代理的词元只从这儿来:只喂卡片上那个小标。输入框的「累计」那套
-      // (liveSubagentTokens 的 done/基线)是照直连模式的 stats 写的,接上可能重复计。
+      // 子代理的词元:只喂卡片上那个小标,输入框的「累计」由后端基线管。
       if (ev.tokens) {
         sink.tokenText = ev.tokens;
         if (sink.taskToken) sink.taskToken.textContent = sink.tokenText;
@@ -6839,17 +6828,6 @@
       if (m) {
         sink.tokenText = m[1].replace(/\s+/g, "");
         if (sink.taskToken) sink.taskToken.textContent = sink.tokenText;
-        // 前台工具卡 / 后台任务条(job)都从这里过:把这次子代理的实时 token 估算按
-        // usageKey 汇进输入框那个「累计」(#131,后台子代理同样接上)。回放/播种时不接
-        // (那是历史,会和后端基线重复计)。
-        const key = sink.usageKey || (sink.id != null ? sink.id : null);
-        const n = tokensFromCount(sink.tokenText);
-        if (key != null && n != null && !state.seedingLive) {
-          // 保留已有的 done/baseAtDone:子代理收尾还可能再来一条 stats,别把完成态覆盖没了。
-          const prev = state.liveSubagentTokens.get(key);
-          state.liveSubagentTokens.set(key, { tokens: n, done: prev?.done || false, baseAtDone: prev?.baseAtDone });
-          refreshComposerCumulative();
-        }
       }
       return;
     }
@@ -7466,7 +7444,7 @@
     {
       const lastTurn = state.turns[state.turns.length - 1];
       const lastCum = lastTurn ? state.cumulativeByTurn.get(String(lastTurn.id || "")) : null;
-      // 回填给「累计」定基线,重连后若正跑子代理,refreshComposerCumulative 有基线可加。
+      // 回填给「累计」定基线。
       // 但**只在没有基线、或候选更高时才用它**:按落库回合求和会漏算子代理子会话,每秒
       // 轮询若照它下调,会把实时事件维护的、含子代理的权威累计压低——后台子代理跑完后
       // 累计瞬间掉一大块正是这么来的(#131)。可信度更高的 bootstrap 会话累计(含子代理)
@@ -9447,11 +9425,6 @@
         tool.card.classList.add("collapsed");
         tool.head.setAttribute("aria-expanded", "false");
         railSnapFit(tool.card);
-        // 子代理跑完:它的实时估算先「冻住」保留(别立刻抽走,否则基线还没把它算进来
-        // 之前累计会掉一下),等下个主回合的权威基线接管时再删(见 handleRoundUsage)。
-        const doneId = String(data?.tool_id || tool.id || "");
-        const entry = doneId && state.liveSubagentTokens.get(doneId);
-        if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       }
       const output = String(data?.output || "");
       if (tool.isTask) window.MiyuSubagents?.link(tool.card, window.MiyuSubagents.sessionOfOutput(output));
@@ -10599,9 +10572,6 @@
       prompt: asFiniteNumber(data?.cumulative_prompt_tokens),
       cached: asFiniteNumber(data?.cumulative_cache_read_tokens),
     };
-    // 已跑完的子代理:基线确实涨上来把它算进去了才摘掉那份估算(见 absorbDoneSubagents,
-    // 躲开后端竞态导致的掉数)。
-    absorbDoneSubagents(state.cumulativeBase.total);
     refreshComposerCumulative({
       speed: generationSpeedValue(data?.turn_generation_tokens, data?.turn_generation_ms),
     });
@@ -10613,28 +10583,12 @@
     }
   }
 
-  // 输入框「累计」的合成:基线(后端每回合 / 收尾给的会话实时累计)+ 正在跑的子代理
-  // 的实时估算之和(#131)。子代理还没落库的花销靠估算先顶上、跑完由下个主回合的
-  // 基线接管;并行子代理各自更新自己那一份,这里只求个和、按 rAF 合并刷,不会鬼畜抖。
+  // 输入框「累计」:后端每回合 / 收尾给的会话实时累计(#131)。子代理在它自己的会话里记账,
+  // 跑完算进父会话的累计。
   function composerCumulativeTokens() {
     const base = state.cumulativeBase || null;
     if (!base || !(base.total > 0)) return null;
-    let extra = 0;
-    for (const v of state.liveSubagentTokens?.values() || []) extra += asFiniteNumber(v?.tokens);
-    const total = base.total + extra;
-    return { total, prompt: base.prompt, cached: base.cached };
-  }
-  // 收尾:把「已跑完」的子代理估算从合成里摘掉——但只在权威基线确实已经把它算进来
-  // 之后才摘(基线比标记完成时涨了至少估算的一半)。否则会撞上后端竞态:子代理刚跑完、
-  // 它的用量还没落库进会话累计,唤醒回合的 round_usage 先带了一个不含它的基线过来,
-  // 这会儿摘掉估算 = 累计瞬间掉一大块(#131 后台子代理实测到的掉数)。等基线真涨上来
-  // 再摘,既不掉也不会和基线重复计。
-  function absorbDoneSubagents(newBaseTotal) {
-    for (const [id, entry] of state.liveSubagentTokens) {
-      if (!entry?.done) continue;
-      const grewBy = asFiniteNumber(newBaseTotal) - asFiniteNumber(entry.baseAtDone);
-      if (grewBy >= asFiniteNumber(entry.tokens) * 0.5) state.liveSubagentTokens.delete(id);
-    }
+    return { total: base.total, prompt: base.prompt, cached: base.cached };
   }
   function refreshComposerCumulative(opts = {}) {
     const cum = composerCumulativeTokens();
@@ -10644,20 +10598,6 @@
       ? `${formatTokens(cum.total)}${cacheSuffix(cum.cached, cum.prompt)}`
       : null;
     setComposerUsage(payload);
-  }
-  // 「≈1.2k」「498.9K」「1.2万」这类计数文本抠成数值(带 k/m/b/万 单位)。是估算,精度
-  // 到单位,足够撑「累计」逐步涨,收尾由后端权威基线纠正。抠不出返回 null。
-  function tokensFromCount(text) {
-    const m = String(text || "").match(/([\d.]+)\s*([kKmMbB万]?)/);
-    if (!m) return null;
-    let n = parseFloat(m[1]);
-    if (!Number.isFinite(n)) return null;
-    const unit = (m[2] || "").toLowerCase();
-    if (unit === "k") n *= 1e3;
-    else if (unit === "m") n *= 1e6;
-    else if (unit === "b") n *= 1e9;
-    else if (m[2] === "万") n *= 1e4; // i18n-allow: 数字后缀是数据,程序按原文解析单位
-    return Math.round(n);
   }
 
   function finishLiveRun(kind, data, live) {
@@ -10709,16 +10649,12 @@
         finishedAt: new Date()
       });
       // 输入框下方信息行:最新一轮的输出速度 + 会话累计 token(#99/#131)。收尾时
-      // 会话累计是权威值(所有子代理都跑完、子会话都记好了),直接当基线,把中途的
-      // 子代理实时估算清空(已被基线接管)。
+      // 会话累计是权威值,直接当基线。
       state.cumulativeBase = {
         total: asFiniteNumber(data?.cumulative_tokens),
         prompt: asFiniteNumber(data?.cumulative_prompt_tokens),
         cached: asFiniteNumber(data?.cumulative_cache_read_tokens),
       };
-      // 只摘「已跑完且基线确实涨上来把它算进去」的子代理估算;仍在跑的后台子代理会活过
-      // 父回合,别清;唤醒回合竞态下基线还没含它时也别清(见 absorbDoneSubagents,#131)。
-      absorbDoneSubagents(state.cumulativeBase.total);
       refreshComposerCumulative({
         speed: generationSpeedValue(data?.usage?.generation_tokens, data?.usage?.generation_ms),
       });
@@ -11074,10 +11010,6 @@
     }
     if (name === "job.finished") {
       const jobId = String(data?.job_id || "");
-      // 后台子代理跑完:它的实时估算先「冻住」(别立刻抽走,否则基线还没算进它之前
-      // 累计会掉一下),等下个主回合权威基线接管时再删(#131,与前台同款)。
-      const entry = state.liveSubagentTokens.get("job:" + jobId);
-      if (entry) { entry.done = true; entry.baseAtDone = asFiniteNumber(state.cumulativeBase?.total); refreshComposerCumulative(); }
       state.expandedJobs.delete(jobId);
       state.subagentJobs.delete(jobId);
       if (state.backgroundJobs.delete(jobId)) renderJobsStrip();
@@ -11099,11 +11031,10 @@
     }
     if (name === "conversation.reset" || name === "conversation.pop" || name === "conversation.compacted") {
       const sessionId = typeof data?.session_id === "string" ? data.session_id : "";
-      // 清空/压缩/pop 会重排或清零会话累计;把「不下调」用的基线与子代理估算一并清了,
-      // 让它按重载后的权威值重新起算(#131:否则 max 会把清零前的旧高值锁住)。
+      // 清空/压缩/pop 会重排或清零会话累计;把「不下调」用的基线清了,让它按重载后的
+      // 权威值重新起算(#131:否则 max 会把清零前的旧高值锁住)。
       if (!sessionId || sessionId === state.viewSessionId) {
         state.cumulativeBase = null;
-        state.liveSubagentTokens.clear();
       }
       if (sessionId && sessionId !== state.viewSessionId) {
         refreshSessions();

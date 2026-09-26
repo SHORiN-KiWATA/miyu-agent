@@ -1,7 +1,7 @@
 {
   "name": "subagent",
   "display_name": "子代理",
-  "description": "Delegate a task to a subagent with your full tool set. Use it when the work would flood this conversation with tool output, when independent pieces can run in parallel, or for a side investigation. Coding goes here too with dev=true. The subagent starts from a fresh context and returns one final message, so prompt must stand on its own: background, conclusions you already confirmed, the goal, and what it should return. Use background=true for long tasks; you are woken when its whole task finishes. It may delegate one level further, no deeper.",
+  "description": "Delegate a task to a subagent with your full tool set. Use it when the work would flood this conversation with tool output, when independent pieces can run in parallel, or for a side investigation. Coding goes here too with dev=true. The subagent starts from a fresh context, so prompt must stand on its own: background, conclusions you already confirmed, the goal, and what it should return. It always runs in the background: you are woken with its final message when its whole task finishes. It may delegate one level further, no deeper.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -30,10 +30,6 @@
           "flagship"
         ],
         "description": "Model tier by difficulty: lite for trivial lookups, cheap for simple tool work, standard (default) for regular multi-step work, flagship for hard reasoning. Every tier has the full tool set; an unconfigured one falls back to the main model."
-      },
-      "background": {
-        "type": "boolean",
-        "description": "Detach: returns a job_id at once, check it with job(action=status)."
       },
       "session_id": {
         "type": "string",

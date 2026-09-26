@@ -630,10 +630,11 @@ pub(in crate::web) fn cancel_run_and_disarm_goal(state: &DaemonState, run_id: &s
                     run.turn_origin,
                     miyu_base::workspace::TurnOrigin::GoalRound { .. }
                 ),
+                run.turn_id.clone(),
             )
         })
     };
-    let Some((session_id, was_goal_round)) = cancelled else {
+    let Some((session_id, was_goal_round, turn_id)) = cancelled else {
         return false;
     };
     if was_goal_round {
@@ -644,13 +645,21 @@ pub(in crate::web) fn cancel_run_and_disarm_goal(state: &DaemonState, run_id: &s
         );
     }
     // 在子代理会话里停：连它名下的孙代理、后台命令一起停（09-26 用户拍板，终端网页同一个
-    // 规矩）。主会话照旧只停这一轮。
+    // 规矩）。主会话停这一轮，连这一轮派出去的子代理一起停（09-26 起子代理只在后台跑，不会
+    // 跟着这一轮结束）；更早派出去的照旧自己跑下去。
     if is_subagent_session(state, &session_id) {
         let state = state.clone();
         tokio::spawn(async move {
             // 先等这一轮真停下：还在收尾的那一轮要是又登记了后台孙代理，先停名下的就漏了它。
             stop_session_runs(&state, &session_id, Duration::from_secs(5)).await;
             stop_subagent_subtree(&state, &session_id).await;
+        });
+    } else if let Some(turn_id) = turn_id {
+        let state = state.clone();
+        tokio::spawn(async move {
+            // 同上：先等这一轮真停下，免得它收尾时又派出一个漏掉。
+            stop_session_runs(&state, &session_id, Duration::from_secs(5)).await;
+            stop_children_of_turn(&state, &session_id, &turn_id).await;
         });
     }
     true

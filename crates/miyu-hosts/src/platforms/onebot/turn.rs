@@ -32,6 +32,10 @@ const JOB_WAKE_NOTE: &str =
 and its report and results are in this turn's message. This is not a message from any \
 group member or user; deliver the results into the conversation naturally, in your own voice.";
 
+/// 同一轮派出去的几个子代理一起交汇报时那一轮的系统说明（09-26，合成一份发）。只有一份时照旧用
+/// 上面那句，字节不变。
+const JOBS_WAKE_NOTE: &str = "This turn was triggered automatically by the system. Several background jobs just finished, and all their reports and results are in this turn's message. This is not a message from any group member or user. Deliver the results into the conversation naturally, in your own voice.";
+
 /// 重启续跑那一轮的系统说明（09-24 断点续跑）。平台回合整轮攒着最后才发，被打断的那一轮
 /// 多半一个字都没发出去；开了中途发言的话前半截可能已经发了，所以只叫它别重复。
 const RESTART_WAKE_NOTE: &str = "This turn was triggered automatically by the system, not by any group member or user. \
@@ -42,7 +46,7 @@ Continue from where it stopped in your own voice, and do not repeat anything you
 /// QQ conversation. There is no inbound event — reply targeting, affection
 /// and trigger judging all no-op — the sender display name stays "System",
 /// so the model reads the job result and reports it into the conversation
-/// in its own voice.
+/// in its own voice. `reports`：这一轮带了几份汇报（同一轮派出去的子代理合成一份发）。
 pub(crate) async fn wake_conversation_for_job(
     state: &DaemonState,
     account_id: &str,
@@ -50,6 +54,7 @@ pub(crate) async fn wake_conversation_for_job(
     conversation_id: &str,
     initiator: Option<&str>,
     content: String,
+    reports: usize,
 ) -> Result<()> {
     wake_conversation(
         state,
@@ -58,7 +63,11 @@ pub(crate) async fn wake_conversation_for_job(
         conversation_id,
         initiator,
         content,
-        JOB_WAKE_NOTE,
+        if reports > 1 {
+            JOBS_WAKE_NOTE
+        } else {
+            JOB_WAKE_NOTE
+        },
     )
     .await
 }

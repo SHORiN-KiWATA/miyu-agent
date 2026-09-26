@@ -60,6 +60,7 @@ pub(super) fn manager_with_run(
         runs_changed: Arc::new(tokio::sync::Notify::new()),
         compact_requests: HashMap::new(),
         live_turns: HashMap::new(),
+        recent_wakes: Default::default(),
     }));
     (manager, cancel_rx)
 }

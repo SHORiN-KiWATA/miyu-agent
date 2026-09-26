@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """09-25 用户实测切子会话的几处问题：复现在前，修完当回归用例。
 
-第 1 轮桩回一段长回复把主会话上下文撑大；换一份桩配置跑第 2 轮：先派一个后台子代理，
-再派一个前台子代理（两条都 sleep 90），主线挂着等。然后：
-1. 进前台子会话：量耗时；任务条上看不看得到兄弟（后台那条）；
+第 1 轮桩回一段长回复把主会话上下文撑大；换一份桩配置跑第 2 轮：派两个子代理（两条都
+sleep 90）。09-26 起子代理只在后台跑，主线派完这一轮就收。然后：
+1. 进其中一个子会话：量耗时；任务条上看不看得到兄弟（另一条）；
 2. 子会话里 `/session`：光标停在哪一行、有没有「*」当前标记；
-3. 子会话里、主会话里各 `/compact` 一次：提示是什么；
-4. `/back`：量耗时；回来前后 footer 上下文数；
-5. 主会话里回合跑着时 `/compact`：像插话一样排队（输入框上方「/compact」「排队中」）；
-6. 主会话里 `/session` 按 Ctrl+D：正在跑的当前会话第一下只出提醒；第二下连同子代理树删干净，
-   面板留着（落到兜底会话上）。
+3. 子会话里 `/compact` 一次：提示是什么；
+4. `/back`：量耗时；回来当场就是主会话、任务条上还列着在跑的子代理；回来前后 footer 上下文数；
+5. （回合跑着时 `/compact` 像插话一样排队，这条原来靠主线挂着等子代理，只后台之后主线不挂着了，
+   由 `midturn_commands` 的「一b」接着测。）
+6. 主会话里 `/session` 按 Ctrl+D：名下还有子代理在跑的当前会话第一下只出提醒；第二下连同子代理树
+   删干净，面板留着（落到兜底会话上）。
 
     MIYU_BIN=... MIYU_HOME=~/.cache/miyu-session-ux/home MIYU_TUI_PORT=18961 STUB_PORT=18962 \\
       MIYU_TUI_RUNTIME=~/.cache/miyu-session-ux/rt OUT=~/.cache/miyu-session-ux/out \\
@@ -149,7 +150,7 @@ def main():
             and s[sv.strip_row(s, sv.ROW)].lstrip()[:1] == "○",
             40.0,
         )
-        report["foreground_child_running"] = screen is not None
+        report["child_running"] = screen is not None
         if screen is None:
             r.save("ux-no-child", now(sink))
             return report
@@ -159,7 +160,7 @@ def main():
         report["_context_before_visit"] = footer_context(before)
         report["_strip_rows_in_parent"] = [line.strip() for line in before[-8:] if line.strip()]
 
-        # 1. 进前台子会话（↓ 停在任务条那一行，回车）
+        # 1. 进子会话（↓ 停在任务条那一行，回车）
         os.write(master, b"\x1b[B")
         h.settle(master, sink, quiet=0.3, timeout=1.5)
         seconds, screen = timed(master, sink, b"\r", sv.inside_child)
@@ -198,11 +199,10 @@ def main():
         h.drain_until(master, sink, "/back", 3.0)
         seconds, screen = timed(master, sink, b"\r", sv.back_in_parent)
         report["_back_seconds"] = seconds
-        # 回来那一刻看得到正在跑的那一轮吗（时间线上子代理那一行）；看不到的话要等多久。
-        back_at = time.monotonic()
-        report["running_turn_visible_on_return"] = screen is not None and sv.timeline_row(screen) is not None
-        attached = r.wait_screen(master, sink, lambda s: sv.timeline_row(s) is not None, 20.0)
-        report["_reattach_seconds"] = round(time.monotonic() - back_at, 2) if attached else None
+        # 回来那一刻就是主会话，任务条上还列着在跑的那个子代理。
+        report["back_shows_parent_and_running_child"] = (
+            screen is not None and sv.strip_row(screen, sv.ROW) is not None
+        )
         r.save("ux-back-immediate", screen or [])
         h.settle(master, sink, quiet=1.0, timeout=5.0)
         after = now(sink)
@@ -212,14 +212,6 @@ def main():
         report["footer_context_survives_visit"] = (
             before_ctx is not None and after_ctx is not None and after_ctx >= before_ctx * 0.9
         )
-
-        # 3b. 主会话里 `/compact`（回合还在跑）：像插话一样排队。
-        sv.command(master, sink, "/compact", quiet=1.0, timeout=6.0)
-        screen = r.wait_screen(
-            master, sink, lambda s: any("/compact" in l for l in s) and any("排队中" in l for l in s), 5.0
-        )
-        report["compact_queues_during_the_turn"] = screen is not None
-        r.save("ux-compact-parent", screen or now(sink))
 
         # 5. 主会话里 `/session` → Ctrl+D：第一下只出提醒
         report["_db_before_delete"] = sessions_in_db()

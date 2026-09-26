@@ -533,6 +533,29 @@ fn cancelled_turn_cleanup_deletes_queued_prompts_without_folding() {
     assert!(store.delete_queued_prompts().unwrap().is_empty());
 }
 
+/// 取消时只撤用户排的话，后台汇报留着（09-26）：子代理只在后台跑之后，结论全靠这份汇报。
+#[test]
+fn cancelling_keeps_queued_background_reports() {
+    let (_temp, store) = test_store();
+    store
+        .start_turn("turn_1", "initial", std::process::id())
+        .unwrap();
+    let report = format!("{}\n子代理跑完了", crate::state::BACKGROUND_JOB_REPORT_TAG);
+    store
+        .enqueue_prompt("q1", "排队消息", "排队消息", &[])
+        .unwrap();
+    store
+        .enqueue_prompt("q2", &report, "[后台任务完成] 子代理", &[])
+        .unwrap();
+    store.interrupt_turn("turn_1").unwrap();
+
+    let dropped = store.delete_queued_prompts().unwrap();
+    assert_eq!(dropped, vec!["q1".to_string()]);
+    let leftovers = store.take_queued_synthetic_prompts().unwrap();
+    assert_eq!(leftovers.len(), 1);
+    assert_eq!(leftovers[0].content, report);
+}
+
 #[test]
 fn undo_removes_last_turn() {
     let temp = tempfile::tempdir().unwrap();

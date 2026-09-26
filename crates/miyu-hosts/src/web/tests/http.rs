@@ -433,6 +433,7 @@ sys.stdin.readline()  # 等 Rust 侧完成死后判定
     let origin = miyu_core::ipc::OriginTty {
         path: std::path::PathBuf::from(slave),
         shell_pid: pid.parse().unwrap(),
+        follower_pid: None,
     };
 
     // pty.fork 的父进程拿到 pid 时,子进程的 login_tty(setsid+TIOCSCTTY+dup)
@@ -448,6 +449,20 @@ sys.stdin.readline()  # 等 Rust 侧完成死后判定
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(at_prompt, "pty.fork 出的会话首进程应判定为「在提示符」");
+    // 发起的一次性命令还在前台跟着后面的轮（09-26）：pty 里那个进程占着前台、三个标准流
+    // 都在 slave 上，拿它当跟随者判定为真；拿测试进程自己（不在那个终端上）、不带跟随者
+    // 都判定为假。
+    let followed = miyu_core::ipc::OriginTty {
+        follower_pid: Some(origin.shell_pid),
+        ..origin.clone()
+    };
+    assert!(origin_follower_in_foreground(&followed));
+    let elsewhere = miyu_core::ipc::OriginTty {
+        follower_pid: Some(std::process::id()),
+        ..origin.clone()
+    };
+    assert!(!origin_follower_in_foreground(&elsewhere));
+    assert!(!origin_follower_in_foreground(&origin));
     // 走生产写线程:Write 分片 + Finish(flush + SIGWINCH),与流式回写同路。
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -509,6 +524,10 @@ sys.stdin.readline()  # 等 Rust 侧完成死后判定
     let gone = lines.next().unwrap().unwrap();
     assert_eq!(gone, "GONE");
     assert!(!origin_shell_at_prompt(&origin), "进程死后必须判定为不可写");
+    assert!(
+        !origin_follower_in_foreground(&followed),
+        "跟随的命令退出之后,回写照旧"
+    );
     stdin.write_all(b"done\n").unwrap();
     let _ = child.wait();
 }

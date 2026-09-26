@@ -17,6 +17,9 @@
 
 绝不碰线上 8300 daemon：每项都有自己的家目录和端口；--bin 给绝对路径。
 
+--bin 要 `cargo build` 编的那份：`cargo test`（含 --no-run、refactor-check）之后的 target/debug/miyu 带 testkit，
+终端探测走测试的固定路径，链接画成「标题 <网址>」，round26 的 OSC 8 两项必红（09-26 白跑过一轮）。
+
 账上没收的（09-25 盘点）：
     要真模型 / 网络   tui/live.py、tui/prepare_edit_live.py、compact-quality、memory-quality、persona-ab、
                       dev-smoke、toolcall-bridge、pdf、reasoning-passback、relay-compact、claude-code、codex、
@@ -119,17 +122,29 @@ def summary_line(log_text):
     return lines[-1][:160] if lines else ""
 
 
-def run_one(entry, binary, out, base_env, tag=""):
+def run_one(entry, binary, out, base_env, index, tag=""):
     # 每项一个家目录、跑完留着：daemon 的详细日志在家目录里，红了要靠它查（共用一个的话
     # 下一项一开跑就把上一项的日志抹了）。复跑的那次另起一个（`tag`），两次的都留着。
     home = out / "homes" / (entry["name"] + tag)
     shutil.rmtree(home, ignore_errors=True)
-    for sub in ("rt", "strt", "artifacts"):
+    for sub in ("rt", "strt"):
         (out / sub).mkdir(parents=True, exist_ok=True)
+    # 产物也是每项一个目录：不少走查起跑先整个清掉 `OUT`，共用一个的话排在前面那些的截屏
+    # 全被后面的抹了（09-26 查 round26 时截屏已经没了）。目录名用序号：有的走查把 daemon 的
+    # 运行目录放在 `OUT` 底下，unix socket 路径不能超过 108 字节（SUN_LEN），拼上走查名就起不来
+    # （09-26 webui_delete_footer）。按名字找走 artifacts/<走查名> 那个链接。
+    artifacts = out / "a" / f"{index:03d}{'r' if tag else ''}"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    artifacts.mkdir(parents=True)
+    link = out / "artifacts" / (entry["name"] + tag)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(os.path.relpath(artifacts, link.parent))
     env = dict(base_env)
     env.update(BIN=str(binary), MIYU_BIN=str(binary), MIYU_HOME=str(home),
                MIYU_TUI_RUNTIME=str(out / "rt"), MIYU_ST_RUNTIME=str(out / "strt"),
-               OUT=str(out / "artifacts"))
+               OUT=str(artifacts))
     for key, value in entry.get("env", {}).items():
         env[key] = str(value).replace("{bin}", str(binary))
     argv = [arg.replace("{bin}", str(binary)) for arg in entry["argv"]]
@@ -202,7 +217,7 @@ def main():
     results = []
     for index, entry in enumerate(entries, 1):
         print(f"[{index}/{len(entries)}] {entry['name']} …", flush=True)
-        result = run_one(entry, binary, out, base_env)
+        result = run_one(entry, binary, out, base_env, index)
         expected_red = entry["name"] in known
         if expected_red:
             result["ledger"] = "红转绿" if result["green"] else "旧红"
@@ -210,7 +225,7 @@ def main():
             result["ledger"] = "绿"
         else:
             print(f"    红了，复跑一次（{result['summary']}）", flush=True)
-            retry = run_one(entry, binary, out, base_env, tag="-retry")
+            retry = run_one(entry, binary, out, base_env, index, tag="-retry")
             result["retry"] = retry
             result["ledger"] = "抖动" if retry["green"] else "新红"
         results.append(result)

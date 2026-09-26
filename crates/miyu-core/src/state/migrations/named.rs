@@ -27,7 +27,29 @@ const NAMED_MIGRATIONS: &[NamedMigration] = &[
         id: "2026-09-25-cache-breaks",
         apply: apply_cache_breaks,
     },
+    NamedMigration {
+        id: "2026-09-26-held-job-reports",
+        apply: apply_held_job_reports,
+    },
 ];
+
+/// 平台会话里还没交出去的后台任务汇报（09-26，见 `conversation_db/held_reports.rs`）：一份一行，
+/// 按批（派它们的那一轮）取，挂会话级联删除。
+fn apply_held_job_reports(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS held_job_reports (
+             id         INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+             batch      TEXT NOT NULL,
+             job_id     TEXT NOT NULL,
+             initiator  TEXT,
+             content    TEXT NOT NULL,
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_held_job_reports_session ON held_job_reports(session_id, id);",
+    )?;
+    Ok(())
+}
 
 /// 断缓存记录（09-25，见 `llm::cache_break`）：一次一行，挂会话级联删除。
 fn apply_cache_breaks(conn: &Connection) -> Result<()> {

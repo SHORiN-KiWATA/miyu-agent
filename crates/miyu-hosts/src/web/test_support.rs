@@ -20,6 +20,7 @@ impl DaemonState {
             runs_changed: Arc::new(tokio::sync::Notify::new()),
             compact_requests: HashMap::new(),
             live_turns: HashMap::new(),
+            recent_wakes: Default::default(),
         }));
         let events = EventHub::new();
         let questions = QuestionBroker::new();

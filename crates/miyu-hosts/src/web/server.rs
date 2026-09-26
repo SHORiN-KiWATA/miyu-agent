@@ -95,6 +95,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
         runs_changed: Arc::new(tokio::sync::Notify::new()),
         compact_requests: HashMap::new(),
         live_turns: HashMap::new(),
+        recent_wakes: Default::default(),
     }));
     if let Some(pending_context) = pending_context {
         let manager = manager.clone();

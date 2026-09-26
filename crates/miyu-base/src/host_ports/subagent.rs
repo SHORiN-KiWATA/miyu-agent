@@ -6,7 +6,8 @@
 //! (REPL 直连、`miyu tool-call`)里没人装,取到 `None`,工具层退回进程内的老循环。
 //!
 //! 「任务完成」不是「一轮结束」:子会话没有活动回合**且**名下没有未完成的后台
-//! 任务(后台命令、后台孙代理都算)才算。前台调用的 future 等的就是这个终态。
+//! 任务(后台命令、后台孙代理都算)才算。09-26 起子代理只在后台跑:后台镜像任务里
+//! `continue_child` 的 future 等的就是这个终态。
 
 use crate::config::ModelTier;
 use anyhow::Result;
@@ -14,24 +15,17 @@ use futures_util::future::BoxFuture;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-/// 子会话回合里的事件折成 `__subagent_*` / `__subtool_*` 标记喂回来:前台原样转进
-/// 父回合的进度通道,后台进任务日志桥。渲染层照旧认这些标记,一字不改。
+/// 子会话回合里的事件折成 `__subagent_*` / `__subtool_*` 标记喂回来,进后台任务的日志桥。
+/// 渲染层照旧认这些标记,一字不改。
 pub type SubagentProgressSink = Arc<dyn Fn(String) + Send + Sync>;
 
-pub struct SpawnChildRequest {
+/// 只建子会话、不起回合（09-26 子代理只在后台跑）：工具层先拿到子会话 id，写进回执、让父回合
+/// 那一步链得过去；第一轮由后台镜像任务经 [`SubagentHostPort::continue_child`] 起。
+pub struct CreateChildRequest {
     pub parent_session: String,
     pub description: String,
-    pub prompt: String,
     pub dev: bool,
     pub tier: ModelTier,
-    /// 只是记在会话行上的元数据:等不等终态由调用方决定(后台 = 包进后台任务里等)。
-    pub background: bool,
-    pub max_steps: usize,
-    /// 父会话里开它的那一轮。
-    pub spawned_by_turn: Option<String>,
-    /// 父回合的工作目录:子会话的回合沿用它,别退回 daemon 的 cwd。
-    pub workdir: Option<PathBuf>,
-    pub progress: SubagentProgressSink,
 }
 
 pub struct ContinueChildRequest {
@@ -56,10 +50,6 @@ pub struct ChildTaskResult {
     pub state: String,
     /// 子会话最后一轮的正文:交付物。
     pub final_text: String,
-    pub turns: i64,
-    pub total_tokens: u64,
-    pub provider_id: Option<String>,
-    pub model: Option<String>,
 }
 
 pub enum ChildOutcome {
@@ -70,12 +60,17 @@ pub enum ChildOutcome {
 }
 
 pub trait SubagentHostPort: Send + Sync {
-    /// 子会话此刻有没有活动回合。工具层据此决定追话是「排进去」还是「起新一轮」,
-    /// 免得后台追话对着闲着的子会话空等。
-    fn is_running(&self, child_session: &str) -> bool;
-    /// 建子会话并起第一轮,等到任务终态才完成。future 被 drop(父回合被停)时
-    /// 宿主要顺手取消子会话的活动回合——工具层没有取消令牌,只有这一条路。
-    fn spawn(&self, request: SpawnChildRequest) -> BoxFuture<'static, Result<ChildOutcome>>;
+    /// 只建子会话(挂在父会话下、归属与沙盒跟父、档位落成会话级模型池),交回它的 id。
+    fn create_child(&self, request: CreateChildRequest) -> Result<String>;
+    /// 给已有子会话追话,只排不跑:它跑着就把话排进它当前那一轮、交回子会话 id,闲着就 `None`
+    /// (调用方另起后台那一轮)。原来先问「跑着吗」再 [`Self::continue_child`],子会话恰好在两步之间
+    /// 收尾时,`continue_child` 就会在父回合的这一步里把整轮跑完(09-26 审查)。
+    fn queue_followup(
+        &self,
+        parent_session: &str,
+        child_session: &str,
+        message: &str,
+    ) -> BoxFuture<'static, Result<Option<String>>>;
     /// 给已有子会话追话:跑着就排 follow-up 立刻返回;闲着/中断了就起新一轮并等终态。
     fn continue_child(
         &self,

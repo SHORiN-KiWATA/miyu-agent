@@ -819,7 +819,11 @@ def main():
             screen = screen if screen is not None else render(bytes(sink))
             return max((i for i, line in enumerate(screen) if hit(marker, line)), default=None)
 
-        head = find_last_row(is_fold_summary)
+        # 带工具的那一段：收起行上数着命令。只后台之后（09-26）子代理的汇报会在主回合后面另起一轮，
+        # 那一轮也有自己的收起行（`› 思考了 …`），屏上最后一个收起行不一定是这一段了。
+        head = find_last_row(
+            lambda line: is_fold_summary(line) and ("命令" in line or "command" in line)
+        )
         if head is not None:
             mark_expand = len(sink)
             click(master, sink, 3, head)
@@ -957,8 +961,15 @@ def main():
                 or re.search(r"\x1b\[38;5;(?:9|1)m[^\n]*运行命令", stream_now)
             )
 
-            # 子代理那一步 → 切进它的会话（09-25 改，理由同上面 item03）
-            sub = find_row("子代理")
+            # 子代理那一步 → 切进它的会话（09-25 改，理由同上面 item03）。认那一步自己的写法
+            # 「子代理·走查…」：只后台之后（09-26）屏上还有唤醒那一行「子代理完成 … · 走查子代理」
+            # 和任务条那一行，那一步滚出屏幕上方时取第一个「子代理」会点到它们上去。
+            sub = find_row("子代理·")
+            for _ in range(6):
+                if sub is not None:
+                    break
+                wheel(master, sink, 10, 5, up=True)
+                sub = find_row("子代理·")
             if sub is not None:
                 click(master, sink, 5, sub)
                 drain_until(master, sink, CHILD_TASK, 10.0)

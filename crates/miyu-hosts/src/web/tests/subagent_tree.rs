@@ -498,3 +498,88 @@ async fn a_running_subagent_reports_what_it_is_doing_without_a_mirror_job() {
     }
     assert!(subagent_activity(&tree.child).is_none(), "这一轮结束就撤");
 }
+
+/// 主会话停一轮，连这一轮派出去的子代理一起停（09-26 起子代理只在后台跑，不跟着那一轮结束）；
+/// 更早那一轮派的照旧跑。
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_main_turn_stops_the_subagents_it_dispatched() {
+    shared_jobs_home();
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let persona = active_persona_scope(&state);
+    let store = &state.state_store;
+    store.adopt_sessions_for_persona(&persona).unwrap();
+    let main = store
+        .create_session(&persona, "主会话", "user", None)
+        .unwrap()
+        .session_id;
+    let now = store
+        .create_subagent_session(&persona, "这一轮派的", &main, "", 1, Some("turn_now"), true)
+        .unwrap()
+        .session_id;
+    let earlier = store
+        .create_subagent_session(
+            &persona,
+            "上一轮派的",
+            &main,
+            "",
+            1,
+            Some("turn_earlier"),
+            true,
+        )
+        .unwrap()
+        .session_id;
+    for child in [&now, &earlier] {
+        store
+            .set_session_task_state(child, SubagentTaskState::Running)
+            .unwrap();
+    }
+    let now_command = command_in(&now).await;
+    let earlier_command = command_in(&earlier).await;
+    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
+    let mut main_run = fake_run(&main, cancel);
+    main_run.turn_id = Some("turn_now".to_string());
+    state
+        .manager
+        .lock()
+        .unwrap()
+        .active_runs
+        .insert("main-run-turn".to_string(), main_run);
+    let main_exit = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _ = cancelled.changed().await;
+            let notify = {
+                let mut manager = state.manager.lock().unwrap();
+                manager.active_runs.remove("main-run-turn");
+                manager.runs_changed.clone()
+            };
+            notify.notify_waiters();
+        })
+    };
+    let now_run = run_in(&state, "now-run", &now);
+    let earlier_run = run_in(&state, "earlier-run", &earlier);
+
+    assert!(cancel_run_and_disarm_goal(&state, "main-run-turn"));
+    main_exit.await.unwrap();
+    assert!(now_run.await.unwrap(), "这一轮派的子代理被要求停");
+    assert_eq!(
+        settled_task_state(&state, &now, "interrupted")
+            .await
+            .as_deref(),
+        Some("interrupted")
+    );
+    assert!(!running(&now_command), "它的后台命令也停了");
+
+    let earlier_still_running = running(&earlier_command);
+    let _ = tools::jobs::stop_job(&earlier_command).await;
+    state
+        .manager
+        .lock()
+        .unwrap()
+        .active_runs
+        .remove("earlier-run");
+    assert!(!earlier_run.await.unwrap(), "上一轮派的不该被停");
+    assert!(earlier_still_running, "上一轮派的后台命令不该被停");
+    assert_eq!(task_state(&state, &earlier).as_deref(), Some("running"));
+}
