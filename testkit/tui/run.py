@@ -785,8 +785,8 @@ def main():
         report["tool_row_has_peek"] = bool(
             re.search(r"运行命令 · [\d.]+m?s · \S", stream)
         )
-        # 09-26 起收缩行按「动词了 + 次数」写（`运行了 N 次命令 · 用了 N 个工具`），英文界面是
-        # `Ran N commands · N tools`；老二进制的 `Worked for … · N tools` 也认。
+        # 收缩行一律英文 `Ran N commands · N tools`；09-26 当天那版中文「运行了 N 次命令」、老二进制的
+        # `Worked for … · N tools` 也认。
         report["tool_counted_in_summary"] = bool(
             re.search(
                 r"Ran \d+ commands?\b|Worked for [^·]+· \d+ tools?\b|运行了 \d+ 次命令|用了 \d+ 个工具",

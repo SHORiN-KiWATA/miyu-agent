@@ -101,7 +101,7 @@ fn a_short_pause_mid_thought_is_still_thinking() {
     });
 }
 
-/// 收进来的时刻比思考结束晚了一截空档；这一段收成「思考了 N 秒」时要从思考开始算，那截
+/// 收进来的时刻比思考结束晚了一截空档；这一段收成「Thought for Ns」时要从思考开始算，那截
 /// 空档也是这一轮在干活（模型在准备下一句），不能漏。动过手的那一段收缩行不挂耗时（09-26），
 /// 一轮一共花了多久看末尾的 `✻`。
 #[test]
@@ -117,7 +117,7 @@ fn the_silent_gap_still_counts_toward_the_thought_summary() {
             .unwrap();
         let out = strip_ansi_for_test(&String::from_utf8_lossy(&renderer.take_output_frame()));
         let seconds: f64 = out
-            .split(t("Thought for ", "思考了 "))
+            .split("Thought for ")
             .nth(1)
             .map(|rest| {
                 rest.chars()

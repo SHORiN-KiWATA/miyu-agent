@@ -11,7 +11,7 @@
 //! 一段连续的过程结束（模型开始说正文／回合结束／面板要抢屏）就**收成一行**：
 //!
 //! ```text
-//!   › 运行了 1 次命令 · 用了 2 个工具 · 思考了 2 次 · 出错了 1 次
+//!   › Ran 1 command · 2 tools · 2 thoughts · 1 err
 //! ```
 //!
 //! （09-26 起不挂耗时，一轮花了多久看回复末尾那行 `✻`，见 `turn_end.rs`。）
@@ -41,7 +41,6 @@ mod stall;
 mod subagent;
 mod thought_rows;
 mod turn_end;
-use turn_end::spell;
 
 pub use cross_session::write_cross_session_message;
 pub(crate) use cross_session::SEND_TOOL;

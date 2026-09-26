@@ -168,6 +168,48 @@ fn expanding_pushes_later_rows_down() {
     });
 }
 
+/// 贴着底的时候点开靠下的一块：点的那一行留在屏幕原处，展开的内容往下长，先看到的是
+/// 开头（用户 09-26：点开收缩行居然是往上展开的，看到的是尾巴不是前面那几步）。原来展开
+/// 前贴底就一直贴底，撑出来的行全堆到了点的那一行上面。
+#[test]
+fn expanding_near_the_bottom_grows_downward_from_the_clicked_row() {
+    with_blocks(|| {
+        let mut body = vec!["头".to_string()];
+        body.extend((0..40).map(|i| format!("详情 {i}")));
+        let id = blocks::register(body).expect("已开启");
+        let mut screen = Screen::detached(80, 30);
+        let mut text: String = (0..60).map(|i| format!("第 {i} 行\r\n")).collect();
+        text.push_str(&format!(
+            "{}折叠{}\r\n回复正文\r\n",
+            blocks::begin_marker(id),
+            blocks::END_MARKER
+        ));
+        screen.feed_for_test(text.as_bytes());
+        screen.prepare_frame(6);
+        assert!(screen.following());
+        let header = (0..screen.view_len())
+            .find(|&index| view_text(&screen, index) == "折叠")
+            .expect("收缩行在视图里");
+        let on_screen = header - screen.scroll_for_test();
+
+        assert!(screen.toggle_block(id));
+        screen.prepare_frame(6);
+        let top = screen.scroll_for_test();
+        assert_eq!(
+            view_text(&screen, top + on_screen),
+            "头",
+            "点的那一行挪了位置"
+        );
+        assert_eq!(view_text(&screen, top + on_screen + 1), "详情 0");
+        assert!(!screen.following(), "展开的内容还在视口下面，不该说在跟底");
+
+        // 收起来就回到原样，也重新跟底。
+        assert!(screen.toggle_block(id));
+        screen.prepare_frame(6);
+        assert!(screen.following());
+    });
+}
+
 /// 「展开思考内容 / 展开工具内容 = 开」落到字节流上就是 `miyu-block-open=`：
 /// 视图第一次见到就替用户开一次，**不用点**（用户 09-17：「不用我点击他的 tag
 /// 行，他出来就是展开的效果」）。

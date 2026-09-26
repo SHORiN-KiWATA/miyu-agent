@@ -3,7 +3,7 @@
 
 四段，每段一个干净的沙箱：
 
-1. 跑完的一轮：收缩行是「运行了 1 次命令 · 思考了 1 次」（不再有 `Worked for`）；回复之后
+1. 跑完的一轮：收缩行是「Ran 1 command · 1 thought」（一律英文，不再有 `Worked for`）；回复之后
    空一行是 `✻ stub-model · <动词> N 秒 · H:MM 完成`；退出重开、切回这条会话，回放里还是
    那一行，动词不变（按轮号固定）。
 2. 被打断的一轮：Ctrl+C 之后是 `✻ … 中断`；重开回放也是它，不再另起一行「已中断」。
@@ -112,7 +112,7 @@ def scenario_done(report):
         report["done_blank_line_before_end_line"] = index > 0 and not done[index - 1].strip()
         folds = [row.strip() for row in done if fs.is_fold_summary(row)]
         report["_folds"] = folds
-        report["fold_line_uses_new_wording"] = any("运行了 1 次命令" in row for row in folds) and not any(
+        report["fold_line_uses_new_wording"] = any("Ran 1 command" in row for row in folds) and not any(
             "Worked for" in row for row in done
         )
         tui, master, sink = reopen(master, sink, tui, "收尾走查")
