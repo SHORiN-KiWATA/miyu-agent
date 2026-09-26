@@ -32,6 +32,9 @@ pub(crate) struct ToolStats {
     /// 全屏时间线里这一步跑完之后抬头底下留着的那几行（命令输出的尾巴）。
     /// 点开看到的是 `detail`（全部），不点开也有这几行——和跑着的时候一个量。
     pub(crate) tail: Vec<String>,
+    /// 这一次调用自己的抬头，盖过按工具名查到的显示名。只有一件工具分几种动作、
+    /// 某种动作另有说法的才填：跨会话那件列名单时叫「列出其他会话」（用户 09-26）。
+    pub(crate) title: Option<String>,
 }
 
 impl ToolStats {

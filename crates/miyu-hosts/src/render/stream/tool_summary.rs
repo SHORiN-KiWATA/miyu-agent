@@ -791,6 +791,15 @@ impl StreamRenderer {
             };
             return format!("{base}·{description}");
         }
+        if self.readable_tool_names {
+            if let Some(title) = self
+                .tool_stats
+                .get(name)
+                .and_then(|stats| stats.title.as_deref())
+            {
+                return title.to_string();
+            }
+        }
         let name = tool_event_base_name(name);
         if self.readable_tool_names {
             readable_tool_name(name)

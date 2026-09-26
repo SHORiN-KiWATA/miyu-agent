@@ -634,7 +634,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "切换到晨光主题": "Switch to the linen theme",
   "切换失败": "Switch failed",
   "划词解释 / 翻译": "Selection explain / translate",
-  "列出开着的会话": "List open sessions",
+  "列出其他会话": "List other sessions",
   "列表按已保存的 key 从 MiniMax 拉取(含克隆音色);先保存 key 再刷新页面。TUI 里可搜索、按标签筛选并试听": "The list is fetched from MiniMax with the saved key (cloned voices included); save the key and refresh the page first. In the TUI you can search, filter by tag, and preview.",
   "列表来自 PipeWire 的输入源(与系统设置里一致);拔掉的设备仍保留当前值": "The list comes from PipeWire input sources (the same as in system settings); unplugged devices keep their current value.",
   "刚刚": "Just now",

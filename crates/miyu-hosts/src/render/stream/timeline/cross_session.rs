@@ -10,7 +10,8 @@
 //!
 //! 发出去的那次是时间线上的一步（`send_to_other_running_session`）：抬头是
 //! 「给其他会话发送消息 · <短 id> <会话名>」，底下露正文的头几行。会话 id 只写
-//! 末尾那段随机串（用户 09-24：完整 id 太长）。
+//! 末尾那段随机串（用户 09-24：完整 id 太长）。同一件工具列名单那次，抬头就叫
+//! 「列出其他会话」（用户 09-26）。
 //!
 //! 两边都先露 `display.cross_session_preview_lines` 行（用户 09-23 定默认 10），
 //! 能点开的面（全屏）点抬头看全文，点不开的面（inline、shellhook）就停在预览。
@@ -83,15 +84,16 @@ impl StreamRenderer {
     pub(crate) fn note_cross_session_send(&mut self, name: &str, arguments: &str) {
         let args: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
         let action = args.get("action").and_then(serde_json::Value::as_str);
-        let peek = match action {
-            Some("list") => Some(t("list open sessions", "列出开着的会话").to_string()),
-            _ => args
-                .get("session_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|session| !session.is_empty())
-                .map(|session| miyu_core::state::short_session_id(session).to_string()),
-        };
+        // 列名单那次没在给谁发话：抬头直接叫「列出其他会话」，右边不再挂一句同义的说明
+        // （用户 09-26）。
+        let listing = action == Some("list");
+        let title = listing.then(|| t("List other sessions", "列出其他会话").to_string());
+        let peek = args
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|session| !listing && !session.is_empty())
+            .map(|session| miyu_core::state::short_session_id(session).to_string());
         // 参数不是 JSON（回放时被截断过）就拿不到正文，那一步只剩抬头。
         let message = args
             .get("message")
@@ -101,6 +103,7 @@ impl StreamRenderer {
         let detail_inline = self.caps().detail_inline();
         let stats = self.tool_stats_entry(name);
         stats.peek = peek;
+        stats.title = title;
         if let Some(message) = message {
             let rows = body_rows(message);
             stats.tail = preview_rows(&rows, preview);

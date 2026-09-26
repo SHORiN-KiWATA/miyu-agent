@@ -11,6 +11,8 @@
     received_block_after_reload  刷新之后回看,还是那一块(不是用户气泡、不露外壳)
     send_card_preview            A 那边的工具签:抬头右边是「<B 的 id> 查资料」,底下露正文前几行
     send_card_expands            点正文预览 = 展开这张签,展开区顶上是正文全文、没有裸参数
+    list_step_titled_live        A 里让 AI 列名单:那张工具签抬头叫「列出其他会话」,右边不再挂说明(09-26)
+    list_step_titled_after_reload  刷新之后回看还是这样
     settings_has_preview_lines   设置页有「跨会话AI消息预览行数」这一项
 
 截图落在 OUT(默认 /tmp/miyu-xs-webui),看完手动删。
@@ -336,6 +338,43 @@ def main():
             check("send_card_expands",
                   opened["open"] and opened["previewHidden"] and "第 14 行" in opened["full"] and not opened["rawArgs"],
                   {k: (v[:80] if isinstance(v, str) else v) for k, v in opened.items()})
+
+            # 列名单那一步(用户 09-26):抬头叫「列出其他会话」,右边不再挂「列出开着的会话」。
+            # 收起的过程里卡片不可见,用 textContent 读。
+            list_cards_js = """() => [...document.querySelectorAll('.tool-card')]
+              .filter((card) => (card.querySelector('.tool-technical-name')?.textContent || '')
+                .includes('send_to_other_running_session'))
+              .map((card) => ({
+                title: card.querySelector('.tool-title strong')?.textContent || '',
+                summary: card.querySelector('.tool-summary')?.textContent || '',
+              }))"""
+
+            def completed(session_id):
+                return sum(1 for turn in api("GET", f"/api/sessions/{session_id}/turns").get("turns", [])
+                           if turn.get("status") == "completed")
+
+            done_before = completed(sender)
+            api("POST", "/api/turns", {"session_id": sender, "content": "TK list"})
+            deadline = time.time() + 30
+            while time.time() < deadline and completed(sender) <= done_before:
+                time.sleep(0.3)
+            page.wait_for_timeout(1500)
+
+            def list_step_ok(cards):
+                last = cards[-1] if cards else {}
+                return (last.get("title") == "列出其他会话"
+                        and "列出开着的会话" not in last.get("summary", "")
+                        and "给其他会话发送消息" not in last.get("title", ""))
+
+            live_cards = page.evaluate(list_cards_js)
+            check("list_step_titled_live", len(live_cards) >= 2 and list_step_ok(live_cards), live_cards)
+            page.reload()
+            page.wait_for_selector("#composerInput:not([disabled])", timeout=20000)
+            open_session(sender)
+            page.wait_for_timeout(1500)
+            replay_cards = page.evaluate(list_cards_js)
+            check("list_step_titled_after_reload", len(replay_cards) >= 2 and list_step_ok(replay_cards),
+                  replay_cards)
 
             schema = page.evaluate("""() => JSON.stringify(window.MiyuSettingsSchema || {})""")
             check("settings_has_preview_lines",

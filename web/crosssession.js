@@ -290,14 +290,20 @@ window.MiyuCrossSession = (() => {
     }
   }
 
-  /// 工具签抬头右边那句:列名单时说「列出开着的会话」,发话时是 `<短 id> <会话名>`。
-  /// 名字先按侧栏里认得的填,结果回来再用它报的名字。
+  /// 工具签抬头右边那句:发话时是 `<短 id> <会话名>`,列名单时空着(抬头已经叫「列出
+  /// 其他会话」了)。名字先按侧栏里认得的填,结果回来再用它报的名字。
   function sendSubject(argumentsValue, knownName) {
     const args = parsedArgs(argumentsValue);
-    if (args.action === "list") return t("列出开着的会话");
+    if (args.action === "list") return "";
     const session = shortId(String(args.session_id || "").trim());
     const name = String(knownName || "").trim();
     return [session, name].filter(Boolean).join(" ");
+  }
+
+  /// 这一次调用自己的抬头:列名单时叫「列出其他会话」(用户 09-26,和终端一个说法),
+  /// 发话时空串,照用 daemon 给的显示名。
+  function sendTitle(argumentsValue) {
+    return parsedArgs(argumentsValue).action === "list" ? t("列出其他会话") : "";
   }
 
   /// 结果里对方会话的名字(发成功时才有)。
@@ -344,6 +350,7 @@ window.MiyuCrossSession = (() => {
     foldInto,
     isSendTool,
     sendSubject,
+    sendTitle,
     targetName,
     decorateSendCard
   };

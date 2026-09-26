@@ -8639,6 +8639,11 @@
       displayName.textContent =
         parsedToolArguments(call?.arguments)?.dev === true ? t("开发中") : t("子代理");
     }
+    // 跨会话那件列名单时抬头叫「列出其他会话」(用户 09-26),和实时那张一个说法。
+    const crossSessionTitle = window.MiyuCrossSession?.isSendTool(name)
+      ? window.MiyuCrossSession.sendTitle(call?.arguments)
+      : "";
+    if (crossSessionTitle) displayName.textContent = crossSessionTitle;
     // 名字被芯片截断时,悬浮还能看全(load_tools 一次点名几个工具就会超长)。
     displayName.title = displayName.textContent;
     const realName = document.createElement("small");
@@ -8945,6 +8950,11 @@
     if (isTask && parsedToolArguments(data?.arguments)?.dev === true) {
       displayName.textContent = t("开发中");
     }
+    // 跨会话那件列名单时抬头叫「列出其他会话」(用户 09-26),和终端一个说法。
+    const crossSessionTitle = window.MiyuCrossSession?.isSendTool(toolName)
+      ? window.MiyuCrossSession.sendTitle(data?.arguments)
+      : "";
+    if (crossSessionTitle) displayName.textContent = crossSessionTitle;
     displayName.title = displayName.textContent;
     const realName = document.createElement("small");
     realName.className = "tool-technical-name";
@@ -9120,7 +9130,7 @@
       think: null,
       thinkAccum: "",
       pendingCall: null,
-      titleText: String(data?.display_name || data?.name || t("未命名工具")),
+      titleText: crossSessionTitle || String(data?.display_name || data?.name || t("未命名工具")),
       subject: subjectText,
       argumentsValue: data?.arguments,
       startedAt: performance.now(),

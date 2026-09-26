@@ -122,3 +122,35 @@ fn the_send_step_shows_the_target_and_a_preview_of_the_message() {
         assert!(detail.contains("第 12 行"), "点开该有正文全文: {detail:?}");
     });
 }
+
+/// 列名单那一步：抬头直接叫「列出其他会话」，右边不再挂「列出开着的会话」那句同义说明
+/// （用户 09-26：列名单就不该写成「给其他会话发送消息」）。
+#[test]
+fn the_list_step_is_titled_list_other_sessions() {
+    with_blocks(|| {
+        let mut renderer = timeline_renderer();
+        renderer.use_buffered_output();
+        renderer
+            .write_tool_call(
+                "send_to_other_running_session",
+                &serde_json::json!({"action": "list"}).to_string(),
+            )
+            .unwrap();
+        renderer
+            .write_tool_result(
+                "send_to_other_running_session",
+                true,
+                r#"{"ok":true,"sessions":[]}"#,
+            )
+            .unwrap();
+        renderer.finalize_tools_summary().unwrap();
+        let (_, live) = renderer.timeline_live(Vec::new());
+        let live = crate::render::strip_ansi_text(&live.unwrap_or_default());
+        let title = miyu_base::i18n::text("List other sessions", "列出其他会话");
+        assert!(live.contains(title), "{live:?}");
+        let send_title = miyu_base::i18n::text("Message another session", "给其他会话发送消息");
+        assert!(!live.contains(send_title), "列名单不该还叫发消息: {live:?}");
+        let old_peek = miyu_base::i18n::text("list open sessions", "列出开着的会话");
+        assert!(!live.contains(old_peek), "右边不该再挂同义说明: {live:?}");
+    });
+}
