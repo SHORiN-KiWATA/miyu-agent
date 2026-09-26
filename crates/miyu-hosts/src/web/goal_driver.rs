@@ -210,6 +210,12 @@ pub(in crate::web) async fn maybe_continue_goal(state: DaemonState, session_id: 
             return;
         }
     }
+    // 闸 1½：有子代理还没收尾就不续轮（09-26 起子代理只在后台跑，用户拍板等报告回来再续）：
+    // 它跑完的汇报会起一轮把会话叫醒，那一轮收尾时再踢一下驱动器。不等的话模型要么空转去查
+    // 状态，要么重复派人，要么提前收尾。
+    if has_pending_subagents(&state, &session_id) {
+        return;
+    }
     // 闸 2：人在排队就让行。自动轮会消耗轮号，插在人前面既抢了额度也抢了顺序。
     // 成员的目标在他自己的会话库:用 for_session 取对库,否则读管理员库
     // 时 session_record 恒 None、goal 也读不到,成员目标从不自动续轮(与

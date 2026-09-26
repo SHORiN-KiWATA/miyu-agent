@@ -36,6 +36,24 @@ pub(in crate::web) fn running_descendants(
     agents + commands
 }
 
+/// 这条会话还有没收尾的子代理吗：它名下在跑的后台子代理镜像任务，或者还没到终态（在跑、等
+/// 后台）的子会话。`/goal` 据此不续轮，等汇报回来（09-26）。
+pub(in crate::web) fn has_pending_subagents(state: &DaemonState, session_id: &str) -> bool {
+    let mirrors = tools::jobs::overview().iter().any(|job| {
+        job.running
+            && job.session_id.as_deref() == Some(session_id)
+            && matches!(job.kind.as_str(), "subagent" | "dev")
+    });
+    mirrors
+        || state
+            .stores
+            .for_session(session_id)
+            .child_sessions(session_id)
+            .unwrap_or_default()
+            .iter()
+            .any(|child| is_pending(child.record.task_state.as_deref()))
+}
+
 /// 这条会话是子代理会话吗。查不到记录的一律当不是：停止的规矩只在认得出时才放宽。
 pub(in crate::web) fn is_subagent_session(state: &DaemonState, session_id: &str) -> bool {
     state

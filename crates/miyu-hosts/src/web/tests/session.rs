@@ -861,6 +861,40 @@ async fn cancelling_an_autonomous_round_disarms_the_goal() {
     assert_eq!(after.phase, miyu_core::state::GoalPhase::Active);
 }
 
+/// 子代理还在后台跑，`/goal` 不续轮，等它的汇报回来（09-26 起子代理只在后台跑，用户拍板）。
+/// 没有这道闸的话驱动器当场认领下一轮，模型要么空转去查状态、要么重复派人。
+#[tokio::test]
+async fn the_goal_waits_while_a_subagent_is_still_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8333).unwrap();
+    let session_id = state.state_store.session_id().to_string();
+    let persona = active_persona_scope(&state);
+    let child = state
+        .state_store
+        .create_subagent_session(&persona, "查资料", &session_id, "", 1, None, true)
+        .unwrap()
+        .session_id;
+    state
+        .state_store
+        .set_session_task_state(&child, miyu_core::state::SubagentTaskState::Running)
+        .unwrap();
+    state
+        .state_store
+        .create_goal(&session_id, "长任务", Some(9))
+        .unwrap();
+    miyu_engine::tools::goal::set_armed(&session_id, true);
+
+    maybe_continue_goal(state.clone(), session_id.clone()).await;
+
+    let goal = state.state_store.goal(&session_id).unwrap().unwrap();
+    assert_eq!(goal.rounds_started, 0, "子代理没收尾就认领了下一轮");
+    assert!(
+        state.manager.lock().unwrap().active_runs.is_empty(),
+        "不该起新一轮"
+    );
+    miyu_engine::tools::goal::set_armed(&session_id, false);
+}
+
 /// 工具桥寻址平台会话(08-26):没有活回合时照旧拒绝(桥不该在回合外碰平台
 /// 会话),回合在跑时放行——这是 claude-code 供应商在群聊里拿到平台工具的
 /// 唯一入口,实测此前 `tool-call --list` 一律报"找不到该会话"。
