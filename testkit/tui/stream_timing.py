@@ -168,7 +168,15 @@ def main():
                         stream.feed(text)
 
         threading.Thread(target=pump, daemon=True).start()
-        time.sleep(3.0)
+        # 等大厅真的画出来再敲（同 tui/run.py 重开那一段）：新进程要一会儿才进 raw，这之前敲的回车被
+        # 行规程变成换行，消息成了草稿，屏上一直是大厅（红绿账 09-26 两轮都是第一遍红、复跑绿）。
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            time.sleep(0.2)
+            with lock:
+                if any("Tab" in line for line in screen.display):
+                    break
+        time.sleep(0.3)
         os.write(master, "说一段长的\r".encode())
         start = time.time()
         print(f"回复 {SEGMENTS} 段 / {len(REPLY)} 字，桩模型 3 字一块、0.35 秒一块")

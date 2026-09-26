@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -88,6 +89,19 @@ def settled_turns(session_id):
     return [turn for turn in turns if turn.get("status") == "completed"]
 
 
+def post_turn(body):
+    """发一句。上一轮在库里记成 completed 之后，daemon 还要收一会儿尾（记账、断缓存计数），这时发
+    会拿到 409「会话正忙」——等它收完再发（红绿账 09-26 两轮都是第一遍红、复跑绿）。"""
+    for _ in range(50):
+        try:
+            return api("POST", "/api/turns", body)
+        except urllib.error.HTTPError as error:
+            if error.code != 409:
+                raise
+            time.sleep(0.2)
+    return api("POST", "/api/turns", body)
+
+
 def wait_until(check_fn, timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -122,7 +136,7 @@ def main():
         assert session_id, created
 
         for index in range(1, TURNS + 1):
-            api("POST", "/api/turns", {"content": f"第 {index} 句", "session_id": session_id})
+            post_turn({"content": f"第 {index} 句", "session_id": session_id})
             assert wait_until(lambda: len(settled_turns(session_id)) == index, 60), f"第 {index} 轮没跑完"
 
         whole = api("GET", f"/api/sessions/{session_id}/turns")
@@ -165,7 +179,7 @@ def main():
             check("补完之后没跳到最上面", scroll_top > 0, f"scrollTop={scroll_top}")
             page.screenshot(path=str(OUT / "after-older.png"))
 
-            api("POST", "/api/turns", {"content": "第 41 句", "session_id": session_id})
+            post_turn({"content": "第 41 句", "session_id": session_id})
             assert wait_until(lambda: len(settled_turns(session_id)) == TURNS + 1, 60), "第 41 轮没跑完"
             page.wait_for_timeout(2500)
             final = user_messages(page)
