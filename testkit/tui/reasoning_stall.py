@@ -10,7 +10,7 @@
   静默过了 1.5s：没有「思考中」、有「已思考」，live 区最后一行只剩转轮
   「已思考」的秒数不含静默
   工具名一到接上「准备编辑」，随后「编辑文件」
-  收缩行的秒数把静默也算进去
+  收尾那行 `✻` 的用时把静默也算进去（09-26 起收缩行不挂耗时）
 
     cargo build
     python3 testkit/tui/reasoning_stall.py
@@ -30,6 +30,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import round26 as r  # noqa: E402
 import run as h  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fold_summary as fs  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", Path.home() / ".cache" / "miyu-reasoning-stall"))
 GAP = float(os.environ.get("GAP", "4"))
@@ -86,8 +89,9 @@ def main():
                 "prepare": any("准备编辑" in line for line in screen),
                 "edit": any("编辑文件" in line for line in screen),
                 "fold": next((line.strip() for line in screen if h.is_fold_summary(line)), None),
+                "end": next((line.strip() for line in screen if fs.is_turn_end(line)), None),
             })
-            if samples[-1]["fold"] and any("好的" in line for line in screen):
+            if samples[-1]["end"]:
                 break
         (OUT / "raw.bin").write_bytes(bytes(sink))
         with (OUT / "frames.jsonl").open("w", encoding="utf-8") as out:
@@ -112,9 +116,10 @@ def main():
     prepare = [s["t"] for s in samples if s["prepare"]]
     check("工具名一到接上「准备编辑」", prepare and settled and prepare[0] > settled[0]["t"], str(prepare[:3]))
     check("随后「编辑文件」", any(s["edit"] for s in samples))
-    fold = next((s["fold"] for s in reversed(samples) if s["fold"]), None)
-    match = re.search(r"(?:Worked for |· )([\d.]+)s", fold or "")
-    check("收缩行的秒数把静默也算进去", match and float(match.group(1)) >= GAP, fold or "没有收缩行")
+    check("收成一行收缩行", any(s["fold"] for s in samples))
+    end = next((s["end"] for s in reversed(samples) if s["end"]), None)
+    spent = fs.turn_end_seconds(end or "")
+    check("收尾行 ✻ 的用时把静默也算进去", spent is not None and spent >= GAP, end or "没有收尾行")
     print(f"{sum(results)}/{len(results)} passed    产物：{OUT}")
     sys.exit(0 if results and all(results) else 1)
 

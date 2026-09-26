@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run as h  # noqa: E402
 import round26 as r  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fold_summary as fs  # noqa: E402
+
 WAVE = set("▁▂▃▄▅▆▇")
 BRAILLE = set("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 READING = re.compile(r"(\d+(?:\.\d+)?k?)/(?:~)?\d+k")
@@ -89,9 +92,15 @@ def main():
             idx = next((i for i, l in enumerate(screen) if any(ch in BRAILLE for ch in l) and "正在压缩上下文" in l), None)
             if idx is not None:
                 braille_seen = True
-                # 转轮行上面要空一行,再上面是回复末尾的「供应商 / 模型」行
+                # 转轮行上面要空一行,再上面是回复末尾那一行:09-26 起是 `✻ 模型 · … 完成`,混合模型池的
+                # 「供应商 / 模型」在它上面(用户 09-18 截图:少空行)。
                 if gap_ok is None:
-                    gap_ok = idx >= 2 and screen[idx - 1].strip() == "" and "stub / stub-" in screen[idx - 2]
+                    above = screen[idx - 2] if idx >= 2 else ""
+                    gap_ok = (
+                        idx >= 2
+                        and screen[idx - 1].strip() == ""
+                        and (fs.is_turn_end(above) or "stub / stub-" in above)
+                    )
         report["footer_wave_while_compacting"] = spinner_seen
         report["blank_line_between_model_line_and_spinner"] = bool(gap_ok)
         report["dot_spinner_with_compacting_text"] = braille_seen

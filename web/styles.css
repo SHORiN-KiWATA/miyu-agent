@@ -1695,6 +1695,34 @@ body[data-theme="graphite"] .session-unread-dot {
   margin-bottom: 8px;
 }
 
+/* 在子代理的会话里回主会话(会话项目第 4 段):和任务条的折叠头一个样子。 */
+.subagent-parent-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 6px 14px 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface-2));
+  color: var(--text);
+  font-size: var(--fs-meta);
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.subagent-parent-bar[hidden] {
+  display: none;
+}
+
+.subagent-parent-bar:hover {
+  color: var(--accent);
+}
+
+.tool-card.has-child-session > .tool-head {
+  cursor: pointer;
+}
+
 .jobs-strip-toggle {
   display: inline-flex;
   align-items: center;
@@ -2252,6 +2280,15 @@ body[data-theme="graphite"] .session-unread-dot {
 .assistant-endpoint {
   color: inherit;
   font-size: inherit;
+}
+
+/* 回复末尾那行 ✻(09-26,与终端同一种写法):跟 meta 行一样的灰与等宽字。 */
+.turn-end {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .message-actions button,

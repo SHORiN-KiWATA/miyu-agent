@@ -16,6 +16,8 @@
     FAIL          返回 HTTP 500(验 run.failed → error 事件与退出码 1)
 
 标题/整理等旁路请求(没有 user 暗号、或系统提示不是主对话)一律回「ok」。
+摘要请求(压缩模板第一句出现在请求里)回一份照模板 `## ` 标题写的摘要:09-25 起不照模板
+写的摘要不落库,回 JSON 的话 `miyu compact` 会报错。
 """
 import json
 import os
@@ -25,6 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("STUB_PORT", "18494"))
 SLOW_SECS = float(os.environ.get("STUB_SLOW_SECS", "4"))
+SUMMARY_MARK = "context summarization assistant"
+SUMMARY_REPLY = "## Task Goal\nCLI walkthrough summary.\n\n## Current Work\n(none)"
 LOG = os.environ.get("STUB_LOG")
 
 
@@ -101,6 +105,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
 
+        if any(SUMMARY_MARK in content_text(m) for m in messages):
+            text_reply(SUMMARY_REPLY)
+            return
         if "ASK_QUESTION" in last_user and last.get("role") == "user" and "ask_question" in tools:
             sse({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{
                 "index": 0, "id": "call_q1", "type": "function",

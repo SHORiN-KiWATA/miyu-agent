@@ -70,7 +70,7 @@ fn footer_stays_on_one_terminal_row_at_every_narrow_width() {
                             cols,
                         );
                     }
-                    assert_single_row(&repl_usage_line(&footer, cols), cols);
+                    assert_single_row(&repl_usage_line(&footer, 0, cols), cols);
                 }
             }
         }
@@ -158,14 +158,14 @@ fn fullscreen_moves_the_usage_to_its_own_row() {
     for gauge in ["tok/s", "Σ", "/1M"] {
         assert!(!line.contains(gauge), "{gauge} left the footer: {line}");
     }
-    let usage = strip_terminal_control_sequences(&repl_usage_line(&footer, 120));
+    let usage = strip_terminal_control_sequences(&repl_usage_line(&footer, 0, 120));
     assert_eq!(
         usage.trim_start(),
         "42 tok/s · 21.7k/1M(2.2%) · Σ180.1k",
         "{usage}"
     );
     // 窄了先丢速度，上下文表撑到最后。
-    let narrow = strip_terminal_control_sequences(&repl_usage_line(&footer, 30));
+    let narrow = strip_terminal_control_sequences(&repl_usage_line(&footer, 0, 30));
     assert_eq!(narrow.trim_start(), "21.7k/1M(2.2%) · Σ180.1k", "{narrow}");
     assert!(
         usage.starts_with(' ') && !usage.ends_with(' '),

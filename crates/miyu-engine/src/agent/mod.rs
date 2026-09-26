@@ -4,6 +4,7 @@ mod control;
 mod history;
 mod images;
 mod input;
+mod instruction_source;
 mod interrupted_replay;
 mod platform_port;
 pub use platform_port::PlatformTurn;
@@ -27,11 +28,12 @@ pub use tool_report::tool_output_succeeded;
 pub use context::archive_and_delete_visible_turns;
 pub use control::{
     AgentTurnControl, QueueIngressBarrier, QueueIngressReservation, RedoPromptInput,
-    TurnSupersedeSignal,
+    TurnCompactRequest, TurnSupersedeSignal,
 };
 // 平台侧的 PDF 工具要问同一个能力判定,不能自己另写一份"池吃不吃 PDF"。
 pub use images::active_text_pool_supports_pdf;
 use images::*;
+use instruction_source::*;
 use interrupted_replay::*;
 use journal::*;
 use prompt::*;
@@ -42,6 +44,8 @@ use turn_state::*;
 mod compact;
 mod compact_analysis;
 mod compact_extras;
+mod compact_structure;
+mod compact_transcript;
 mod conversation;
 mod describe;
 pub(crate) mod overflow;
@@ -71,8 +75,8 @@ use miyu_core::memory::{
 };
 use miyu_core::persona_hint;
 use miyu_core::state::{
-    QueuedPrompt, QueuedPromptAttachment, RedoCandidate, RedoInputKind, StateStore,
-    TurnRedoCheckpointPayload,
+    QueuedPrompt, QueuedPromptAttachment, RedoCandidate, RedoInputKind, StateStore, TurnCompletion,
+    TurnFinishExtras, TurnRedoCheckpointPayload,
 };
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -130,6 +134,13 @@ pub enum AgentEvent {
         name: String,
         message: String,
     },
+    /// 前台子代理此刻的样子：窥视、词元、子会话（会话项目第 4 段之二）。子会话里的过程
+    /// 不再原样转成工具进度，界面只画状态行那一行，点它切进子会话看全程。
+    SubagentProgress {
+        call_id: String,
+        name: String,
+        status: tools::subagent::status::SubagentStatus,
+    },
     CommandOutput {
         call_id: String,
         name: String,
@@ -183,6 +194,9 @@ pub enum AgentEvent {
         /// 刚结束这次请求实际应答的端点,供日志/前端标注(08-24 需求)。
         provider_id: Option<String>,
         model: Option<String>,
+        /// 会话树(这条会话 + 名下子代理)一共断过几次缓存(09-25,`llm::cache_break`),
+        /// footer 挂在 C% 后面。
+        cache_breaks: u64,
     },
     SpinnerTick,
     CompactStart,
@@ -269,13 +283,6 @@ struct PreparedUserInput {
     content: String,
     message: ChatMessage,
     hints: Vec<ChatMessage>,
-}
-
-/// Output of a `task` call executed in the parallel group.
-struct GroupTaskOutput {
-    output: String,
-    /// Persistable tool report, extracted at completion.
-    report: Option<String>,
 }
 
 impl Agent {

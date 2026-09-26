@@ -26,6 +26,7 @@ impl OpenAiCompatibleClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
             let sent_thinking_blocks = messages.iter().any(|message| {
                 message.thinking_signature.is_some()
@@ -77,7 +78,9 @@ impl OpenAiCompatibleClient {
                     "Anthropic Messages 流式请求失败"
                 )
             )
-            .context(HttpStatusFailure::classify(status.as_u16(), &body)));
+            .context(
+                HttpStatusFailure::classify(status.as_u16(), &body).with_retry_after(retry_after),
+            ));
         }
 
         self.consume_anthropic_stream(response, on_chunk).await
@@ -97,11 +100,14 @@ impl OpenAiCompatibleClient {
             ),
             variant_extra,
         );
+        let tool_choice = (self.tool_choice_none && !tools.is_empty())
+            .then(|| serde_json::json!({ "type": "none" }));
         AnthropicRequest {
             model: self.provider.default_model.clone(),
             system: lower_anthropic_system(&messages),
             messages: lower_anthropic_messages(messages),
             tools: (!tools.is_empty()).then(|| lower_anthropic_tools(tools)),
+            tool_choice,
             stream: true,
             max_tokens: self
                 .max_tokens_override
@@ -120,20 +126,21 @@ impl OpenAiCompatibleClient {
         stage: &'static str,
     ) -> Result<reqwest::Response> {
         let url = format!("{}/messages", self.provider.base_url.trim_end_matches('/'));
+        let body = with_cache_breakpoints(serde_json::to_value(request)?);
         crate::llm::request_log::record(
             &self.provider.id,
             &self.provider.default_model,
             "anthropic",
             self.request_scope,
             &url,
-            request,
+            &body,
         );
         self.send_with_transport_retry(request_id, stage, || {
             self.client
                 .post(&url)
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
-                .json(request)
+                .json(&body)
         })
         .await
     }
@@ -241,7 +248,9 @@ impl OpenAiCompatibleClient {
             instructions: None,
             previous_response_id: previous_response_id.map(str::to_string),
             stream: true,
+            tool_choice: (self.tool_choice_none && !tools.is_empty()).then_some("none"),
             tools: (!tools.is_empty()).then(|| lower_responses_tools(tools)),
+            prompt_cache_key: self.prompt_cache_key(),
             reasoning: self.responses_reasoning(),
             temperature: Some(self.provider.effective_temperature()),
             extra_body,
@@ -284,6 +293,7 @@ impl OpenAiCompatibleClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
             if responses_unsupported(status.as_u16(), &body) {
                 return Ok(None);
@@ -292,7 +302,9 @@ impl OpenAiCompatibleClient {
                 "{} ({status}): {body}",
                 t("responses stream request failed", "Responses 流式请求失败")
             )
-            .context(HttpStatusFailure::classify(status.as_u16(), &body)));
+            .context(
+                HttpStatusFailure::classify(status.as_u16(), &body).with_retry_after(retry_after),
+            ));
         }
 
         let dsml = dsml_enabled_for(&self.provider);
@@ -388,4 +400,51 @@ impl OpenAiCompatibleClient {
         )
         .map(Some)
     }
+}
+
+/// Anthropic 官方接口不打 `cache_control` 就完全不缓存（09-24，对照 opencode 的默认策略）。
+/// 三个断点：最后一件工具、system、对话尾巴（最后一条消息的最后一个内容块）。
+/// 上限是 4 个；思考块不能打，往前找；用户在 extra_body 里自己配了 `cache_control`
+/// 的请求原样不动。
+pub(in crate::llm::openai_compatible) fn with_cache_breakpoints(mut body: Value) -> Value {
+    if body.get("cache_control").is_some() {
+        return body;
+    }
+    let mark = || serde_json::json!({ "type": "ephemeral" });
+    if let Some(last_tool) = body
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .and_then(|tools| tools.last_mut())
+        .and_then(Value::as_object_mut)
+    {
+        last_tool.insert("cache_control".to_string(), mark());
+    }
+    if let Some(system) = body
+        .get("system")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        body["system"] = serde_json::json!([
+            { "type": "text", "text": system, "cache_control": mark() }
+        ]);
+    }
+    if let Some(block) = body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .and_then(|messages| messages.last_mut())
+        .and_then(|message| message.get_mut("content"))
+        .and_then(Value::as_array_mut)
+        .and_then(|blocks| {
+            blocks.iter_mut().rev().find(|block| {
+                !matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("thinking" | "redacted_thinking")
+                )
+            })
+        })
+        .and_then(Value::as_object_mut)
+    {
+        block.insert("cache_control".to_string(), mark());
+    }
+    body
 }

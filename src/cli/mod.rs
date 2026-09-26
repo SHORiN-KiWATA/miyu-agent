@@ -51,6 +51,7 @@ mod model_cmds;
 mod pm_cmds;
 mod pop_cmds;
 mod repl;
+mod repl_history;
 mod select;
 mod shell_bridge;
 mod stt;
@@ -99,6 +100,10 @@ use repl::tail::{
 };
 use repl::wake::follow_wake_run;
 use repl::width::{truncate_visible_width, visible_width, wrap_visible_width};
+use repl_history::{
+    legacy_repl_history_file, load_persistent_repl_history, persist_repl_history_entry,
+    read_repl_history_file,
+};
 
 use miyu_engine::tools::build_tool_registry;
 use miyu_hosts::render;
@@ -519,68 +524,6 @@ fn reload_repl_config(
     Ok(())
 }
 
-const REPL_HISTORY_CAP: usize = 200;
-
-/// 一个会话一个历史文件。
-///
-/// 以前是全局一个 `state/repl-history.jsonl`，所有会话混在一起——上键会翻出
-/// 别的会话里敲的东西。会话 id 形如 `sess_1787036807476_a188fc33`，本来就是
-/// 安全的文件名，但它来自库里的字符串，还是过一遍白名单：一个 `../` 就能把
-/// 写入指到 state 目录外面去。
-fn repl_history_file(paths: &MiyuPaths, session_id: &str) -> PathBuf {
-    let safe = session_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    paths
-        .state_dir
-        .join("repl-history")
-        .join(format!("{safe}.jsonl"))
-}
-
-/// 分会话之前的那个全局文件。**只读不写**：老记录都在里面，直接丢掉用户会
-/// 觉得「历史没了」。新条目一律写进会话文件。
-fn legacy_repl_history_file(paths: &MiyuPaths) -> PathBuf {
-    paths.state_dir.join("repl-history.jsonl")
-}
-
-fn read_repl_history_file(path: &std::path::Path) -> Vec<ReplHistoryEntry> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    content
-        .lines()
-        .filter_map(ReplHistoryEntry::parse_line)
-        .filter(|entry| !entry.display.trim().is_empty())
-        .collect()
-}
-
-/// Prompt history that survives /reset and restarts: a per-session
-/// append-only file, capped on load. Conversation resets delete turns, so the
-/// file is the durable source; the turns-derived list only seeds sessions that
-/// predate it.
-fn load_persistent_repl_history(paths: &MiyuPaths, session_id: &str) -> Vec<ReplHistoryEntry> {
-    let path = repl_history_file(paths, session_id);
-    let mut entries = read_repl_history_file(&path);
-    if entries.len() > REPL_HISTORY_CAP {
-        entries = entries.split_off(entries.len() - REPL_HISTORY_CAP);
-        // Opportunistic rewrite keeps the file from growing without bound.
-        let rewritten = entries
-            .iter()
-            .filter_map(ReplHistoryEntry::to_json_line)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let _ = std::fs::write(&path, rewritten + "\n");
-    }
-    entries
-}
-
 /// 会话内输入历史的容量上限:REPL 常开数天时防无界增长,超限丢最老。
 const REPL_HISTORY_LIMIT: usize = 500;
 
@@ -590,27 +533,6 @@ fn push_history_capped(history: &mut Vec<ReplHistoryEntry>, entry: ReplHistoryEn
         let excess = history.len() - REPL_HISTORY_LIMIT;
         history.drain(..excess);
     }
-}
-
-fn persist_repl_history_entry(paths: &MiyuPaths, session_id: &str, entry: &ReplHistoryEntry) {
-    if entry.display.trim().is_empty() {
-        return;
-    }
-    let Some(line) = entry.to_json_line() else {
-        return;
-    };
-    let path = repl_history_file(paths, session_id);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut file| {
-            use std::io::Write as _;
-            writeln!(file, "{line}")
-        });
 }
 
 struct LiveSubmission {
@@ -810,6 +732,8 @@ enum LiveReplOutcome {
     SwitchMode(PersonaLane),
     /// Tab(非空会话)/ Shift+Tab:切只读模式(09-23)。
     ToggleReadonly,
+    /// 点了任务条上的会话行：切进那条子代理会话，或者回去（会话项目第 3 段）。
+    Strip(crate::cli::repl::strip::StripAction),
 }
 
 fn repl_history_is_clean(

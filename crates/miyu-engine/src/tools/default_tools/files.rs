@@ -44,15 +44,14 @@ pub(crate) fn read_file(args: Value) -> Result<String> {
             .cloned()
             .collect::<Vec<_>>();
         let next = (start + selected.len() < entries.len()).then_some(offset + selected.len());
-        return Ok(serde_json::to_string_pretty(&json!({
-            "type": "directory-page",
-            "path": path.display().to_string(),
-            "offset": offset,
-            "limit": limit,
-            "truncated": next.is_some(),
-            "next": next,
-            "entries": selected,
-        }))?);
+        let header = page_header(
+            &format!("{}/", path.display().to_string().trim_end_matches('/')),
+            "entries",
+            offset,
+            offset + selected.len().saturating_sub(1),
+            next,
+        );
+        return Ok(format!("{header}\n{}", selected.join("\n")));
     }
     let metadata = std::fs::metadata(&path)?;
     if !metadata.is_file() {
@@ -93,15 +92,26 @@ pub(crate) fn read_file(args: Value) -> Result<String> {
     }
     // Pagination cursor before the bulky content: truncating consumers
     // (platform tool logs cap at 2400 chars) must still see truncated/next.
-    Ok(serde_json::to_string_pretty(&json!({
-        "type": "text-page",
-        "path": path.display().to_string(),
-        "offset": offset,
-        "limit": limit,
-        "truncated": next.is_some(),
-        "next": next,
-        "content": lines.join("\n"),
-    }))?)
+    // 纯文本（09-24，对照 opencode）：正文塞进 JSON 字符串会把每个换行和引号都转义，
+    // 实测同样的内容多出一成多 token。旧回合里的 JSON 形态照旧逐字节回放。
+    let header = page_header(
+        &path.display().to_string(),
+        "lines",
+        offset,
+        offset + lines.len().saturating_sub(1),
+        next,
+    );
+    Ok(format!("{header}\n{}", lines.join("\n")))
+}
+
+/// 读取结果的第一行：读的是什么、这一页是哪一段、后面还有没有。
+fn page_header(path: &str, unit: &str, first: usize, last: usize, next: Option<usize>) -> String {
+    let mut header = format!("[{path} · {unit} {first}-{last}");
+    match next {
+        Some(next) => header.push_str(&format!(" · more below, continue with offset={next}]")),
+        None => header.push_str(" · end]"),
+    }
+    header
 }
 
 pub(in crate::tools) fn trash_paths(args: Value, progress: ToolProgress) -> Result<String> {

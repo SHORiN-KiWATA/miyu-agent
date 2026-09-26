@@ -51,6 +51,20 @@ pub(in crate::cli) async fn handle_live_post_turn_overflow(
     Ok(None)
 }
 
+/// daemon 记下的事件时刻（Unix 毫秒）换算成本机的 `Instant`，喂给渲染器的事件时钟
+/// （`StreamRenderer::set_event_clock`）。同一台机器上墙上时钟是同一个；比现在还晚
+/// （时钟被往回拨过）就当是现在。
+pub(in crate::cli) fn event_instant(at_ms: Option<u64>) -> Option<Instant> {
+    let at_ms = at_ms?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let age = u64::try_from(now_ms.saturating_sub(u128::from(at_ms))).unwrap_or(u64::MAX);
+    let now = Instant::now();
+    Some(now.checked_sub(Duration::from_millis(age)).unwrap_or(now))
+}
+
 pub(in crate::cli) fn handle_live_agent_event(
     live: &mut LiveReplTail,
     renderer: &mut render::StreamRenderer,
@@ -58,16 +72,25 @@ pub(in crate::cli) fn handle_live_agent_event(
 ) -> Result<()> {
     let event = match event {
         AgentEvent::Chunk(chunk) => {
-            live.queue_stream_chunk(chunk);
+            live.queue_stream_chunk(chunk, renderer.event_clock());
             return Ok(());
         }
         AgentEvent::RoundUsage {
-            round, turn, speed, ..
+            round,
+            turn,
+            cumulative,
+            speed,
+            cache_breaks,
+            ..
         } => {
+            live.cache_breaks = cache_breaks;
             // 一次模型请求刚结束:立即刷新 footer 计量,不等整个回合。
             // prompt+completion 即该请求结束时的上下文实际占用。
             let context_tokens = round.prompt_tokens.saturating_add(round.completion_tokens);
-            return live.refresh_round_usage(context_tokens, turn, speed);
+            // 这次请求报的会话累计里已经有跑完的前台子代理了：先从实时加数里撤掉。
+            renderer.absorb_settled_subagents();
+            live.set_live_turn_tokens(renderer.running_subagent_tokens());
+            return live.refresh_round_usage(context_tokens, turn, cumulative, speed);
         }
         event => event,
     };
@@ -157,11 +180,7 @@ pub(in crate::cli) async fn run_live_agent_turn(
 ) -> Result<Option<miyu_core::llm::ChatResult>> {
     renderer.use_external_cursor_control();
     renderer.use_buffered_output();
-    let mut raw = if std::mem::take(&mut live.raw_mode_handoff) {
-        LiveRawMode::adopt()
-    } else {
-        LiveRawMode::start()?
-    };
+    let (mut raw, _) = live.take_raw_guard()?;
     live.external_output_active = false;
     if !live.rendered {
         live.resume_at(live.output_cursor)?;

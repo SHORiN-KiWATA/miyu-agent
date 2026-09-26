@@ -13,12 +13,15 @@ pub(crate) const PENDING_PLACEHOLDER: &str = "<system-reminder>上一轮prompt�
 pub(crate) const INTERRUPTED_TEXT: &str =
     "<system-reminder>上一轮prompt已被中断，除非用户重新要求否则不要处理上一轮的prompt</system-reminder>";
 
-/// Budget for a finished turn's display transcript. Generous enough for a
-/// normal turn's prose plus a handful of tool blocks, small enough that a
-/// session's worth of them stays cheap to load.
+/// Budget for the tool and thinking entries of a finished turn's display
+/// transcript: enough for a handful of tool blocks, small enough that a page
+/// of turns stays cheap to load. Prose does not count against it and is kept
+/// whole (a long reply used to replay cut at 2048 chars, 09-25).
 pub(crate) const REPLAY_JOURNAL_MAX_CHARS: usize = 8 * 1024;
 
-/// Per-entry clamp so one runaway tool result cannot eat the whole budget.
+/// Per-entry clamp for tool arguments and output, so one runaway tool result
+/// cannot eat the whole budget. Before 09-25 it clamped prose too; snapshots
+/// from then are healed on read (`heal_clipped_reply`).
 pub(crate) const REPLAY_ENTRY_MAX_CHARS: usize = 2 * 1024;
 
 /// 思考正文进回放时的上限。比别的条目紧：一轮可能想好几段，而整份流水账只有
@@ -101,6 +104,34 @@ impl TurnStatus {
             _ => Self::Running,
         }
     }
+}
+
+/// 回合完成时写进 `turns` 的正文与用量。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnCompletion<'a> {
+    pub content: &'a str,
+    pub reasoning: Option<&'a str>,
+    pub provider_id: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub tokens: TurnTokens,
+    pub token_usage_estimated: bool,
+}
+
+/// 回合收尾时和完成标记一起写的东西（09-25 合进同一个事务）。
+///
+/// 原来是完成之后再分四笔写：完成那一笔同时删掉流水，工具流、上下文锚点、输出速度、
+/// 持久上下文各写一笔。中途崩溃会留下「已完成、流水已删、工具流还是上一个检查点」
+/// 的轮，下一轮回放就少了最后几步工具。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnFinishExtras<'a> {
+    /// 这一轮最后一次请求的真实上下文占用。照写，None 写 NULL（同 `set_turn_context_end`）。
+    pub context_end: Option<u64>,
+    /// 输出速度样本 (tokens, ms)。None 不动那两列。
+    pub generation: Option<(u64, u64)>,
+    /// 最终工具流。None 不动，留着检查点写的那份。
+    pub tool_flow: Option<&'a [ToolFlowRound]>,
+    /// 追加进 `turn_tool_reports` 的持久上下文。
+    pub persisted_contexts: &'a [String],
 }
 
 /// Deterministic per-turn tool footprint. BTreeSet: sorted, deduplicated,
@@ -611,10 +642,32 @@ pub struct PlatformMemeRefCount {
     pub last_seen_at: String,
 }
 
+/// daemon 替会话起、终端没挂上就跑完的那一轮（后台任务报告、跨会话消息、重启续跑），
+/// REPL 闲着时从库里补印。
+#[derive(Clone, Debug, Default)]
+pub struct BackgroundReportRow {
+    pub seq: i64,
+    pub turn_id: String,
+    /// 给人看的那一行（`[后台任务完成] …`、跨会话消息的外壳……）。
+    pub display_content: String,
+    pub reply: String,
+    /// 后台任务报告附的结果段，铃铛那一行点开看（09-26）。
+    pub job_report: Option<crate::state::JobReportResult>,
+    /// 收尾那行 `✻` 要的：谁答的、起止时刻、是不是被打断（报错的轮不画）。
+    pub assistant_model: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub status: String,
+}
+
 /// One replayable turn: the prompt echo plus either its ordered transcript or,
 /// for turns predating the transcript column, just the final reply.
-#[derive(Clone, Debug, Default)]
+/// 可序列化：跑着的那一轮由 daemon 经 IPC 补给挂上来的终端（`turn.catchup`）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TurnReplay {
+    /// 这一轮在会话里的序号。往前翻页时拿它当游标（`session_replay_page` 的
+    /// `before_seq`）。
+    pub seq: i64,
     /// What the user saw as the prompt — or, for a wake turn, the
     /// `[后台任务完成] …` headline.
     pub display_content: String,
@@ -632,4 +685,21 @@ pub struct TurnReplay {
     /// 这一轮被中断了（Ctrl+C／断线）。回放时照画它说到一半的话，尾巴上那段给
     /// 模型看的 `<system-reminder>` 去掉，末尾标一行「已中断」。
     pub interrupted: bool,
+    /// 主会话派给子代理的任务（子代理会话的第一轮）。回放时画成「来自主会话的任务」
+    /// 那一块，不是用户气泡。老 daemon 补过来的没有这一项，当 false。
+    #[serde(default)]
+    pub from_parent: bool,
+    /// 后台任务唤醒的那一轮：唤醒里附的结果段（子代理结论、失败原因、命令输出结尾）。
+    /// 铃铛那一行点开看的就是它（09-26）。
+    #[serde(default)]
+    pub job_report: Option<crate::state::JobReportResult>,
+    /// 这一轮开始、结束的时刻（RFC 3339）。收尾那行「✻ 模型 · 处理了多久 · 几点完成」
+    /// 从它们算（09-26）；还在跑的那一轮没有结束时刻，不画收尾行。
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    /// 收尾行的动词按它挑（同一轮每次画都是同一个词）。
+    #[serde(default)]
+    pub turn_id: String,
 }

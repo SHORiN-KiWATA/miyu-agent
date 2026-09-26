@@ -260,6 +260,12 @@ fn repaint_epoch(live: &LiveReplTail) -> u64 {
         .map_or(0, |screen| screen.repaint_epoch())
 }
 
+/// 整块画一遍面板那几行。回合里开在活动区位置上的面板（`tail::turn_panel`，会话项目
+/// 第 3 段 B4）用它：那块位置每一帧都跟着活动区重新布局，没有上一版可比。
+pub(in crate::cli) fn paint_panel(panel: &Panel, bar: &str, lines: &[String]) -> Result<()> {
+    Canvas::default().paint(panel, bar, lines, 0, true)
+}
+
 fn expire_toast(live: &mut LiveReplTail) -> bool {
     live.screen
         .as_mut()

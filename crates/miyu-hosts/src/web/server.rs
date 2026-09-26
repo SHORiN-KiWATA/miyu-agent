@@ -13,7 +13,7 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     tools::jobs::init(&paths);
     // 子代理断点续传落盘目录(09-12):检查点写盘,daemon 重启后 resume_id 仍有效。
     tools::subagent_runner::init_checkpoint_dir(&paths);
-    let state_store = StateStore::new(&paths)?;
+    let state_store = StateStore::open_maintained(&paths)?;
     state_store.init_files()?;
     // 子代理会话化(09-18):上个进程里没跑完的子代理任务标 interrupted,不自动续——
     // 用户到任务条里点进去回复即续。成员库在第一次打开时各标各的(StoreRegistry)。
@@ -93,6 +93,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
             state_store.session_id().to_string(),
         )]),
         runs_changed: Arc::new(tokio::sync::Notify::new()),
+        compact_requests: HashMap::new(),
+        live_turns: HashMap::new(),
     }));
     if let Some(pending_context) = pending_context {
         let manager = manager.clone();
@@ -177,16 +179,21 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     // 监督器盯着子会话每轮结束判「任务完没完」。
     install_subagent_host(&state);
     spawn_subagent_supervisor(state.clone());
+    spawn_subagent_activity_tracker(state.clone());
     // 上一个 daemon 死掉或关停时没跑完的回合：投递、平台、子代理宿主都装好之后接着跑
     // （09-24 断点续跑）。
     spawn_restart_resumes(&state);
     // 脚本查宿主信息的一次性令牌只由 daemon 签发。
     crate::runtime::enable_host_grants();
+    // MCP 服务器进程常驻只在 daemon 里开（09-25）：单次 CLI 每次调用照旧新起、用完就收。
+    miyu_engine::tools::enable_mcp_pool();
     voice_bridge::spawn_if_enabled(&state);
     // 目标续轮驱动器。启动时故意**不**恢复任何自动续跑：目标还在库里，但
     // 「是否自动跑」驻内存、重启即失，必须由人 `/goal resume` 重新授权。
     // 不然一次崩溃重启就能让机器在无人看管的情况下继续自己开轮。
     spawn_goal_round_driver(state.clone());
+    // 回合跑着时敲的 `/compact` 没被那一轮取走的，回合退场后补压（09-25）。
+    spawn_queued_compact_driver(state.clone());
     // QQ 定时消息:常驻 tick 循环,每个 tick 现读配置,启停/改表无需重启。
     crate::platforms::plugins::scheduled_messages::spawn_scheduled_message_worker(state.clone());
     let app = router(state.clone());
@@ -249,6 +256,8 @@ pub async fn run(paths: MiyuPaths, args: WebArgs) -> Result<()> {
     voice_bridge::shutdown();
     // 常驻的 agy 进程各在自己的进程组里,不收就成孤儿。
     miyu_core::llm::shutdown_relay_processes().await;
+    // 常驻的 MCP 服务器进程同样各在自己的进程组里：关 stdin、SIGTERM、SIGKILL 依次收。
+    miyu_engine::tools::shutdown_mcp_pool().await;
     state.platforms.qq_listener.shutdown(&state).await;
     ipc_task.abort();
     let _ = ipc_task.await;
@@ -331,6 +340,15 @@ pub(in crate::web) async fn follow_run(
             }
         };
         if record.kind == "resync_required" {
+            // 事件环追不回这一轮的开头：回合还在跑，就从库里的流水补到现在，再接实时。
+            if let Some((resume_at, catchup)) =
+                follow_catchup::catch_up_from_journal(state, &run_id)
+            {
+                ipc::send(stream, &catchup).await?;
+                subscription = state.events.subscribe_after(resume_at);
+                last_id = resume_at;
+                continue;
+            }
             ipc::send(
                 stream,
                 &IpcFrame::error("Miyu core event history was exhausted"),
@@ -339,10 +357,7 @@ pub(in crate::web) async fn follow_run(
             break;
         }
         last_id = record.id;
-        let Ok(mut data) = serde_json::from_str::<Value>(&record.data) else {
-            continue;
-        };
-        if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
+        if record.run_id.as_deref() != Some(run_id.as_str()) {
             // 补发一轮已经结束的记录时，缓冲里夹着别的轮的事件是常态：跳过
             // 就是了，不能在这儿 break——一 break 就把本轮还没补完的尾巴切掉。
             // 补发的收口在上面「pending 空了就 break」那一处。
@@ -362,6 +377,9 @@ pub(in crate::web) async fn follow_run(
             }
             continue;
         }
+        let Ok(mut data) = serde_json::from_str::<Value>(&record.data) else {
+            continue;
+        };
         let terminal = matches!(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"
@@ -373,8 +391,9 @@ pub(in crate::web) async fn follow_run(
             stream,
             &IpcFrame::Event {
                 id: record.id,
-                kind: record.kind,
+                kind: record.kind.clone(),
                 data,
+                at_ms: Some(record.at_ms),
             },
         )
         .await?;
@@ -417,6 +436,8 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/linkcards.js", get(linkcards_js_asset))
         .route("/todos.js", get(todos_js_asset))
         .route("/crosssession.js", get(crosssession_js_asset))
+        .route("/turnend.js", get(turnend_js_asset))
+        .route("/subagents.js", get(subagents_js_asset))
         .route("/sessionselect.js", get(sessionselect_js_asset))
         .route("/selectionmenu.js", get(selectionmenu_js_asset))
         .route("/highlight.js", get(highlight_js_asset))
@@ -707,6 +728,10 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         )
         .route("/api/sessions/{session_id}/turns", get(session_turns_http))
         .route("/api/sessions/{session_id}/todos", get(session_todos_http))
+        .route(
+            "/api/sessions/{session_id}/subagents",
+            get(session_subagents_http),
+        )
         .route("/api/sessions/{session_id}/goal", get(session_goal_http))
         .route(
             "/api/sessions/{session_id}/context",
@@ -757,7 +782,6 @@ pub(in crate::web) fn router(state: DaemonState) -> Router {
         .route("/api/usage/clear", post(usage_clear_web))
         .route("/api/jobs/{job_id}", delete(stop_job_http))
         .route("/api/jobs/{job_id}/log", get(job_log_http))
-        .route("/api/jobs/{job_id}/trace", get(job_trace_http))
         // OneBot v11 reverse-WS endpoint: NapCat connects here as a WS
         // client. Gated by platforms.qq config, not web auth.
         .route("/ws", get(platforms::onebot::onebot_ws_on_web_port))
@@ -933,39 +957,9 @@ pub(in crate::web) async fn bootstrap(
         .is_none()
         .then_some(running_target.as_ref())
         .flatten();
-    let mut assets_by_turn = HashMap::<String, Vec<ImageAsset>>::new();
-    for asset in store.load_image_assets().map_err(ApiError::internal)? {
-        assets_by_turn
-            .entry(asset.turn_id.clone())
-            .or_default()
-            .push(asset);
-    }
-    let mut artifacts_by_turn = HashMap::<String, Vec<ArtifactAsset>>::new();
-    for artifact in store.load_artifact_assets().map_err(ApiError::internal)? {
-        artifacts_by_turn
-            .entry(artifact.turn_id.clone())
-            .or_default()
-            .push(artifact);
-    }
-    let generation_by_turn = store
-        .load_turn_generation(&current_session)
+    // 首屏只给最近一页，往上翻到顶再补（会话项目第 2 段）。
+    let page = safe_turn_page(&store, &current_session, None, Some(WEB_TURN_PAGE))
         .map_err(ApiError::internal)?;
-    let turns = store
-        .load_turns()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .filter(|turn| !turn.is_summary)
-        .map(|turn| {
-            let assets = assets_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let artifacts = artifacts_by_turn.remove(&turn.turn_id).unwrap_or_default();
-            let mut safe = SafeTurn::from_turn(turn, assets, artifacts);
-            if let Some((tokens, millis)) = generation_by_turn.get(&safe.id) {
-                safe.generation_tokens = *tokens;
-                safe.generation_ms = *millis;
-            }
-            safe
-        })
-        .collect();
     let usage = state
         .state_store
         .usage_snapshot()
@@ -1011,7 +1005,10 @@ pub(in crate::web) async fn bootstrap(
         active_run_id,
         running_turn_id,
         external_queue_available,
-        turns,
+        turns: page.turns,
+        older: page.older,
+        tokens_before: page.tokens_before,
+        first_user_content: page.first_user_content,
         queued_prompts,
         models: safe_models(&config),
         display: web_display_config(&config),

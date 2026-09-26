@@ -6,6 +6,7 @@
 
 use crate::cli::repl::editor::*;
 use crate::cli::repl::tail::*;
+use crate::cli::repl::turn_end::{show_turn_end, turn_end_model, turn_started_instant};
 use crate::cli::*;
 
 /// Attach to a daemon-initiated wake turn and render it live: streaming
@@ -103,12 +104,18 @@ pub(in crate::cli) async fn follow_wake_run(
             // 擦掉重画，开着的浮层跟着闪一下（用户实测：后台任务完成时已经开着
             // 的浮层会鬼畜抖动一下）。
             if !header.is_empty() {
-                let glyph = miyu_hosts::render::timeline::glyph_notice();
+                // 后台任务报告起的这一轮：铃铛那一行点得开，看唤醒附的结果段（09-26）。
                 let text = header.trim_start_matches('⚙').trim_start();
-                let line = miyu_hosts::render::timeline::indent_body(&format!(
-                    "\x1b[2m{glyph} {text}\x1b[0m\r\n\r\n"
-                ));
-                live.apply_output_frame(line.as_bytes())?;
+                let report = turn_id
+                    .as_deref()
+                    .and_then(|turn_id| turn_job_report(paths, turn_id));
+                let mut line = Vec::new();
+                miyu_hosts::render::timeline::write_job_report_notice(
+                    &mut line,
+                    text,
+                    report.as_ref(),
+                )?;
+                live.apply_output_frame(&line)?;
             }
         } else {
             live.suspend()?;
@@ -142,8 +149,43 @@ pub(in crate::cli) async fn follow_wake_run(
     // 这条 REPL 自己没起轮，但屏幕上正在流内容，报 idle 是骗人的。守卫在这段
     // 结束时（跑完 / 脱离 / 中断）报回 idle。
     let herdr_follow = herdr::TurnGuard::begin(session_id);
-    let mut raw = LiveRawMode::start()?;
+    // 上一段交接过来的 raw 接着用，不另开一把（见 `take_raw_guard`）。原来这里总是
+    // 另开：回合循环切走时交出来的那份没人认领，这把一放终端就回到回显模式，交接标记
+    // 却还立着——回到空闲的会话，输入循环认领它，坐在 cooked 的终端上收不到键（09-26）。
+    let (mut raw, _) = live.take_raw_guard()?;
+    // 这一段不管从哪个口子离开，raw 都交给下一段：切会话、执行命令的那几百毫秒里终端
+    // 要是回到回显模式，敲的键就被回显到屏上（`one_shot.rs` 的 `handoff_raw!` 同理）。
+    macro_rules! handoff_raw {
+        () => {
+            raw.handoff();
+            live.raw_mode_handoff = true;
+        };
+    }
+    // 点了任务条上的会话行、时间线上子代理那一行，或者方向键停在会话行上回车（会话项目
+    // 第 3 段）：这一轮留在 daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一
+    // 条路。
+    macro_rules! suspend_for_strip {
+        () => {
+            if let Some(action) = live.take_strip_action() {
+                // 要切走了：收尾这一帧和后面的清屏回放攒成一帧（09-25，同 `one_shot.rs`）。
+                crate::cli::repl::tail::begin_frame_hold();
+                renderer.finish()?;
+                live.stop_footer_spinner()?;
+                live.apply_renderer_frame(&mut renderer)?;
+                handoff_raw!();
+                return Err(anyhow::Error::new(
+                    crate::cli::repl::session::RemoteTurnSuspended {
+                        action: crate::cli::repl::session::SuspendedAction::Strip(action),
+                        run_id: run_id.to_string(),
+                        last_event_id,
+                        session_id: session_id.to_string(),
+                    },
+                ));
+            }
+        };
+    }
 
+    let mut last_frame_at = std::time::Instant::now();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(33));
     spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     spinner_tick.tick().await;
@@ -151,6 +193,10 @@ pub(in crate::cli) async fn follow_wake_run(
     input_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     input_tick.tick().await;
     let mut follow_strip_tick: u32 = 0;
+    // 这一轮怎么结束的（是不是被打断、哪个模型答的），收尾那行 `✻` 用。
+    let mut ended: Option<(bool, String, String)> = None;
+    let mut round_model = String::new();
+    let mut round_provider = String::new();
 
     'outer: loop {
         // 装箱而不是 `tokio::pin!`：取到这一帧就把它放掉，分发表里提问那一支
@@ -173,6 +219,51 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                     let event = event::read()?;
                     crate::cli::repl::input::hurry_pending_input(&mut input_tick)?;
+                    // 回合里开着的面板（B4）：按键归它，正文照流。面板里挑了别的会话
+                    // 就借暂离那条路把它带回 `RemoteRepl` 去切。
+                    if live.turn_panel_takes(&event) {
+                        use crate::cli::repl::midturn_panel::{turn_panel_event, HostedPanel};
+                        let mut scope = crate::cli::repl::midturn_panel::TurnScope {
+                            session_id,
+                            run_id,
+                            renderer: &mut renderer,
+                            herdr: Some(&herdr_follow),
+                        };
+                        if let Some(HostedPanel::SwitchSession(state)) =
+                            turn_panel_event(paths, live, &event, &mut scope).await?
+                        {
+                            crate::cli::repl::tail::begin_frame_hold();
+                            renderer.finish()?;
+                            live.stop_footer_spinner()?;
+                            live.apply_renderer_frame(&mut renderer)?;
+                            handoff_raw!();
+                            return Err(anyhow::Error::new(
+                                crate::cli::repl::session::RemoteTurnSuspended {
+                                    action: crate::cli::repl::session::SuspendedAction::SwitchSession(
+                                        state,
+                                    ),
+                                    run_id: run_id.to_string(),
+                                    last_event_id,
+                                    session_id: session_id.to_string(),
+                                },
+                            ));
+                        }
+                        continue;
+                    }
+                    // 方向键先看命令候选和任务条（会话项目第 3 段），排在下面拦回车之前：
+                    // 任务条上回车是点那一行，不是发消息。
+                    if matches!(
+                        live.navigate_key(&event)?,
+                        crate::cli::repl::tail::Navigated::Done
+                    ) {
+                        suspend_for_strip!();
+                        if !live.external_output_active {
+                            synchronized_terminal_update(CursorAfterUpdate::Preserve, || {
+                                live.redraw()
+                            })?;
+                        }
+                        continue;
+                    }
                     // 斜杠命令在**编辑器处理回车之前**拦：编辑器一旦处理
                     // Enter 就会清空缓冲区，「输入原样留着」就成了空话——
                     // 显示滞留旧文本，下一次按键才暴露缓冲区其实已经空了。
@@ -286,41 +377,32 @@ pub(in crate::cli) async fn follow_wake_run(
                                     // `one_shot.rs` 那条泵同一份处理。
                                     DuringTurn::Panel if live.screen.is_some() => {
                                         live.editor.clear();
-                                        use crate::cli::repl::midturn_panel::{
-                                            host_panel, HostedPanel,
-                                        };
-                                        match host_panel(
-                                            paths,
-                                            live,
-                                            &mut renderer,
-                                            command,
-                                            session_id,
+                                        crate::cli::repl::midturn_panel::open_turn_panel(
+                                            paths, live, command, session_id,
                                         )
-                                        .await?
-                                        {
-                                            HostedPanel::Stayed => continue,
-                                            HostedPanel::SwitchSession(state) => {
-                                                renderer.finish()?;
-                                                live.stop_footer_spinner()?;
-                                                live.apply_renderer_frame(&mut renderer)?;
-                                                return Err(anyhow::Error::new(
-                                                    crate::cli::repl::session::RemoteTurnSuspended {
-                                                        action: crate::cli::repl::session::SuspendedAction::SwitchSession(state),
-                                                        run_id: run_id.to_string(),
-                                                        last_event_id,
-                                                        session_id: session_id.to_string(),
-                                                    },
-                                                ));
-                                            }
-                                        }
+                                        .await?;
+                                        continue;
+                                    }
+                                    // 像插话一样排进这一轮（09-25），同 `one_shot.rs`。
+                                    DuringTurn::Queue => {
+                                        live.editor.clear();
+                                        crate::cli::repl::midturn_panel::queue_turn_command(
+                                            paths, live, command, session_id,
+                                        )
+                                        .await?;
+                                        continue;
                                     }
                                     // 行内 REPL 没有面板：`Panel` 退回分离那条路。
                                     DuringTurn::Panel | DuringTurn::Detach => {
                                         let args = args.trim().to_string();
                                         live.editor.clear();
+                                        if miyu_core::slash_commands::switches_session(command, &args) {
+                                            crate::cli::repl::tail::begin_frame_hold();
+                                        }
                                         renderer.finish()?;
                                         live.stop_footer_spinner()?;
                                         live.apply_renderer_frame(&mut renderer)?;
+                                        handoff_raw!();
                                         return Err(anyhow::Error::new(
                                             crate::cli::repl::session::RemoteTurnSuspended {
                                                 action: crate::cli::repl::session::SuspendedAction::Command {
@@ -341,6 +423,7 @@ pub(in crate::cli) async fn follow_wake_run(
                     if live.handle_screen_event(&event)? {
                         // 浮层里按了 x：跟着别处起的回合时也当场停（见 `job_stop`）。
                         stop_pending_job(paths, jobs_feed, live).await?;
+                        suspend_for_strip!();
                         continue;
                     }
                     match live.editor.handle_event(event, paths, true)? {
@@ -379,7 +462,14 @@ pub(in crate::cli) async fn follow_wake_run(
                             // 续轮在 daemon 里继续跑：用户面对的是一个看起来
                             // 停了、`/goal` 却说「进行中」、还在烧额度的幽灵轮。
                             // 其他后台唤醒保持仅脱离——那些回合不是它发起的。
-                            if label == miyu_engine::tools::goal::GOAL_ROUND_LABEL {
+                            //
+                            // 切进子代理会话时跟着的是子代理自己那一轮，Ctrl+C 也是「停」：
+                            // daemon 按子代理会话的规矩连它名下的孙代理、后台命令一起收
+                            // （09-26 用户拍板）。原来这儿只脱离，子代理和孙代理在 daemon
+                            // 里照跑（用户：Ctrl+C 关掉了子代理，孙代理没停下）。
+                            if label == miyu_engine::tools::goal::GOAL_ROUND_LABEL
+                                || !live.visits.is_empty()
+                            {
                                 let _ = send_ipc_command(
                                     paths,
                                     IpcCommand::Cancel {
@@ -400,8 +490,18 @@ pub(in crate::cli) async fn follow_wake_run(
                         }
                     }
                 }
-                frame = &mut recv => break frame?,
+                frame = &mut recv => {
+                    last_frame_at = std::time::Instant::now();
+                    break frame?;
+                }
                 _ = spinner_tick.tick() => {
+                    // 切过来挂上的这一轮，补发的那一阵画完了（一小会儿没有新帧）：
+                    // 攒着的切换画面整段放出去（09-25，见 `begin_frame_hold`）。
+                    if crate::cli::repl::tail::frame_hold_active()
+                        && last_frame_at.elapsed() >= crate::cli::repl::tail::CATCH_UP_QUIET
+                    {
+                        crate::cli::repl::tail::release_frame_hold()?;
+                    }
                     // SpinnerTick 经 live 路径冲刷 chunk 缓冲，流式输出靠它。
                     handle_live_agent_event(live, &mut renderer, AgentEvent::SpinnerTick)?;
                     // 状态条是 live tail 的一部分，附着期间同样要持续刷新。
@@ -424,12 +524,16 @@ pub(in crate::cli) async fn follow_wake_run(
             }
         };
         drop(recv);
-        if let Some(IpcFrame::Event { id, .. }) = &frame {
+        if let Some(IpcFrame::Event { id, at_ms, .. }) = &frame {
             last_event_id = *id;
+            // 事件时钟停在这个事件上，直到下一个事件（补发的一轮按事件自己的时刻掐表）。
+            renderer.set_event_clock(crate::cli::repl::live_turn::event_instant(*at_ms));
         }
         let Some(IpcFrame::Event { kind, data, .. }) = frame else {
             break;
         };
+        // 这一帧发生的时刻（事件时钟），思考几种事件的 `received_at` 用它。
+        let event_at = renderer.event_now();
         match kind.as_str() {
             "turn.started" => {
                 turn_id = Some(ipc_text(&data, "turn_id").to_string());
@@ -449,6 +553,10 @@ pub(in crate::cli) async fn follow_wake_run(
                     } else if let Some(attempt) = miyu_core::state::service_restart_attempt(&said) {
                         // daemon 重启后接着跑的这一轮（09-24）：一行提示，不是谁说的话。
                         live.show_restart_notice(attempt)?;
+                    } else if turn_from_parent(paths, turn_id.as_deref()) {
+                        // 切进子会话时它正跑着第一轮：开头那句是主会话派的任务（会话项目
+                        // 第 3 段），和回放画成同一块。
+                        live.show_parent_task(&said, config.display.cross_session_preview_lines)?;
                     } else if !said.trim().is_empty() {
                         let cols = crate::cli::terminal_cols();
                         let mut echo = submitted_echo_lines(live.mode(), &said, cols).join("\r\n");
@@ -473,6 +581,31 @@ pub(in crate::cli) async fn follow_wake_run(
                     }
                 }
             }
+            // 事件环追不回这一轮的开头时，daemon 从库里的流水补一份到现在为止的样子
+            //（会话项目第 3 段）。按回放那一套画出来，之后的实时事件接着往下写。
+            "turn.catchup" => {
+                turn_id = Some(ipc_text(&data, "turn_id").to_string());
+                let replay = data
+                    .get("replay")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                if let Some(replay) = replay {
+                    let (cols, _) = crate::cli::history_replay::replay_viewport();
+                    let frame = crate::cli::history_replay::session_replay_frame(
+                        std::slice::from_ref(&replay),
+                        live.mode(),
+                        &config,
+                        cols,
+                        false,
+                    )?;
+                    live.apply_output_frame(&frame)?;
+                }
+                if !waiting_started {
+                    renderer.start_waiting()?;
+                    live.apply_renderer_frame(&mut renderer)?;
+                    waiting_started = true;
+                }
+            }
             "assistant.delta" => handle_live_agent_event(
                 live,
                 &mut renderer,
@@ -493,28 +626,28 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.reset" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_start" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartStart {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.part_end" => handle_live_agent_event(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningPartEnd {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             "reasoning.title" => handle_live_agent_event(
@@ -556,6 +689,15 @@ pub(in crate::cli) async fn follow_wake_run(
                     call_id: ipc_text(&data, "tool_id").to_string(),
                     name: ipc_text(&data, "name").to_string(),
                     message: ipc_text(&data, "message").to_string(),
+                },
+            )?,
+            "subagent.progress" => handle_live_agent_event(
+                live,
+                &mut renderer,
+                AgentEvent::SubagentProgress {
+                    call_id: ipc_text(&data, "tool_id").to_string(),
+                    name: ipc_text(&data, "name").to_string(),
+                    status: miyu_hosts::runtime::subagent_status_from(&data),
                 },
             )?,
             "tool.output" => handle_live_agent_event(
@@ -649,7 +791,8 @@ pub(in crate::cli) async fn follow_wake_run(
                     .unwrap_or_default();
                 let consumed_mode = PersonaLane::from_mode_word(Some(ipc_text(&data, "mode")));
                 // 同 `one_shot.rs`：收尾 → 通知行 → 空行。
-                let notices = live.take_queued_notices(&prompt_ids);
+                let mut notices = live.take_queued_notices(&prompt_ids);
+                fill_job_reports(paths, &mut notices);
                 let visible = live.has_queued(&prompt_ids);
                 if !notices.is_empty() || visible {
                     renderer.prepare_for_external_output()?;
@@ -670,18 +813,26 @@ pub(in crate::cli) async fn follow_wake_run(
             // 直连模式也有(走本地事件),唯独日常的「终端连 daemon」要等整
             // 个回合结束才动。
             "chat.round_usage" => {
+                // 被打断的轮收尾时写哪个模型：run.cancelled 里没有，记最近一次请求的。
+                let model = ipc_text(&data, "model");
+                if !model.is_empty() {
+                    round_model = model.to_string();
+                    round_provider = ipc_text(&data, "provider_id").to_string();
+                }
+                // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
+                live.cache_breaks = ipc_u64(&data, "cache_breaks");
                 let usage = data.get("usage").cloned().unwrap_or_default();
                 // prompt+completion 即该请求结束时的上下文实际占用,与
                 // 本地事件那条路取同一个口径。
                 let context_tokens = ipc_u64(&usage, "prompt_tokens")
                     .saturating_add(ipc_u64(&usage, "completion_tokens"));
+                // 这次请求报的会话累计里已经有跑完的前台子代理了：先从实时加数里撤掉。
+                renderer.absorb_settled_subagents();
+                live.set_live_turn_tokens(renderer.running_subagent_tokens());
                 live.refresh_round_usage(
                     context_tokens,
-                    TurnTokens {
-                        total: ipc_u64(&data, "turn_total"),
-                        prompt: ipc_u64(&data, "turn_prompt"),
-                        cache_read: ipc_u64(&data, "turn_cache_read"),
-                    },
+                    round_turn_tokens(&data),
+                    round_session_tokens(&data),
                     GenerationSpeed {
                         tokens: ipc_u64(&data, "turn_generation_tokens"),
                         millis: ipc_u64(&data, "turn_generation_ms"),
@@ -692,7 +843,7 @@ pub(in crate::cli) async fn follow_wake_run(
                 live,
                 &mut renderer,
                 AgentEvent::ReasoningReset {
-                    received_at: Instant::now(),
+                    received_at: event_at,
                 },
             )?,
             // daemon 自己开的轮里模型也会提问（目标续轮最常见）。这一条以前
@@ -714,7 +865,36 @@ pub(in crate::cli) async fn follow_wake_run(
                 )
                 .await?;
             }
+            // 别处先答了 / 关了这一轮正开着的那道题（另一个终端、网页）。
+            "question.answered" | "question.closed" => {
+                crate::cli::repl::question_flow::settle_question_layer(
+                    live,
+                    &mut renderer,
+                    &kind,
+                    &data,
+                    Some(&herdr_follow),
+                )?;
+            }
+            // 排着的 `/compact` 开始做了：排队区那一行撤掉（09-25）。
+            "context.compact_start" => live.drop_compact_marker()?,
             "run.completed" | "run.failed" | "run.cancelled" => {
+                // 收尾那行 `✻`：说完的写「完成」、被打断的写「中断」，报错的不画（回放也没有它）。
+                ended = match kind.as_str() {
+                    "run.completed" => Some((
+                        false,
+                        ipc_text(&data, "provider_id").to_string(),
+                        ipc_text(&data, "model").to_string(),
+                    )),
+                    "run.cancelled" => Some((true, round_provider.clone(), round_model.clone())),
+                    _ => None,
+                };
+                // 没走到检查点就收场的，守护进程事后补压。
+                live.drop_compact_marker()?;
+                crate::cli::repl::question_flow::abandon_question_layer(
+                    live,
+                    &mut renderer,
+                    Some(&herdr_follow),
+                )?;
                 break;
             }
             _ => {}
@@ -726,8 +906,26 @@ pub(in crate::cli) async fn follow_wake_run(
     live.flush_pending_chunks(&mut renderer)?;
     renderer.finish()?;
     live.apply_renderer_frame(&mut renderer)?;
-    raw.handoff();
-    live.raw_mode_handoff = true;
+    if let Some((interrupted, provider, model)) = &ended {
+        let elapsed = live.turn_elapsed();
+        // 混合模型池的「本次供应商 / 模型」写在收尾那行的模型位置上（用户 09-26）。
+        let model = turn_end_model(
+            paths,
+            &config,
+            session_id,
+            Some(provider.as_str()),
+            Some(model.as_str()),
+        );
+        show_turn_end(
+            paths,
+            live,
+            turn_id.as_deref(),
+            model.as_deref(),
+            elapsed,
+            *interrupted,
+        )?;
+    }
+    handoff_raw!();
     // Suppress the duplicate DB report for a turn that was rendered live.
     if let Some(turn_id) = turn_id {
         let mut rendered = jobs_shared.rendered_turns.lock().unwrap();
@@ -739,16 +937,37 @@ pub(in crate::cli) async fn follow_wake_run(
     Ok(())
 }
 
-/// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。
-fn turn_started_instant(paths: &MiyuPaths, turn_id: &str) -> Option<std::time::Instant> {
-    let started = StateStore::new(paths)
+/// 这一轮是不是主会话派给子代理的任务（子会话的第一轮）。读不到库就当不是。
+/// `chat.round_usage` 里这一回合至今的累计。
+pub(in crate::cli) fn round_turn_tokens(data: &serde_json::Value) -> TurnTokens {
+    TurnTokens {
+        total: ipc_u64(data, "turn_total"),
+        prompt: ipc_u64(data, "turn_prompt"),
+        cache_read: ipc_u64(data, "turn_cache_read"),
+    }
+}
+
+/// `chat.round_usage` 里这条会话（连同名下子代理）至今的累计：已落库的各回合 + 本回合
+/// 至今。footer 的 Σ 直接取它（见 `ReplFooterStatus::apply_round_usage`）。
+pub(in crate::cli) fn round_session_tokens(data: &serde_json::Value) -> TurnTokens {
+    TurnTokens {
+        total: ipc_u64(data, "cumulative_tokens"),
+        prompt: ipc_u64(data, "cumulative_prompt_tokens"),
+        cache_read: ipc_u64(data, "cumulative_cache_read_tokens"),
+    }
+}
+
+fn turn_from_parent(paths: &MiyuPaths, turn_id: Option<&str>) -> bool {
+    turn_id.is_some_and(|turn_id| {
+        StateStore::new(paths).is_ok_and(|store| store.turn_from_parent(turn_id).unwrap_or(false))
+    })
+}
+
+/// 后台任务唤醒那一轮附的结果段，库打不开就当没有。
+fn turn_job_report(paths: &MiyuPaths, turn_id: &str) -> Option<miyu_core::state::JobReportResult> {
+    StateStore::new(paths)
         .ok()?
-        .turn_started_at(turn_id)
+        .turn_job_report(turn_id)
         .ok()
-        .flatten()?;
-    let started = chrono::DateTime::parse_from_rfc3339(&started).ok()?;
-    let ago = (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
-        .to_std()
-        .unwrap_or_default();
-    std::time::Instant::now().checked_sub(ago)
+        .flatten()
 }

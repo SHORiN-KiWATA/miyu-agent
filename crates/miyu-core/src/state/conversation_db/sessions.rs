@@ -503,6 +503,27 @@ impl ConversationDb {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// `root` 名下(不含它自己)每一条子代理会话和它的任务状态,先浅后深。任务条上
+    /// 「开发中（+3）」那个数要数其中没到终态的(09-26)。
+    pub fn descendant_task_states(&self, root: &str) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "WITH RECURSIVE tree(session_id, level) AS (
+                 SELECT session_id, 1 FROM sessions
+                  WHERE parent_session_id = ?1 AND kind = 'subagent'
+                 UNION ALL
+                 SELECT child.session_id, tree.level + 1
+                   FROM sessions child JOIN tree ON child.parent_session_id = tree.session_id
+                  WHERE child.kind = 'subagent'
+             )
+             SELECT tree.session_id, sessions.task_state
+               FROM tree JOIN sessions ON sessions.session_id = tree.session_id
+              ORDER BY tree.level ASC, tree.session_id ASC",
+        )?;
+        let rows = stmt.query_map(params![root], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// 直系子代理里还没到终态(running / waiting)的有几条。子代理「任务完成」的判据之一。
     pub fn pending_child_sessions(&self, parent_session_id: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
@@ -797,55 +818,6 @@ impl ConversationDb {
                 session_record_from_row,
             )
             .optional()?)
-    }
-
-    /// Deletes subagent audit sessions older than the retention window;
-    /// their turns/images/queues cascade away.
-    pub fn delete_subagent_sessions_older_than(&self, days: i64) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // 与 delete_ask_sessions_older_than 同理:queued_prompts.session_id
-        // 经 ALTER 而来没有级联外键,必须先手动清,否则留孤儿行。
-        tx.execute(
-            "DELETE FROM queued_prompts WHERE session_id IN (
-                 SELECT session_id FROM sessions
-                 WHERE kind = 'subagent'
-                   AND datetime(updated_at) < datetime('now', '-' || ?1 || ' days'))",
-            params![days],
-        )?;
-        let deleted = tx.execute(
-            "DELETE FROM sessions
-             WHERE kind = 'subagent'
-               AND datetime(updated_at) < datetime('now', '-' || ?1 || ' days')",
-            params![days],
-        )?;
-        tx.commit()?;
-        Ok(deleted)
-    }
-
-    /// Deletes abandoned one-shot sessions older than the retention window. A
-    /// `miyu ask` turn deletes its own session; anything still here was
-    /// orphaned by a client that died mid-turn (Ctrl+C, SIGKILL).
-    pub fn delete_ask_sessions_older_than(&self, hours: i64) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // queued_prompts.session_id arrived via ALTER and has no cascading FK,
-        // so its rows have to go first (same reason as `delete_session`).
-        tx.execute(
-            "DELETE FROM queued_prompts WHERE session_id IN (
-                 SELECT session_id FROM sessions
-                 WHERE kind = ?1
-                   AND datetime(updated_at) < datetime('now', '-' || ?2 || ' hours'))",
-            params![crate::state::ASK_SESSION_KIND, hours],
-        )?;
-        let deleted = tx.execute(
-            "DELETE FROM sessions
-             WHERE kind = ?1
-               AND datetime(updated_at) < datetime('now', '-' || ?2 || ' hours')",
-            params![crate::state::ASK_SESSION_KIND, hours],
-        )?;
-        tx.commit()?;
-        Ok(deleted)
     }
 
     pub(crate) fn update_session_field(

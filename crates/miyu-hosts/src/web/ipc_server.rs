@@ -123,20 +123,6 @@ async fn dispatch_ipc_connection(
             ipc::send(&mut stream, &IpcFrame::Ack).await?;
             let _ = state.shutdown_tx.send(());
         }
-        IpcCommand::JobTrace { job_id, after } => {
-            // 任务没了（跑完清掉、或 daemon 重启过）：回空 + `reset`，让面板退回
-            // 读日志那条路。
-            let (markers, cursor, reset) = tools::jobs::job_trace_after(&job_id, after)
-                .unwrap_or_else(|| (Vec::new(), 0, true));
-            ipc::send(
-                &mut stream,
-                &IpcFrame::AdminResult {
-                    state: session_state(&state.manager, &state.state_store)?,
-                    data: json!({ "markers": markers, "cursor": cursor, "reset": reset }),
-                },
-            )
-            .await?;
-        }
         IpcCommand::JobsOverview => {
             let (wake_runs, peer_runs) = {
                 let manager = state.manager.lock().unwrap();
@@ -244,7 +230,19 @@ async fn dispatch_ipc_connection(
             .await?;
         }
         IpcCommand::StopSessionJobs { session_id } => {
-            let stopped = tools::jobs::stop_session_jobs(&session_id).await;
+            // 闲着按 Ctrl+C（有后台活时那一级）、删会话之前：连它名下各层子代理一起停（09-26）。
+            // 主会话也按整棵树停——原来只停它自己名下的任务，靠停子代理的镜像任务顺带停那一支；
+            // 可子代理被打断过、又在它自己的会话里接着聊起了新的孙代理，镜像任务早收了，任务条上
+            // 还列着它，Ctrl+C 却一个都停不到（用户 09-26）。
+            //
+            // 后台任务当场停、当场回话；各层的轮在后台一起收——它们退场要等，等完再回话的话子代理一
+            // 多，终端就卡在这儿（用户 09-26：打断的时候会卡住）。
+            let (stopped, descendants) = stop_subtree_jobs(&state, &session_id).await;
+            let background = state.clone();
+            let root = session_id.clone();
+            tokio::spawn(async move {
+                settle_subtree_runs(&background, &root, &descendants).await;
+            });
             state
                 .events
                 .publish("job.acknowledged", json!({ "session_id": session_id }));
@@ -680,6 +678,18 @@ async fn dispatch_ipc_connection(
                 }
             };
             let session_id: Arc<str> = record.session_id.into();
+            // 回合跑着：排进这一轮，回合在下一个检查点压（09-25，见 `compact_queue`）。
+            if queue_compact_if_running(&state, &session_id) {
+                ipc::send(
+                    &mut stream,
+                    &IpcFrame::AdminResult {
+                        state: session_state_for(&state, &session_id)?,
+                        data: json!({ "queued": true }),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
             reserve_admin_for_session(&state.manager, &session_id)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let (reply, receiver) = oneshot::channel();
@@ -709,6 +719,7 @@ async fn dispatch_ipc_connection(
                         id: event_id,
                         kind,
                         data,
+                        at_ms: None,
                     },
                 )
                 .await?;
@@ -1230,12 +1241,12 @@ pub(in crate::web) async fn handle_ipc_turn(
             break;
         }
         last_id = record.id;
+        if record.run_id.as_deref() != Some(run_id.as_str()) {
+            continue;
+        }
         let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
             continue;
         };
-        if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
-            continue;
-        }
         let terminal = matches!(
             record.kind.as_str(),
             "run.completed" | "run.failed" | "run.cancelled"
@@ -1244,8 +1255,9 @@ pub(in crate::web) async fn handle_ipc_turn(
             stream,
             &IpcFrame::Event {
                 id: record.id,
-                kind: record.kind,
+                kind: record.kind.clone(),
                 data,
+                at_ms: Some(record.at_ms),
             },
         )
         .await?;

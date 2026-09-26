@@ -48,9 +48,9 @@ use miyu_base::config::{
     QqGroupJoinApprovalPluginSettings, QqMemeCollectorPluginSettings,
     QqMessageHistoryPluginSettings, RealContextIdentityMapping, RealContextPluginSettings,
     MAX_COMMAND_OUTPUT_LINES, MAX_CROSS_SESSION_PREVIEW_LINES, MAX_PLATFORM_COMMAND_PREFIX_CHARS,
-    MAX_PLATFORM_SESSION_QUEUED, MAX_PLATFORM_SESSION_RUNNING, MAX_REPL_REPLAY_TURNS,
-    MAX_THINKING_SCROLL_LINES, QQ_GROUP_JOIN_APPROVAL_PLUGIN_ID, QQ_MEME_COLLECTOR_PLUGIN_ID,
-    QQ_MESSAGE_HISTORY_PLUGIN_ID, REAL_CONTEXT_PLUGIN_ID,
+    MAX_PLATFORM_SESSION_QUEUED, MAX_PLATFORM_SESSION_RUNNING, MAX_THINKING_SCROLL_LINES,
+    QQ_GROUP_JOIN_APPROVAL_PLUGIN_ID, QQ_MEME_COLLECTOR_PLUGIN_ID, QQ_MESSAGE_HISTORY_PLUGIN_ID,
+    REAL_CONTEXT_PLUGIN_ID,
 };
 use miyu_base::default_models::{OPENCODE_DEFAULT_VISION_MODEL, OPENCODE_PROVIDER_ID};
 use miyu_base::i18n::{is_zh, text as t};
@@ -151,8 +151,8 @@ impl Drop for TerminalSession {
 /// 保存成功后把用量账本里改过名的供应商 id 一起改掉。
 ///
 /// 不放在改 id 的那一刻:用户可能改完不保存就退出。TUI 是独立进程,daemon 可能
-/// 同时在往账本追加——这是 `usage::record_usage_at` 注释里说过的跨进程竞态,
-/// 接受。账本改失败不阻断保存,配置已经落盘了。
+/// 同时在往账本追加;账本在库里(`state/usage.db`),改名是一条 UPDATE,和追加
+/// 互不覆盖。账本改失败不阻断保存,配置已经落盘了。
 fn sync_usage_ledger_after_save(
     paths: &MiyuPaths,
     pristine_config: Option<&String>,
@@ -162,13 +162,17 @@ fn sync_usage_ledger_after_save(
     else {
         return;
     };
-    let path = paths
-        .state_dir
-        .join(miyu_core::state::usage::USAGE_HISTORY_FILE);
+    let ledger = match miyu_core::state::usage::ledger(&paths.state_dir) {
+        Ok(ledger) => ledger,
+        Err(error) => {
+            tracing::warn!(error = %error, "opening the usage ledger failed");
+            return;
+        }
+    };
     for (old, new) in
         miyu_base::config::detect_provider_renames(&before.providers, &config.providers)
     {
-        match miyu_core::state::usage::rename_provider(&path, &old, &new) {
+        match ledger.rename_provider(&old, &new) {
             Ok(rows) => tracing::info!(
                 old = %old,
                 new = %new,

@@ -4,7 +4,7 @@ use super::*;
 
 impl super::super::LiveReplTail {
     /// 重画一帧（正文 + 活动区）。
-    fn repaint_screen(&mut self) -> Result<()> {
+    pub(in crate::cli::repl::tail) fn repaint_screen(&mut self) -> Result<()> {
         let cursor = self.output_cursor;
         // 拖选重画是自己的帧：中间没人插手，走 diff。
         self.resume_at_own(cursor)
@@ -169,10 +169,7 @@ impl super::super::LiveReplTail {
             if matches!(mouse.kind, MouseEventKind::Moved) {
                 // 底部任务条那几行在正文区之外,单独判:悬在哪一条上那一条就不 dim
                 // (用户 09-18:任务条行悬浮没有高亮)。
-                let strip_hover = (self.job_strip_rows > 0 && row >= self.job_strip_start)
-                    .then(|| usize::from(row - self.job_strip_start).checked_sub(1))
-                    .flatten()
-                    .filter(|index| *index < self.jobs.len());
+                let strip_hover = self.strip_index_at(row);
                 if strip_hover != self.job_hover {
                     self.job_hover = strip_hover;
                     self.tick_job_strip()?;
@@ -236,9 +233,10 @@ impl super::super::LiveReplTail {
                         .screen
                         .as_mut()
                         .and_then(super::super::screen::Screen::selection_finish);
-                    // 点在后台状态行上：开那个任务的日志面板。状态行在活动区
-                    // 里，不在正文缓冲里，所以走单独的命中判断。
-                    if self.open_job_overlay_at(row)? {
+                    // 点在任务条上：会话行切进那条会话（或者回去），后台命令开
+                    // 日志面板。任务条在活动区里，不在正文缓冲里，所以走单独的
+                    // 命中判断。
+                    if self.activate_strip_row_at(row)? {
                         return Ok(true);
                     }
                     if let Some(row) = click {
@@ -257,15 +255,19 @@ impl super::super::LiveReplTail {
                             self.repaint_screen()?;
                             return Ok(true);
                         }
-                        if let Some(screen) = &mut self.screen {
-                            if let Some((id, _)) = screen.block_at(row) {
-                                // 子代理点开的是覆盖层，不是就地展开。
-                                if miyu_hosts::render::blocks::is_overlay(id) {
-                                    screen.open_overlay(id);
-                                } else {
-                                    screen.toggle_block(id);
-                                }
-                            }
+                        let block = self
+                            .screen
+                            .as_ref()
+                            .and_then(|screen| screen.block_at(row))
+                            .map(|(id, _)| id);
+                        // 子代理是一条会话（09-18）：点它那一行就切进去看、接着聊
+                        // （会话项目第 3 段）。别的块就地展开。
+                        let linked = block.and_then(miyu_hosts::render::blocks::linked_session);
+                        if let Some(session) = linked {
+                            self.pending_strip_action =
+                                Some(crate::cli::repl::strip::StripAction::Visit(session));
+                        } else if let (Some(id), Some(screen)) = (block, &mut self.screen) {
+                            screen.toggle_block(id);
                         }
                     }
                     self.repaint_screen()?;
@@ -367,9 +369,9 @@ impl super::super::LiveReplTail {
         Ok(true)
     }
 
-    /// 点在后台状态行上就开日志面板。返回真表示这一下被状态行吃掉了。
-    ///
-    fn open_job_overlay_at(&mut self, row: u16) -> Result<bool> {
+    /// 点在任务条上就交给那一行（见 `activate_strip_row`）。返回真表示这一下被任务条
+    /// 吃掉了。
+    fn activate_strip_row_at(&mut self, row: u16) -> Result<bool> {
         if std::env::var_os("MIYU_SCREEN_TRACE").is_some() {
             use std::io::Write as _;
             if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -379,35 +381,17 @@ impl super::super::LiveReplTail {
             {
                 let _ = writeln!(
                     f,
-                    "jobclick row={row} strip_start={} strip_rows={} jobs={}",
+                    "jobclick row={row} strip_start={} strip_rows={} rows={}",
                     self.job_strip_start,
                     self.job_strip_rows,
-                    self.jobs.len()
+                    self.strip_rows().len()
                 );
             }
         }
-        if self.job_strip_rows == 0 || row < self.job_strip_start {
-            return Ok(false);
+        match self.strip_index_at(row) {
+            Some(index) => self.activate_strip_row(index),
+            None => Ok(false),
         }
-        let offset = usize::from(row - self.job_strip_start);
-        if offset >= usize::from(self.job_strip_rows) {
-            return Ok(false);
-        }
-        // `background_job_lines` 头一行是空的分隔行，任务从第二行起。
-        let Some(job) = offset.checked_sub(1).and_then(|index| self.jobs.get(index)) else {
-            return Ok(false);
-        };
-        let Some(path) = job.log_path.clone() else {
-            return Ok(false);
-        };
-        let title = job_panel_title(job);
-        let job_id = job.job_id.clone();
-        let command = job.command.clone();
-        if let Some(screen) = &mut self.screen {
-            screen.open_log_overlay(std::path::PathBuf::from(path), title, Some(job_id), command);
-        }
-        self.repaint_screen()?;
-        Ok(true)
     }
 
     /// 回翻。覆盖层开着时翻的是面板，不是正文——屏幕归谁，翻页就归谁。
@@ -417,6 +401,10 @@ impl super::super::LiveReplTail {
                 screen.scroll_overlay(delta);
             } else {
                 screen.scroll_by(delta);
+                // 翻到顶了，更早的还在库里：往前补一页（会话项目第 2 段）。
+                if delta < 0 {
+                    screen.load_older_at_top();
+                }
             }
         }
         self.repaint_screen()

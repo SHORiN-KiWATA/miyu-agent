@@ -23,14 +23,10 @@ use miyu_base::host_ports::{
 use miyu_core::state::{SubagentTaskState, SUBAGENT_SESSION_KIND};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use std::time::Instant;
 use tokio::sync::oneshot;
 
 /// 子代理树深度上限(用户 09-18 拍板写死):0 主会话、1 子代理、2 孙代理。
 const MAX_SUBAGENT_DEPTH: i64 = 2;
-
-/// 内层事件里单条输出最多带多少字节——与老循环的 `clip_detail` 同口径。
-const MAX_DETAIL_BYTES: usize = 8 * 1024;
 
 /// 追话时子会话的回合可能刚起、`queue_target` 还没就位:等它最多这么久。
 const FOLLOWUP_SETTLE: Duration = Duration::from_secs(3);
@@ -43,7 +39,7 @@ fn waiters() -> &'static Mutex<HashMap<String, oneshot::Sender<SubagentTaskState
     WAITERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn resolve_waiter(session_id: &str, state: SubagentTaskState) {
+pub(in crate::web) fn resolve_waiter(session_id: &str, state: SubagentTaskState) {
     if let Some(sender) = waiters().lock().unwrap().remove(session_id) {
         let _ = sender.send(state);
     }
@@ -404,7 +400,9 @@ async fn run_child_turn(
                 job_wake: false,
                 turn_origin: origin.clone(),
                 job_wake_label: None,
-                first_event_id: None,
+                // 切进子会话的终端要从头补这一轮（会话项目第 3 段）；订阅起点就是
+                // 上面入队前取的那个号。
+                first_event_id: Some(events_after),
             },
         );
     }
@@ -480,21 +478,6 @@ fn child_result(
     }
 }
 
-fn clip_detail(text: &str) -> String {
-    if text.len() <= MAX_DETAIL_BYTES {
-        return text.to_string();
-    }
-    let mut end = MAX_DETAIL_BYTES;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}\n…", &text[..end])
-}
-
-fn field<'a>(data: &'a Value, key: &str) -> &'a str {
-    data.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
 /// 把子会话的回合事件折成老循环那套 `__subagent_*` / `__subtool_*` 标记喂给父回合。
 /// 渲染层(全屏 TUI 浮层、WebUI 子过程时间线、后台任务日志桥)一字不改照旧能画;
 /// 前端改成「切进子会话看」之后这条中继只剩状态行要的那几样。
@@ -509,32 +492,8 @@ async fn relay_child_events(
 ) {
     let mut subscription = state.events.subscribe_after(after);
     let mut runs: HashSet<String> = HashSet::new();
-    let mut reasoning_since: Option<Instant> = None;
-    let mut tool_since: HashMap<String, Instant> = HashMap::new();
-    let mut tool_calls: u64 = 0;
-    // 最近一次轮用量(会话累计)与是否估算:工具一起跑就报一次量,让面板抬头上的
-    // 「工具调用 N 次」当场涨,不等下一轮用量事件(老循环每步都报;TUI 走查 item06)。
-    let mut last_total: u64 = 0;
-    let mut last_estimated = false;
+    let mut markers = ChildMarkers::default();
     let mut last_id = after;
-    let metric = |tool_calls: u64, total: u64, estimated: bool, progress: &SubagentProgressSink| {
-        let tokens = miyu_engine::tools::subagent_runner::format_token_count(total, estimated);
-        let text = if miyu_base::i18n::is_zh() {
-            format!("工具调用 {tool_calls} 次　消耗词元 {tokens}")
-        } else {
-            format!("tool calls: {tool_calls}　token cost: {tokens}")
-        };
-        progress(format!("__subagent_metric__{tokens}\t{total}\t{text}"));
-    };
-    let seal = |since: &mut Option<Instant>, progress: &SubagentProgressSink| {
-        if let Some(started) = since.take() {
-            progress(format!(
-                "{}{}",
-                miyu_engine::tools::subagent::protocol::REASONING_DONE_MARKER,
-                started.elapsed().as_millis()
-            ));
-        }
-    };
     loop {
         let record = if let Some(record) = subscription.pending.pop_front() {
             record
@@ -552,91 +511,29 @@ async fn relay_child_events(
             continue;
         }
         last_id = record.id;
+        let run = record.run_id.as_deref().unwrap_or_default();
+        if record.kind == "run.started" {
+            if record.session_id.as_deref().unwrap_or_default() == child {
+                runs.insert(run.to_string());
+            }
+            continue;
+        }
+        if !runs.contains(run) {
+            continue;
+        }
         let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
             continue;
         };
-        if record.kind == "run.started" {
-            if field(&data, "session_id") == child {
-                runs.insert(field(&data, "run_id").to_string());
-            }
-            continue;
+        for marker in markers.markers(&record.kind, &data) {
+            progress(marker);
         }
-        if !runs.contains(field(&data, "run_id")) {
-            continue;
-        }
-        match record.kind.as_str() {
-            "reasoning.delta" => {
-                let delta = field(&data, "delta");
-                if !delta.is_empty() {
-                    reasoning_since.get_or_insert_with(Instant::now);
-                    progress(format!("__subagent_reasoning__{delta}"));
-                }
+        if matches!(
+            record.kind.as_str(),
+            "run.completed" | "run.failed" | "run.cancelled"
+        ) {
+            if let Some(run_id) = data.get("run_id").and_then(Value::as_str) {
+                runs.remove(run_id);
             }
-            "assistant.delta" => {
-                let delta = field(&data, "delta");
-                if !delta.is_empty() {
-                    seal(&mut reasoning_since, &progress);
-                    progress(format!("__subagent_content__{delta}"));
-                }
-            }
-            "tool.preparing" => {
-                let name = field(&data, "name");
-                if miyu_engine::tools::preparing_phase(name).is_some() {
-                    seal(&mut reasoning_since, &progress);
-                    progress(format!("__subtool_preparing__{name}"));
-                }
-            }
-            "tool.started" => {
-                seal(&mut reasoning_since, &progress);
-                let name = field(&data, "name");
-                tool_since.insert(field(&data, "tool_id").to_string(), Instant::now());
-                tool_calls += 1;
-                progress(format!(
-                    "__subtool_call__{}",
-                    json!({
-                        "name": name,
-                        "display": field(&data, "display_name"),
-                        "args": clip_detail(field(&data, "arguments")),
-                    })
-                ));
-                metric(tool_calls, last_total, last_estimated, &progress);
-            }
-            "tool.finished" => {
-                let name = field(&data, "name");
-                let millis = tool_since
-                    .remove(field(&data, "tool_id"))
-                    .map(|since| since.elapsed().as_millis());
-                progress(format!(
-                    "__subtool_result__{}",
-                    json!({
-                        "name": name,
-                        "display": field(&data, "display_name"),
-                        "args": "",
-                        "ok": data.get("ok").and_then(Value::as_bool).unwrap_or(false),
-                        "ms": millis,
-                        "output": clip_detail(field(&data, "output")),
-                    })
-                ));
-            }
-            "chat.round_usage" => {
-                // 会话累计(含这一轮之前的轮):状态行上要的正是「这个子代理一共烧了多少」。
-                let total = data
-                    .get("cumulative_tokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                let estimated = data
-                    .get("estimated")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                last_total = total;
-                last_estimated = estimated;
-                metric(tool_calls, total, estimated, &progress);
-            }
-            "run.completed" | "run.failed" | "run.cancelled" => {
-                seal(&mut reasoning_since, &progress);
-                runs.remove(field(&data, "run_id"));
-            }
-            _ => {}
         }
     }
 }
@@ -660,10 +557,7 @@ pub(in crate::web) fn spawn_subagent_supervisor(state: DaemonState) {
             ) {
                 continue;
             }
-            let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
-                continue;
-            };
-            let session_id = field(&data, "session_id").to_string();
+            let session_id = record.session_id.clone().unwrap_or_default();
             if session_id.is_empty() {
                 continue;
             }
@@ -741,6 +635,41 @@ fn root_session_of(state: &DaemonState, session_id: &str) -> Option<String> {
     None
 }
 
+/// 名下有回合在跑的会话：跑着回合的会话自己，加上它往上每一层父会话。子代理在跑，主会话
+/// 也算「在跑」——删它会连子代理一起停（`/session` 面板里这种要按两下 Ctrl+D，09-25）。
+pub(in crate::web) fn sessions_with_running_trees(
+    state: &DaemonState,
+) -> std::collections::HashSet<String> {
+    let running: Vec<String> = state
+        .manager
+        .lock()
+        .unwrap()
+        .active_runs
+        .values()
+        .map(|info| info.session_id.to_string())
+        .collect();
+    let mut busy = std::collections::HashSet::new();
+    for session_id in running {
+        let mut current = Some(session_id);
+        // 深度上限同 `root_session_of`：写死到 2，多留点余量防坏数据成环。
+        for _ in 0..4 {
+            let Some(id) = current.take() else { break };
+            if !busy.insert(id.clone()) {
+                break;
+            }
+            current = state
+                .stores
+                .for_session(&id)
+                .session_record(&id)
+                .ok()
+                .flatten()
+                .filter(|record| record.kind == SUBAGENT_SESSION_KIND)
+                .and_then(|record| record.parent_session_id);
+        }
+    }
+    busy
+}
+
 /// reset / 删除会话:沿整棵子代理树停回合、停后台任务、收中转进程、删行(先深后浅),
 /// 根会话自己的后台任务也一并停掉。删会话现状只停回合(不停任务、不收进程),这里
 /// 连根会话的一起补上。
@@ -753,7 +682,7 @@ pub(in crate::web) async fn teardown_subagent_tree(state: &DaemonState, root: &s
             stop_session_runs(state, id, Duration::from_secs(5)).await;
         }
         tools::jobs::stop_session_jobs(id).await;
-        miyu_core::llm::forget_relay_sessions(id);
+        crate::web::forget_session_processes(id);
         let child_store = state.stores.for_session(id);
         if let Err(error) = child_store.delete_session(id) {
             tracing::warn!(session = %id, error = %error, "failed to delete a subagent session");

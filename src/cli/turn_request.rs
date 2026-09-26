@@ -152,6 +152,7 @@ pub async fn resolve_managed_session(paths: &MiyuPaths, target: &str) -> Result<
                 sandbox_read_all: false,
                 mode: state.mode,
                 context_tokens: Some(state.context_tokens),
+                running: false,
             });
         }
     }
@@ -271,6 +272,7 @@ mod tests {
             sandbox: None,
             sandbox_read_all: false,
             mode: "normal".to_string(),
+            running: false,
         }
     }
 

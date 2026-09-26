@@ -315,14 +315,22 @@ pub struct ThinkingVariantPreferences {
     pub(in crate::llm::openai_compatible) provider_renames: Vec<(String, String)>,
 }
 
-/// 档位偏好存在哪一份（09-24：effort 做成会话级）。全局那份按「供应商 + 模型」记，
-/// 成员各有一份（`member_thinking_view`）；会话那份只记这个会话钉住的档位，没钉的
-/// 跟着全局走。会话里选「默认」是钉成模型默认档（[`MODEL_DEFAULT_PIN`]），不是回到
-/// 跟随全局（用户 09-24）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 档位偏好存在哪一份（09-24：effort 做成会话级）。
+///
+/// - 全局那份按「供应商 + 模型」记，放在文件里，成员各有一份（`member_thinking_view`）。
+/// - 会话那份只记这个会话钉住的档位，没钉的跟着全局走。它存在这个会话所在的会话库里
+///   （`SessionValueKind::ThinkingPins`，会话项目第 1 段入库，删会话时一起删），所以
+///   要带上那个库。
+///
+/// 会话里选「默认」是钉成模型默认档（[`MODEL_DEFAULT_PIN`]），不是回到跟随全局
+/// （用户 09-24）。
+#[derive(Debug, Clone, Copy)]
 pub enum ThinkingVariantScope<'a> {
     Global,
-    Session(&'a str),
+    Session {
+        store: &'a crate::state::StateStore,
+        session_id: &'a str,
+    },
 }
 
 /// 会话那份里「钉成模型默认档」的记法：不带任何档位参数，全局设了也不用。和没钉
@@ -334,32 +342,33 @@ const SESSION_PREFERENCES_DIR: &str = "session-thinking-variants";
 
 pub(in crate::llm::openai_compatible) fn thinking_variant_preferences_file(
     paths: &MiyuPaths,
-    scope: ThinkingVariantScope<'_>,
-) -> Result<PathBuf> {
-    match scope {
-        ThinkingVariantScope::Global => Ok(paths.state_dir.join("thinking-variants.json")),
-        ThinkingVariantScope::Session(session_id) => {
-            // 会话 id 进了文件名：只认字母、数字、`_`、`-`，别让它拼出别的路径来。
-            if session_id.is_empty()
-                || !session_id
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-            {
-                bail!("invalid session id for thinking variants: {session_id:?}");
-            }
-            Ok(paths
-                .state_dir
-                .join(SESSION_PREFERENCES_DIR)
-                .join(format!("{session_id}.json")))
-        }
-    }
+) -> PathBuf {
+    paths.state_dir.join("thinking-variants.json")
 }
 
-/// 删会话时顺手删掉它那份档位。没有就算了。
-pub fn remove_session_thinking_variants(paths: &MiyuPaths, session_id: &str) {
-    if let Ok(path) =
-        thinking_variant_preferences_file(paths, ThinkingVariantScope::Session(session_id))
+/// 会话那份入库之前的老文件（本版保留，第一次读写时导进库）。
+pub(in crate::llm::openai_compatible) fn legacy_session_preferences_file(
+    paths: &MiyuPaths,
+    session_id: &str,
+) -> Result<PathBuf> {
+    // 会话 id 进了文件名：只认字母、数字、`_`、`-`，别让它拼出别的路径来。
+    if session_id.is_empty()
+        || !session_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
     {
+        bail!("invalid session id for thinking variants: {session_id:?}");
+    }
+    Ok(paths
+        .state_dir
+        .join(SESSION_PREFERENCES_DIR)
+        .join(format!("{session_id}.json")))
+}
+
+/// 删会话时顺手删掉它那份档位的老文件。没有就算了。库里那份跟着会话级联删除；
+/// `StateStore::delete_session` 也会删这个文件，这里是删会话那条路原有的一步。
+pub fn remove_session_thinking_variants(paths: &MiyuPaths, session_id: &str) {
+    if let Ok(path) = legacy_session_preferences_file(paths, session_id) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -406,11 +415,29 @@ impl ThinkingVariantPreferences {
         Self::load_for_update(paths, scope).unwrap_or_default()
     }
 
+    /// 会话钉住的那份，见 [`ThinkingVariantScope::Session`]。
+    pub fn load_session(store: &crate::state::StateStore, session_id: &str) -> Self {
+        Self::load_pins(store, session_id).unwrap_or_default()
+    }
+
+    fn load_pins(store: &crate::state::StateStore, session_id: &str) -> Result<Self> {
+        let pinned =
+            store.session_value(session_id, crate::state::SessionValueKind::ThinkingPins)?;
+        match pinned {
+            Some(text) => serde_json::from_str(&text)
+                .with_context(|| format!("failed to parse thinking pins of {session_id}")),
+            None => Ok(Self::default()),
+        }
+    }
+
     pub(in crate::llm::openai_compatible) fn load_for_update(
         paths: &MiyuPaths,
         scope: ThinkingVariantScope<'_>,
     ) -> Result<Self> {
-        let path = thinking_variant_preferences_file(paths, scope)?;
+        if let ThinkingVariantScope::Session { store, session_id } = scope {
+            return Self::load_pins(store, session_id);
+        }
+        let path = thinking_variant_preferences_file(paths);
         match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).with_context(|| {
                 format!("failed to parse thinking variant state: {}", path.display())
@@ -465,14 +492,41 @@ impl ThinkingVariantPreferences {
         if self.changes.is_empty() && self.provider_renames.is_empty() {
             return Ok(());
         }
+        if let ThinkingVariantScope::Session { store, session_id } = scope {
+            // 同一个会话可能两处同时在改（终端 /effort 和网页）：读、合、写放在一个
+            // 事务里，只把这次改的那几项合进去。
+            return store.update_session_value(
+                session_id,
+                crate::state::SessionValueKind::ThinkingPins,
+                |current| {
+                    let mut persisted = match current {
+                        Some(text) => serde_json::from_str(&text)?,
+                        None => Self::default(),
+                    };
+                    self.merge_into(&mut persisted);
+                    Ok(serde_json::to_string_pretty(&persisted)?)
+                },
+            );
+        }
 
-        let path = thinking_variant_preferences_file(paths, scope)?;
+        let path = thinking_variant_preferences_file(paths);
         let parent = path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("thinking variant state path has no parent"))?;
         std::fs::create_dir_all(parent)?;
         let _lock = lock_thinking_variant_preferences(paths)?;
         let mut persisted = Self::load_for_update(paths, scope)?;
+        self.merge_into(&mut persisted);
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        temp.write_all(serde_json::to_string_pretty(&persisted)?.as_bytes())?;
+        temp.persist(path).map_err(|error| error.error)?;
+        Ok(())
+    }
+}
+
+impl ThinkingVariantPreferences {
+    /// 把这次的改动（改名、设值、拔钉子）合进读回来的那份，别的项原样留着。
+    fn merge_into(&self, persisted: &mut Self) {
         for (old_id, new_id) in &self.provider_renames {
             rename_thinking_variant_entries(&mut persisted.selected, old_id, new_id);
         }
@@ -483,10 +537,6 @@ impl ThinkingVariantPreferences {
                 persisted.selected.remove(key);
             }
         }
-        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-        temp.write_all(serde_json::to_string_pretty(&persisted)?.as_bytes())?;
-        temp.persist(path).map_err(|error| error.error)?;
-        Ok(())
     }
 }
 
@@ -621,6 +671,9 @@ pub(in crate::llm::openai_compatible) fn anthropic_thinking_config() -> Value {
 /// only to providers known to understand it and strip it everywhere else, so
 /// the transport copy stays byte-identical to the pre-A17 shape on unrelated
 /// endpoints (prompt-cache prefix preserved).
+///
+/// mimo 与 sensenova 是 09-24 用 `testkit/reasoning-passback/probe.py` 实测后加的:
+/// 网关收下这个键并转给了模型(prompt 多出约 20 token)。新加一家先跑这个探针。
 pub(in crate::llm::openai_compatible) fn provider_accepts_reasoning_content(
     provider: &ProviderConfig,
 ) -> bool {
@@ -630,7 +683,16 @@ pub(in crate::llm::openai_compatible) fn provider_accepts_reasoning_content(
         provider.base_url.to_ascii_lowercase(),
         provider.default_model.to_ascii_lowercase()
     );
-    ["deepseek", "glm-", "zhipu", "bigmodel", "kimi", "moonshot"]
-        .iter()
-        .any(|needle| haystack.contains(needle))
+    [
+        "deepseek",
+        "glm-",
+        "zhipu",
+        "bigmodel",
+        "kimi",
+        "moonshot",
+        "mimo",
+        "sensenova",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
 }

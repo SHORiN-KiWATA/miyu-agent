@@ -101,17 +101,14 @@ fn a_short_pause_mid_thought_is_still_thinking() {
     });
 }
 
-/// 收进来的时刻比思考结束晚了一截空档；`Worked for` 要从思考开始算，那截空档
-/// 也是这一轮在干活（模型在写参数），不能漏。
+/// 收进来的时刻比思考结束晚了一截空档；这一段收成「思考了 N 秒」时要从思考开始算，那截
+/// 空档也是这一轮在干活（模型在准备下一句），不能漏。动过手的那一段收缩行不挂耗时（09-26），
+/// 一轮一共花了多久看末尾的 `✻`。
 #[test]
-fn the_silent_gap_still_counts_toward_worked_for() {
+fn the_silent_gap_still_counts_toward_the_thought_summary() {
     with_blocks(|| {
         crate::render::set_cols_override(100);
         let mut renderer = thinking_then_silent(2.0);
-        renderer
-            .write_tool_call("read", r#"{"path":"/tmp/a"}"#)
-            .unwrap();
-        renderer.write_tool_result("read", true, "ok").unwrap();
         renderer
             .write_chunk(ChatStreamChunk {
                 kind: ChatStreamKind::Content,
@@ -120,15 +117,16 @@ fn the_silent_gap_still_counts_toward_worked_for() {
             .unwrap();
         let out = strip_ansi_for_test(&String::from_utf8_lossy(&renderer.take_output_frame()));
         let seconds: f64 = out
-            .split("Worked for ")
+            .split(t("Thought for ", "思考了 "))
             .nth(1)
-            .and_then(|rest| rest.split('s').next())
-            .and_then(|number| number.trim().parse().ok())
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect::<String>()
+            })
+            .and_then(|number| number.parse().ok())
             .unwrap_or_else(|| panic!("没有收缩行:\n{out}"));
-        assert!(
-            seconds >= 2.9,
-            "空档没算进 Worked for（{seconds}s）:\n{out}"
-        );
+        assert!(seconds >= 2.9, "空档没算进收缩行（{seconds}s）:\n{out}");
         crate::render::set_cols_override(0);
     });
 }

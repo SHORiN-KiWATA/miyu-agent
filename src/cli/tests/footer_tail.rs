@@ -63,6 +63,7 @@ fn live_frame_uses_the_gap_only_for_a_terminating_newline() {
 fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
     let config = AppConfig::default();
     let wake = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "[后台任务完成] 子代理完成 82bea3 · 后台测试A".to_string(),
         assistant_content: "跑完了。".to_string(),
         entries: Vec::new(),
@@ -71,8 +72,11 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
+        ..Default::default()
     };
     let typed = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "帮我改一下 README".to_string(),
         assistant_content: "改好了。".to_string(),
         entries: Vec::new(),
@@ -81,6 +85,8 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
         assistant_reasoning: None,
         assistant_provider_id: None,
         assistant_model: None,
+        from_parent: false,
+        ..Default::default()
     };
 
     let frame = session_replay_frame(&[wake], PersonaLane::Active, &config, 80, false).unwrap();
@@ -97,12 +103,166 @@ fn replayed_job_wake_turns_are_not_drawn_as_user_prompts() {
     assert!(!frame.contains('⚙'));
 }
 
+/// 全屏下回放的铃铛那一行点得开，点开是唤醒附的结果段（用户 09-26：「这个内容是可以点击
+/// 展开看到返回内容的」）；没有结果段的还是那一行，inline 的字节不变。
+#[test]
+fn replayed_job_wake_notice_expands_to_what_the_job_returned() {
+    let config = AppConfig::default();
+    let wake = |report: Option<miyu_core::state::JobReportResult>| miyu_core::state::TurnReplay {
+        display_content: "[后台任务完成] 子代理完成 82bea3 · 后台测试A".to_string(),
+        assistant_content: "跑完了。".to_string(),
+        is_synthetic: true,
+        job_report: report,
+        ..Default::default()
+    };
+    let conclusion = Some(miyu_core::state::JobReportResult {
+        kind: miyu_core::state::JobReportKind::Conclusion,
+        body: "结论第一行\n\n**结论第二行**".to_string(),
+    });
+    let block_of = |frame: &str| -> Option<Vec<String>> {
+        let at = frame.find("miyu-block=")? + "miyu-block=".len();
+        let id: u64 = frame[at..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        miyu_hosts::render::blocks::get(id)
+    };
+    super::tui_blocks::with_blocks(|| {
+        let frame = session_replay_frame(
+            &[wake(conclusion.clone())],
+            PersonaLane::Active,
+            &config,
+            80,
+            false,
+        )
+        .unwrap();
+        let frame = String::from_utf8_lossy(&frame).to_string();
+        let expanded = block_of(&frame).expect("the bell line is expandable");
+        let plain: Vec<String> = expanded
+            .iter()
+            .map(|line| miyu_hosts::render::strip_ansi_text(line))
+            .collect();
+        assert!(
+            plain[0].contains("子代理完成 82bea3 · 后台测试A"),
+            "{plain:?}"
+        );
+        assert!(
+            plain.iter().any(|line| line.contains("结论第一行")),
+            "{plain:?}"
+        );
+        assert!(
+            plain
+                .iter()
+                .any(|line| line.contains("结论第二行") && !line.contains("**")),
+            "the conclusion is rendered as prose: {plain:?}"
+        );
+
+        let frame =
+            session_replay_frame(&[wake(None)], PersonaLane::Active, &config, 80, false).unwrap();
+        let frame = String::from_utf8_lossy(&frame).to_string();
+        assert!(
+            block_of(&frame).is_none(),
+            "nothing to expand without a result"
+        );
+        assert!(frame.contains("子代理完成 82bea3 · 后台测试A"));
+    });
+    let frame =
+        session_replay_frame(&[wake(conclusion)], PersonaLane::Active, &config, 80, false).unwrap();
+    let frame = String::from_utf8_lossy(&frame);
+    assert!(frame.contains("\n\x1b[2m⚙ 子代理完成 82bea3 · 后台测试A\x1b[0m\n\n"));
+    assert!(!frame.contains("miyu-block"));
+}
+
+/// 回放的每一轮末尾也有那行 `✻ 模型 · 处理了多久 · 几点完成`（用户 09-26），和实时收尾一个
+/// 样子：被打断的轮写「中断」，不再另起一行「已中断」；库里缺时刻的老轮退回「已中断」那一行；
+/// 还在跑的那一轮（挂上来时补的那一截）没有结束时刻，不画。
+#[test]
+fn replayed_turns_end_with_the_turn_end_line() {
+    let config = AppConfig::default();
+    let turn = |interrupted: bool, finished: Option<&str>| miyu_core::state::TurnReplay {
+        display_content: "第一句走查".to_string(),
+        assistant_content: "回放里的回复".to_string(),
+        assistant_model: Some("stub-b".to_string()),
+        interrupted,
+        turn_id: "turn_1790180210926_acd86d38".to_string(),
+        started_at: Some("2026-09-26T01:49:53+00:00".to_string()),
+        finished_at: finished.map(str::to_string),
+        ..Default::default()
+    };
+    let replay = |turn: miyu_core::state::TurnReplay| {
+        let frame = session_replay_frame(&[turn], PersonaLane::Active, &config, 80, false).unwrap();
+        miyu_hosts::render::strip_ansi_text(&String::from_utf8_lossy(&frame))
+    };
+    let done = replay(turn(false, Some("2026-09-26T01:53:07+00:00")));
+    let line = done
+        .lines()
+        .find(|line| line.starts_with("✻ "))
+        .unwrap_or_else(|| panic!("no end line: {done}"));
+    assert!(line.starts_with("✻ stub-b · "), "{line}");
+    assert!(line.contains(t("3m 14s", "3 分 14 秒")), "{line}");
+    assert!(
+        line.ends_with(t("done", "完成")) || line.contains(t("done at", "完成")),
+        "{line}"
+    );
+    assert!(
+        done.find("回放里的回复").unwrap() < done.find("✻ ").unwrap(),
+        "the end line comes after the reply"
+    );
+
+    let cut = replay(turn(true, Some("2026-09-26T01:53:07+00:00")));
+    assert!(cut.contains(t("stopped at", "中断")), "{cut}");
+    assert!(!cut.contains(t("interrupted", "已中断")), "{cut}");
+
+    let old = replay(turn(true, None));
+    assert!(!old.contains("✻ "), "{old}");
+    assert!(old.contains(t("interrupted", "已中断")), "{old}");
+    assert!(!replay(turn(false, None)).contains("✻ "));
+}
+
+/// 混合模型池时「本次供应商 / 模型」写在收尾那行 `✻` 的模型位置上，不再单独占一行（用户 09-26：
+/// 同一个模型名写了两遍）；库里缺时刻、收尾那行画不出来的老轮才退回单独那一行（下一条测试）。
+#[test]
+fn replayed_mixed_pool_turns_show_the_endpoint_in_the_end_line() {
+    let config = AppConfig::default();
+    let answered = miyu_core::state::TurnReplay {
+        display_content: "第一句走查".to_string(),
+        assistant_content: "回放里的回复".to_string(),
+        assistant_provider_id: Some("stub".to_string()),
+        assistant_model: Some("stub-b".to_string()),
+        turn_id: "turn_1790180210926_acd86d38".to_string(),
+        started_at: Some("2026-09-26T01:49:53+00:00".to_string()),
+        finished_at: Some("2026-09-26T01:53:07+00:00".to_string()),
+        ..Default::default()
+    };
+    let frame = session_replay_frame(&[answered], PersonaLane::Active, &config, 80, true).unwrap();
+    let raw = String::from_utf8_lossy(&frame).to_string();
+    let plain = miyu_hosts::render::strip_ansi_text(&raw);
+    let line = plain
+        .lines()
+        .find(|line| line.starts_with("✻ "))
+        .unwrap_or_else(|| panic!("no end line: {plain}"));
+    assert!(line.starts_with("✻ stub / stub-b · "), "{line}");
+    let separate = crate::cli::model_cmds::mixed_model_endpoint_frame("stub", "stub-b", None);
+    assert!(
+        !raw.contains(&separate),
+        "供应商 / 模型那一行不该再单独画: {plain}"
+    );
+    assert_eq!(
+        plain.matches("stub-b").count(),
+        1,
+        "模型名只写一遍: {plain}"
+    );
+}
+
 /// 混合模型池时回放要补回每轮末尾那行「本次供应商 / 模型」（BUG-05），而且挂在
 /// 回复后面。这件事以前只有 `mixed_endpoint` 走查兜着。
 #[test]
 fn replayed_turns_keep_the_mixed_pool_endpoint_line() {
     let config = AppConfig::default();
     let answered = miyu_core::state::TurnReplay {
+        seq: 0,
         display_content: "第一句走查".to_string(),
         assistant_content: "回放里的回复".to_string(),
         assistant_provider_id: Some("stub".to_string()),
@@ -543,6 +703,14 @@ fn spinner_does_not_resume_tail_during_external_output() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_items: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
+        strip_focus: None,
+        strip_refocus: None,
+        strip_scroll: 0,
+        command_pick: None,
+        turn_panel: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -556,6 +724,8 @@ fn spinner_does_not_resume_tail_during_external_output() {
         row_memo: Default::default(),
         suppress_switch_note: false,
         session_footer_stale: false,
+        reopen_session_picker: None,
+        cache_breaks: 0,
         cumulative_from_poll: false,
         lobby_lane_pending: false,
         jobs: Vec::new(),
@@ -598,6 +768,14 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_strip_start: 0,
         job_strip_rows: 0,
         job_hover: None,
+        strip_items: Vec::new(),
+        visits: Vec::new(),
+        pending_strip_action: None,
+        strip_focus: None,
+        strip_refocus: None,
+        strip_scroll: 0,
+        command_pick: None,
+        turn_panel: None,
         last_mouse_move: None,
         pending_stop_job: None,
         input_cursor: (0, 0),
@@ -611,6 +789,8 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         row_memo: Default::default(),
         suppress_switch_note: false,
         session_footer_stale: false,
+        reopen_session_picker: None,
+        cache_breaks: 0,
         cumulative_from_poll: false,
         lobby_lane_pending: false,
         jobs: Vec::new(),
@@ -620,21 +800,34 @@ fn live_tail_coalesces_adjacent_stream_chunks_and_can_discard_them() {
         job_spinner_started: std::time::Instant::now(),
     };
 
-    for (kind, text) in [
+    // 每一片带着它所在事件的时刻；并成一段后留第一片的（思考转正文就是正文第一片到的那一刻）。
+    let base = std::time::Instant::now();
+    for (index, (kind, text)) in [
         (ChatStreamKind::Reasoning, "one"),
         (ChatStreamKind::Reasoning, " two"),
         (ChatStreamKind::Content, "answer"),
         (ChatStreamKind::Content, " text"),
-    ] {
-        live.queue_stream_chunk(ChatStreamChunk {
-            kind,
-            text: text.to_string(),
-        });
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        live.queue_stream_chunk(
+            ChatStreamChunk {
+                kind,
+                text: text.to_string(),
+            },
+            Some(base + std::time::Duration::from_secs(index as u64)),
+        );
     }
 
     assert_eq!(live.pending_chunks.len(), 2);
-    assert_eq!(live.pending_chunks[0].text, "one two");
-    assert_eq!(live.pending_chunks[1].text, "answer text");
+    assert_eq!(live.pending_chunks[0].0.text, "one two");
+    assert_eq!(live.pending_chunks[0].1, Some(base));
+    assert_eq!(live.pending_chunks[1].0.text, "answer text");
+    assert_eq!(
+        live.pending_chunks[1].1,
+        Some(base + std::time::Duration::from_secs(2))
+    );
     live.discard_pending_chunks();
     assert!(live.pending_chunks.is_empty());
 }
@@ -829,9 +1022,20 @@ fn the_job_strip_reports_tokens_left_of_the_timer() {
         log_path: None,
         metric: metric.map(str::to_string),
         metric_tokens: None,
+        child_session_id: None,
     };
     let row = |metric: Option<&str>| {
-        let lines = crate::cli::repl::jobs::background_job_lines(&[job(metric)], 0, 60, None);
+        let job = job(metric);
+        let lines = crate::cli::repl::strip::strip_lines(
+            &[crate::cli::repl::strip::StripItem::Job {
+                job,
+                depth: 0,
+                twig: String::new(),
+            }],
+            0,
+            60,
+            Default::default(),
+        );
         strip_terminal_control_sequences(&lines[1])
             .trim_end()
             .to_string()
@@ -871,6 +1075,7 @@ fn the_job_panel_title_carries_the_token_figure() {
         log_path: None,
         metric: None,
         metric_tokens: None,
+        child_session_id: None,
     };
     assert_eq!(job_panel_title(&job), "走查后台子代理 · running");
     job.metric = Some("≈3.1K".into());

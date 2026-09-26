@@ -172,25 +172,8 @@ impl Agent {
         // prefix caching).
         let user_index = messages.len();
         messages.push(ChatMessage::plain("user", current_input));
-        // dsh 式投影(08-16 缓存调研):运行时上下文"变了才注入"。终端面
-        // 时间已降到小时级,同一小时内 cwd/环境不变 → 与历史里最近一份
-        // 化石逐字节相同 → 本轮零新增;平台面保留分钟级,人格报时靠它。
-        let runtime = runtime_context(self.input.platform_context.is_some());
-        if last_fossil_with_prefix(&messages, "<runtime ") != Some(runtime.as_str()) {
-            messages.push(ChatMessage::turn_context(runtime));
-        }
-        // 沙盒说明(09-23 起不在系统提示词里:按 Tab 随开随关,写在前缀里每切一次
-        // 就掰断整段缓存)。整体替换了系统提示词的会话连主机环境块都没有,也不发。
-        if self.input.system_prompt_override.is_none() {
-            let last = last_fossil_with_prefix(&messages, "<sandbox ").map(str::to_string);
-            if let Some(notice) = sandbox_tail(
-                self.core.prompt_audience,
-                self.input.platform_context.is_some(),
-                last.as_deref(),
-            ) {
-                messages.push(ChatMessage::turn_context(notice));
-            }
-        }
+        // 指令源(时间与目录、沙盒):跟请求里最近一份比,变了才发(`instruction_source`)。
+        push_projected(&self.instruction_sources(), &mut messages);
         // 防失忆提醒(08-16 起):不再浮动,每隔 interval 轮以化石身份进
         // 历史——纯追加,不掰前缀。计数以历史里最近一份提醒化石所在的
         // 轮为锚。(08-23 试过"上一轮工具轮次多则提前补一针"的工具后
@@ -314,6 +297,8 @@ impl Agent {
                 ),
                 false,
             );
+            // 带图的伴随消息整轮工具结果放完再放，和活体同序（见 push_tool_result_with_media）。
+            let mut companions = Vec::new();
             for call in &round.calls {
                 push_tool_result_with_media(
                     messages,
@@ -323,8 +308,10 @@ impl Agent {
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
                     tool_form,
+                    &mut companions,
                 );
             }
+            messages.extend(companions);
             self.push_flow_messages(messages, &round.after, turn);
         }
     }

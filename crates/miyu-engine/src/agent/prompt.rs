@@ -169,35 +169,8 @@ pub(crate) fn host_environment_for(config: &AppConfig, paths: &MiyuPaths) -> Str
     });
     // effort 不再进主机环境块(09-11 用户拍板):思考档位在对话中会切换,把它写进
     // 系统提示词会让每次改档都掰断前缀缓存。档位与缓存前缀就此解耦。沙盒同理
-    // (09-23 起可以按 Tab 随开随关),改走 `<sandbox>` 尾巴,见 `sandbox_tail`。
+    // (09-23 起可以按 Tab 随开随关),改走 `<sandbox>` 尾巴,见 `instruction_source::SandboxSource`。
     miyu_base::host_info::host_environment_block_full(&paths.root_dir, model_label.as_deref(), None)
-}
-
-/// 这一轮要不要追加 `<sandbox>` 尾巴,以及追加什么。
-///
-/// 判据跟主机环境块一样(属主回合、WebUI 回合;QQ 等平台回合不带)——沙盒说明
-/// 09-23 之前就写在那个块里,挪出来不改谁看得到。「变了才追加」:跟历史里最近
-/// 一份逐字节相同就不发;从没说过而且现在没沙盒,什么都不发;说过而现在关了,
-/// 补一条「关了」。
-pub(in crate::agent) fn sandbox_tail(
-    audience: PromptAudience,
-    platform_turn: bool,
-    last: Option<&str>,
-) -> Option<String> {
-    let applies = audience == PromptAudience::Owner
-        || (audience == PromptAudience::External && !platform_turn);
-    if !applies {
-        return None;
-    }
-    match miyu_base::sandbox::current_sandbox() {
-        Some(policy) => {
-            let notice = miyu_base::host_info::sandbox_notice(&policy);
-            (last != Some(notice.as_str())).then_some(notice)
-        }
-        None => last
-            .filter(|last| *last != miyu_base::host_info::SANDBOX_OFF_NOTICE)
-            .map(|_| miyu_base::host_info::SANDBOX_OFF_NOTICE.to_string()),
-    }
 }
 
 /// 每轮瞬态尾巴里唯一的运行时事实：时间 + 工作目录。

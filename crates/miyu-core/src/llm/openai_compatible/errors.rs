@@ -85,6 +85,14 @@ pub(in crate::llm::openai_compatible) enum HttpFailureKind {
     /// 那种):是对这条内容的裁定,不是端点故障——不冷却、可切别的端点、
     /// 同端点重打必然再撞。
     ContentPolicy,
+    /// 对话超出了这个模型的上下文窗口。同端点重打必然还是超长(09-24 B6:
+    /// 原来归「端点不兼容」,单端点会被补齐白打三次才轮到被动压缩);换一个
+    /// 窗口更大的端点可能答得了,所以照样可以换端点。不冷却:端点没坏。
+    ContextOverflow,
+    /// 余额或额度用完(402、insufficient_quota 一类)。是对这个账号的裁定:
+    /// 同端点不重打、长冷却;换一家就能答,所以照样换端点(09-24 B6:402 的
+    /// 报文常把 code 写成 invalid_request_error,原来因此连换端点都不试)。
+    Quota,
 }
 
 impl std::fmt::Display for HttpFailureKind {
@@ -97,6 +105,8 @@ impl std::fmt::Display for HttpFailureKind {
             Self::EndpointIncompatible => "endpoint_incompatible",
             Self::InvalidRequest => "invalid_request",
             Self::ContentPolicy => "content_policy",
+            Self::ContextOverflow => "context_overflow",
+            Self::Quota => "quota",
         })
     }
 }
@@ -125,6 +135,11 @@ impl HttpFailureKind {
                 "the provider's content policy blocked this prompt",
                 "供应商的内容策略拦下了这条提示词",
             ),
+            Self::ContextOverflow => t(
+                "the conversation is longer than the model's context window",
+                "对话超出了模型的上下文窗口",
+            ),
+            Self::Quota => t("out of balance or quota", "余额或额度用完"),
             Self::Status => t("the provider returned an error", "供应商报错"),
         }
     }
@@ -146,6 +161,8 @@ pub(in crate::llm::openai_compatible) struct HttpStatusFailure {
     /// 原来给用户的那行是把整条错误链倒出来，里头是一整坨原始 JSON；而真正有用
     /// 的只有这一句（「Please try again in 1.024s」这种）。留下它，别的丢掉。
     pub(in crate::llm::openai_compatible) detail: Option<String>,
+    /// 服务端在 `retry-after-ms` / `retry-after` 头里说的「多久之后再来」。
+    pub(in crate::llm::openai_compatible) retry_after: Option<Duration>,
 }
 
 impl HttpStatusFailure {
@@ -156,12 +173,24 @@ impl HttpStatusFailure {
             kind,
             relay: true,
             detail: None,
+            retry_after: None,
         }
+    }
+
+    /// 带上响应头里的 Retry-After。只有真 HTTP 响应才有头，所以单独挂。
+    pub(in crate::llm::openai_compatible) fn with_retry_after(
+        mut self,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        self.retry_after = retry_after;
+        self
     }
 
     pub(in crate::llm::openai_compatible) fn classify(status: u16, body: &str) -> Self {
         let kind = match status {
             401 | 403 => HttpFailureKind::Authentication,
+            402 => HttpFailureKind::Quota,
+            429 if quota_exhausted(body) => HttpFailureKind::Quota,
             429 => HttpFailureKind::RateLimit,
             // 404 从 LLM 端点回来只有一个意思:这儿没有这个模型/这条路径。
             // 一定是端点自己的问题,换一个端点有意义——不该按「服务端一时
@@ -170,6 +199,11 @@ impl HttpStatusFailure {
             // 模型名夹在中间,拼不出 `model_not_found` 这个关键词)。
             404 => HttpFailureKind::EndpointUnavailable,
             408 | 500..=599 => HttpFailureKind::Status,
+            // 超长的措辞各家不一，全文匹配复用被动压缩那一份判据
+            // (`is_context_overflow_message`,带限流排除)，两边永远认同一批。
+            400..=499 if crate::llm::is_context_overflow_message(body) => {
+                HttpFailureKind::ContextOverflow
+            }
             _ => classify_provider_error_body(body).unwrap_or(HttpFailureKind::Status),
         };
         Self {
@@ -177,8 +211,69 @@ impl HttpStatusFailure {
             kind,
             relay: false,
             detail: provider_message(body),
+            retry_after: None,
         }
     }
+}
+
+/// 余额 / 额度用完的报文信号(与「一时限流」区分:额度用完等多久都没用)。
+const QUOTA_SIGNALS: &[&str] = &[
+    "insufficient_quota",
+    "insufficient_balance",
+    "exceeded_current_quota",
+    "billing_hard_limit",
+    "payment_required",
+    "insufficient_credit",
+    "out_of_credit",
+];
+
+fn quota_exhausted(body: &str) -> bool {
+    let signal = normalize_error_signal(body);
+    contains_any(&signal, QUOTA_SIGNALS)
+}
+
+/// 服务端让等多久以内，就在原地等完、同一端点再试一次（用户 09-24 拍板 20 秒）。
+/// 更长的等待交给冷却：一轮对话不该卡在那里干等。
+pub(in crate::llm::openai_compatible) const HONORED_RETRY_AFTER_MAX: Duration =
+    Duration::from_secs(20);
+
+/// 读 `retry-after-ms`(毫秒,OpenAI / Anthropic 网关)与 `retry-after`
+/// (秒数或 HTTP 日期,RFC 9110)。读不出来就是 None。
+pub(in crate::llm::openai_compatible) fn parse_retry_after(
+    headers: &reqwest::header::HeaderMap,
+) -> Option<Duration> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+    };
+    if let Some(millis) = header("retry-after-ms").and_then(|value| value.parse::<f64>().ok()) {
+        if millis.is_finite() && millis >= 0.0 {
+            return Some(Duration::from_secs_f64(millis / 1000.0));
+        }
+    }
+    let value = header("retry-after")?;
+    if let Ok(seconds) = value.parse::<f64>() {
+        return (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds));
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let wait = at.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    Some(wait.to_std().unwrap_or(Duration::ZERO))
+}
+
+/// 这次失败要不要原地等一会儿、再打同一个端点：只认服务端明说的短等待。
+/// 额度用完不算——那不是等一等就会好的事。
+pub(in crate::llm::openai_compatible) fn retry_after_to_honor(
+    error: &anyhow::Error,
+) -> Option<Duration> {
+    let failure = error.downcast_ref::<HttpStatusFailure>()?;
+    if failure.kind != HttpFailureKind::RateLimit {
+        return None;
+    }
+    failure
+        .retry_after
+        .filter(|wait| *wait <= HONORED_RETRY_AFTER_MAX)
 }
 
 /// 报文里供应商自己那句话。JSON 认 `error.message` 与顶层 `message`；不是 JSON
@@ -243,6 +338,11 @@ pub(in crate::llm::openai_compatible) fn classify_provider_error_body(
         }
     }
     for signal in &signals {
+        if contains_any(signal, QUOTA_SIGNALS) {
+            return Some(HttpFailureKind::Quota);
+        }
+    }
+    for signal in &signals {
         if contains_any(
             signal,
             &["rate_limit", "ratelimit", "quota", "too_many_requests"],
@@ -269,6 +369,19 @@ pub(in crate::llm::openai_compatible) fn classify_provider_error_body(
             ],
         ) {
             return Some(HttpFailureKind::EndpointUnavailable);
+        }
+    }
+    for signal in &signals {
+        if contains_any(
+            signal,
+            &[
+                "context_length_exceeded",
+                "context_window_exceeded",
+                "maximum_context_length",
+                "model_context_window_exceeded",
+            ],
+        ) {
+            return Some(HttpFailureKind::ContextOverflow);
         }
     }
     for signal in &signals {
@@ -413,6 +526,21 @@ pub(in crate::llm::openai_compatible) fn stream_options_unsupported(
     }
     let body = body.to_ascii_lowercase();
     body.contains("stream_options")
+        && (body.contains("unsupported")
+            || body.contains("not supported")
+            || body.contains("unknown")
+            || body.contains("unrecognized")
+            || body.contains("invalid")
+            || body.contains("extra"))
+}
+
+/// 网关不认 `tool_choice`：报文点名了这个字段，并说不支持 / 不认识 / 无效。
+pub(in crate::llm::openai_compatible) fn tool_choice_unsupported(status: u16, body: &str) -> bool {
+    if status != 400 && status != 422 {
+        return false;
+    }
+    let body = body.to_ascii_lowercase();
+    body.contains("tool_choice")
         && (body.contains("unsupported")
             || body.contains("not supported")
             || body.contains("unknown")

@@ -83,8 +83,8 @@ pub(in crate::web) async fn session_goal_http(
 
 /// 复用 `ResetConversationRequest`，不再造一个字段一样的类型。
 ///
-/// 与 `IpcCommand::Compact` 同一条 actor 路径，回合运行中一律拒绝——压缩会重
-/// 写消息数组，正在跑的回合手里那份就成了悬空引用。
+/// 与 `IpcCommand::Compact` 同一条 actor 路径。回合运行中不当场压（压缩会重写消息
+/// 数组，正在跑的回合手里那份就成了悬空引用），排进那一轮（09-25，见 `compact_queue`）。
 pub(in crate::web) async fn compact_conversation(
     State(state): State<DaemonState>,
     headers: HeaderMap,
@@ -96,6 +96,9 @@ pub(in crate::web) async fn compact_conversation(
         .unwrap_or_else(|| state.state_store.session_id().to_string());
     require_local_web_session(&state, &headers, &session_id)?;
     let session_id: std::sync::Arc<str> = session_id.into();
+    if queue_compact_if_running(&state, &session_id) {
+        return Ok(Json(json!({ "ok": true, "queued": true })));
+    }
     reserve_admin_for_session(&state.manager, &session_id)?;
     let (reply, receiver) = oneshot::channel();
     if state

@@ -113,15 +113,6 @@ fn the_three_surfaces_have_the_shapes_we_expect() {
     });
 }
 
-/// 面板那一份是常量，不随全局块开关变——两个子代理面板共用它。
-#[test]
-fn panel_caps_are_fixed() {
-    let caps = crate::render::stream::surface::PANEL_CAPS;
-    assert!(caps.expandable && caps.fold);
-    assert!(!caps.commit_immediately);
-    assert!(!caps.detail_inline());
-}
-
 /// 「TUI 不自动收起」开了之后:每一步就地落下去、段末没有 `Worked for …`
 /// ——和 shell 无缝对话那条路一个样子(用户 todolist:21)。
 ///

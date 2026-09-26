@@ -182,12 +182,12 @@ pub(crate) async fn run_platform_turn(
             );
         }
         last_id = record.id;
+        if record.run_id.as_deref() != Some(run_id.as_str()) {
+            continue;
+        }
         let Ok(data) = serde_json::from_str::<Value>(&record.data) else {
             continue;
         };
-        if data.get("run_id").and_then(Value::as_str) != Some(run_id.as_str()) {
-            continue;
-        }
         match record.kind.as_str() {
             "reasoning.start" => {
                 if intermediate_replies {

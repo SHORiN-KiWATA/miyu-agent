@@ -14,86 +14,6 @@ pub(in crate::cli) fn format_job_duration(seconds: u64) -> String {
     miyu_base::durations::format_hms(std::time::Duration::from_secs(seconds))
 }
 
-/// Status strip under the footer: a leading blank line, then one line per
-/// background command with a blank line between entries. Timers are
-/// right-aligned to the terminal width.
-/// `hovered`:鼠标正悬在哪一条上(下标),那一行不 dim——和正文里可点的块一个规矩:
-/// 悬浮提亮,好让人知道这行能点(用户 09-18:任务条行悬浮没有高亮)。
-pub(in crate::cli) fn background_job_lines(
-    jobs: &[miyu_engine::tools::jobs::JobOverview],
-    spinner_phase: usize,
-    cols: usize,
-    hovered: Option<usize>,
-) -> Vec<String> {
-    if jobs.is_empty() {
-        return Vec::new();
-    }
-    let kind_label = |job: &miyu_engine::tools::jobs::JobOverview| match job.kind.as_str() {
-        // 开发模式的子代理单列一类：那一条是去写代码的，「开发中」比「子代理」
-        // 更说明它在干嘛。
-        "dev" => miyu_base::i18n::text("dev", "开发中"),
-        "subagent" => miyu_base::i18n::text("agent", "子代理"),
-        _ => miyu_base::i18n::text("cmd", "命令"),
-    };
-    // Pad kinds to one column so mixed command/subagent rows keep their ids
-    // and titles vertically aligned.
-    let kind_col = jobs
-        .iter()
-        .map(|job| visible_width(kind_label(job)))
-        .max()
-        .unwrap_or(0);
-    let mut lines = vec![String::new()];
-    for (index, job) in jobs.iter().enumerate() {
-        let marker = JOB_SPINNER_FRAMES[spinner_phase % JOB_SPINNER_FRAMES.len()];
-        let kind_word = kind_label(job);
-        let kind_pad = " ".repeat(kind_col.saturating_sub(visible_width(kind_word)));
-        // 后代的任务(子代理开的后台命令、后台孙代理)前面挂个 ↳,看得出不是这一层开的。
-        let nested = job
-            .root_session_id
-            .as_deref()
-            .is_some_and(|root| job.session_id.as_deref() != Some(root));
-        let mut left = format!(
-            "{marker} {kind_word}{kind_pad} {}{} · {}",
-            if nested { "↳ " } else { "" },
-            job.job_id,
-            job.title
-        );
-        // 时间左边先报量：一条子代理跑五分钟，光有秒数看不出它是在干活还是
-        // 卡住了（用户：这里时间左侧应该有一个 token 记述）。命令类任务没有
-        // 这个概念，那儿就是空的。
-        let timer = match job.metric.as_deref().filter(|text| !text.trim().is_empty()) {
-            Some(metric) => format!(
-                "{}  {}",
-                metric.trim(),
-                format_job_duration(job.runtime_seconds)
-            ),
-            None => format_job_duration(job.runtime_seconds),
-        };
-        let timer_width = visible_width(&timer);
-        // Never exceed the terminal width: a wrapped strip line would shift
-        // the whole tail and flicker.
-        let max_left = cols.saturating_sub(timer_width).saturating_sub(2);
-        while visible_width(&left) > max_left && !left.is_empty() {
-            left.pop();
-        }
-        let left_width = visible_width(&left);
-        let pad = cols
-            .saturating_sub(left_width)
-            .saturating_sub(timer_width)
-            .max(1);
-        let dim = if hovered == Some(index) {
-            ""
-        } else {
-            "\x1b[2m"
-        };
-        lines.push(format!("{dim}{left}{}{timer}\x1b[0m", " ".repeat(pad)));
-    }
-    lines
-}
-
-/// Strips the bracketed prefix off a background-job wake headline, leaving
-/// `子代理完成 82bea3 · 标题`. The older `[后台命令完成] ` spelling still shows
-/// up in sessions recorded before the rename.
 /// 这条排队消息是 daemon 合成的后台任务报告吗。判据和剥前缀的那个函数同源，
 /// 别在别处再写一份前缀字面量。
 pub(in crate::cli) fn is_job_wake_headline(headline: &str) -> bool {
@@ -109,6 +29,9 @@ pub(in crate::cli) fn is_daemon_notice(display: &str) -> bool {
         || miyu_core::state::service_restart_attempt(display).is_some()
 }
 
+/// Strips the bracketed prefix off a background-job wake headline, leaving
+/// `子代理完成 82bea3 · 标题`. The older `[后台命令完成] ` spelling still shows
+/// up in sessions recorded before the rename.
 pub(in crate::cli) fn job_wake_headline(headline: &str) -> String {
     headline
         .strip_prefix("[后台任务完成] ")
@@ -210,11 +133,14 @@ pub(in crate::cli) struct SharedJobsFeed {
     /// were rendered live (their DB report must not print again).
     pub(in crate::cli) followed_runs: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(in crate::cli) rendered_turns: std::sync::Mutex<std::collections::HashSet<String>>,
-    /// 后台子代理面板**正开着**哪个任务。有值这条轮询就顺带拉它的原始标记流。
-    pub(in crate::cli) trace_job: std::sync::Mutex<Option<String>>,
-    /// 拉回来的那份：`(job_id, 全部标记, 游标)`。面板每帧读它，攒步照旧是无状态
-    /// 重算——比 150ms 重读整份日志便宜，而且不受「按自然段落盘」那道闸的限制。
-    pub(in crate::cli) trace: std::sync::Mutex<Option<(String, Vec<String>, u64)>>,
+    /// 访问路径（访问栈，从车道上那条会话往上），栈顶是回去的那条。任务条要列父会话名下的
+    /// 子代理，轮询线程按它再拉一份（09-25）。没在访问就是空的。
+    pub(in crate::cli) visit_path: std::sync::Mutex<Vec<String>>,
+    /// 各条会话名下的子代理会话（什么状态都有，任务条自己挑），按会话号存。轮询线程一秒
+    /// 拉一次正在看的这条和父会话的；访问路径上的都留着——退回上一层那一下，那一层的子代理
+    /// 表就在手里，任务条不空一拍（用户 09-25：切回来时状态行会消失一瞬间）。
+    pub(in crate::cli) children:
+        std::sync::Mutex<std::collections::HashMap<String, Vec<super::strip::SubagentRow>>>,
 }
 
 /// 这个 REPL 进程里那一条。后台面板要读 `trace`，而它拿不到 `SharedJobsFeed` 的
@@ -244,6 +170,37 @@ pub(in crate::cli) struct BackgroundReport {
     pub(in crate::cli) turn_id: String,
     pub(in crate::cli) headline: String,
     pub(in crate::cli) reply: String,
+    /// 后台任务报告附的结果段：铃铛那一行点开看（09-26）。
+    pub(in crate::cli) job_report: Option<miyu_core::state::JobReportResult>,
+    /// 回复末尾那行 `✻`：跑完或被打断的轮才有（报错的轮不画，回放也没有它）。
+    pub(in crate::cli) turn_end: Option<ReportTurnEnd>,
+}
+
+/// 补印的那一轮收尾要的几样（见 `render::timeline::TurnEnd`）。
+#[derive(Clone)]
+pub(in crate::cli) struct ReportTurnEnd {
+    pub(in crate::cli) model: Option<String>,
+    pub(in crate::cli) elapsed: std::time::Duration,
+    pub(in crate::cli) finished_at: chrono::DateTime<chrono::Local>,
+    pub(in crate::cli) interrupted: bool,
+}
+
+/// 任务条那棵树上的任务：正在看的会话和访问路径上各条会话自己的，以及它们名下的（树根是
+/// 它们的），没挂会话的老任务也留着。任务条第一层只列会话自己的，后代的收进「（+N）」，但切进去
+/// 那一下就要展开——手里先留着，不等下一轮轮询。
+pub(in crate::cli) fn retain_tree_jobs(
+    jobs: &mut Vec<miyu_engine::tools::jobs::JobOverview>,
+    current: &str,
+    path: &[String],
+) {
+    let in_tree = |session: Option<&str>| {
+        session.is_some_and(|session| session == current || path.iter().any(|at| at == session))
+    };
+    jobs.retain(|job| {
+        job.session_id.is_none()
+            || in_tree(job.session_id.as_deref())
+            || in_tree(job.root_session_id.as_deref())
+    });
 }
 
 /// Session isolation for the strip: keep only `session`'s jobs (sessionless
@@ -264,18 +221,51 @@ pub(in crate::cli) fn retain_session_jobs(
 }
 
 impl SharedJobsFeed {
-    /// 换成这个 REPL 现在看着的会话。已经拉回来的任务表里不属于它的当场摘掉：等下一轮
-    /// 轮询（约 1 秒）才换的话，这一秒里状态行上还是上一个会话的后台任务。
+    /// 换成这个 REPL 现在看着的会话，访问路径不动（切进子会话、回去走 `set_scope`）。已经拉
+    /// 回来的任务表里不属于它的当场摘掉：等下一轮轮询（约 1 秒）才换的话，这一秒里状态行上
+    /// 还是上一个会话的后台任务。
     pub(in crate::cli) fn set_repl_session(&self, session: &str) {
+        let path = self.visit_path.lock().unwrap().clone();
+        self.set_scope(session, &path);
+    }
+
+    /// 换任务条看的那一段树：正在看的会话、访问路径（栈底是车道上那条，栈顶是回去的那条）。
+    /// 两样一起换、一起按新的范围摘任务——分两步的话，中间那一步按半新半旧的范围摘，退回主
+    /// 会话时会把主会话自己的任务先摘掉，状态行空一拍（用户 09-25）。
+    pub(in crate::cli) fn set_scope(&self, session: &str, path: &[String]) {
         let mut current = self.repl_session.lock().unwrap();
-        if current.as_deref() == Some(session) {
+        let mut visit_path = self.visit_path.lock().unwrap();
+        if current.as_deref() == Some(session) && visit_path.as_slice() == path {
             return;
         }
         *current = Some(session.to_string());
-        retain_session_jobs(&mut self.jobs.lock().unwrap(), Some(session));
+        *visit_path = path.to_vec();
+        retain_tree_jobs(&mut self.jobs.lock().unwrap(), session, path);
+        // 子代理表只留访问路径上的和这一条的：再往回退都用得上，别的用不上了。
+        self.children
+            .lock()
+            .unwrap()
+            .retain(|owner, _| owner == session || path.contains(owner));
     }
 
-    /// 刚拉回来的任务表按这个 REPL 的会话过滤后放上去，返回过滤后的那份。
+    /// 刚拉回来的 `session` 名下的子代理放上去。它不在这会儿看的那一段树上（拉的途中切走
+    /// 了）就不收：收了也画不出来，只会留在表里。
+    pub(in crate::cli) fn publish_children(
+        &self,
+        session: &str,
+        rows: Vec<super::strip::SubagentRow>,
+    ) {
+        let current = self.repl_session.lock().unwrap();
+        let path = self.visit_path.lock().unwrap();
+        if current.as_deref() == Some(session) || path.iter().any(|owner| owner == session) {
+            self.children
+                .lock()
+                .unwrap()
+                .insert(session.to_string(), rows);
+        }
+    }
+
+    /// 刚拉回来的任务表按这个 REPL 看着的那一段树过滤后放上去，返回过滤后的那份。
     ///
     /// 过滤和写入都在会话锁里做：拉取途中 REPL 换了会话，按旧会话过滤的那份就不会
     /// 盖上来。还不知道自己是哪条会话时一条都不认——原来这时「全都显示」，新开的终端
@@ -285,12 +275,31 @@ impl SharedJobsFeed {
         mut jobs: Vec<miyu_engine::tools::jobs::JobOverview>,
     ) -> Vec<miyu_engine::tools::jobs::JobOverview> {
         let session = self.repl_session.lock().unwrap();
+        let path = self.visit_path.lock().unwrap();
         match session.as_deref() {
-            Some(session) => retain_session_jobs(&mut jobs, Some(session)),
+            Some(session) => retain_tree_jobs(&mut jobs, session, &path),
             None => jobs.clear(),
         }
         *self.jobs.lock().unwrap() = jobs.clone();
         jobs
+    }
+
+    /// 任务条此刻该列的行（`strip_tree`），会话和各层的子代理表从这儿取。`visits` 是访问栈。
+    pub(in crate::cli) fn strip_items(
+        &self,
+        visits: &[super::strip::ParentRow],
+        jobs: &[miyu_engine::tools::jobs::JobOverview],
+    ) -> Vec<super::strip::StripItem> {
+        let current = self.repl_session.lock().unwrap().clone();
+        let children = self.children.lock().unwrap();
+        super::strip_tree::strip_items(
+            &super::strip_tree::StripScope {
+                current: current.as_deref(),
+                path: visits,
+                children: Some(&children),
+            },
+            jobs,
+        )
     }
 }
 
@@ -391,6 +400,19 @@ impl JobsFeed {
             own.clear();
         }
         own.insert(run_id.to_string());
+    }
+
+    /// 这一轮已经挂上去看了（换会话后挂上它正在跑的那一轮，见 `follow_active_run_here`），
+    /// 空闲循环别再当成别人的轮认领一次：那会把整轮从头再画一遍。
+    pub(in crate::cli) fn mark_followed(&self, run_id: &str) {
+        let JobsFeed::Shared(shared) = self else {
+            return;
+        };
+        let mut followed = shared.followed_runs.lock().unwrap();
+        if followed.len() >= JOBS_FEED_MARK_LIMIT {
+            followed.clear();
+        }
+        followed.insert(run_id.to_string());
     }
 
     /// `session` 上**别人**起的、还没挂过的那一轮；认领一次就记下，免得重复挂。
@@ -525,6 +547,22 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                 if let Ok(goal) = goal {
                     *feed.goal.lock().unwrap() = goal;
                 }
+                // 这条会话名下的子代理会话：任务条列它们，点进去看（会话项目第 3 段）；在子会话
+                // 里还要访问路径上每一层名下的（树从主会话画起，09-26）。超时、出错就留着上一份，
+                // 不清空——清了任务条会闪。
+                let path = feed.visit_path.lock().unwrap().clone();
+                for owner in std::iter::once(session).chain(path.iter().map(String::as_str)) {
+                    let rows = runtime.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            super::strip::fetch_subagent_rows(&paths, owner),
+                        )
+                        .await
+                    });
+                    if let Ok(Ok(rows)) = rows {
+                        feed.publish_children(owner, rows);
+                    }
+                }
             }
             if let (Some(store), Some(session)) = (store.as_ref(), repl_session.as_deref()) {
                 // 代次在**读库之前**取：读的中途 footer 被刷新了，这份就算旧的。
@@ -548,58 +586,44 @@ pub(in crate::cli) fn spawn_jobs_poll_thread(
                     }
                 };
                 if let Ok(rows) = store.background_report_replies_after(&session_id, watermark) {
-                    for (seq, turn_id, display, reply) in rows {
-                        seen.insert(session_id.clone(), seq);
-                        if feed.rendered_turns.lock().unwrap().contains(&turn_id) {
+                    for row in rows {
+                        seen.insert(session_id.clone(), row.seq);
+                        if feed.rendered_turns.lock().unwrap().contains(&row.turn_id) {
                             continue;
                         }
+                        let turn_end = (row.status != "failed")
+                            .then(|| {
+                                render::timeline::turn_end_span(
+                                    row.started_at.as_deref(),
+                                    row.finished_at.as_deref(),
+                                )
+                            })
+                            .flatten()
+                            .map(|(elapsed, finished_at)| ReportTurnEnd {
+                                model: row.assistant_model.clone(),
+                                elapsed,
+                                finished_at,
+                                interrupted: row.status == "interrupted",
+                            });
                         feed.reports.lock().unwrap().push(BackgroundReport {
-                            turn_id,
-                            headline: display,
-                            reply,
+                            turn_id: row.turn_id,
+                            headline: row.display_content,
+                            reply: row.reply,
+                            job_report: row.job_report,
+                            turn_end,
                         });
                     }
                 }
             }
-            // 面板开着的时候按 150ms 跟标记流：整份任务总览一秒一次就够，但面板
-            // 要的是「它还活着」的手感。拉不到就什么都不动，面板自己退回读日志。
-            for _ in 0..TRACE_TICKS_PER_POLL {
-                let want = { feed.trace_job.lock().unwrap().clone() };
-                if let Some(job_id) = want {
-                    let after = {
-                        let trace = feed.trace.lock().unwrap();
-                        match trace.as_ref() {
-                            Some((id, _, cursor)) if *id == job_id => *cursor,
-                            _ => 0,
-                        }
-                    };
-                    if let Ok((markers, cursor, reset)) =
-                        runtime.block_on(fetch_job_trace(&paths, &job_id, after))
-                    {
-                        let mut slot = feed.trace.lock().unwrap();
-                        match slot.as_mut() {
-                            // 接着上次那份往后攒。`reset` = 缓冲把中间挤掉了／任务
-                            // 已经不在 daemon 里，这份得从头算。
-                            Some((id, seen, at)) if *id == job_id && !reset => {
-                                seen.extend(markers);
-                                *at = cursor;
-                            }
-                            _ => *slot = Some((job_id.clone(), markers, cursor)),
-                        }
-                    }
-                }
-                std::thread::sleep(TRACE_TICK);
-            }
+            std::thread::sleep(POLL_EVERY);
         }
     });
     shared
 }
 
-/// 面板跟标记流的节奏。和原来重读日志那个间隔一样——换的是「读什么」，不是
-/// 「多久读一次」。
-const TRACE_TICK: std::time::Duration = std::time::Duration::from_millis(150);
-/// 一轮总览（1s）里跟几次标记流。
-const TRACE_TICKS_PER_POLL: usize = 7;
+/// 轮询任务总览的间隔。原来这一秒里还按 150ms 跟后台子代理浮层的标记流（顺带就是
+/// 这条轮询唯一的 sleep），浮层 09-25 退役，只剩这一下。
+const POLL_EVERY: std::time::Duration = std::time::Duration::from_millis(1000);
 
 /// `(任务总览, daemon 当前会话, 唤醒轮, 人起的活跃轮)`。
 ///
@@ -621,46 +645,6 @@ pub(in crate::cli) struct WakeRun {
     /// 挂上去时从这一轮开头补：跨会话消息起的轮，开头那条消息就是要看的内容
     /// （09-23）。后台任务汇报照旧只接实时，抬头由 `label` 画。
     pub(in crate::cli) from_start: bool,
-}
-
-/// 后台子代理的原始进度标记，从绝对序号 `after` 之后取。
-///
-/// 返回 `(标记, 新游标, 要不要重新攒)`。`reset` 为真有两种情形：环形缓冲把 `after`
-/// 挤掉了，或者这个任务在 daemon 里已经不在了（跑完清掉、daemon 重启过）——两种
-/// 都得让面板退回读日志那条路。
-pub(in crate::cli) async fn fetch_job_trace(
-    paths: &MiyuPaths,
-    job_id: &str,
-    after: u64,
-) -> Result<(Vec<String>, u64, bool)> {
-    let mut stream = ipc::connect(&paths.ipc_socket()).await?;
-    ipc::send(
-        &mut stream,
-        &IpcRequest::new(IpcCommand::JobTrace {
-            job_id: job_id.to_string(),
-            after,
-        }),
-    )
-    .await?;
-    match ipc::receive::<IpcFrame>(&mut stream).await? {
-        Some(IpcFrame::AdminResult { data, .. }) => Ok((
-            data.get("markers")
-                .and_then(serde_json::Value::as_array)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(|row| row.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            data.get("cursor")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(after),
-            data.get("reset")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-        )),
-        other => anyhow::bail!("unexpected frame for job trace: {other:?}"),
-    }
 }
 
 /// 一条会话此刻的目标（`/goal`）。

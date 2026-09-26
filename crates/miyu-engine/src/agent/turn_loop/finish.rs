@@ -74,6 +74,10 @@ impl Agent {
             // 打断记账的依据:累计器本身是这个函数的栈上局部态,打断时随栈没了,
             // 回合守卫够不着。每次请求入账后往共享镜像同步一份。
             self.runtime.turn_usage.set(turn_tokens);
+            // 被打断时也记得下这一轮是哪家哪个模型答的（回放那行 `✻` 用，09-26）。
+            self.runtime
+                .turn_usage
+                .set_endpoint(result.provider_id.clone(), result.model.clone());
             // 与 footer 同一个口径:这次请求结束时的上下文 = prompt + completion。
             self.runtime
                 .turn_usage
@@ -87,6 +91,7 @@ impl Agent {
                 .session_cumulative_token_totals()
                 .unwrap_or_default();
             cumulative.add(turn_tokens);
+            let cache_breaks = self.record_cache_breaks();
             on_event(AgentEvent::RoundUsage {
                 round: Box::new(round),
                 turn: turn_tokens,
@@ -95,10 +100,23 @@ impl Agent {
                 estimated: st.usage_accumulator.estimated,
                 provider_id: result.provider_id.clone(),
                 model: result.model.clone(),
+                cache_breaks,
             })?;
         }
         st.last_round_completed_at = Some(Instant::now());
         Ok(())
+    }
+
+    /// 这次请求判出来的断缓存落库(09-25,`llm::cache_break`),返回会话树一共断过几次。
+    /// 记账失败不算回合失败。
+    fn record_cache_breaks(&self) -> u64 {
+        let session = self.state.session_id();
+        for entry in miyu_core::llm::take_cache_breaks(&session) {
+            if let Err(error) = self.state.record_cache_break(&entry) {
+                tracing::debug!(error = %error, "cache break not recorded");
+            }
+        }
+        self.state.cache_break_count(&session).unwrap_or(0)
     }
 
     /// 模型没有再要工具(或工具关着):`Some(result)` 是回合的最终结果;`None` 表示排队的
@@ -186,6 +204,9 @@ impl Agent {
                 return Ok(None);
             }
         }
+        // 排队的 `/compact`（09-25）：模型要收尾了，只压库里的历史，下一轮从库里重建。
+        self.run_queued_compact(current_turn_id, messages, st, control, false, on_event)
+            .await?;
         let mut result = result;
         if let Some(usage) = st.usage_accumulator.usage() {
             // 供应商已给出"最后一次请求"的口径(claude-code 中转:

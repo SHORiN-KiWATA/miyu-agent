@@ -156,6 +156,22 @@ fn host_environment_rides_the_system_prompt_for_owners_only() {
     assert!(host_at < lock_at);
 }
 
+/// `<sandbox>` 尾巴:受众不对就不发,否则跟最近一份比(09-25 起走指令源)。
+fn sandbox_tail(
+    audience: PromptAudience,
+    platform_turn: bool,
+    last: Option<&str>,
+) -> Option<String> {
+    if !SandboxSource::applies(audience, platform_turn) {
+        return None;
+    }
+    let messages = last
+        .map(|last| ChatMessage::turn_context(last.to_string()))
+        .into_iter()
+        .collect::<Vec<_>>();
+    project(&SandboxSource, &messages)
+}
+
 /// 沙盒不在环境块里(09-23 起:按 Tab 随开随关,写在系统提示词里每切一次就掰断
 /// 整段前缀),改走「变了才追加」的 `<sandbox>` 尾巴。退回修复前第一条断言报红。
 #[tokio::test]

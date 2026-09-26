@@ -8,6 +8,7 @@
 //! 现场比成功的更需要看。
 
 use crate::tools::jobs::*;
+use miyu_core::state::JobReportKind;
 
 /// Output chunk cap per job_status call, mirroring script output limits.
 pub(crate) const MAX_STATUS_OUTPUT_CHARS: usize = 20_000;
@@ -136,19 +137,25 @@ pub fn completion_result(
                 if body.is_empty() {
                     continue;
                 }
-                let label = if marker == SUBAGENT_RESULT_MARKER {
-                    "子代理结论"
+                // 标签和终端拆唤醒用的是同一份（`miyu_core::state::job_report_result`）。
+                let kind = if marker == SUBAGENT_RESULT_MARKER {
+                    JobReportKind::Conclusion
                 } else {
-                    "子代理失败"
+                    JobReportKind::Failure
                 };
-                return Some((label.to_string(), body.to_string()));
+                return Some((kind.label().to_string(), body.to_string()));
             }
         }
         return None;
     }
     let (tail, _) = read_log_tail(log_path, if ok { 10 } else { 30 });
     let tail = tail.trim_end();
-    (!tail.is_empty()).then(|| ("输出结尾".to_string(), tail.to_string()))
+    (!tail.is_empty()).then(|| {
+        (
+            JobReportKind::OutputTail.label().to_string(),
+            tail.to_string(),
+        )
+    })
 }
 
 /// 任务越多每条给得越少,总量始终有界:最坏 20 条 × 3 行 × 200 字符 ≈ 12 K。

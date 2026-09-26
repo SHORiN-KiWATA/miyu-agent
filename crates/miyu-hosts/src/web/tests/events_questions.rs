@@ -67,6 +67,105 @@ fn future_event_cursor_requests_resync_after_server_restart() {
     assert_eq!(replay[0].kind, "resync_required");
 }
 
+/// 路由字段在发布时取好（09-25）：订阅者按它挑自己的事件，不再为此解析整条 JSON。
+#[test]
+fn published_events_carry_their_routing_fields() {
+    let events = EventHub::new();
+    events.publish(
+        "assistant.delta",
+        json!({ "run_id": "r1", "session_id": "s1", "delta": "hi" }),
+    );
+    events.publish("session.reordered", json!({ "session_ids": ["s1"] }));
+    let replay = events.replay_after(0);
+    assert_eq!(replay[0].run_id.as_deref(), Some("r1"));
+    assert_eq!(replay[0].session_id.as_deref(), Some("s1"));
+    assert_eq!(replay[1].run_id, None);
+    assert_eq!(replay[1].session_id, None);
+}
+
+/// 重放缓冲、广播和每个订阅者手里是同一份记录，不是各拷一份正文。
+#[tokio::test]
+async fn the_replay_buffer_and_subscribers_share_one_record() {
+    let events = EventHub::new();
+    let mut first = events.subscribe_live();
+    let mut second = events.subscribe_live();
+    events.publish(
+        "tool.completed",
+        json!({ "run_id": "r1", "output": "x".repeat(4096) }),
+    );
+    let a = first.recv().await.unwrap();
+    let b = second.recv().await.unwrap();
+    let buffered = events.replay_after(0);
+    assert!(std::sync::Arc::ptr_eq(&a, &b));
+    assert!(std::sync::Arc::ptr_eq(&a, &buffered[0]));
+}
+
+/// 量尺（09-25，`--ignored` 才跑）：一个订阅者从别的会话刷屏的事件流里挑自己那一轮的
+/// 开销。旧口径：每条事件拷一份正文、整条 JSON 解析一遍再看 run_id。新口径：共享同一
+/// 份、先看路由字段，只有自己那一轮才解析。比的是倍率，不断言耗时（AGENTS §5.2）。
+///
+/// `cargo test -p miyu-hosts --lib event_fanout_cost_scale -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn event_fanout_cost_scale() {
+    const SUBSCRIBERS: usize = 6;
+    let events = EventHub::new();
+    // 回合的形状：大量小 delta，每 100 条夹一条大工具输出；自己那一轮只占六分之一。
+    for index in 0..4000 {
+        let run = if index % SUBSCRIBERS == 0 {
+            "mine"
+        } else {
+            "other"
+        };
+        let data = if index % 100 == 0 {
+            json!({ "run_id": run, "session_id": "s", "output": "输出".repeat(10_000) })
+        } else {
+            json!({ "run_id": run, "session_id": "s", "delta": "一段流式输出的正文。" })
+        };
+        events.publish("assistant.delta", data);
+    }
+    let records = events.replay_after(0);
+    let bytes: usize = records.iter().map(|record| record.data.len()).sum();
+
+    let started = std::time::Instant::now();
+    let mut old_hits = 0usize;
+    for _ in 0..SUBSCRIBERS {
+        for record in &records {
+            let copy = (record.kind.clone(), record.data.clone());
+            let data: serde_json::Value = serde_json::from_str(&copy.1).unwrap();
+            if data.get("run_id").and_then(serde_json::Value::as_str) == Some("mine") {
+                old_hits += 1;
+            }
+        }
+    }
+    let old = started.elapsed();
+
+    let started = std::time::Instant::now();
+    let mut new_hits = 0usize;
+    for _ in 0..SUBSCRIBERS {
+        for record in &records {
+            let shared = std::sync::Arc::clone(record);
+            if shared.run_id.as_deref() == Some("mine") {
+                let _data: serde_json::Value = serde_json::from_str(&shared.data).unwrap();
+                new_hits += 1;
+            }
+        }
+    }
+    let new = started.elapsed();
+
+    assert_eq!(old_hits, new_hits);
+    println!(
+        "{} events, {:.1} MB of JSON, {SUBSCRIBERS} subscribers: \
+         old {:.1} ms and {:.1} MB copied, new {:.1} ms and 0 MB copied, ratio {:.1}x",
+        records.len(),
+        bytes as f64 / 1e6,
+        old.as_secs_f64() * 1e3,
+        (bytes * SUBSCRIBERS) as f64 / 1e6,
+        new.as_secs_f64() * 1e3,
+        old.as_secs_f64() / new.as_secs_f64().max(1e-9),
+    );
+}
+
 #[test]
 fn answer_validation_trims_values_and_rejects_control_characters() {
     let request = sample_question();

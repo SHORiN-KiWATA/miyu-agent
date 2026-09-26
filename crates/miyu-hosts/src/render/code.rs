@@ -110,25 +110,32 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
     output
 }
 
-pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
+const CODE_BLOCK_FOOTER: &str = "--";
+
+/// 代码块的抬头与框宽。整块和活尾巴（`render_code_block_tail`）共用：同一份代码两处
+/// 算出来的框必须一样宽，闭合那一刻样子才不跳。
+fn code_block_layout<'a>(lang: &str, lines: impl Iterator<Item = &'a str>) -> (String, usize) {
     let label = if lang.is_empty() {
         "code".to_string()
     } else {
         format!("code {lang}")
     };
     let header = format!("-- {label}");
-    let footer = "--";
     // 框宽封顶在内容宽度：一行代码比屏（或面板）还宽的话，框按最长那行画出来
     // 就被终端硬折成碎片——底色断成两截、下一行是一片空白（子代理面板里
     // 实测）。超长的行在框里折行，一个字不丢。
     let cap = crate::render::content_cols(120).saturating_sub(2).max(24);
     let width = lines
-        .iter()
-        .map(|line| UnicodeWidthStr::width(line.as_str()))
-        .chain([header.chars().count(), footer.chars().count()])
+        .map(UnicodeWidthStr::width)
+        .chain([header.chars().count(), CODE_BLOCK_FOOTER.chars().count()])
         .max()
-        .unwrap_or(footer.len())
+        .unwrap_or(CODE_BLOCK_FOOTER.len())
         .clamp(24, cap);
+    (header, width)
+}
+
+pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
+    let (header, width) = code_block_layout(lang, lines.iter().map(String::as_str));
     let mut output = String::new();
     output.push_str(&render_code_block_frame(&header, width));
     output.push('\n');
@@ -138,9 +145,48 @@ pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
             output.push('\n');
         }
     }
-    output.push_str(&render_code_block_frame(footer, width));
+    output.push_str(&render_code_block_frame(CODE_BLOCK_FOOTER, width));
     output.push('\n');
     output
+}
+
+/// 还没闭合的代码块露出来的最后 `max_rows` 行（正文的活尾巴，09-25）。`partial` 是还没
+/// 收到换行的最后那半行。
+///
+/// 和 [`render_code_block`] 一个样子（框宽照整块算），只是不渲露不出来的那些行：一段
+/// 几千行的代码每一拍都整块重渲，会把一个核吃满（思考滚动窗的 `ThoughtRows` 就是这么
+/// 来的）。整块都露得出来时才带抬头。
+pub(crate) fn render_code_block_tail(
+    lang: &str,
+    lines: &[String],
+    partial: Option<&str>,
+    max_rows: usize,
+) -> Vec<String> {
+    if max_rows == 0 {
+        return Vec::new();
+    }
+    let all = || lines.iter().map(String::as_str).chain(partial);
+    let (header, width) = code_block_layout(lang, all());
+    let mut rows = vec![render_code_block_frame(CODE_BLOCK_FOOTER, width)];
+    let mut complete = true;
+    let newest_first = partial
+        .into_iter()
+        .chain(lines.iter().rev().map(String::as_str));
+    'lines: for line in newest_first {
+        let line = crate::render::markdown::preview_tail(line);
+        for piece in crate::render::wrap_display_text(line, width).iter().rev() {
+            if rows.len() >= max_rows {
+                complete = false;
+                break 'lines;
+            }
+            rows.push(render_code_block_line_with_width(lang, piece, width));
+        }
+    }
+    if complete && rows.len() < max_rows {
+        rows.push(render_code_block_frame(&header, width));
+    }
+    rows.reverse();
+    rows
 }
 
 pub(crate) fn render_code_block_frame(text: &str, width: usize) -> String {

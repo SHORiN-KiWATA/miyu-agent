@@ -761,21 +761,6 @@ pub(crate) fn command_ansi_width(text: &str) -> usize {
     UnicodeWidthStr::width(plain.as_str())
 }
 
-pub(crate) fn write_command_block_with_status(
-    stdout: &mut impl Write,
-    arguments: &str,
-    status: CommandStatus,
-) -> Result<()> {
-    let command = command_from_arguments(arguments);
-    writeln!(stdout, "{}", command_heading_line(status))?;
-    let terminal_width = crate::render::content_cols(120);
-    let usable = terminal_width.saturating_sub(1).max(5);
-    for line in render_command_preview(&command, usable, true, false, 0) {
-        writeln!(stdout, "{line}")?;
-    }
-    Ok(())
-}
-
 pub(crate) fn write_command_result_blocks(stdout: &mut impl Write, output: &str) -> Result<()> {
     let Some(result) = parse_command_result(output) else {
         return write_tool_payload(stdout, t("output", "输出"), &sanitize_terminal_text(output));

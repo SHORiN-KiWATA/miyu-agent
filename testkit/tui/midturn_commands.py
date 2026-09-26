@@ -7,7 +7,9 @@
 - `Inline`：`/goal` 就地执行，跟随一点都不断（它完全不往屏幕上写）；
 - `Detach`：要占屏的先把这一轮**分离到后台**，执行完再按事件号挂回来接着看 ——
   已经看过的那半截不会再来一遍；
-- `Blocked`：做不了的**说一句为什么**，输入原样留在框里，这一轮说完再回车。
+- `Blocked`：做不了的**说一句为什么**，输入原样留在框里，这一轮说完再回车（`/undo`）；
+- `Queue`：像插话一样排进这一轮（09-25，`/compact`）：输入框上方挂一行「排队中」，回合走到
+  下一个检查点（这里是说完那一刻）压完就撤。
 
     cargo build
     python3 testkit/tui/midturn_commands.py
@@ -26,7 +28,7 @@ import round26 as r  # noqa: E402
 
 # 回合要够长，才来得及在它说话的**中途**敲命令。
 #
-# 第一版只重复 10 遍（约 5 秒），`/compact` 那次回车落在回合**结束之后**，
+# 第一版只重复 10 遍（约 5 秒），被拦的那条命令回车落在回合**结束之后**，
 # 于是它真的执行了，走查以为「Blocked 没生效」——判据自己没造出现场。
 LONG = "这一段是为了把回合拖长，好让人来得及在中途敲命令。" * 200
 STUB = {
@@ -123,8 +125,8 @@ def main():
         report["回合真的在流"] = turn_running(master, sink)
         # 先把字打进去，**确认这一刻还在流**再按回车——不然按下去的时候回合
         # 已经结束，测的就不是「回合中」了（第一版就是这么假报红的）。
-        os.write(master, b"/compact")
-        h.drain_until(master, sink, "/compact", 5.0)
+        os.write(master, b"/undo")
+        h.drain_until(master, sink, "/undo", 5.0)
         report["按回车那一刻回合还在跑"] = turn_running(master, sink)
         os.write(master, b"\r")
         # **不要 settle**：settle 会一直等到流安静，那就等成了「回合结束之后」，
@@ -136,15 +138,28 @@ def main():
         report["做不了的会说一句为什么"] = any(
             "等这一轮说完" in line or "wait for it to finish" in line for line in screen
         )
-        report["被挡下来输入还留在框里"] = any("/compact" in line for line in screen)
-        report["被挡下来没有执行"] = not any(
-            "没有可压缩" in line or "nothing to compact" in line for line in screen
-        )
+        report["被挡下来输入还留在框里"] = any("/undo" in line for line in screen)
         # 把它退掉，免得影响后面。
         os.write(master, b"\x7f" * 10)
         h.drain(master, 0.8, sink)
-        # 让这一轮说完
+
+        # ── 一b、Queue：/compact 像插话一样排进这一轮 ──
+        os.write(master, b"/compact")
+        h.drain_until(master, sink, "/compact", 5.0)
+        report["敲 /compact 那一刻回合还在跑"] = turn_running(master, sink)
+        os.write(master, b"\r")
+        h.drain(master, 1.5, sink)
+        screen = h.render(bytes(sink))
+        r.save("midturn-queued-compact", screen)
+        report["压缩排进这一轮"] = any("排队中" in line or "Queued" in line for line in screen)
+        report["排队之后输入框空了"] = not any(
+            line.strip().startswith("┃ /compact") and "排队中" not in line for line in screen[-6:]
+        )
+        # 让这一轮说完：压缩在说完那一刻做掉，排队那一行撤掉。
         h.settle(master, sink, quiet=2.0, timeout=180)
+        screen = h.render(bytes(sink))
+        r.save("midturn-after-queued-compact", screen)
+        report["说完之后排队那一行撤了"] = not any("排队中" in line for line in screen)
 
         # ── 二、Detach：/help 这种长文，执行完还能挂回来接着看 ──
         before = turn_finished()

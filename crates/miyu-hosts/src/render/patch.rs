@@ -83,16 +83,6 @@ fn trim_blank_edges(rendered: String) -> Vec<String> {
     lines
 }
 
-/// 调用参数里那份 apply_patch 信封的加减行数。
-///
-/// 子代理浮层拿不到 `__patch_preview__` 的真 diff,只有这份信封;信封本身就是
-/// `+`/`-` 的形状,数出来的量和真 diff 一致(除非补丁应用后被上下文吸收)。
-pub(crate) fn envelope_diff_stat(tool: &str, arguments: &str) -> Option<(usize, usize)> {
-    // 事实那一半住在 engine：写流水账那一侧也要用它（抬头上的 `+3 -1`），而
-    // 那一侧够不着渲染层。见 `miyu_engine::tools::envelope_diff_stat`。
-    miyu_engine::tools::envelope_diff_stat(tool, arguments)
-}
-
 /// apply_patch 的**信封**（`*** Begin Patch … *** End Patch`）渲染成 diff。
 ///
 /// 工具自己跑的时候会用改前改后算出真 diff 走 `__patch_preview__`，但那条路只

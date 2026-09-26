@@ -322,3 +322,7 @@ release note：`## 重要更新` 一条（子代理成会话、可切进去看�
   回复;CLI 侧列表里找不到的 `sess_` id 走 `GetSessionState` 直取),`GetSessionState` 认子会话,
   删会话/reset 沿树停回合、停后台任务、收中转进程、删行,根会话自己的后台任务也停。
 - 测具 `testkit/subagent-session/{run,stub}.py` 13 项全过;`testkit/subagent-dev` 仍走直连老循环。
+
+## 9. 第二段（TUI）施工记录
+
+见 `docs/plan/2026-09-25-会话项目第3段-子代理会话化.md`（会话项目第 3 段，09-25）。

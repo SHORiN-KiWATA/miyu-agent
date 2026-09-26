@@ -489,6 +489,7 @@ mod tests {
                 sandbox_readonly: false,
                 sandbox_writable: Vec::new(),
                 sandbox_readable: Vec::new(),
+                cache_breaks: 0,
             },
             data: serde_json::json!({"ok": true}),
         };

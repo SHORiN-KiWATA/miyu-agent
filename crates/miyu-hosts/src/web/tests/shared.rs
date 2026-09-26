@@ -58,6 +58,8 @@ pub(super) fn manager_with_run(
         },
         persona_session_ids: HashMap::new(),
         runs_changed: Arc::new(tokio::sync::Notify::new()),
+        compact_requests: HashMap::new(),
+        live_turns: HashMap::new(),
     }));
     (manager, cancel_rx)
 }

@@ -185,6 +185,9 @@ pub struct ToolSpec {
     /// 这不是懒加载:没有任何机制会在会话中途把它加回数组,所以 tools 数组
     /// 字节恒定(AGENTS §1.1)。
     pub exposed: bool,
+    /// 能不能和同一批里相邻的其它可并发调用一起跑（09-24，同轮工具并发）。默认不能：
+    /// 只有只读、不抢终端、不往外发东西的工具才标上，结果照旧按调用顺序交回模型。
+    pub concurrent: bool,
     pub(crate) handler: ToolHandler,
 }
 
@@ -261,6 +264,7 @@ impl ToolSpec {
             cross_hints: Vec::new(),
             requires_prior: Vec::new(),
             exposed: true,
+            concurrent: false,
             handler: Arc::new(move |args, _progress| Box::pin(handler(args))),
         }
     }
@@ -291,6 +295,7 @@ impl ToolSpec {
             cross_hints: Vec::new(),
             requires_prior: Vec::new(),
             exposed: true,
+            concurrent: false,
             handler: Arc::new(move |args, progress| Box::pin(handler(args, progress))),
         }
     }
@@ -307,6 +312,12 @@ impl ToolSpec {
 
     pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
         self.display_name = Some(display_name.into());
+        self
+    }
+
+    /// 同一批里可以和相邻的可并发调用一起跑。见 [`ToolSpec::concurrent`]。
+    pub fn concurrent(mut self) -> Self {
+        self.concurrent = true;
         self
     }
 
@@ -374,12 +385,7 @@ impl ToolSpec {
 
     pub fn apply_built_in_description(mut self) -> Self {
         if let Some(desc) = crate::tools::tool_descriptions::get(&self.name) {
-            // load_skill owns a dynamic catalog description, but still uses
-            // the same loading policy, groups, schema, and display metadata
-            // as every other built-in tool.
-            if self.name != "load_skill" {
-                self.description = desc.description.clone();
-            }
+            self.description = desc.description.clone();
             self.parameters = desc.parameters.clone();
             // 显示名走双语表(内建工具 41/41 全覆盖),JSON 里那一份只是中文单槽:
             // 直接用它,英文界面就会把「查找文件」端给英文用户。表里没有的

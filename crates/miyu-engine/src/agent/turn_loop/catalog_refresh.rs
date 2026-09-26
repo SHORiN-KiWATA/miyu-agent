@@ -46,15 +46,14 @@ impl Agent {
                 let paths = self.core.paths.clone();
                 let refresh = tokio::task::spawn_blocking(move || {
                     tools::prepare_skill_refresh(current_fingerprint, &config, &paths)
-                        .map(|snapshot| (snapshot, config, paths))
                 })
                 .await;
                 match refresh {
-                    Ok(Ok((Some(snapshot), config, paths))) => {
+                    Ok(Ok(Some(snapshot))) => {
                         let mut registry = self.tools.lock().unwrap();
-                        tools::apply_skill_refresh(&mut registry, &config, &paths, snapshot);
+                        tools::apply_skill_refresh(&mut registry, snapshot);
                     }
-                    Ok(Ok((None, _, _))) => {}
+                    Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
                         tracing::warn!(error = %error, "failed to refresh Miyu skill catalog")
                     }
@@ -66,12 +65,12 @@ impl Agent {
         }
     }
 
-    /// 这一轮发给模型的工具定义:工具关着或到了轮数上限就一个不给。
-    pub(super) fn round_tool_definitions(
+    /// 这一轮发给模型的工具定义:工具关着或复读保险丝熔断时一个不给。
+    pub(in crate::agent) fn round_tool_definitions(
         &self,
-        tool_limit_reached: bool,
+        withhold: bool,
     ) -> Vec<miyu_core::llm::ToolDefinition> {
-        if self.core.tools_enabled && !tool_limit_reached {
+        if self.core.tools_enabled && !withhold {
             let mut tools = self.tools.lock().unwrap();
             self.enforce_turn_restrictions(&mut tools);
             // 有效模式按候选模型池解析(模型级覆盖,任一成员要 full 则整池

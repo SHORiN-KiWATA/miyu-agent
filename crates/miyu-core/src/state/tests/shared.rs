@@ -20,6 +20,24 @@ pub(super) fn test_paths(root: &Path) -> MiyuPaths {
     }
 }
 
+/// 沙箱里的会话库。按人分库之后路径由布局推导，测试直接找文件更省事。
+pub(super) fn find_db(dir: &Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_db(&path) {
+                return Some(found);
+            }
+        } else if path
+            .file_name()
+            .is_some_and(|name| name == "conversation.db")
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
 pub(super) fn test_store() -> (tempfile::TempDir, StateStore) {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path())).unwrap();

@@ -31,7 +31,13 @@ pub struct ToolRegistry {
     script_tool_names: BTreeSet<String>,
     unregistered_scripts: Vec<UnregisteredScript>,
     skill_catalog_fingerprint: Option<[u8; 32]>,
+    /// 技能目录块（`<available-skills>`，没有技能是 None）。09-25 起不拼进 `load_skill`
+    /// 的描述，由回合尾巴的指令源发（`agent::instruction_source::SkillsSource`）。
+    skill_catalog: Option<String>,
     script_catalog_fingerprint: Option<[u8; 32]>,
+    /// MCP 服务器握手时给的使用说明（09-25），系统提示词末尾那一段读它
+    /// （`mcp::instructions_section`）。
+    mcp_instructions: Vec<super::mcp::ServerInstructions>,
     /// 兜底超时：工具未声明 timeout_seconds 时生效。None=不兜底（默认构
     /// 造/测试保持旧行为），工厂函数按 config.tools.default_timeout_secs
     /// 注入。防的是 MCP/web/生图这类没有自管超时的工具把回合无限挂死；
@@ -127,8 +133,21 @@ impl ToolRegistry {
         self.skill_catalog_fingerprint
     }
 
-    pub(crate) fn set_skill_catalog_fingerprint(&mut self, fingerprint: [u8; 32]) {
+    pub(crate) fn set_skill_catalog(&mut self, fingerprint: [u8; 32], catalog: Option<String>) {
         self.skill_catalog_fingerprint = Some(fingerprint);
+        self.skill_catalog = catalog;
+    }
+
+    pub(crate) fn skill_catalog(&self) -> Option<&str> {
+        self.skill_catalog.as_deref()
+    }
+
+    pub(crate) fn add_mcp_instructions(&mut self, instructions: super::mcp::ServerInstructions) {
+        self.mcp_instructions.push(instructions);
+    }
+
+    pub(crate) fn mcp_instructions(&self) -> &[super::mcp::ServerInstructions] {
+        &self.mcp_instructions
     }
 
     pub(crate) fn script_catalog_fingerprint(&self) -> Option<[u8; 32]> {
@@ -440,6 +459,11 @@ impl ToolRegistry {
 
     pub fn tool_names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
+    }
+
+    /// 这个工具能不能和同一批里相邻的可并发调用一起跑（未注册的一律不能）。
+    pub fn is_concurrent(&self, name: &str) -> bool {
+        self.tools.get(name).is_some_and(|tool| tool.concurrent)
     }
 
     pub fn contains(&self, name: &str) -> bool {

@@ -25,11 +25,13 @@ mod attachments;
 mod bridge_progress;
 mod bridge_question;
 mod commands_api;
+mod compact_queue;
 mod config_api;
 mod cross_session;
 mod dashboards;
 mod dto;
 mod event_map;
+mod follow_catchup;
 mod goal_driver;
 mod link_preview;
 mod member_persona;
@@ -46,7 +48,9 @@ mod session_cmds;
 mod session_effort;
 mod sessions;
 mod shared_files;
+mod subagent_activity;
 mod subagent_host;
+mod subagent_tree;
 #[cfg(test)]
 mod tests;
 mod tty;
@@ -68,6 +72,7 @@ use attachments::*;
 use bridge_progress::*;
 use bridge_question::*;
 use commands_api::*;
+use compact_queue::*;
 use config_api::*;
 use cross_session::*;
 use dashboards::affection::*;
@@ -96,7 +101,9 @@ use session_cmds::*;
 use session_effort::*;
 use sessions::*;
 use shared_files::*;
+use subagent_activity::*;
 use subagent_host::*;
+use subagent_tree::*;
 use tty::*;
 use turns::*;
 use ui_prefs::*;
@@ -108,8 +115,9 @@ use crate::runtime::{
     ActorCommand, AdminFailure, AnswerFailure, ApiError, ContextSnapshot, DaemonState, EventHub,
     EventRecord, IpcRunGuard, LoginFailure, ManagerState, PlatformPersonaResetError,
     PromptDocument, PromptDocuments, QuestionBroker, RedoWebPrompt, RunInfo, RunOperation,
-    SafeQueuedPrompt, SafeUserAttachment, StoreRegistry, ThinkingVariantUpdate, TurnEngineState,
-    TurnResourceCache, TurnUpdateMode, TurnUpdateReceipt, TurnUpdateRequest, WebAuth, WebIdentity,
+    SafeQueuedPrompt, SafeUserAttachment, SharedEvent, StoreRegistry, ThinkingVariantUpdate,
+    TurnEngineState, TurnResourceCache, TurnUpdateMode, TurnUpdateReceipt, TurnUpdateRequest,
+    WebAuth, WebIdentity,
 };
 use anyhow::{bail, Context, Result};
 use axum::body::Bytes;
@@ -170,6 +178,10 @@ const LINKCARDS_JS: &str = include_str!("../../../../web/linkcards.js");
 const TODOS_JS: &str = include_str!("../../../../web/todos.js");
 // 跨会话消息(09-23):在线登记心跳与消息外壳的显示。
 const CROSS_SESSION_JS: &str = include_str!("../../../../web/crosssession.js");
+// 回复末尾那行 ✻(09-26):与终端 `turn_end.rs` 同一套词表和写法。
+const TURN_END_JS: &str = include_str!("../../../../web/turnend.js");
+// 子代理的会话(会话项目第 4 段):卡片点进子会话、子会话里回主会话。
+const SUBAGENTS_JS: &str = include_str!("../../../../web/subagents.js");
 // 侧栏会话批量删除(09-24):选择模式与操作栏。
 const SESSION_SELECT_JS: &str = include_str!("../../../../web/sessionselect.js");
 // 聊天正文选中文字的右键菜单(2026-09-14)。
@@ -317,6 +329,13 @@ impl From<UserAttachment> for SafeUserAttachment {
             height: attachment.height,
         }
     }
+}
+
+/// 一条会话清空或删掉了：它名下常驻的外部进程一并忘掉——中转线 CLI 的续传映射、
+/// MCP 服务器进程（09-25）。原来只有前一样，各处各调一遍；合成一处，免得再加一种时漏掉几处。
+pub(in crate::web) fn forget_session_processes(session_id: &str) {
+    miyu_core::llm::forget_relay_sessions(session_id);
+    miyu_engine::tools::forget_mcp_session(session_id);
 }
 
 // ── spawn_actor ──

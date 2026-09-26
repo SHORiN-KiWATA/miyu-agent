@@ -126,7 +126,10 @@ async fn the_web_pins_effort_on_one_session_and_leaves_the_global_default_alone(
     let pinned = || {
         ThinkingVariantPreferences::load_scoped(
             &state.paths,
-            ThinkingVariantScope::Session(&session.session_id),
+            ThinkingVariantScope::Session {
+                store: &state.state_store,
+                session_id: &session.session_id,
+            },
         )
         .selected(&choice.provider_id, &choice.model)
         .map(str::to_string)

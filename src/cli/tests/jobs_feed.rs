@@ -19,6 +19,7 @@ fn job(id: &str, session: Option<&str>, root: Option<&str>) -> JobOverview {
         log_path: None,
         metric: None,
         metric_tokens: None,
+        child_session_id: None,
     }
 }
 
@@ -60,4 +61,101 @@ fn switching_sessions_drops_the_previous_sessions_jobs_at_once() {
     feed.set_repl_session("b");
     assert_eq!(ids(&feed.jobs.lock().unwrap()), ["legacy"]);
     assert_eq!(feed.repl_session.lock().unwrap().as_deref(), Some("b"));
+}
+
+fn row(id: &str) -> crate::cli::repl::strip::SubagentRow {
+    crate::cli::repl::strip::SubagentRow {
+        session_id: id.into(),
+        title: id.into(),
+        state: "running".into(),
+        dev: false,
+        job_id: None,
+        running_descendants: 0,
+        peek: String::new(),
+        tokens_label: String::new(),
+        running_since_ms: None,
+    }
+}
+
+fn parent_row() -> crate::cli::repl::strip::ParentRow {
+    crate::cli::repl::strip::ParentRow {
+        session_id: "root".into(),
+        title: "root".into(),
+        root: true,
+    }
+}
+
+/// 切进子代理再退回来：主会话名下的子代理表和它自己的任务一直在手里，任务条不空一拍（用户
+/// 09-25：切回来的时候底下的状态行会消失一瞬间——原来退回来那一下先把兄弟表清了、任务表按
+/// 半新半旧的范围摘了，要等下一轮轮询才补回来）。
+#[test]
+fn going_back_keeps_the_parents_rows_and_jobs() {
+    let feed = SharedJobsFeed::default();
+    feed.set_scope("root", &[]);
+    feed.publish_children("root", vec![row("c1"), row("c2")]);
+    feed.publish_jobs(vec![
+        job("rootcmd", Some("root"), Some("root")),
+        job("c1cmd", Some("c1"), Some("root")),
+    ]);
+
+    feed.set_scope("c1", &["root".to_string()]);
+    feed.publish_children("c1", vec![row("g1")]);
+    assert_eq!(ids(&feed.jobs.lock().unwrap()), ["rootcmd", "c1cmd"]);
+
+    feed.set_scope("root", &[]);
+    assert_eq!(ids(&feed.jobs.lock().unwrap()), ["rootcmd", "c1cmd"]);
+    let items = feed.strip_items(&[], &feed.jobs.lock().unwrap().clone());
+    assert_eq!(
+        items.len(),
+        4,
+        "主会话那一行、两个子代理、主会话的命令: {items:#?}"
+    );
+    assert!(
+        !feed.children.lock().unwrap().contains_key("c1"),
+        "访问路径以外的子代理表不留"
+    );
+}
+
+/// 任务条从轮询那份取：主会话那一行在最上面，正在看的这条挂在它下面，它名下的再往下挂一层，
+/// 兄弟跟在后面。
+#[test]
+fn the_feed_nests_the_current_sessions_children_under_it() {
+    use crate::cli::repl::strip::{Place, StripItem};
+    let feed = SharedJobsFeed::default();
+    feed.set_scope("c1", &["root".to_string()]);
+    feed.publish_children("root", vec![row("c1"), row("c2")]);
+    feed.publish_children("c1", vec![row("g1")]);
+    feed.publish_children("elsewhere", vec![row("x")]);
+
+    let items = feed.strip_items(&[parent_row()], &[]);
+    let shape: Vec<(String, usize)> = items
+        .iter()
+        .map(|item| match item {
+            StripItem::Root { row: root, .. } => {
+                (format!("root:{}", root.session_id), item.depth())
+            }
+            StripItem::Agent { row, place, .. } => {
+                let tag = if *place == Place::Current {
+                    "current"
+                } else {
+                    "agent"
+                };
+                (format!("{tag}:{}", row.session_id), item.depth())
+            }
+            StripItem::Job { job, .. } => (format!("job:{}", job.job_id), item.depth()),
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("root:root".to_string(), 0),
+            ("current:c1".to_string(), 0),
+            ("agent:g1".to_string(), 1),
+            ("agent:c2".to_string(), 0),
+        ]
+    );
+    assert!(
+        !feed.children.lock().unwrap().contains_key("elsewhere"),
+        "不在这一段树上的不收"
+    );
 }

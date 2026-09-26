@@ -270,6 +270,14 @@ def tui_case(env, report, term="xterm-256color", tag="TUI", fresh=False):
     sink = bytearray()
     try:
         tui.drain(master, 3.0, sink)
+        # 等大厅真的画出来再敲（同 tui/run.py 重开那一段）：新进程要一会儿才进 raw，这之前敲的回车被
+        # 行规程变成换行，「发个表情包」就成了草稿，等满 90 秒也等不到回复（红绿账 09-26 两轮都是第一遍
+        # 红、复跑绿）。
+        deadline = time.time() + 20
+        while time.time() < deadline and not any(
+            "Tab" in line for line in render(APC.sub(b"", bytes(sink)))
+        ):
+            tui.settle(master, sink, quiet=0.2, timeout=1.0)
         if fresh:
             # 换一条空会话再问。桩模型的阶段表按**整个会话**已经回过几次工具
             # 结果走，接着上一轮问的话它直接跳到"只说话"那一格，图根本不会出

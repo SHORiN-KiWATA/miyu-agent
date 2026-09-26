@@ -102,6 +102,11 @@ impl StateStore {
             .remove_queued_prompt(&self.session(), prompt_id, queue_session_id)
     }
 
+    /// 见 `ConversationDb::queued_job_report`。
+    pub fn queued_job_report(&self, prompt_id: &str) -> Result<Option<JobReportResult>> {
+        self.conv_db.queued_job_report(prompt_id)
+    }
+
     pub fn load_queued_prompts(&self) -> Result<Vec<QueuedPrompt>> {
         self.conv_db
             .load_queued_prompts(&self.session(), &self.queue_session_id)

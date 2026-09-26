@@ -283,13 +283,15 @@ fn inline_media_falls_back_to_a_user_message_when_the_provider_cannot_carry_it()
         messages[tool_index].content,
         Some(miyu_core::llm::ChatContent::Text(_))
     ));
-    let next = &messages[tool_index + 1];
-    assert_eq!(next.role, "user");
+    // 09-24：整轮的工具结果先放完，带图的那条用户消息在它们后面。原来它紧跟在 c1
+    // 后面、插在 c2 前面：严格的网关 400，配平检查还会给 c2 补一条占位。
+    assert_eq!(messages[tool_index + 1].tool_call_id.as_deref(), Some("c2"));
+    let image = &messages[tool_index + 2];
+    assert_eq!(image.role, "user");
     assert!(matches!(
-        next.content.as_ref().unwrap(),
+        image.content.as_ref().unwrap(),
         miyu_core::llm::ChatContent::Parts(parts) if matches!(&parts[0], miyu_core::llm::ChatContentPart::ImageUrl { .. })
     ));
-    assert_eq!(messages[tool_index + 2].tool_call_id.as_deref(), Some("c2"));
 }
 
 /// pop 溢出策略(平台群会话默认)必须真的裁掉旧回合。08-25 线上实录:某群
@@ -1036,7 +1038,7 @@ async fn compaction_resets_the_byte_prefix_at_most_once_each() {
             server_bodies.lock().unwrap().push(body);
             let sse = if is_compact {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )
@@ -1232,7 +1234,7 @@ async fn effective_context_tokens_prefers_the_provider_anchor() {
             let body = String::from_utf8_lossy(&body).to_string();
             let sse = if body.contains("context summarization assistant") {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )
@@ -1329,7 +1331,7 @@ async fn compaction_restores_recent_files_behind_the_checkpoint() {
             server_bodies.lock().unwrap().push(body);
             let sse = if is_compact {
                 concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"## Task Goal\\nmock summary\\n\\n## Current Work\\n(none)\"}}]}\n\n",
                     "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n",
                     "data: [DONE]\n\n"
                 )

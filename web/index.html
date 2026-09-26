@@ -26,6 +26,8 @@
   <script defer src="/linkcards.js"></script>
   <script defer src="/todos.js"></script>
   <script defer src="/crosssession.js"></script>
+  <script defer src="/turnend.js"></script>
+  <script defer src="/subagents.js"></script>
   <script defer src="/sessionselect.js"></script>
   <script defer src="/selectionmenu.js"></script>
   <script defer src="/shared.js"></script>
@@ -244,6 +246,8 @@
           </div>
           <!-- 目标状态行：目标是长期存在的东西，不该只在对话流里闪一下。
                贴在输入框上方随状态刷新，操作直接在这儿点。 -->
+          <!-- 在子代理的会话里:点它回主会话(会话项目第 4 段,见 subagents.js)。 -->
+          <button class="subagent-parent-bar" id="subagentParentBar" type="button" hidden></button>
           <div class="jobs-strip" id="jobsStrip" hidden></div>
           <div class="goal-bar" id="goalBar" aria-label="当前目标" data-i18n-aria-label="当前目标" hidden></div>
           <div class="question-dock" id="questionDock" aria-label="待回答问题" data-i18n-aria-label="待回答问题" aria-live="polite" hidden></div>

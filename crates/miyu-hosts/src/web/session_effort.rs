@@ -1,7 +1,7 @@
 //! 会话级的思考档位（09-24：「effort 做成会话级」）。
 //!
-//! 会话钉住的档位存在这个会话自己那一份偏好里（`ThinkingVariantScope::Session`），回合
-//! 开始时盖在全局（成员是自己家里那份）档位上（`turns::task`）。改它不碰共享的 agent、
+//! 会话钉住的档位存在这个会话自己那一份偏好里（`ThinkingVariantScope::Session`，存在会话
+//! 所在的库里），回合开始时盖在全局（成员是自己家里那份）档位上（`turns::task`）。改它不碰共享的 agent、
 //! 不用预约管理锁：别的会话跑着也能改，这个会话下一轮就用上。没钉的模型跟着全局走，
 //! 选「跟随全局」（`selected: null`）就是把钉子拔掉；选「模型默认」钉的是
 //! `MODEL_DEFAULT_PIN`，全局设了档位也不带。全局默认档还在 `miyu config` 里改。
@@ -35,11 +35,10 @@ pub(in crate::web) fn session_variant_paths(state: &DaemonState, owner: &str) ->
 
 fn pinned_variants(
     config: &AppConfig,
-    paths: &MiyuPaths,
+    store: &StateStore,
     session_id: &str,
 ) -> Vec<PinnedThinkingVariant> {
-    let pinned =
-        ThinkingVariantPreferences::load_scoped(paths, ThinkingVariantScope::Session(session_id));
+    let pinned = ThinkingVariantPreferences::load_session(store, session_id);
     config
         .provider_model_choices()
         .into_iter()
@@ -62,9 +61,9 @@ pub(in crate::web) async fn get_session_thinking_variants_http(
     require_auth(&headers, &state)?;
     let record = require_local_web_session(&state, &headers, &session_id)?;
     let config = state.manager.lock().unwrap().config.clone();
-    let paths = session_variant_paths(&state, &record.owner);
+    let store = state.stores.for_session(&record.session_id);
     Ok(Json(SessionThinkingVariantsResponse {
-        pinned: pinned_variants(&config, &paths, &record.session_id),
+        pinned: pinned_variants(&config, &store, &record.session_id),
     }))
 }
 
@@ -80,7 +79,11 @@ pub(in crate::web) async fn set_session_thinking_variants_http(
     let config = state.manager.lock().unwrap().config.clone();
     let paths = session_variant_paths(&state, &record.owner);
     let options = active_thinking_variant_options(&config, &paths).map_err(ApiError::internal)?;
-    let scope = ThinkingVariantScope::Session(&record.session_id);
+    let store = state.stores.for_session(&record.session_id);
+    let scope = ThinkingVariantScope::Session {
+        store: &store,
+        session_id: &record.session_id,
+    };
     let mut pinned = ThinkingVariantPreferences::load_scoped(&paths, scope);
     for update in &updates {
         let option = options
@@ -110,7 +113,7 @@ pub(in crate::web) async fn set_session_thinking_variants_http(
     pinned
         .save_scoped(&paths, scope)
         .map_err(ApiError::internal)?;
-    let pinned = pinned_variants(&config, &paths, &record.session_id);
+    let pinned = pinned_variants(&config, &store, &record.session_id);
     state.events.publish(
         "session.updated",
         json!({ "session_id": record.session_id, "thinking_variants": pinned }),

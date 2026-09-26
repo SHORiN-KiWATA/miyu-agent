@@ -15,7 +15,7 @@ impl StateStore {
         &self,
         session_id: &str,
         after_seq: i64,
-    ) -> Result<Vec<(i64, String, String, String)>> {
+    ) -> Result<Vec<BackgroundReportRow>> {
         self.conv_db
             .background_report_replies_after(session_id, after_seq)
     }
@@ -33,17 +33,21 @@ impl StateStore {
         _compatible_previous_prompt: Option<&str>,
     ) -> Result<()> {
         self.init_files()?;
+        let session = self.session();
         let fingerprint = prompt_fingerprint(system_prompt);
-        let file = self.prompt_fingerprint_file();
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent)?;
+        let previous = self.session_value(
+            &session,
+            conversation_db::SessionValueKind::PromptFingerprint,
+        )?;
+        // 分会话记指纹之前的老家：没记过就当没变，只把当前这份记下。
+        if previous.is_none() && self.state_dir.join("prompt.sha256").exists() {
+            return self.set_session_value(
+                &session,
+                conversation_db::SessionValueKind::PromptFingerprint,
+                &fingerprint,
+            );
         }
-        if !file.exists() && self.state_dir.join("prompt.sha256").exists() {
-            std::fs::write(file, format!("{fingerprint}\n"))?;
-            return Ok(());
-        }
-        let previous = std::fs::read_to_string(&file).unwrap_or_default();
-        if previous.trim() != fingerprint {
+        if previous.as_deref().map(str::trim) != Some(fingerprint.as_str()) {
             // v7 Release 3: a persona prompt text change is a planned cache
             // cold start, not a reason to destroy data. Earlier versions
             // physically deleted every turn and the session's artifacts here,
@@ -54,7 +58,11 @@ impl StateStore {
                 "persona prompt fingerprint changed; keeping session history (cache cold start)"
             );
             self.clear_last_usage()?;
-            std::fs::write(file, format!("{fingerprint}\n"))?;
+            self.set_session_value(
+                &session,
+                conversation_db::SessionValueKind::PromptFingerprint,
+                &fingerprint,
+            )?;
         }
         Ok(())
     }
@@ -129,6 +137,54 @@ impl StateStore {
     /// a reopened REPL.
     pub fn session_replay(&self, limit: usize) -> Result<Vec<conversation_db::TurnReplay>> {
         self.conv_db.session_replay(&self.session(), limit)
+    }
+
+    /// 回放快照的翻页版，见 `ConversationDb::session_replay_page`。
+    pub fn replay_page(
+        &self,
+        before_seq: Option<i64>,
+        limit: usize,
+    ) -> Result<conversation_db::ReplayPage> {
+        self.conv_db
+            .session_replay_page(&self.session(), before_seq, limit)
+    }
+
+    /// 网页一页要显示的回合，见 `ConversationDb::load_turn_page`。
+    pub fn turn_page(
+        &self,
+        before_seq: Option<i64>,
+        limit: usize,
+    ) -> Result<conversation_db::TurnPage> {
+        self.conv_db
+            .load_turn_page(&self.session(), before_seq, limit)
+    }
+
+    /// 跑着的那一轮已经流出去的部分，见 `ConversationDb::running_turn_replay`。
+    pub fn running_turn_replay(
+        &self,
+        turn_id: &str,
+    ) -> Result<Option<conversation_db::TurnReplay>> {
+        self.conv_db.running_turn_replay(turn_id)
+    }
+
+    /// 这一轮是不是主会话派给子代理的任务，见 `ConversationDb::turn_from_parent`。
+    pub fn turn_from_parent(&self, turn_id: &str) -> Result<bool> {
+        self.conv_db.turn_from_parent(turn_id)
+    }
+
+    /// 见 `ConversationDb::turn_job_report`。
+    pub fn turn_job_report(&self, turn_id: &str) -> Result<Option<JobReportResult>> {
+        self.conv_db.turn_job_report(turn_id)
+    }
+
+    /// 会话里用户说的第一句，见 `ConversationDb::first_user_content`。
+    pub fn first_user_content(&self) -> Result<Option<String>> {
+        self.conv_db.first_user_content(&self.session())
+    }
+
+    /// 这个会话里用户说过的话，上键历史用，见 `ConversationDb::user_inputs`。
+    pub fn user_inputs(&self) -> Result<Vec<String>> {
+        self.conv_db.user_inputs(&self.session())
     }
 
     pub fn load_visible_turns_excluding(&self, exclude_turn_id: &str) -> Result<Vec<Turn>> {
@@ -362,7 +418,7 @@ impl StateStore {
 
     pub fn reset_conversation(&self) -> Result<()> {
         self.clear_session_content()?;
-        usage::reset_conversation(&self.usage_file())
+        self.reset_conversation_usage()
     }
 
     pub fn reset_persona_contexts(&self, persona: &str, platform: &str) -> Result<Vec<String>> {

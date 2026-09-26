@@ -78,6 +78,7 @@ fn the_output_speed_sits_between_the_turn_figure_and_the_context_meter() {
         generation_tokens: 12_800,
         generation_ms: 35_457,
         live_extra_tokens: 0,
+        cache_breaks: 0,
     };
     assert_eq!(
         format_token_usage_inline(&meter),
@@ -195,4 +196,28 @@ fn an_uncounted_context_renders_as_a_dash_without_a_percent() {
         ..Default::default()
     };
     assert_eq!(format_token_usage_inline(&meter), "—/1M · Σ12k");
+}
+
+/// 断过缓存的会话，Σ 的 C% 后面挂次数；没断过不挂（09-25）。
+#[test]
+fn cache_breaks_ride_behind_the_cache_rate() {
+    let meter = TokenMeter {
+        session_tokens: 133_900,
+        context_window: Some(1_000_000),
+        cumulative_tokens: Some(760_200),
+        cumulative_prompt_tokens: 686_806,
+        cumulative_cached_tokens: 557_568,
+        ..Default::default()
+    };
+    let calm = format_token_usage_inline(&meter);
+    assert!(calm.ends_with("Σ760.2k(C81%)"), "{calm}");
+    let broken = format_token_usage_inline(&TokenMeter {
+        cache_breaks: 2,
+        ..meter
+    });
+    let label = miyu_base::i18n::text("2 miss", "断2");
+    assert!(
+        broken.ends_with(&format!("Σ760.2k(C81%·{label})")),
+        "{broken}"
+    );
 }

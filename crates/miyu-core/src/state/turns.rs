@@ -22,6 +22,7 @@ impl StateStore {
             queue_session_id: self.queue_session_id.clone(),
             queue_owner_pid: self.queue_owner_pid,
             usage_account: self.usage_account.clone(),
+            legacy_home: self.legacy_home.clone(),
         }
     }
 
@@ -109,6 +110,17 @@ impl StateStore {
         self.conv_db.interrupt_turn_with_usage(turn_id, tokens)?;
         let session_id = self.session_id();
         self.recover_journal_assets(&session_id, turn_id)
+    }
+
+    /// 见 `ConversationDb::record_turn_endpoint`。
+    pub fn record_turn_endpoint(
+        &self,
+        turn_id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<()> {
+        self.conv_db
+            .record_turn_endpoint(turn_id, provider_id, model)
     }
 
     /// daemon 有序关停时的收尾：只记用量、不改状态，见
@@ -207,6 +219,28 @@ impl StateStore {
             tokens,
             token_usage_estimated,
         )
+    }
+
+    /// 完成一轮，收尾要写的几样在同一个事务里一起写（见 `TurnFinishExtras`）。
+    pub fn finish_turn(
+        &self,
+        turn_id: &str,
+        done: &conversation_db::TurnCompletion<'_>,
+        extras: &conversation_db::TurnFinishExtras<'_>,
+    ) -> Result<()> {
+        self.conv_db.finish_turn(turn_id, done, Some(extras))
+    }
+
+    /// 同 `finish_turn`，给重做的那一版修订。
+    pub fn finish_turn_revision(
+        &self,
+        turn_id: &str,
+        revision: i64,
+        done: &conversation_db::TurnCompletion<'_>,
+        extras: &conversation_db::TurnFinishExtras<'_>,
+    ) -> Result<()> {
+        self.conv_db
+            .finish_turn_revision(turn_id, revision, done, Some(extras))
     }
 
     pub fn append_persisted_contexts(&self, turn_id: &str, reports: &[String]) -> Result<()> {

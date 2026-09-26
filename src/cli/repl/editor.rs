@@ -23,17 +23,16 @@ pub(in crate::cli) fn load_repl_input_history(
     let session_id = state.session_id();
     let mut merged: Vec<ReplHistoryEntry> =
         read_repl_history_file(&legacy_repl_history_file(paths));
-    // daemon 自己合成的轮（后台任务唤醒、目标续轮）在库里也是 `role == "user"`，
+    // daemon 自己合成的轮（后台任务唤醒、目标续轮）在库里也是用户消息，
     // 不是你敲的，不进上键历史。回放那条路早就认这个标签，这条路原来没认。
+    // 只取用户原话：以前为了这几十 KB 要把整段对话读出来解析（09-24 调研：4.6 MB）。
     let conversation = state
-        .load_conversation()?
+        .user_inputs()?
         .into_iter()
-        .filter(|entry| {
-            entry.role == "user"
-                && !entry.content.trim().is_empty()
-                && !miyu_core::state::is_synthetic_user_content(&entry.content)
+        .filter(|content| {
+            !content.trim().is_empty() && !miyu_core::state::is_synthetic_user_content(content)
         })
-        .map(|entry| strip_terminal_control_sequences(&entry.content))
+        .map(|content| strip_terminal_control_sequences(&content))
         .filter(|content| !content.trim().is_empty());
     for content in conversation {
         merge_history_entry(&mut merged, ReplHistoryEntry::plain(&content));
@@ -148,6 +147,13 @@ impl LiveReplEditor {
     /// 折行按哪个宽度算。活动区每帧把窄框宽度写进 `box_cols`;还没画过就问终端。
     fn content_cols(&self) -> usize {
         self.box_cols.unwrap_or_else(terminal_cols)
+    }
+
+    /// 光标在输入框最后一个物理行上：再按 ↓ 光标已经挪不动了（任务条从这儿进，见
+    /// `tail::navigate`）。
+    pub(in crate::cli) fn cursor_on_last_row(&self) -> bool {
+        repl_move_cursor_vertical_for_cols("  ", &self.input, self.cursor, 1, self.content_cols())
+            == self.cursor
     }
 
     pub(in crate::cli) fn clear(&mut self) {

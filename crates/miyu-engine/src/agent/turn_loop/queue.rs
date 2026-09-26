@@ -191,6 +191,8 @@ impl Agent {
         if messages.len() > inserted_from {
             self.checkpoint_tool_flow(current_turn_id, messages, st.replay_start);
         }
-        Ok(())
+        // 排队的 `/compact` 和插话同一个时机（09-25）：压掉本轮之前的历史，拼回来接着跑。
+        self.run_queued_compact(current_turn_id, messages, st, control, true, on_event)
+            .await
     }
 }

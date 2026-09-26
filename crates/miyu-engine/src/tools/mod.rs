@@ -24,6 +24,13 @@ pub mod knowledge_base;
 mod ledger;
 mod load_tools;
 mod mcp;
+pub(crate) use mcp::instructions_section as mcp_instructions_section;
+pub use mcp::{
+    enable_pool as enable_mcp_pool, forget_session as forget_mcp_session,
+    prefetch as prefetch_mcp_listings, retire_changed as retire_changed_mcp_servers,
+    shutdown_pool as shutdown_mcp_pool,
+};
+mod line_diff;
 pub mod memes;
 mod memory;
 pub mod net_guard;
@@ -40,12 +47,16 @@ mod registry;
 mod relay_tests;
 mod scripts;
 mod session_scope;
+mod session_store;
 pub use session_scope::{apply_session_kind_scope, apply_turn_restrictions};
 mod skills;
 pub mod subagent;
 /// 渲染层要认它:认不出的子代理标记不能原样打到屏幕上(hosts 那边的兜底分支)。
-pub use subagent::{is_subagent_marker, SUBAGENT_SESSION_EXCLUDED, SUBAGENT_SESSION_MARKER};
-pub(crate) use subagent::{peek_subagent_trace, record_subagent_trace, take_subagent_trace};
+pub use subagent::{
+    is_subagent_marker, subagent_session_of_output, SUBAGENT_SESSION_EXCLUDED,
+    SUBAGENT_SESSION_MARKER,
+};
+pub(crate) use subagent::{peek_subagent_session, record_subagent_session, take_subagent_session};
 pub use voice_chat::TOOL_NAME as END_VOICE_CHAT_TOOL;
 pub mod subagent_runner;
 mod todowrite;
@@ -81,7 +92,9 @@ pub use scripts::{
     scripts_dashboard_disable, scripts_dashboard_enable, scripts_dashboard_overview,
     scripts_dashboard_register, scripts_dashboard_source,
 };
-pub(crate) use skills::{apply_skill_refresh, prepare_skill_refresh};
+pub(crate) use skills::{
+    apply_skill_refresh, prepare_skill_refresh, AVAILABLE_SKILLS_TAG, NO_SKILLS_NOTICE,
+};
 pub use web::search_for_webui;
 
 /// 把「一串字符串」参数收成 Vec，容忍模型真会传的几种形状。

@@ -242,6 +242,8 @@ pub(in crate::web) async fn actor_loop(
                     // 人格文件 / MCP 注册 / 模型都可能变了:常驻的 agy 进程手里是旧世界,
                     // 全收掉,下一轮起新的。
                     miyu_core::llm::retire_relay_processes("configuration reloaded");
+                    // MCP 常驻进程只收配置变了、删掉、关掉的那几个（别的会话的浏览器还开着）。
+                    miyu_engine::tools::retire_changed_mcp_servers(&config);
                     // 「终端集成会话默认模式」改了就当场换人格，下一轮生效。
                     if let Err(error) =
                         crate::web::sessions::apply_terminal_session_mode(&config, &state_store)
@@ -553,8 +555,8 @@ pub(in crate::web) fn reset_actor_conversation(
         let store = state_store.pinned(session_id);
         store.clear_session_content()?;
         store.reset_conversation_usage()?;
-        // 待办存在库外面，`clear_session_content` 够不到它。
-        tools::clear_session_todos(paths, session_id)?;
+        // 待办不在 `clear_session_content` 清的那几张表里，得单独清。
+        tools::clear_session_todos(&store, session_id)?;
         // 目标也一起清：重置就是从头来过。留着的话，armed 的旧目标会在重置后
         // 第一个回合结束时把驱动器重新拉起来，对着空历史推进一个被清掉的话题。
         if let Ok(Some(goal)) = store.goal(session_id) {
@@ -579,7 +581,7 @@ pub(in crate::web) fn reset_actor_conversation(
     };
     let context = reset().map_err(|error| AdminFailure::Internal(safe_error_message(&error)))?;
     // claude-code 中转的联动:清空即丢弃该会话的续传映射并尽力删 claude 侧转录。
-    miyu_core::llm::forget_relay_sessions(session_id);
+    crate::web::forget_session_processes(session_id);
     if let Some(context) = context {
         manager.lock().unwrap().context = context;
     }
@@ -600,7 +602,7 @@ pub(in crate::web) fn reset_actor_persona_state(
         let persona = reset_config.active_persona_scope();
         let cleared_sessions = state_store.reset_persona_contexts(&persona, "onebot")?;
         for session_id in &cleared_sessions {
-            miyu_core::llm::forget_relay_sessions(session_id);
+            crate::web::forget_session_processes(session_id);
         }
         // 同 run_wipe:技能/脚本文件不归 wipe 管。
         MemoryStore::new(reset_config, paths).reset_all()?;
@@ -638,9 +640,9 @@ pub(in crate::web) fn clear_actor_session_content(
     store
         .clear_session_content()
         .map_err(|error| AdminFailure::Internal(safe_error_message(error)))?;
-    // 与 `reset_actor_conversation` 同理：待办在库外面，得单独清。
-    miyu_core::llm::forget_relay_sessions(session_id);
-    tools::clear_session_todos(paths, session_id)
+    // 与 `reset_actor_conversation` 同理：待办得单独清。
+    crate::web::forget_session_processes(session_id);
+    tools::clear_session_todos(&store, session_id)
         .map_err(|error| AdminFailure::Internal(safe_error_message(&error)))?;
 
     // Platform sessions normally never become the daemon's current local

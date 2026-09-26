@@ -24,7 +24,7 @@ pub fn register(
     paths: &miyu_base::paths::MiyuPaths,
 ) {
     register_readonly(registry, config, paths);
-    register_run_command(registry, allow_command_execution);
+    register_run_command(registry, allow_command_execution, paths);
     registry.register(ToolSpec::new_with_progress(
         "trash_path",
         "Move files, directories, or symlinks to the system Trash instead of permanently deleting them. Pass every path in one call — one call per path floods the transcript. Use this when the user asks to delete/remove/clean up local paths; do not use rm unless explicitly requested.",
@@ -35,13 +35,21 @@ pub fn register(
 
 /// `run_command` 单独可注册:dev 模式只挂它(+后台任务管理),不连带
 /// coreutils 可替代的读写全家(验收三轮裁剪)。
-pub fn register_run_command(registry: &mut ToolRegistry, allow_command_execution: bool) {
+pub fn register_run_command(
+    registry: &mut ToolRegistry,
+    allow_command_execution: bool,
+    paths: &miyu_base::paths::MiyuPaths,
+) {
+    let full_output_dir = paths.cache_dir.join("command-output");
     registry.register(ToolSpec::new_with_progress(
         "run_command",
         "Run a shell command in the workspace when skills.allow_command_execution is enabled. Set background=true for long-running commands (builds, dev servers): it returns a job_id immediately; poll with job(action=status) and stop with job(action=stop).",
         json!({"type":"object","properties":{"command":{"type":"string","description": "Command to run."},"timeout_seconds":{"type":"integer","description": "Optional timeout in seconds (1-600, default 120). Ignored when background=true."},"background":{"type":"boolean","description": "Run detached as a background command and return a short job_id immediately."},"title":{"type":"string","description": "What this command is for (<=16 chars)."}},"required":["command","title"],"additionalProperties":false}),
-        move |args, progress| async move {
-            run_command(args, allow_command_execution, progress).await
+        move |args, progress| {
+            let full_output_dir = full_output_dir.clone();
+            async move {
+                run_command(args, allow_command_execution, progress, &full_output_dir).await
+            }
         },
     ).writes());
 }
@@ -66,19 +74,22 @@ pub fn register_readonly(
             let paths = read_paths.clone();
             async move { read_dispatch(args, &config, &paths) }
         },
-    ));
+    )
+    .concurrent());
     registry.register(ToolSpec::new(
         "glob",
         "Find files by case-insensitive glob pattern under a directory. Defaults to workspace; use ~ or /home for user files, or / for protected global search.",
         json!({"type":"object","properties":{"path":{"type":"string","description": "Directory to search. Defaults to workspace; use ~ or /home for user files, or / for protected global search."},"pattern":{"type":"string","description": "Case-insensitive glob pattern, for example *ai*test*."},"max_results":{"type":"integer","description": "Maximum results."}},"required":["pattern"],"additionalProperties":false}),
         |args| async move { glob_files(args).await },
-    ));
+    )
+    .concurrent());
     registry.register(ToolSpec::new(
         "grep",
         "Search file contents using ripgrep under a directory or single file. Defaults to workspace; use ~ or /home for user files, or / for protected global search. No matches are returned as an empty ok result.",
         json!({"type":"object","properties":{"path":{"type":"string","description": "Directory or file to search. Defaults to workspace; use ~ or /home for user files, or / for protected global search."},"pattern":{"type":"string","description": "Regex pattern."},"include":{"type":"string","description": "Optional case-insensitive file glob filter."},"max_results":{"type":"integer","description": "Maximum matches."}},"required":["pattern"],"additionalProperties":false}),
         |args| async move { grep_text(args).await },
-    ));
+    )
+    .concurrent());
 }
 
 /// `read` 的命名空间分发:`artifact:名字` 读当前会话的 Artifact 库
@@ -366,6 +377,7 @@ mod tests {
             "printf 'out'; printf 'err' >&2",
             CommandTimeout::fixed(5),
             ToolProgress::new(tx),
+            None,
         )
         .await
         .unwrap();
@@ -395,6 +407,7 @@ mod tests {
             "sleep 30 & echo $!; wait",
             CommandTimeout::fixed(1),
             ToolProgress::new(tx),
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -439,11 +452,62 @@ mod tests {
             "limit": 1,
         }))
         .unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["type"], "text-page");
-        assert_eq!(data["content"], "2: two");
-        assert_eq!(data["truncated"], true);
-        assert_eq!(data["next"], 3);
+        // 09-24：纯文本，第一行是这一页的位置和下一页从哪读（原来是一层 JSON，
+        // 正文里每个换行、引号都要转义）。
+        assert_eq!(
+            result,
+            format!(
+                "[{} · lines 2-2 · more below, continue with offset=3]\n2: two",
+                path.display()
+            )
+        );
+    }
+
+    /// 09-24 B8：输出被截断时全文存盘，结果里给出路径（模型只看得到末尾两万字）。
+    #[tokio::test]
+    async fn a_clipped_command_output_is_saved_in_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let output = execute_command(
+            "seq 1 20000",
+            CommandTimeout::fixed(10),
+            ToolProgress::new(tx),
+            Some(dir.path()),
+        )
+        .await
+        .unwrap();
+        let saved = output
+            .lines()
+            .last()
+            .and_then(|line| line.strip_prefix("[full output saved to "))
+            .and_then(|line| line.strip_suffix(']'))
+            .unwrap_or_else(|| panic!("no saved path in: {}", &output[output.len() - 200..]));
+        let text = std::fs::read_to_string(saved).unwrap();
+        assert!(
+            text.starts_with("$ seq 1 20000\n\n1\n2\n"),
+            "{}",
+            &text[..40]
+        );
+        assert!(text.trim_end().ends_with("\n20000"));
+    }
+
+    /// 09-24 B8：超时的命令已经打出来的输出要交给模型，不能随超时一起丢掉。
+    #[tokio::test]
+    async fn a_timed_out_command_keeps_what_it_already_printed() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        // 给 5 秒：`sh -lc` 在机器忙的时候光起登录 shell 就可能超过 1 秒，
+        // 那样还没打印就超时，测的就不是「保住已有输出」了。
+        let error = execute_command(
+            "echo started-marker; sleep 30",
+            CommandTimeout::fixed(5),
+            ToolProgress::new(tx),
+            None,
+        )
+        .await
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("timed out"), "{message}");
+        assert!(message.contains("started-marker"), "{message}");
     }
 
     #[test]
@@ -570,10 +634,12 @@ mod tests {
     #[tokio::test]
     async fn command_timeout_error_names_the_limit_and_the_way_out() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let output_dir = tempfile::tempdir().unwrap();
         let error = run_command(
             json!({"command": "sleep 5", "timeout_seconds": 1}),
             true,
             ToolProgress::new(tx),
+            output_dir.path(),
         )
         .await
         .expect_err("1 秒预算跑 sleep 5 必然超时")

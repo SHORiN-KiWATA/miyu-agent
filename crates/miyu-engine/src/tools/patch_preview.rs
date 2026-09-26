@@ -1,3 +1,4 @@
+use super::line_diff::{diff_lines, EditLine};
 use super::ToolProgress;
 use anyhow::Result;
 use serde_json::{json, Map, Value};
@@ -10,15 +11,54 @@ pub(crate) fn write_with_patch_preview(
     progress: &ToolProgress,
     mut result: Map<String, Value>,
 ) -> Result<String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let target = write_target(path)?;
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let temp = tempfile::NamedTempFile::new_in(parent)?;
+    let temp = new_temp_file(parent)?;
     std::fs::write(temp.path(), after.as_bytes())?;
-    temp.persist(path)?;
+    // 已有的文件沿用原来的权限位（09-24 B2）：tempfile 在 Unix 上按 0600 建临时
+    // 文件，rename 之后目标就成了 0600，改一次脚本就丢执行位。
+    if let Ok(metadata) = std::fs::metadata(&target) {
+        std::fs::set_permissions(temp.path(), metadata.permissions())?;
+    }
+    temp.persist(&target)?;
     report_patch_preview(progress, path, &patch_result_json(path, before, after));
     result.insert("ok".to_string(), Value::Bool(true));
     result.insert("path".to_string(), Value::String(display_path(path)));
     Ok(serde_json::to_string_pretty(&Value::Object(result))?)
+}
+
+/// 真正要写的那个文件。
+///
+/// 路径是软链时写到它指向的文件（09-24 B2）：rename 会把软链本身换成普通文件，
+/// dotfiles 这类软链就此断开。解析出来的目标要再过一遍沙盒写检查——项目里一个
+/// 指向沙盒外的软链，不能成为往外写的口子。指向不存在的目标时按原路径写。
+fn write_target(path: &Path) -> Result<PathBuf> {
+    let is_link = std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    match std::fs::canonicalize(path) {
+        Ok(target) => {
+            miyu_base::sandbox::guard_write(&target)?;
+            Ok(target)
+        }
+        Err(_) => Ok(path.to_path_buf()),
+    }
+}
+
+/// 新文件按 0666 建、交给 umask 收窄，和 shell 重定向建出来的权限一样；tempfile
+/// 默认的 0600 只适合临时文件。已有文件随后改回它原来的权限。
+fn new_temp_file(parent: &Path) -> Result<tempfile::NamedTempFile> {
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    Ok(builder.tempfile_in(parent)?)
 }
 
 pub(crate) fn patch_result_json(path: &Path, before: &str, after: &str) -> String {
@@ -110,37 +150,39 @@ fn diff_hunks(edits: &[EditLine<'_>]) -> Vec<DiffHunk> {
         ranges.push((start, end));
     }
 
+    // 每一块的起始行号按顺序往下推，不再每块都从文件头数一遍（改动分散的大文件原来是
+    // 块数 × 行数）。
+    let mut walked = 0usize;
+    let (mut old_line, mut new_line) = (1usize, 1usize);
     ranges
         .into_iter()
         .map(|(start, end)| {
-            let (old_start, new_start) = line_numbers_at(edits, start);
+            for edit in &edits[walked..start] {
+                advance(edit, &mut old_line, &mut new_line);
+            }
+            walked = start;
             let (old_count, new_count) = line_counts(&edits[start..end]);
             DiffHunk {
                 start,
                 end,
-                old_start,
+                old_start: old_line,
                 old_count,
-                new_start,
+                new_start: new_line,
                 new_count,
             }
         })
         .collect()
 }
 
-fn line_numbers_at(edits: &[EditLine<'_>], index: usize) -> (usize, usize) {
-    let mut old_line = 1usize;
-    let mut new_line = 1usize;
-    for edit in &edits[..index] {
-        match edit {
-            EditLine::Context(_) => {
-                old_line += 1;
-                new_line += 1;
-            }
-            EditLine::Delete(_) => old_line += 1,
-            EditLine::Insert(_) => new_line += 1,
+fn advance(edit: &EditLine<'_>, old_line: &mut usize, new_line: &mut usize) {
+    match edit {
+        EditLine::Context(_) => {
+            *old_line += 1;
+            *new_line += 1;
         }
+        EditLine::Delete(_) => *old_line += 1,
+        EditLine::Insert(_) => *new_line += 1,
     }
-    (old_line, new_line)
 }
 
 fn line_counts(edits: &[EditLine<'_>]) -> (usize, usize) {
@@ -174,79 +216,6 @@ fn split_lines(value: &str) -> Vec<String> {
         .collect()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum EditLine<'a> {
-    Context(&'a str),
-    Delete(&'a str),
-    Insert(&'a str),
-}
-
-impl<'a> EditLine<'a> {
-    fn marker(&self) -> char {
-        match self {
-            Self::Context(_) => ' ',
-            Self::Delete(_) => '-',
-            Self::Insert(_) => '+',
-        }
-    }
-
-    fn line(&self) -> &'a str {
-        match self {
-            Self::Context(line) | Self::Delete(line) | Self::Insert(line) => line,
-        }
-    }
-}
-
-fn diff_lines<'a>(before: &'a [String], after: &'a [String]) -> Vec<EditLine<'a>> {
-    if before.len().saturating_mul(after.len()) > 250_000 {
-        return before
-            .iter()
-            .map(|line| EditLine::Delete(line.as_str()))
-            .chain(after.iter().map(|line| EditLine::Insert(line.as_str())))
-            .collect();
-    }
-
-    let rows = before.len() + 1;
-    let cols = after.len() + 1;
-    let mut lcs = vec![0usize; rows * cols];
-    for i in (0..before.len()).rev() {
-        for j in (0..after.len()).rev() {
-            let index = i * cols + j;
-            lcs[index] = if before[i] == after[j] {
-                lcs[(i + 1) * cols + j + 1] + 1
-            } else {
-                lcs[(i + 1) * cols + j].max(lcs[i * cols + j + 1])
-            };
-        }
-    }
-
-    let mut edits = Vec::new();
-    let mut i = 0;
-    let mut j = 0;
-    while i < before.len() && j < after.len() {
-        if before[i] == after[j] {
-            edits.push(EditLine::Context(before[i].as_str()));
-            i += 1;
-            j += 1;
-        } else if lcs[(i + 1) * cols + j] >= lcs[i * cols + j + 1] {
-            edits.push(EditLine::Delete(before[i].as_str()));
-            i += 1;
-        } else {
-            edits.push(EditLine::Insert(after[j].as_str()));
-            j += 1;
-        }
-    }
-    while i < before.len() {
-        edits.push(EditLine::Delete(before[i].as_str()));
-        i += 1;
-    }
-    while j < after.len() {
-        edits.push(EditLine::Insert(after[j].as_str()));
-        j += 1;
-    }
-    edits
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +228,29 @@ mod tests {
         assert!(diff.contains("-two"));
         assert!(diff.contains("+TWO"));
         assert!(diff.contains("+three"));
+    }
+
+    /// 一千多行的文件改一行：diff 只有那一行一块（用户 09-26：原来两边行数一乘过 25 万就算成
+    /// 整份删了再加，抬头写 `+1269 -1285`，点开是整个文件）。
+    #[test]
+    fn a_one_line_edit_in_a_big_file_is_a_one_line_diff() {
+        let before: String = (0..1_300).map(|index| format!("line {index}\n")).collect();
+        let after = before.replace("line 650\n", "changed\n");
+        let diff = unified_diff("big.html", &before, &after);
+        assert_eq!(crate::tools::diff_stat(&diff), Some((1, 1)), "{diff}");
+        assert_eq!(diff.matches("@@ ").count(), 1, "{diff}");
+    }
+
+    /// 两块离得远：第二块的行号接着第一块往下数（行号按顺序推，不再每块从头数）。
+    #[test]
+    fn hunk_headers_count_lines_across_earlier_hunks() {
+        let before: String = (1..=100).map(|index| format!("{index}\n")).collect();
+        let after = before
+            .replace("\n10\n", "\nten\n")
+            .replace("\n80\n", "\neighty\n\nextra\n");
+        let diff = unified_diff("n.txt", &before, &after);
+        assert!(diff.contains("@@ -7,7 +7,7 @@"), "{diff}");
+        assert!(diff.contains("@@ -77,7 +77,9 @@"), "{diff}");
     }
 
     #[test]

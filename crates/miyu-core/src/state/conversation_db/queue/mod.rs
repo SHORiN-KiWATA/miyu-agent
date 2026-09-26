@@ -117,6 +117,23 @@ impl ConversationDb {
         Ok(prompts)
     }
 
+    /// 排进正在跑的那一轮的后台任务报告附的结果段（见 `job_report_result`）。终端从事件里
+    /// 只拿得到给人看的那一行，铃铛点开要看的结果段在库里的原文里（09-26）。
+    pub fn queued_job_report(
+        &self,
+        prompt_id: &str,
+    ) -> Result<Option<crate::state::JobReportResult>> {
+        let conn = self.conn.lock().unwrap();
+        let content = conn
+            .query_row(
+                "SELECT content FROM queued_prompts WHERE prompt_id = ?1",
+                params![prompt_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(content.as_deref().and_then(crate::state::job_report_result))
+    }
+
     pub(crate) fn user_attachments_for_prompt(
         &self,
         prompt_id: &str,

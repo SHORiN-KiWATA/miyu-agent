@@ -18,6 +18,8 @@ impl DaemonState {
             context,
             persona_session_ids: HashMap::new(),
             runs_changed: Arc::new(tokio::sync::Notify::new()),
+            compact_requests: HashMap::new(),
+            live_turns: HashMap::new(),
         }));
         let events = EventHub::new();
         let questions = QuestionBroker::new();

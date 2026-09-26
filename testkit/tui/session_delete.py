@@ -9,7 +9,8 @@
 - 按一下就少一条，屏幕上**不出现** y/N；
 - 删的是**光标那一条**，不是别的；
 - 连着按能连着删（光标不会跳回顶上）；
-- 删掉**当前会话**也不要确认，之后 REPL 还能用（落到另一条会话上）；
+- 删掉**当前会话**也不要确认，之后 REPL 还能用（落到另一条会话上）；面板留着、
+  开在兜底会话上，可以接着删（09-25：原来删完当前会话面板就收了）；
 - Esc 退出菜单时不会顺手删掉什么。
 
 跑之前给它私有端口和沙箱家，别跟别的走查抢：
@@ -199,13 +200,13 @@ def main():
         report["落到了另一条会话上"] = (
             pointer() is not None and pointer() != current_id
         )
-        # 删掉自己待着的那条之后应该**当场离开**：面板自己收掉，屏幕上不该
-        # 还留着被删会话的正文（用户 09-20 实测）。
+        # 删掉自己待着的那条之后应该**当场离开**：屏幕上不该还留着被删会话的正文
+        # （用户 09-20 实测）。面板留着、开在兜底会话上，可以接着删（09-25）。
         r.save("sessdel-current-after", screen)
         h.settle(master, sink, quiet=1.2, timeout=30)
         screen = h.render(bytes(sink))
         r.save("sessdel-current-after2", screen)
-        report["删当前会话后面板自己收了"] = not any(
+        report["删当前会话后面板还开着，可以接着删"] = any(
             "选择会话" in line or "Select session" in line for line in screen
         )
         report["删当前会话后看不见它的正文"] = not any(
@@ -215,6 +216,9 @@ def main():
         report["没有落进终端集成会话"] = not any(
             "终端集成会话" in line for line in screen
         )
+        # Esc 收掉面板，接着说话。
+        os.write(master, b"\x1b")
+        h.settle(master, sink, quiet=0.6, timeout=5)
         # 还能接着说话（落到另一条会话上，没把 REPL 弄死）。
         screen = ask(master, sink, "删完还能说话")
         r.save("sessdel-after-current", screen)

@@ -9,5 +9,7 @@ mod slash_config;
 mod slash_context;
 mod slash_session;
 mod submit;
+/// 切进子代理会话、回去（会话项目第 3 段）。
+mod visit;
 pub(in crate::cli) use interactive::*;
 pub(in crate::cli) use one_shot::*;

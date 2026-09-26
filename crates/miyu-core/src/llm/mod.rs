@@ -1,3 +1,4 @@
+mod cache_break;
 mod cache_log;
 mod cache_prefix;
 mod openai_compatible;
@@ -5,12 +6,13 @@ pub(crate) mod provider_capabilities;
 pub mod request_log;
 mod request_shape;
 
-pub use openai_compatible::ContentPolicyBlocked;
+pub use cache_break::{note_cache_rebuild, take_cache_breaks, CacheBreak, CacheBreakCause};
 pub use openai_compatible::{
     forget_relay_sessions, remove_antigravity_relay_files, remove_session_thinking_variants,
     retire_relay_processes, shutdown_relay_processes, thinking_variant_options_for_model,
     ThinkingVariantPreferences, ThinkingVariantScope, MODEL_DEFAULT_PIN,
 };
+pub use openai_compatible::{ContentPolicyBlocked, ContextOverflowed};
 pub use openai_compatible::{OpenAiCompatibleClient, ThinkingVariantOptions};
 pub use openai_compatible::{
     ANTIGRAVITY_BRIDGE_DUPLICATE_TOOLS, CLAUDE_CODE_BRIDGE_DUPLICATE_TOOLS,
@@ -544,7 +546,12 @@ pub fn is_context_overflow_message(message: &str) -> bool {
 }
 
 pub fn is_context_overflow_error(error: &anyhow::Error) -> bool {
-    is_context_overflow_message(&format!("{error:#}"))
+    // 端点层已经认出来的超长带着类型走（09-24 B6）；认不出类型的（中转线、
+    // 老路径）再按措辞兜底。
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<ContextOverflowed>().is_some())
+        || is_context_overflow_message(&format!("{error:#}"))
 }
 
 /// Responses 续传不被上游支持的签名错误:第二步只发增量(带

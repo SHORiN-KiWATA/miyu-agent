@@ -11,6 +11,7 @@ use crate::render::*;
 
 impl StreamRenderer {
     pub fn start_waiting(&mut self) -> Result<()> {
+        self.spinner_frozen = false;
         if self.plain
             || self.wait_spinner.is_some()
             || self.command_display.is_some()
@@ -19,6 +20,8 @@ impl StreamRenderer {
             return Ok(());
         }
         self.hide_cursor()?;
+        // 活动区只有一块：转轮起来之前先把正文的活尾巴擦掉。
+        self.clear_reply_tail()?;
         let phase = self.waiting_phase_text();
         self.wait_spinner = Some(WaitSpinner::start(phase, self.wait_style()));
         self.last_tick = None;
@@ -130,7 +133,7 @@ impl StreamRenderer {
             return Ok(());
         }
         self.reasoning_title = Some(title);
-        self.reasoning_last_delta_at = Some(std::time::Instant::now());
+        self.reasoning_last_delta_at = Some(self.event_now());
         self.ensure_waiting_phase(self.reasoning_live_text(), self.wait_style())
     }
 
@@ -200,6 +203,16 @@ impl StreamRenderer {
     }
 
     pub fn tick_spinner(&mut self) -> Result<()> {
+        // 提问面板开着：画面停在开面板那一刻（见 `spinner_frozen`）。
+        if self.spinner_frozen && self.wait_spinner.is_some() {
+            return Ok(());
+        }
+        self.paint_spinner()
+    }
+
+    /// 按当前状态画一帧（到了间隔才画）。`tick_spinner` 的本体；开提问面板时绕过冻结画
+    /// 最后一帧也走它。
+    pub(crate) fn paint_spinner(&mut self) -> Result<()> {
         let now = std::time::Instant::now();
         self.settle_stalled_reasoning(now)?;
         let should_tick = self
@@ -229,7 +242,6 @@ impl StreamRenderer {
                 self.set_waiting_phase(self.waiting_phase_text());
             } else if self.timeline_enabled() && self.wait_spinner.is_some() {
                 self.refresh_live_block();
-                self.refresh_subagent_panels();
                 // 全屏：live 区就是这一段过程的时间线——已完成的步骤原样列着,
                 // 最后一行是正在做的那个(转轮画在它上面)。
                 let (header, sub) = self.timeline_waiting();
@@ -262,6 +274,10 @@ impl StreamRenderer {
             {
                 self.last_tick = Some(now);
             }
+        }
+        // 没有转轮的时候活动区归正文的活尾巴（它自己按拍节流）。
+        if self.wait_spinner.is_none() {
+            self.refresh_reply_tail(now)?;
         }
         Ok(())
     }
@@ -351,7 +367,7 @@ impl StreamRenderer {
         if self.reasoning_title.is_some() || !self.reasoning_text.is_empty() {
             return;
         }
-        self.reasoning_started_at = Some(std::time::Instant::now());
+        self.reasoning_started_at = Some(self.event_now());
         self.reasoning_elapsed = None;
     }
 
@@ -380,9 +396,9 @@ impl StreamRenderer {
     }
 
     pub(crate) fn record_reasoning_text(&mut self, text: &str) {
-        self.reasoning_started_at
-            .get_or_insert_with(std::time::Instant::now);
-        self.reasoning_last_delta_at = Some(std::time::Instant::now());
+        let now = self.event_now();
+        self.reasoning_started_at.get_or_insert(now);
+        self.reasoning_last_delta_at = Some(now);
         self.reasoning_text.push_str(text);
         // Incremental: recounting the whole accumulated text on every chunk is
         // O(n²) over the stream and the value only feeds the spinner label.
@@ -427,6 +443,7 @@ impl StreamRenderer {
             return Ok(());
         }
         if self.wait_spinner.is_none() {
+            self.clear_reply_tail()?;
             self.wait_spinner = Some(WaitSpinner::start(phase, style));
             self.last_tick = None;
             self.tick_spinner()?;
@@ -463,6 +480,7 @@ impl StreamRenderer {
         }
         if self.wait_spinner.is_none() {
             self.hide_cursor()?;
+            self.clear_reply_tail()?;
             self.wait_spinner = Some(WaitSpinner::start(header, SpinnerStyle::Braille));
             self.last_tick = None;
         } else {
@@ -479,11 +497,12 @@ impl StreamRenderer {
             return Ok(());
         }
         self.release_transient_output()?;
-        self.preparing_question_started_at = Some(std::time::Instant::now());
+        self.preparing_question_started_at = Some(self.event_now());
         if !WaitSpinner::supported() {
             return Ok(());
         }
         self.hide_cursor()?;
+        self.clear_reply_tail()?;
         self.wait_spinner = Some(WaitSpinner::start(
             self.waiting_phase_text(),
             SpinnerStyle::Braille,
@@ -499,7 +518,15 @@ impl StreamRenderer {
         }
     }
 
+    /// 收掉活动区：转轮和正文的活尾巴一起。
     pub(crate) fn stop_waiting(&mut self) -> Result<()> {
+        self.clear_reply_tail()?;
+        self.stop_spinner()
+    }
+
+    /// 只收转轮，正文的活尾巴留着（正文 delta 进来时用，见 `write_chunk`）。
+    pub(crate) fn stop_spinner(&mut self) -> Result<()> {
+        self.spinner_frozen = false;
         if let Some(mut spinner) = self.wait_spinner.take() {
             // 已经在同步块里（落地时顺手收转轮）就别再发一对标记：2026 不是栈。
             let own_block = self.sync_depth == 0;

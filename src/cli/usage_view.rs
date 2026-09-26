@@ -249,3 +249,63 @@ pub(in crate::cli) async fn handle_post_turn_overflow(
     }
     Ok(None)
 }
+
+/// `/usage` 里的断缓存明细（09-25，判定见 `llm::cache_break`）：会话树一共断过几次，最近的
+/// 每一次什么时候、重算了多少、为什么。没断过就是空串，不占地方。
+pub(in crate::cli) fn cache_breaks_text(
+    total: u64,
+    recent: &[miyu_core::state::CacheBreakRecord],
+) -> String {
+    if total == 0 {
+        return String::new();
+    }
+    let mut lines = vec![format!(
+        "\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m",
+        if miyu_base::i18n::is_zh() {
+            format!("断缓存 {total} 次")
+        } else {
+            format!("Cache breaks: {total}")
+        },
+        t(
+            "(this session and its subagents; cached input that had to be recomputed)",
+            "（本会话连同子代理：本来能从缓存读到、却重算了的）"
+        )
+    )];
+    for record in recent {
+        let at = chrono::DateTime::parse_from_rfc3339(&record.at)
+            .map(|at| {
+                at.with_timezone(&chrono::Local)
+                    .format("%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default();
+        lines.push(format!(
+            "  {at}  {} {}  {}",
+            t("recomputed", "重算"),
+            render::format_compact_count(record.lost_tokens),
+            cache_break_cause_text(&record.cause, record.idle_secs),
+        ));
+    }
+    lines.join("\n")
+}
+
+fn cache_break_cause_text(cause: &miyu_core::llm::CacheBreakCause, idle_secs: u64) -> String {
+    use miyu_core::llm::CacheBreakCause;
+    let zh = miyu_base::i18n::is_zh();
+    match cause {
+        CacheBreakCause::SystemPrompt => t("system prompt changed", "系统提示词变了").to_string(),
+        CacheBreakCause::Tools { changes } if zh => format!("工具表变了（{changes}）"),
+        CacheBreakCause::Tools { changes } => format!("tool list changed ({changes})"),
+        CacheBreakCause::History { at, role } if zh => format!("历史第 {at} 条（{role}）被改写"),
+        CacheBreakCause::History { at, role } => format!("message {at} ({role}) was rewritten"),
+        CacheBreakCause::Provider => {
+            let reason = t("the provider did not reuse the cache", "供应商没接住");
+            // 空闲一阵之后的多半是缓存过期了：把隔了多久写上。
+            match idle_secs / 60 {
+                0..=4 => reason.to_string(),
+                minutes if zh => format!("{reason}（距上一次请求 {minutes} 分钟）"),
+                minutes => format!("{reason} ({minutes} min after the previous request)"),
+            }
+        }
+    }
+}

@@ -80,6 +80,24 @@ def say(master, sink, text, wait_stream=True):
     return h.render(bytes(sink))
 
 
+def found_above(master, sink, text, pages=12):
+    """切回来是按库完整回放、停在最底下（会话项目第 2 段）：这一轮的回复很长，用户那句在
+    上面几屏。一页页往上翻，找得到就算在；翻完回到底，别影响后面的步骤。"""
+    screen = h.render(bytes(sink))
+    found = any(text in line for line in screen)
+    turned = 0
+    while not found and turned < pages:
+        os.write(master, b"\x1b[5~")
+        h.settle(master, sink, quiet=0.3, timeout=4)
+        turned += 1
+        found = any(text in line for line in h.render(bytes(sink)))
+    for _ in range(turned):
+        os.write(master, b"\x1b[6~")
+    if turned:
+        h.settle(master, sink, quiet=0.3, timeout=4)
+    return found
+
+
 def command(master, sink, text, wait=4.0):
     os.write(master, text.encode())
     h.drain_until(master, sink, text, 5.0)
@@ -106,9 +124,7 @@ def main():
 
         screen = command(master, sink, "/dev")
         r.save("switchback-dev", screen)
-        report["切走之后看得见开发车道那条会话"] = any(
-            "开发车道的老话" in line for line in screen
-        )
+        report["切走之后看得见开发车道那条会话"] = found_above(master, sink, "开发车道的老话")
 
         screen = command(master, sink, "/normal", wait=6.0)
         r.save("switchback-normal", screen)
@@ -136,9 +152,7 @@ def main():
         command(master, sink, "/dev")
         screen = command(master, sink, "/normal", wait=6.0)
         r.save("switchback-again", screen)
-        report["跑完之后再切一趟也看得见"] = any(
-            "这句话不能丢" in line for line in screen
-        )
+        report["跑完之后再切一趟也看得见"] = found_above(master, sink, "这句话不能丢")
         return report
     finally:
         r.stop(tui, daemon, stub)

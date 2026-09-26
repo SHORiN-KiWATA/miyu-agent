@@ -41,6 +41,57 @@ pub(in crate::cli) enum UsagePlacement {
     Fullscreen { below: bool },
 }
 
+/// footer 左端模式标签那一段要叠的会话级状态。不放进 `ReplFooterStatus`：那份每次
+/// `set_footer` 整份覆盖，会话级的东西放进去每次覆盖都得记着带回来（`goal` 就是这么
+/// 漏过的）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::cli) struct FooterBadges {
+    /// 这个会话开着只读模式（09-23，Tab 切换）：顶替模式那几个字。
+    pub(in crate::cli) readonly: bool,
+    /// 切进子代理会话几层了（会话项目第 3 段）：模式标签后面跟「子代理 ↳N」。
+    pub(in crate::cli) visit_depth: usize,
+    /// 会话树断过几次缓存（09-25）：用量那一段 Σ 的 C% 后面挂「断N」。
+    pub(in crate::cli) cache_breaks: u64,
+}
+
+impl From<bool> for FooterBadges {
+    /// 只知道只读开关的地方（大厅、直连模式）：不在子代理会话里。
+    fn from(readonly: bool) -> Self {
+        Self {
+            readonly,
+            visit_depth: 0,
+            cache_breaks: 0,
+        }
+    }
+}
+
+/// 模式标签那一段。`colored` 为假时是纯文本，量宽用。
+///
+/// 只读开着时直接顶替模式那几个字（用户 09-23：「普通 · 只读」太长，车道看输入框竖条
+/// 的颜色就知道）。窄屏时模式标签最后才裁，它和访问层数一样一直看得见。
+fn footer_mode_segment(mode: PersonaLane, badges: FooterBadges, colored: bool) -> String {
+    let label = if badges.readonly {
+        t("read-only", "只读")
+    } else {
+        mode.label()
+    };
+    let mut segment = match (colored, badges.readonly) {
+        (false, _) => label.to_string(),
+        (true, true) => format!("{}{label}\x1b[0m", readonly_label_style()),
+        (true, false) => colored_footer_mode_label(mode),
+    };
+    if badges.visit_depth > 0 {
+        let visit = format!("{} ↳{}", t("subagent", "子代理"), badges.visit_depth);
+        segment.push_str(" · ");
+        if colored {
+            segment.push_str(&format!("{}{visit}\x1b[0m", lane_accent_style(mode)));
+        } else {
+            segment.push_str(&visit);
+        }
+    }
+    segment
+}
+
 /// 量一行放不放得下时给声波和计时留的宽：三个空格 + 五柱声波 + 空格 + `59m 59s`。
 const RUNNING_ALLOWANCE: usize = 3 + 5 + 1 + 7;
 /// 同一行里左右两段之间至少空这么宽，挨得再近就像一整串了。
@@ -53,23 +104,25 @@ const USAGE_GAP: usize = 3;
 /// 模型名、思考档位要整个留得下，用量也要整串（带速度和累计）。
 pub(in crate::cli) fn usage_fits_on_footer_line(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     cols: usize,
 ) -> bool {
+    let badges = badges.into();
     let bar = footer_display_width(&input_prompt_bar(mode));
-    let label = if readonly {
-        t("read-only", "只读")
-    } else {
-        mode.label()
-    };
+    let label = footer_mode_segment(mode, badges, false);
     let essential = footer_display_width(&repl_footer_left_parts(
-        label,
+        &label,
         &footer.model,
         None,
         footer.thinking.as_deref().unwrap_or_default(),
     ));
-    let usage = footer_display_width(&usage_text_fitting(footer, usize::MAX, 0));
+    let usage = footer_display_width(&usage_text_fitting(
+        footer,
+        badges.cache_breaks,
+        usize::MAX,
+        0,
+    ));
     bar + essential + RUNNING_ALLOWANCE + USAGE_GAP + usage <= cols
 }
 
@@ -279,12 +332,18 @@ impl ReplFooterStatus {
         changed
     }
 
-    /// 回合中途的逐请求刷新:在(回合前的)基线上叠加回合累计。必须作用
-    /// 在基线快照的克隆上,同一回合内可重复调用而不重复相加。
+    /// 回合中途的逐请求刷新。必须作用在基线快照（回合前的 footer）的克隆上，同一回合内
+    /// 可重复调用而不重复相加。
+    ///
+    /// Σ 取 daemon 随这次请求报的会话累计（已落库的各回合 + 本回合至今），不在基线上再加
+    /// 本回合：切进一条回合正跑着的会话时，基线是 daemon 的实时快照，本回合至今已经在里面
+    /// 了，再加一遍就是算两遍——跟着看的那一阵 Σ 虚高，回合一停又「往回掉」（09-26 走查：
+    /// 子代理里 900，Ctrl+C 之后 750，750 才是对的）。老 daemon 不报累计（为 0）时照旧叠加。
     pub(in crate::cli) fn apply_round_usage(
         &mut self,
         context_tokens: u64,
         turn: TurnTokens,
+        session: TurnTokens,
         speed: GenerationSpeed,
     ) {
         let meter = &mut self.token_usage;
@@ -296,6 +355,12 @@ impl ReplFooterStatus {
         if context_tokens > 0 {
             meter.session_tokens = context_tokens;
             meter.session_tokens_unknown = false;
+        }
+        if session.total > 0 && session.total >= turn.total {
+            meter.cumulative_tokens = Some(session.total);
+            meter.cumulative_prompt_tokens = session.prompt;
+            meter.cumulative_cached_tokens = session.cache_read;
+            return;
         }
         let cumulative = meter.cumulative_tokens.unwrap_or(0) + turn.total;
         meter.cumulative_tokens = (cumulative > 0).then_some(cumulative);
@@ -348,22 +413,26 @@ impl ReplFooterStatus {
     }
 }
 
-/// `readonly`:这个会话开着只读模式(09-23,Tab 切换),模式标签后面跟一段「只读」。
-/// 它不放在 `ReplFooterStatus` 里:那份是被 `set_footer` 整份覆盖的,会话级的开关
-/// 放进去每次覆盖都得记着带回来(`goal` 就是这么漏过的)。
+/// `badges`:只读、切进子代理会话几层(见 [`FooterBadges`])。
 pub(in crate::cli) fn repl_footer_line(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     cols: usize,
     usage: UsagePlacement,
 ) -> String {
     let cols = cols.max(1);
+    let badges = badges.into();
     let bar = input_prompt_bar(mode);
     let bar_width = footer_display_width(&bar);
     let right_plain = match usage {
         UsagePlacement::FooterRight | UsagePlacement::Fullscreen { below: false } => {
-            usage_text_fitting(footer, cols.saturating_sub(bar_width), 24)
+            usage_text_fitting(
+                footer,
+                badges.cache_breaks,
+                cols.saturating_sub(bar_width),
+                24,
+            )
         }
         UsagePlacement::Fullscreen { below: true } => String::new(),
     };
@@ -374,7 +443,7 @@ pub(in crate::cli) fn repl_footer_line(
     };
     let right_width = footer_display_width(&right);
     let left_budget = cols.saturating_sub(bar_width.saturating_add(right_width).saturating_add(1));
-    let left = repl_footer_left(mode, readonly, footer, left_budget);
+    let left = repl_footer_left(mode, badges, footer, left_budget);
     let gap = cols
         .saturating_sub(
             bar_width
@@ -389,9 +458,13 @@ pub(in crate::cli) fn repl_footer_line(
 }
 
 /// 全屏下一行放不下时 footer 底下那一行：用量右对齐，整行垫满（重画时不先擦）。
-pub(in crate::cli) fn repl_usage_line(footer: &ReplFooterStatus, cols: usize) -> String {
+pub(in crate::cli) fn repl_usage_line(
+    footer: &ReplFooterStatus,
+    cache_breaks: u64,
+    cols: usize,
+) -> String {
     let cols = cols.max(1);
-    let text = usage_text_fitting(footer, cols, 0);
+    let text = usage_text_fitting(footer, cache_breaks, cols, 0);
     if text.is_empty() {
         return " ".repeat(cols);
     }
@@ -412,12 +485,18 @@ fn pad_row(line: &str, cols: usize) -> String {
 /// 用量那串字，按宽度降级：先丢输出速度，再丢累计，最后丢百分比，上下文表撑到最后。
 /// `reserve` 是同一行上还要留给左边的列数（跟在 footer 右端时，模式和模型名至少要
 /// 留出这么宽）。
-fn usage_text_fitting(footer: &ReplFooterStatus, width: usize, reserve: usize) -> String {
+fn usage_text_fitting(
+    footer: &ReplFooterStatus,
+    cache_breaks: u64,
+    width: usize,
+    reserve: usize,
+) -> String {
     // The usage figures carry only the standing gauges — how much context is
     // left, and what the session has cost. The per-turn figure is transient and
     // already has its own home in the `Token:` line printed after each reply.
     let usage = render::TokenMeter {
         turn_tokens: 0,
+        cache_breaks,
         ..footer.token_usage
     };
     let mut text = String::new();
@@ -441,10 +520,11 @@ fn usage_text_fitting(footer: &ReplFooterStatus, width: usize, reserve: usize) -
 
 pub(in crate::cli) fn repl_footer_left(
     mode: PersonaLane,
-    readonly: bool,
+    badges: impl Into<FooterBadges>,
     footer: &ReplFooterStatus,
     width: usize,
 ) -> String {
+    let badges = badges.into();
     let thinking = footer.thinking.as_deref().unwrap_or_default();
     let colored_thinking = (!thinking.is_empty()).then(|| primary_footer_text(thinking));
     let colored_thinking = colored_thinking.as_deref().unwrap_or_default();
@@ -464,17 +544,7 @@ pub(in crate::cli) fn repl_footer_left(
         None => text,
     };
     let provider = format!("\x1b[2m{}\x1b[0m", footer.provider);
-    // 只读开着时直接顶替模式那几个字(用户 09-23:「普通 · 只读」太长,车道看
-    // 输入框竖条的颜色就知道)。窄屏时模式标签最后才裁,它同样一直看得见。
-    let mode = if readonly {
-        format!(
-            "{}{}\x1b[0m",
-            readonly_label_style(),
-            t("read-only", "只读")
-        )
-    } else {
-        colored_footer_mode_label(mode)
-    };
+    let mode = footer_mode_segment(mode, badges, true);
     let full = with_wave(repl_footer_left_parts(
         &mode,
         &footer.model,
@@ -614,7 +684,10 @@ pub(in crate::cli) fn footer_thinking_summary(
     session_id: &str,
 ) -> Result<Option<String>> {
     let mut client = OpenAiCompatibleClient::from_config(session_config, paths)?;
-    client.apply_session_thinking_variants(paths, session_id);
+    // 终端的会话都在管理员库里;钉子存在会话库,库开不了就只显示全局档位。
+    if let Ok(store) = StateStore::new(paths) {
+        client.apply_session_thinking_variants(&store, session_id);
+    }
     Ok(client.thinking_variant_summary())
 }
 

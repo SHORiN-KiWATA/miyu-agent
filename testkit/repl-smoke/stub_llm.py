@@ -19,6 +19,14 @@ REPLY = os.environ.get(
     "STUB_REPLY",
     "好的,收到。这是一段用于走查的回复,分块吐出来好让 footer 量得出每秒 token。",
 )
+# 摘要请求（压缩模板的第一句在系统提示里，fork 摘要则在追加的那条 user 消息里）回一份
+# 照模板写的摘要，不走阶段表。09-25 起不照模板 `## ` 标题写的摘要不落库，回普通正文的话
+# `/compact` 会报错。
+SUMMARY_MARK = b"context summarization assistant"
+SUMMARY_REPLY = "## Task Goal\n走查用的摘要。\n\n## Current Work\n(none)"
+# 置 STUB_SUBAGENT_REPLY 让子代理的最终回复和主线分开:默认两边吐同一段 REPLY,
+# 切进子会话看的时候就分不清画面上那段是子代理自己说的、还是主回合串进来的(09-25)。
+SUBAGENT_REPLY = os.environ.get("STUB_SUBAGENT_REPLY")
 # 默认不发思考:老的走查脚本按「回复就是全部输出」断言。置 STUB_REASONING=1
 # 才多吐一段 reasoning_content,给全屏 TUI 的「点击展开」测具用。
 REASONING = os.environ.get("STUB_REASONING")
@@ -54,6 +62,12 @@ SUBAGENT_COMMAND = os.environ.get("STUB_SUBAGENT_COMMAND", TOOL_COMMAND)
 # 只跑一条的话"趁它还活着点开看看"这件事根本来不及做。
 SUBAGENT_BG_COMMAND = os.environ.get("STUB_SUBAGENT_BG_COMMAND", SUBAGENT_COMMAND)
 SUBAGENT_BG_ROUNDS = int(os.environ.get("STUB_SUBAGENT_BG_ROUNDS", "3"))
+# 置 STUB_GRANDCHILDREN=N：后台子代理先派 N 个后台孙代理（`走查孙代理1`…），再跑它自己那几轮
+# 命令。孙代理的 prompt 带 `GRANDCHILD-SENT`、不带 `BGSUB-SENT`，认得出来；它跑一条慢命令
+# （`STUB_GRANDCHILD_COMMAND`）。任务条的「（+N）」、切进子代理后挂在它下面的孙代理、Ctrl+C
+# 连孙代理一起停，都靠它（09-26）。
+GRANDCHILDREN = int(os.environ.get("STUB_GRANDCHILDREN", "0"))
+GRANDCHILD_COMMAND = os.environ.get("STUB_GRANDCHILD_COMMAND", "sleep 90; printf 'GCOUT\\n'")
 # 置 STUB_EXTRA_CALLS='[{"name":"load_tools","arguments":{"names":["x"]}},{"name":"x","arguments":{}}]'：
 # 按顺序再调这几个工具（走查脚本工具的显示名之类，阶段表里没有的都从这儿来）。
 EXTRA_CALLS = json.loads(os.environ.get("STUB_EXTRA_CALLS", "[]"))
@@ -141,6 +155,9 @@ class Handler(BaseHTTPRequestHandler):
         # 后台子代理：派出去那条的 prompt 里带 `BGSUB-SENT`，历史里认得出来，
         # 免得每轮再派一条。
         wants_bg_subagent = b"STUB_SUBBG" in body and b"BGSUB-SENT" not in body
+        # 在子代理会话里说 `STUB_GC_AGAIN`：再派一个后台孙代理（09-26：子代理被打断过、又在它自己
+        # 的会话里接着聊出了孙代理）。派出去那条的 prompt 带 `GC-AGAIN-SENT`，历史里认得出来。
+        wants_gc_again = b"STUB_GC_AGAIN" in body and b"GC-AGAIN-SENT" not in body
         # 消息里带 `STUB_USAGE` 就去查一次本会话用量，不看阶段表——阶段表是
         # 一轮内跑完的，而「这个会话烧了多少」要等**上一轮**落库才有数。
         wants_usage = b"STUB_USAGE" in body and b"Token \xe6\xb6\x88\xe8\x80\x97" not in body
@@ -148,9 +165,21 @@ class Handler(BaseHTTPRequestHandler):
             SUBAGENT_MARK.encode() in body and MAIN_MARK.encode() not in body
         )
         inside_bg_subagent = inside_subagent and b"BGSUB-SENT" in body
-        if inside_subagent:
+        inside_grandchild = (
+            inside_subagent and b"GRANDCHILD-SENT" in body and b"BGSUB-SENT" not in body
+        )
+        is_summary = SUMMARY_MARK in body
+        if is_summary:
+            stage = None
+        elif wants_gc_again:
+            stage = "grandchild_again"
+        elif inside_subagent:
+            spawn = GRANDCHILDREN if inside_bg_subagent else 0
             rounds = SUBAGENT_BG_ROUNDS if inside_bg_subagent else 1
-            stage = "tool" if done < rounds else None
+            if done < spawn:
+                stage = "grandchild"
+            else:
+                stage = "tool" if done < spawn + rounds else None
         elif wants_bg_subagent:
             stage = "background_subagent"
         elif wants_usage:
@@ -234,6 +263,20 @@ class Handler(BaseHTTPRequestHandler):
                     "prompt": f"{SUBAGENT_MARK}BGSUB-SENT：跑一条命令看看，然后简单说一句。",
                     "background": True,
                 }, ensure_ascii=False)
+            elif stage == "grandchild_again":
+                name = "subagent"
+                arguments = json.dumps({
+                    "description": "走查孙代理又一个",
+                    "prompt": f"{SUBAGENT_MARK}GRANDCHILD-SENT GC-AGAIN-SENT：跑一条慢命令。",
+                    "background": True,
+                }, ensure_ascii=False)
+            elif stage == "grandchild":
+                name = "subagent"
+                arguments = json.dumps({
+                    "description": f"走查孙代理{done + 1}",
+                    "prompt": f"{SUBAGENT_MARK}GRANDCHILD-SENT：跑一条慢命令。",
+                    "background": True,
+                }, ensure_ascii=False)
             elif stage == "todo":
                 name = "todowrite"
                 todos = [
@@ -283,7 +326,9 @@ class Handler(BaseHTTPRequestHandler):
                 name = "run_command"
                 # 子代理内层跑的那条要慢一点：面板标题上的工具次数与词元、状态行
                 # 上那串量，都只有在它还跑着的时候才看得见。
-                if inside_bg_subagent:
+                if inside_grandchild:
+                    command = GRANDCHILD_COMMAND
+                elif inside_bg_subagent:
                     command = SUBAGENT_BG_COMMAND
                 elif inside_subagent:
                     command = SUBAGENT_COMMAND
@@ -338,12 +383,15 @@ class Handler(BaseHTTPRequestHandler):
                                                   REASONING_TEXT[start:start + CHUNK_CHARS]},
                                         "finish_reason": None}]})
                 time.sleep(CHUNK_SLEEP)
-        for start in range(0, len(REPLY), CHUNK_CHARS):
+        reply = SUBAGENT_REPLY if (SUBAGENT_REPLY and inside_subagent) else REPLY
+        if is_summary:
+            reply = SUMMARY_REPLY
+        for start in range(0, len(reply), CHUNK_CHARS):
             self._sse({"choices": [{"index": 0,
-                                    "delta": {"content": REPLY[start:start + CHUNK_CHARS]},
+                                    "delta": {"content": reply[start:start + CHUNK_CHARS]},
                                     "finish_reason": None}]})
             time.sleep(CHUNK_SLEEP)
-        completion = max(1, len(REPLY) // 2)
+        completion = max(1, len(reply) // 2)
         # prompt 用量随对话长度涨（每条 user 消息算 5 个）：撤销/弹出之后 footer 的
         # 上下文读数才有得变，走查看得出「即时刷新」。
         user_turns = body.count(b'"role":"user"') + body.count(b'"role": "user"')

@@ -114,33 +114,7 @@ pub(in crate::web) async fn handle_session_command(
                 VISITABLE_KINDS,
                 None,
             )?;
-            let children = state
-                .stores
-                .for_session(&parent.session_id)
-                .child_sessions(&parent.session_id)
-                .map_err(|error| safe_error_message(&error))?;
-            let manager = state.manager.lock().unwrap();
-            let sessions: Vec<Value> = children
-                .iter()
-                .map(|overview| {
-                    let record = &overview.record;
-                    json!({
-                        "session_id": record.session_id,
-                        "name": record.name,
-                        "depth": record.depth,
-                        "task_state": record.task_state,
-                        "background": record.background,
-                        "dev": record.persona == miyu_core::state::DEV_PERSONA,
-                        "spawned_by_turn": record.spawned_by_turn,
-                        "turn_count": overview.turn_count,
-                        "context_tokens": overview.context_tokens,
-                        "active_run_id": manager.run_in_session(&record.session_id),
-                        "created_at": record.created_at,
-                        "updated_at": record.updated_at,
-                    })
-                })
-                .collect();
-            Ok(json!({ "session_id": parent.session_id, "sessions": sessions }))
+            subagent_sessions_json(state, &parent.session_id)
         }
         IpcCommand::ListSessions { mode } => {
             // dev 列表以 dev REPL 指针为"当前":全局指针指向普通会话,
@@ -179,12 +153,24 @@ pub(in crate::web) async fn handle_session_command(
             // 表(一万多),挂在没聊过的会话上会误导,列表里给 0。
             const LAZY_FILL_PER_CALL: usize = 8;
             let mut filled = 0usize;
+            // 在跑的（连同子代理在跑的）：`/session` 面板里删它要按两下（09-25）。
+            let running = sessions_with_running_trees(state);
+            // 回合还在跑的会话，上下文取这一轮的实时数（09-25，见 `overlay_live_turn`）。
+            let live_context = |id: &str| {
+                let manager = state.manager.lock().unwrap();
+                manager
+                    .session_has_runs(id)
+                    .then(|| manager.live_turns.get(id).map(|live| live.context_tokens))
+                    .flatten()
+            };
             let sessions: Vec<Value> = sessions
                 .iter()
                 .map(|overview| {
                     let mut value = session_overview_json(overview, &current);
                     let id = overview.record.session_id.as_str();
-                    let tokens = if overview.turn_count == 0 {
+                    let tokens = if let Some(tokens) = live_context(id) {
+                        Some(tokens)
+                    } else if overview.turn_count == 0 {
                         Some(0)
                     } else if let Some(tokens) = overview.context_tokens {
                         Some(tokens)
@@ -197,6 +183,7 @@ pub(in crate::web) async fn handle_session_command(
                         None
                     };
                     value["context_tokens"] = json!(tokens);
+                    value["running"] = json!(running.contains(id));
                     value
                 })
                 .collect();
@@ -522,57 +509,7 @@ pub(in crate::web) async fn handle_session_command(
                 )
                 .to_string());
             }
-            // 运行中的会话也能删：先替用户按停止，等 run 退场再删。
-            if state
-                .manager
-                .lock()
-                .unwrap()
-                .session_has_runs(&record.session_id)
-            {
-                crate::web::stop_session_runs(
-                    state,
-                    &record.session_id,
-                    std::time::Duration::from_secs(5),
-                )
-                .await;
-            }
-            // 子代理树先拆(09-18 会话化):停回合、停后台任务、收中转进程、删行。
-            teardown_subagent_tree(state, &record.session_id).await;
-            reserve_admin_for_session(&state.manager, &record.session_id)
-                .map_err(|error| error.message)?;
-            if &*store.session_id() == record.session_id.as_str() {
-                let fallback = match fallback_session_id(state, &record.session_id) {
-                    Ok(fallback) => fallback,
-                    Err(error) => {
-                        release_admin(&state.manager);
-                        return Err(error);
-                    }
-                };
-                if let Err(error) = switch_session_via_actor_reserved(state, fallback).await {
-                    release_admin(&state.manager);
-                    return Err(error);
-                }
-            }
-            let result = state
-                .stores
-                .for_session(&record.session_id)
-                .delete_session(&record.session_id)
-                .map_err(|error| safe_error_message(&error));
-            miyu_core::llm::forget_relay_sessions(&record.session_id);
-            release_admin(&state.manager);
-            result?;
-            // 这个会话钉住的思考档位（09-24）跟着会话走。
-            miyu_core::llm::remove_session_thinking_variants(
-                &session_variant_paths(state, &record.owner),
-                &record.session_id,
-            );
-            // 库里的目标行随会话级联删除；进程内的 goal 状态（armed 等）
-            // 也一起清，不然条目在内存里陪跑到进程退出。
-            miyu_engine::tools::goal::forget_session(&record.session_id);
-            state.events.publish(
-                "session.deleted",
-                json!({ "session_id": record.session_id }),
-            );
+            delete_session_tree(state, &record).await?;
             Ok(json!({}))
         }
         IpcCommand::SetSandbox {
@@ -841,6 +778,149 @@ fn session_is_running_local_webui(state: &DaemonState, session_id: &str) -> bool
         .filter(|info| &*info.session_id == session_id);
     runs.next()
         .is_some_and(|first| local(first) && runs.all(local))
+}
+
+/// 某条会话名下的直系子代理会话（09-18 会话化）：终端的任务条、`/subagent`，网页的子代理
+/// 卡片都读它，IPC 和 HTTP 共用这一份形状。
+pub(in crate::web) fn subagent_sessions_json(
+    state: &DaemonState,
+    parent_session_id: &str,
+) -> Result<Value, String> {
+    let children = state
+        .stores
+        .for_session(parent_session_id)
+        .child_sessions(parent_session_id)
+        .map_err(|error| safe_error_message(&error))?;
+    let jobs = tools::jobs::overview();
+    // 名下还在跑的后代、这会儿的样子只算还没到终态的：跑完的不上任务条，轮询一秒一次，
+    // 名下攒了几十条做完的子代理时不必每条都查一遍库。
+    let live: Vec<Option<(usize, LiveRow)>> = children
+        .iter()
+        .map(|overview| {
+            let record = &overview.record;
+            let pending = record
+                .task_state
+                .as_deref()
+                .and_then(miyu_core::state::SubagentTaskState::parse)
+                .is_some_and(miyu_core::state::SubagentTaskState::is_pending);
+            pending.then(|| {
+                (
+                    running_descendants(state, &record.session_id, &jobs),
+                    live_row(state, &record.session_id),
+                )
+            })
+        })
+        .collect();
+    let manager = state.manager.lock().unwrap();
+    let sessions: Vec<Value> = children
+        .iter()
+        .zip(live)
+        .map(|(overview, live)| {
+            let record = &overview.record;
+            let (running_descendants, live) = live.unwrap_or_default();
+            json!({
+                "session_id": record.session_id,
+                "name": record.name,
+                "depth": record.depth,
+                "task_state": record.task_state,
+                "background": record.background,
+                "dev": record.persona == miyu_core::state::DEV_PERSONA,
+                "spawned_by_turn": record.spawned_by_turn,
+                "turn_count": overview.turn_count,
+                "context_tokens": overview.context_tokens,
+                "active_run_id": manager.run_in_session(&record.session_id),
+                "job_id": miyu_engine::tools::subagent::background_job_of(&record.session_id),
+                // 它名下还在跑的后代（孙代理、这一支的后台命令）：任务条折叠行上的「（+N）」。
+                "running_descendants": running_descendants,
+                // 它这会儿在干什么、烧了多少、这一轮什么时候起的（09-26）：前台后台、停下之后
+                // 接着聊的都有，任务条那一行不再只靠后台子代理的镜像任务。
+                "peek": live.peek,
+                "tokens": live.tokens,
+                "tokens_label": live.tokens_label,
+                "running_since_ms": live.running_since_ms,
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+            })
+        })
+        .collect();
+    Ok(json!({ "session_id": parent_session_id, "sessions": sessions }))
+}
+
+/// 任务条上一行子代理的实时那几样。
+#[derive(Default)]
+struct LiveRow {
+    peek: String,
+    tokens: u64,
+    tokens_label: String,
+    running_since_ms: Option<u64>,
+}
+
+/// 在跑的取事件流里记着的（`subagent_activity`）；闲着等后台的取库里的会话累计。
+fn live_row(state: &DaemonState, session_id: &str) -> LiveRow {
+    if let Some((status, since)) = subagent_activity(session_id) {
+        if status.tokens > 0 || !status.peek.is_empty() {
+            return LiveRow {
+                peek: status.peek,
+                tokens: status.tokens,
+                tokens_label: status.tokens_label,
+                running_since_ms: Some(since),
+            };
+        }
+    }
+    let tokens = state
+        .stores
+        .for_session(session_id)
+        .pinned(session_id)
+        .session_cumulative_token_totals()
+        .map(|totals| totals.total)
+        .unwrap_or_default();
+    LiveRow {
+        tokens,
+        tokens_label: miyu_engine::tools::subagent_runner::format_token_count(tokens, false),
+        running_since_ms: subagent_activity(session_id).map(|(_, since)| since),
+        ..LiveRow::default()
+    }
+}
+
+/// 网页能「看」的会话：侧栏里那些，外加它们名下的子代理会话（会话项目第 4 段）。子会话按
+/// 它的根会话核：根会话是你能看的，它名下的子会话你就能看；归属、人格、平台那几条闸都落在
+/// 根会话上（子会话建的时候归属就是跟着父会话走的）。
+pub(in crate::web) fn require_viewable_web_session(
+    state: &DaemonState,
+    headers: &HeaderMap,
+    session_id: &str,
+) -> std::result::Result<miyu_core::state::SessionRecord, ApiError> {
+    let identity = require_identity(headers, state)?;
+    let store = state
+        .stores
+        .for_identity(&identity)
+        .map_err(ApiError::internal)?;
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "session not found");
+    let record = store
+        .session_record(session_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(not_found)?;
+    if record.kind != miyu_core::state::SUBAGENT_SESSION_KIND {
+        return require_local_web_session(state, headers, session_id);
+    }
+    // 往上找根会话。树最多三层（主会话、子代理、孙代理），多走几步兜住坏数据。
+    let mut parent = record.parent_session_id.clone();
+    for _ in 0..8 {
+        let Some(parent_id) = parent.take() else {
+            break;
+        };
+        let above = store
+            .session_record(&parent_id)
+            .map_err(ApiError::internal)?
+            .ok_or_else(not_found)?;
+        if above.kind == miyu_core::state::SUBAGENT_SESSION_KIND {
+            parent = above.parent_session_id;
+            continue;
+        }
+        require_local_web_session(state, headers, &above.session_id)?;
+        return Ok(record);
+    }
+    Err(not_found())
 }
 
 pub(in crate::web) fn session_api_error(message: String) -> ApiError {

@@ -12,7 +12,7 @@ use crate::state::conversation_db::*;
 /// `turns` 的固定列序。`map_turn_row` 是按位置读的,顺序一改全库跟着错——
 /// AGENTS §3.1 点名的最脆弱处。原来这串在本文件里抄了 7 份,新加一个查询就是
 /// 第 8 份;收成一份,谁都别再手抄。
-const TURN_COLUMNS: &str = "turn_id, seq, user_content, display_content, user_timestamp, assistant_content,
+pub(super) const TURN_COLUMNS: &str = "turn_id, seq, user_content, display_content, user_timestamp, assistant_content,
                     assistant_reasoning, assistant_provider_id, assistant_model, assistant_timestamp, status, tool_reports, hidden, is_summary, owner_pid,
                     token_total, token_usage_estimated, revision, context_messages, token_prompt, token_cache_read, tool_flow";
 
@@ -708,12 +708,11 @@ impl ConversationDb {
     #[allow(dead_code)]
     /// Completed daemon wake turns after `after_seq`, oldest first: background
     /// job reports and cross-session messages (09-23).
-    /// (seq, turn id, user display content, assistant reply).
     pub fn background_report_replies_after(
         &self,
         session_id: &str,
         after_seq: i64,
-    ) -> Result<Vec<(i64, String, String, String)>> {
+    ) -> Result<Vec<BackgroundReportRow>> {
         let conn = self.conn.lock().unwrap();
         let cross_session = crate::state::CROSS_SESSION_MESSAGE_TAG;
         // 重启续跑的轮（09-24）同样是 daemon 替会话起的：终端没来得及挂上去就跑完了
@@ -724,7 +723,8 @@ impl ConversationDb {
                     CASE WHEN status = 'completed' THEN assistant_content
                          WHEN length(trim(assistant_content)) > 0 THEN assistant_content
                          ELSE '（自动跟进未能完成：模型请求失败或被中断，可用 job 工具查看任务输出）'
-                    END
+                    END,
+                    user_content, assistant_model, user_timestamp, assistant_timestamp, status
              FROM turns
              WHERE session_id = ?1 AND seq > ?2 AND status IN ('completed', 'failed', 'interrupted')
                AND (user_content LIKE '<background-job-report>%'
@@ -736,12 +736,20 @@ impl ConversationDb {
         ))?;
         let rows = stmt
             .query_map(params![session_id, after_seq], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
+                Ok(BackgroundReportRow {
+                    seq: row.get(0)?,
+                    turn_id: row.get(1)?,
+                    display_content: row.get(2)?,
+                    reply: row.get(3)?,
+                    job_report: row
+                        .get::<_, Option<String>>(4)?
+                        .as_deref()
+                        .and_then(crate::state::job_report_result),
+                    assistant_model: row.get(5)?,
+                    started_at: row.get(6)?,
+                    finished_at: row.get(7)?,
+                    status: row.get(8)?,
+                })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)

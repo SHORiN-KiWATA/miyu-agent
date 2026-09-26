@@ -220,6 +220,21 @@ impl RemoteRepl {
                 return Ok(LoopStep::Continue);
             }
         };
+        // 这条会话其实有一轮在跑（这边以为闲着，比如后台报告刚起的那一轮）：守护进程把压缩
+        // 排进了那一轮（09-25），说一声就好。
+        if data.get("queued").and_then(serde_json::Value::as_bool) == Some(true) {
+            repl_note(
+                &mut self.live_repl,
+                &format!(
+                    "\x1b[2m{}\x1b[0m\n",
+                    t(
+                        "a turn is running in this session; compaction is queued behind its next step",
+                        "这条会话有一轮正在跑，压缩排进了它，走到下一步时做",
+                    )
+                ),
+            )?;
+            return Ok(LoopStep::Continue);
+        }
         // 压完 footer 的上下文读数当场刷新(用户 09-18:压缩后 footer 没刷新)——
         // 原来只把数写进正文那一行,footer 要等下一轮结束才变。
         self.cumulative_tokens = state_cumulative(&state);

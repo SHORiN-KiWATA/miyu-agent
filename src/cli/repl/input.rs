@@ -15,17 +15,12 @@ pub(in crate::cli) fn read_live_repl_input(
     // 这个 REPL 的会话：唤醒回合按它认领，输入历史也按它刷新。
     repl_session: Option<&str>,
 ) -> Result<LiveReplOutcome> {
-    let mut raw_mode = if std::mem::take(&mut live.raw_mode_handoff) {
-        LiveRawMode::adopt()
-    } else {
-        let guard = LiveRawMode::start()?;
-        // 全屏：raw 模式断过一段（斜杠命令等 daemon 的那几秒终端在回显模式），
-        // 屏上可能落了回显进来的字符，整屏按缓冲重画一遍把它们盖掉。
-        if crate::cli::repl::tail::screen::in_fullscreen() {
-            live.rendered = false;
-        }
-        guard
-    };
+    let (mut raw_mode, was_cooked) = live.take_raw_guard()?;
+    // 全屏：raw 模式断过一段（斜杠命令等 daemon 的那几秒终端在回显模式），
+    // 屏上可能落了回显进来的字符，整屏按缓冲重画一遍把它们盖掉。
+    if was_cooked && crate::cli::repl::tail::screen::in_fullscreen() {
+        live.rendered = false;
+    }
     if !live.rendered {
         synchronized_terminal_update(CursorAfterUpdate::Shown, || live.resume())?;
     }
@@ -195,7 +190,14 @@ pub(in crate::cli) fn read_live_repl_input(
             live.expire_hover()?;
             live.tick_overlay()?;
             if let Some(job_id) = live.pending_stop_job.take() {
+                // 停任务要等 daemon 回话：raw 交给下一次读键，等的时候不回到回显模式（见下面 Ctrl+C
+                // 第三级那一支）。
+                raw_mode.handoff();
+                live.raw_mode_handoff = true;
                 return Ok(LiveReplOutcome::StopJob { job_id });
+            }
+            if let Some(action) = live.take_strip_action() {
+                return Ok(LiveReplOutcome::Strip(action));
             }
             if live.set_jobs(jobs_feed.current()) || cumulative_changed || lane_counted {
                 synchronized_terminal_update(CursorAfterUpdate::Preserve, || live.redraw())?;
@@ -268,6 +270,15 @@ pub(in crate::cli) fn read_live_repl_input(
             }
             // 全屏下先给视口一次机会（回翻、滚轮）；inline 下这里是空操作。
             if live.handle_screen_event(&event)? {
+                continue;
+            }
+            // 方向键先看命令候选和任务条（会话项目第 3 段）。任务条上回车点的是会话行
+            // 的话，下一拍空闲时取走（`take_strip_action`）。
+            if matches!(
+                live.navigate_key(&event)?,
+                crate::cli::repl::tail::Navigated::Done
+            ) {
+                redraw_pending = true;
                 continue;
             }
             // 又打字了：候选面板可以重新弹出来（Esc 只关「当时那一串」）。
@@ -351,10 +362,15 @@ pub(in crate::cli) fn read_live_repl_input(
                 }
                 // Ctrl+C rung 3: the draft was empty and no reply is running, but
                 // this session still has background work — stop that before the
-                // press is allowed to mean "quit". `live.jobs` holds only running
-                // jobs of this session, refreshed on every idle tick. Ctrl+D
-                // (`Exit`) always quits outright.
-                LiveEditorAction::Interrupt if !live.jobs.is_empty() => {
+                // press is allowed to mean "quit". The strip lists that work,
+                // refreshed on every idle tick (in a subagent session: the rows
+                // hanging under it). Ctrl+D (`Exit`) always quits outright.
+                LiveEditorAction::Interrupt if live.has_background_work() => {
+                    // 停后台任务要等 daemon 回话：raw 交给下一次读键，不在中间回到回显模式。原来这里
+                    // 把 raw 关了，子代理一多要等好一会儿，这段里按的键被终端回显、方向键的转义符
+                    // 落进输入框（用户 09-26）。
+                    raw_mode.handoff();
+                    live.raw_mode_handoff = true;
                     return Ok(LiveReplOutcome::StopJobs);
                 }
                 // Ctrl+C 的最后一级在全屏下不退出。
@@ -449,8 +465,9 @@ pub(in crate::cli) fn read_repl_input(
             rendered_rows,
             &mut Vec::new(),
             mode,
-            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切。
-            false,
+            // 老的非 live 输入只剩直连模式在用,直连没有沙盒可切,也没有子代理会话。
+            crate::cli::footer::FooterBadges::default(),
+            None,
             input,
             cursor,
             raw_pasted_lines,
@@ -933,8 +950,10 @@ pub(in crate::cli) fn render_repl_input_with_footer(
     // 输入区不在正文缓冲里，不记下来就没法知道某一格上是什么字。
     drawn: &mut Vec<(u16, String)>,
     mode: PersonaLane,
-    // 只读模式开着(09-23):状态行模式标签后面跟「只读」。
-    readonly: bool,
+    // 只读模式开着(09-23)、切进子代理会话几层(会话项目第 3 段):叠在状态行模式标签上。
+    badges: crate::cli::footer::FooterBadges,
+    // 命令候选里方向键挑中的那一条(见 `tail::navigate`)。
+    command_pick: Option<usize>,
     input: &str,
     cursor: usize,
     raw_pasted_lines: usize,
@@ -1029,7 +1048,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
             Print(&prompt_prefix),
             Print(format!(
                 "\x1b[2m{}\x1b[0m",
-                repl_command_suggestions_line(&suggestions, suggestion_width)
+                repl_command_suggestions_line(&suggestions, suggestion_width, command_pick)
             ))
         )?;
         footer_row = None;
@@ -1038,7 +1057,7 @@ pub(in crate::cli) fn render_repl_input_with_footer(
         queue!(
             stdout,
             MoveTo(x0, (*input_row).saturating_add(row_offset)),
-            Print(repl_footer_line(mode, readonly, footer, cols, usage))
+            Print(repl_footer_line(mode, badges, footer, cols, usage))
         )?;
         if show_hint {
             row_offset = row_offset.saturating_add(1);

@@ -54,13 +54,26 @@ impl RemoteRepl {
     }
 
     pub(super) async fn cmd_usage(&mut self) -> Result<LoopStep> {
-        let snapshot = StateStore::new(&self.paths)?.usage_snapshot()?;
+        let store = StateStore::new(&self.paths)?;
+        let snapshot = store.usage_snapshot()?;
         let usage = self.footer.token_usage;
         let context = Some((usage.session_tokens, usage.context_window));
-        repl_note(
-            &mut self.live_repl,
-            &format!("{}\n\n", usage_overview_text(&snapshot, context)),
-        )?;
+        let mut text = usage_overview_text(&snapshot, context);
+        // 断缓存按会话树算：切进子代理会话看的时候也是整棵树（09-25）。
+        let root = self
+            .live_repl
+            .visits
+            .first()
+            .map(|parent| parent.session_id.clone())
+            .unwrap_or_else(|| self.active_session_id.clone());
+        let total = store.cache_break_count(&root).unwrap_or(0);
+        let recent = store.recent_cache_breaks(&root, 10).unwrap_or_default();
+        let breaks = cache_breaks_text(total, &recent);
+        if !breaks.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(&breaks);
+        }
+        repl_note(&mut self.live_repl, &format!("{text}\n\n"))?;
         Ok(LoopStep::Continue)
     }
 
@@ -108,8 +121,8 @@ impl RemoteRepl {
                 .await?;
                 // 换过去那条会话要是有正在跑的回合，挂上去跟着看——换会话的
                 // 回放不收正在跑的轮，不挂的话那一轮在屏幕上就没了（09-20，
-                // 和 `/dev` `/normal` 同一个毛病）。
-                self.follow_active_run_here().await?;
+                // 和 `/dev` `/normal` 同一个毛病）。主循环回到顶上时挂。
+                self.follow_pending = true;
                 repl_note(
                     &mut self.live_repl,
                     &format!("{}\n", t("configuration reloaded", "配置已重新加载")),
@@ -215,6 +228,9 @@ impl RemoteRepl {
 
     pub(super) async fn cmd_config(&mut self) -> Result<LoopStep> {
         crate::config_tui::run(&self.paths)?;
+        // 设置界面退出时把终端切回了 cooked：当场回到 raw，交给下一次读键。下面重载配置
+        // 要等 daemon 回话，这段里敲的回车在 cooked 下会变成换行（见 `hand_off_raw_now`）。
+        self.live_repl.hand_off_raw_now()?;
         // 设置界面退出时画面原样留着、光标藏着：在一个同步块里把 REPL
         // 整屏画回来，光标直接出现在输入框，中间不经过左上角。
         if crate::cli::in_fullscreen() {

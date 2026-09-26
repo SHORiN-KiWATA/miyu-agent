@@ -541,17 +541,6 @@ pub(in crate::web) async fn list_jobs_http(
     Ok(Json(json!({ "jobs": jobs })).into_response())
 }
 
-/// 后台子代理到目前为止的原始进度标记流,网页端刷新后据它回放子过程时间线(#9)。
-pub(in crate::web) async fn job_trace_http(
-    State(state): State<DaemonState>,
-    headers: HeaderMap,
-    Path(job_id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    require_auth(&headers, &state)?;
-    let trace = tools::jobs::job_trace(&job_id);
-    Ok(Json(json!({ "job_id": job_id, "trace": trace })).into_response())
-}
-
 pub(in crate::web) async fn job_log_http(
     State(state): State<DaemonState>,
     headers: HeaderMap,
@@ -653,6 +642,16 @@ pub(in crate::web) fn cancel_run_and_disarm_goal(state: &DaemonState, run_id: &s
             session = %session_id,
             "goal disarmed after the user cancelled an autonomous round"
         );
+    }
+    // 在子代理会话里停：连它名下的孙代理、后台命令一起停（09-26 用户拍板，终端网页同一个
+    // 规矩）。主会话照旧只停这一轮。
+    if is_subagent_session(state, &session_id) {
+        let state = state.clone();
+        tokio::spawn(async move {
+            // 先等这一轮真停下：还在收尾的那一轮要是又登记了后台孙代理，先停名下的就漏了它。
+            stop_session_runs(&state, &session_id, Duration::from_secs(5)).await;
+            stop_subagent_subtree(&state, &session_id).await;
+        });
     }
     true
 }

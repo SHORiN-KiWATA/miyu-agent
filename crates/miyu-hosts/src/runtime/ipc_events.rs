@@ -149,6 +149,11 @@ pub(crate) fn decode_ipc_event_at(kind: &str, data: &Value, received_at: Instant
             name: ipc_text(data, "name").to_string(),
             message: ipc_text(data, "message").to_string(),
         },
+        "subagent.progress" => AgentEvent::SubagentProgress {
+            call_id: ipc_text(data, "tool_id").to_string(),
+            name: ipc_text(data, "name").to_string(),
+            status: subagent_status_from(data),
+        },
         "tool.output" => AgentEvent::CommandOutput {
             call_id: ipc_text(data, "tool_id").to_string(),
             name: ipc_text(data, "name").to_string(),
@@ -214,6 +219,7 @@ pub(crate) fn decode_ipc_event_at(kind: &str, data: &Value, received_at: Instant
                 estimated: ipc_bool(data, "estimated"),
                 provider_id: ipc_opt_text(data, "provider_id"),
                 model: ipc_opt_text(data, "model"),
+                cache_breaks: ipc_u64(data, "cache_breaks"),
             }
         }
         "context.compact_start" => AgentEvent::CompactStart,
@@ -456,6 +462,7 @@ mod tests {
             "estimated": true,
             "provider_id": "codex",
             "model": "gpt",
+            "cache_breaks": 3,
         });
         let DecodedIpc::Event(AgentEvent::RoundUsage {
             round,
@@ -465,10 +472,12 @@ mod tests {
             estimated,
             provider_id,
             model,
+            cache_breaks,
         }) = decode_ipc_event("chat.round_usage", &data)
         else {
             panic!("chat.round_usage 应当解码成 RoundUsage");
         };
+        assert_eq!(cache_breaks, 3);
         assert_eq!(round.prompt_tokens, 1000);
         assert_eq!(round.completion_tokens, 200);
         assert_eq!(round.cache_read_tokens, 800);
@@ -597,5 +606,19 @@ mod display_name_tests {
             miyu_engine::tools::readable_tool_name("load_tools:walk_script_later"),
             "加载：稍后才学到的脚本"
         );
+    }
+}
+
+/// `subagent.progress` 事件里那个子代理的样子（`event_map.rs` 发的形状）。
+pub fn subagent_status_from(data: &Value) -> miyu_engine::tools::subagent::status::SubagentStatus {
+    miyu_engine::tools::subagent::status::SubagentStatus {
+        peek: ipc_text(data, "peek").to_string(),
+        tokens_label: ipc_text(data, "tokens_label").to_string(),
+        tokens: data.get("tokens").and_then(Value::as_u64).unwrap_or(0),
+        session_id: data
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
     }
 }

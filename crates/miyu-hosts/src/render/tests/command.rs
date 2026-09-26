@@ -268,22 +268,6 @@ fn omitted_command_notice_wraps_within_narrow_width() {
 }
 
 #[test]
-fn static_full_command_block_shows_multiline_body() {
-    let arguments = serde_json::json!({
-        "command": "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh"
-    })
-    .to_string();
-    let mut output = Vec::new();
-
-    write_command_block_with_status(&mut output, &arguments, CommandStatus::Ok).unwrap();
-
-    let output = strip_ansi_for_test(&String::from_utf8(output).unwrap());
-    assert!(output.contains("  │ third\n"));
-    assert!(output.contains("  └ seventh\n"));
-    assert!(!output.contains("omitted") && !output.contains("省略"));
-}
-
-#[test]
 fn command_display_detects_output_row_growth_before_redraw() {
     let mut display = CommandLiveDisplay::new(r#"{"command":"printf ok"}"#, 3, true, false);
     display.rendered_line_widths = display

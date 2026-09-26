@@ -5,14 +5,18 @@
 
 mod accounts;
 mod assets;
+mod cache_breaks;
 mod compact;
 mod context_anchor;
 mod goals;
 mod interrupted_replay;
+mod pages;
 mod platform;
 mod queue;
 mod redo;
+mod replay_text;
 mod restart;
+mod session_state;
 mod sessions;
 mod shared;
 mod sponsors;

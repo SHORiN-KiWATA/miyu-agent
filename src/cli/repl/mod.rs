@@ -18,7 +18,13 @@ pub(in crate::cli) mod question_flow;
 /// `/sandbox` 查看与绑定回执的表格。
 pub(in crate::cli) mod sandbox_view;
 pub(in crate::cli) mod session;
-mod session_picker;
+pub(in crate::cli) mod session_picker;
+/// 任务条：会话行（切进子代理会话、回主会话）与后台任务行。
+pub(in crate::cli) mod strip;
+/// 任务条上列哪些行、按什么顺序、挂在哪一层。
+pub(in crate::cli) mod strip_tree;
+/// 实时那一轮末尾的 `✻` 收尾行。
+pub(in crate::cli) mod turn_end;
 
 pub(super) mod direct;
 pub(super) mod editor;

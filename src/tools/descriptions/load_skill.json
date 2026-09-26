@@ -2,7 +2,7 @@
   "name": "load_skill",
   "trust": "external",
   "display_name": "加载技能",
-  "description": "",
+  "description": "Load a specialized skill's full instructions and resources into the conversation.\n\nThe skill name must match one of the skills in the latest <available-skills> block. Use this tool before applying a skill or using any scripts/resources from that skill. Skill allowed-tools metadata never grants Miyu permissions.",
   "parameters": {
     "type": "object",
     "properties": {

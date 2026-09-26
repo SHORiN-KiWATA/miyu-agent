@@ -7,7 +7,9 @@
 //! 打一遍」——过滤要在流式条件下做，所以得记住最长的部分匹配前缀
 //! （`longest_sent_meme_prefix_suffix`），不能等看完整段。
 
+mod event_clock;
 mod reasoning_phase;
+mod reply_tail;
 pub(crate) mod surface;
 pub mod timeline;
 mod tool_summary;
@@ -65,6 +67,14 @@ pub struct StreamRenderer {
     /// 时会话累计从库里重读，加数跟着清掉，不会算两遍。
     /// 记的是**各自的最新值**不是增量，所以并行几个也不会互相叠加出鬼数。
     pub(crate) subagent_tokens: BTreeMap<String, u64>,
+    /// 已经跑完、还留在 `subagent_tokens` 里的前台子代理：它的会话已经落盘，下一次请求报的
+    /// 会话累计里就有它了，到那时才从加数里撤（`absorb_settled_subagents`）。跑完当场就撤
+    /// 的话，下一次请求之前 Σ 会往下闪一下。
+    pub(crate) settled_subagents: std::collections::BTreeSet<String>,
+    /// 前台子代理此刻的样子（`subagent.progress`，工具事件名 → 状态）：状态行那一行的
+    /// 窥视、词元从这儿取（会话项目第 4 段之二）。
+    pub(crate) subagent_status:
+        BTreeMap<String, miyu_engine::tools::subagent::status::SubagentStatus>,
     pub(crate) reasoning_mode: ReasoningDisplayMode,
     pub(crate) tool_call_mode: ToolCallDisplayMode,
     pub(crate) plain: bool,
@@ -122,13 +132,18 @@ pub struct StreamRenderer {
     pub live_summary: bool,
     pub wait_spinner: Option<WaitSpinner>,
     pub(crate) last_tick: Option<std::time::Instant>,
+    /// 提问面板开着：转轮不动（她在等人回答，没什么在跑）。面板改成活动区上的层之后回合
+    /// 循环照转（会话项目第 3 段），不冻的话转轮还在面板上头动；把整块转轮收掉又会连
+    /// 「已思考」那几行一起抹掉（09-20 修过一次的「面板一开，刚才的过程就没了」）。
+    /// 见 `prepare_for_panel` / `resume_after_panel`。
+    pub(crate) spinner_frozen: bool,
     /// 等待转轮上钉死的文案(压缩上下文那种不属于任何一步的等待):在,每帧都用它,
     /// 不让时间线的「正在思考/工具名」盖掉。
     pub(crate) custom_waiting_phase: Option<String>,
     /// 全屏：自动压缩时流进来的摘要先攒着，压完收成一块（`finish_compact`）。
     pub(crate) compact_text: String,
-    /// 上一次把子代理面板重灌是什么时候。见 `refresh_subagent_panels`。
-    pub(crate) last_subagent_refresh: Option<std::time::Instant>,
+    /// 正在喂的这个事件是什么时候发生的（`event_clock.rs`）。
+    pub(crate) event_clock: Option<std::time::Instant>,
     pub(crate) preparing_question_started_at: Option<std::time::Instant>,
     /// Phase text and start time for the "still receiving arguments" hint.
     /// Sticky like `preparing_question_started_at` and for the same reason:
@@ -152,11 +167,11 @@ pub struct StreamRenderer {
     pub(crate) stream_control: TerminalControlState,
     /// 全屏下这一段连续过程的时间线。inline 模式全程为空。
     pub(crate) timeline: timeline::Timeline,
-    /// 每个子代理的内层流水账，按工具名归档。点开覆盖层看的就是这个。
-    pub(crate) subagent_logs: BTreeMap<String, timeline::SubagentLog>,
     /// 「正在进行」那一行的块 id。每帧重发标记但**id 不变**，否则每 tick
     /// 都会在登记处攒一个新块。想完/跑完就清掉。
     pub(crate) live_block: Option<u64>,
+    /// 正文还没落下的那一截（见 `reply_tail`）。
+    pub(crate) reply_tail: reply_tail::ReplyTail,
 }
 
 impl StreamRenderer {
@@ -196,6 +211,8 @@ impl StreamRenderer {
             timeline_ends_after_tools: false,
             live_tool_blocks: BTreeMap::new(),
             subagent_tokens: BTreeMap::new(),
+            settled_subagents: std::collections::BTreeSet::new(),
+            subagent_status: BTreeMap::new(),
             command_display: None,
             finalizing_for_external_output: false,
             summary_line_active: false,
@@ -204,9 +221,10 @@ impl StreamRenderer {
             live_summary: io::stdout().is_terminal(),
             wait_spinner: None,
             last_tick: None,
+            spinner_frozen: false,
             custom_waiting_phase: None,
             compact_text: String::new(),
-            last_subagent_refresh: None,
+            event_clock: None,
             preparing_question_started_at: None,
             tool_preparing: None,
             tool_preparing_since: None,
@@ -214,8 +232,8 @@ impl StreamRenderer {
             sent_meme_filter: SentMemeStreamFilter::default(),
             stream_control: TerminalControlState::default(),
             timeline: timeline::Timeline::default(),
-            subagent_logs: BTreeMap::new(),
             live_block: None,
+            reply_tail: Default::default(),
         }
     }
 
@@ -306,7 +324,8 @@ impl StreamRenderer {
             self.ensure_waiting_phase(self.reasoning_live_text(), self.wait_style())?;
             return Ok(());
         }
-        self.stop_waiting()?;
+        // 只停转轮：正文的活尾巴留着，下面有整行落下时和正文同一帧交接。
+        self.stop_spinner()?;
         if self.mode != Some(chunk.kind) {
             if chunk.kind == ChatStreamKind::Content {
                 self.finalize_reasoning_summary()?;
@@ -318,26 +337,23 @@ impl StreamRenderer {
             }
             self.switch_mode(chunk.kind)?;
         }
-        // 能力位要在借走 `self.output` 之前问:借用检查不让同时拿。
-        let expandable = self.caps().expandable;
-        let stdout = &mut self.output;
         if chunk.kind == ChatStreamKind::Reasoning {
-            write_full_reasoning_chunk(stdout, &text)?;
+            write_full_reasoning_chunk(&mut self.output, &text)?;
         } else if self.plain {
-            write!(stdout, "{text}")?;
+            write!(self.output, "{text}")?;
         } else {
             let rendered = self.markdown.push(&text);
             // 全屏：正文也缩进两格，和时间线、用户消息共用一条装订边。
             // `push` 只吐**整行**（半行留在它自己的缓冲里），所以这里逐行加
             // 前缀不会把一行切成两半。
-            let rendered = if expandable {
+            let rendered = if self.caps().expandable {
                 timeline::indent_body(&rendered)
             } else {
                 rendered
             };
-            write!(stdout, "{rendered}")?;
+            self.write_committed_body(&rendered)?;
         }
-        stdout.flush()?;
+        self.output.flush()?;
         Ok(())
     }
 
@@ -373,11 +389,40 @@ impl StreamRenderer {
     /// 的那一步会被记成红色的「已中断」，而真结果回来时又记一次（09-19 在
     /// shellhook 里实测过一次发图两行报错）。
     pub fn prepare_for_panel(&mut self) -> Result<()> {
+        // 面板开着时她在等人回答，没什么在跑：清掉「准备问题 / 准备编辑」（④，09-24
+        // goal_question 走查），按「面板开着」重画最后一帧，然后冻住转轮（`spinner_frozen`）。
+        // 全屏下这一帧只剩已经跑完的那几步（「已思考 · …」），不挂转轮那一行
+        // （`timeline_waiting` / `timeline_live` 看这个标记）；行内那一行换成等待文案。
+        //
+        // 集成时先取过「整块转轮收掉」（`stop_waiting`）：转轮是不动了，可全屏下时间线
+        // 那几行就画在转轮那块里，「已思考」跟着一起没了——正是 09-20 修过的「面板一开，
+        // 刚才的过程就没了」（09-25 红绿账 panel_keeps_body 抓到，会话分支上就红）。
         self.preparing_question_started_at = None;
         self.tool_preparing = None;
         self.tool_preparing_since = None;
+        self.clear_reply_tail()?;
+        self.spinner_frozen = true;
+        if self.wait_spinner.is_some() {
+            if self.timeline_enabled() {
+                if self.timeline_waiting().1.is_none() {
+                    // 时间线上一步都还没有（没想就直接问）：没什么可留的，转轮直接收掉。
+                    self.stop_spinner()?;
+                    return self.show_cursor();
+                }
+            } else {
+                self.set_waiting_phase(self.waiting_phase_text());
+            }
+            self.last_tick = None;
+            self.paint_spinner()?;
+        }
         self.show_cursor()?;
         Ok(())
+    }
+
+    /// 提问面板收掉了（答了、关了、没法显示）：转轮接着动。
+    pub fn resume_after_panel(&mut self) {
+        self.spinner_frozen = false;
+        self.last_tick = None;
     }
 
     pub fn prepare_for_external_output(&mut self) -> Result<()> {
@@ -518,6 +563,8 @@ impl StreamRenderer {
         // 这一轮的子代理用量交还给会话累计：回合收尾时调用方会从库里重读 Σ，
         // 那时审计会话已经落盘，实时加数留着就是算两遍。
         self.subagent_tokens.clear();
+        self.settled_subagents.clear();
+        self.subagent_status.clear();
         self.mode = None;
         self.show_cursor()?;
         Ok(())
@@ -558,6 +605,8 @@ impl StreamRenderer {
     }
 
     pub(crate) fn end_active_stream_line(&mut self) -> Result<()> {
+        // 半行要冲出去了：先把活尾巴擦掉，冲出去的字落在它原来的位置上。
+        self.clear_reply_tail()?;
         if self.captures_reasoning() && self.mode == Some(ChatStreamKind::Reasoning) {
             self.mode = None;
             return Ok(());
@@ -662,8 +711,9 @@ impl StreamRenderer {
             .find(|(name, stats)| is_command_tool(name) && !stats.settled())
             .map(|(name, _)| name.clone());
         if let Some(name) = name {
+            let now = self.event_now();
             let stats = self.tool_stats_entry(&name);
-            stats.elapsed = stats.started_at.map(|at| at.elapsed());
+            stats.elapsed = stats.started_at.map(|at| now.saturating_duration_since(at));
             stats.detail = detail;
             stats.tail = tail;
         }

@@ -57,6 +57,21 @@ pub(in crate::cli) async fn handle_question_requested(
         return Ok(());
     }
     let question_id = ipc_text(data, "question_id").to_string();
+    // 全屏：面板开在活动区的位置上，回合照流（会话项目第 3 段，B4）。行内没有活动区
+    // 可让，照旧自己跑一个面板。
+    if let Some(live) = live.as_deref_mut().filter(|live| live.screen.is_some()) {
+        return open_question_layer(
+            paths,
+            config,
+            live,
+            renderer,
+            request,
+            question_id,
+            run_id,
+            herdr_turn,
+        )
+        .await;
+    }
     // 报回 `working` 走 RAII：这个函数有好几条出口（答完、关掉、取消、各种
     // `?`），只在成功路径上报的话，答完侧栏还一直红着——herdr 那一项就是这么
     // 栽的（九条出口只报了一条）。
@@ -129,6 +144,193 @@ pub(in crate::cli) async fn handle_question_requested(
     Ok(())
 }
 
+/// 回合里开在活动区位置上的提问面板（会话项目第 3 段，B4）：面板开着正文照流，按键归它。
+/// 画法和按键都是 `question_tui::QuestionPanel` 那一份，自己跑终端的面板也用它。
+pub(in crate::cli) struct QuestionLayer {
+    panel: crate::question_tui::QuestionPanel,
+    question_id: String,
+    /// 上一帧光标该在哪（正在输入自定义答案时）。
+    cursor: Option<(usize, usize)>,
+}
+
+impl QuestionLayer {
+    /// 面板高度：内容要几行就几行，最多 `QuestionPanel::max_rows`。
+    pub(in crate::cli) fn desired_rows(&self) -> u16 {
+        let width = crate::cli::terminal_cols().saturating_sub(3).max(1);
+        u16::try_from(self.panel.rows_needed(width))
+            .unwrap_or(u16::MAX)
+            .clamp(1, crate::question_tui::QuestionPanel::max_rows())
+    }
+
+    /// 这一帧的行。`width` 是扣掉行首竖条之后的宽，面板自己再留一列边。
+    pub(in crate::cli) fn content(&mut self, width: usize, rows: u16) -> Vec<String> {
+        self.panel.expire_cancel();
+        let view = self
+            .panel
+            .view(width.saturating_sub(1).max(1), usize::from(rows));
+        self.cursor = view.cursor;
+        view.lines
+    }
+
+    pub(in crate::cli) fn on_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<QuestionResponse> {
+        self.panel
+            .on_key(KeyEvent::new(code, modifiers))
+            .unwrap_or_else(|error| Some(QuestionResponse::Unavailable(error.to_string())))
+    }
+
+    pub(in crate::cli) fn paste(&mut self, text: &str) {
+        self.panel.on_paste(text);
+    }
+
+    /// 光标在第几行、第几列（列从行首竖条算起）。
+    pub(in crate::cli) fn cursor(&self) -> Option<(usize, usize)> {
+        self.cursor
+    }
+
+    /// 行首那根竖条，和自己跑的提问面板一个样子。
+    pub(in crate::cli) fn bar() -> String {
+        format!("{} ", crate::question_tui::QUESTION_BAR)
+    }
+}
+
+/// 全屏下开提问面板：收掉「准备问题」那一行、侧栏标红、没焦点就提醒，然后面板开在活动区
+/// 的位置上，回合接着收事件。
+#[allow(clippy::too_many_arguments)]
+async fn open_question_layer(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    live: &mut LiveReplTail,
+    renderer: &mut render::StreamRenderer,
+    request: QuestionRequest,
+    question_id: String,
+    run_id: &str,
+    herdr_turn: Option<&crate::cli::repl::herdr::TurnGuard>,
+) -> Result<()> {
+    renderer.prepare_for_panel()?;
+    live.apply_renderer_frame(renderer)?;
+    let panel = match crate::question_tui::QuestionPanel::new(request.clone()) {
+        Ok(panel) => panel,
+        // 画不出来不是掐掉这一轮的理由：和面板关掉同一条路，daemon 拿到一个结果。
+        Err(error) => {
+            let asked = QuestionResponse::Unavailable(error.to_string());
+            record_exchange(renderer, &request, &asked)?;
+            reply(paths, renderer, asked, question_id, run_id).await?;
+            return live.apply_renderer_frame(renderer);
+        }
+    };
+    if let Some(guard) = herdr_turn {
+        guard.blocked(
+            request
+                .questions
+                .first()
+                .map(|question| question.question.as_str()),
+        );
+    }
+    notify_if_unfocused(
+        config,
+        Some(live.editor.focused),
+        t("Miyu is waiting on you", "Miyu 在等你回答"),
+        // 问题正文不外泄。
+        t("waiting for you", "正在等待处理"),
+        miyu_base::notify::NotifySound::Question,
+    );
+    live.open_turn_panel(crate::cli::repl::midturn_panel::TurnPanel::Question(
+        QuestionLayer {
+            panel,
+            question_id,
+            cursor: None,
+        },
+    ))
+}
+
+/// 在活动区的面板上答了 / 关了：记进这一步，回发给 daemon。
+pub(in crate::cli) async fn answer_question_layer(
+    paths: &MiyuPaths,
+    live: &mut LiveReplTail,
+    renderer: &mut render::StreamRenderer,
+    run_id: &str,
+    herdr_turn: Option<&crate::cli::repl::herdr::TurnGuard>,
+    layer: QuestionLayer,
+    asked: QuestionResponse,
+) -> Result<()> {
+    if let Some(guard) = herdr_turn {
+        guard.resumed();
+    }
+    record_exchange(renderer, layer.panel.request(), &asked)?;
+    reply(paths, renderer, asked, layer.question_id, run_id).await?;
+    live.apply_renderer_frame(renderer)
+}
+
+/// 回合循环收到 `question.answered` / `question.closed`：开着的正是这道题，就说明别处先
+/// 了结了（另一个终端、网页）。面板收掉，照那边的结果画出来，一条命令都不回发。
+pub(in crate::cli) fn settle_question_layer(
+    live: &mut LiveReplTail,
+    renderer: &mut render::StreamRenderer,
+    kind: &str,
+    data: &serde_json::Value,
+    herdr_turn: Option<&crate::cli::repl::herdr::TurnGuard>,
+) -> Result<()> {
+    let open = matches!(
+        &live.turn_panel,
+        Some(crate::cli::repl::midturn_panel::TurnPanel::Question(layer))
+            if layer.question_id == ipc_text(data, "question_id")
+    );
+    if !open {
+        return Ok(());
+    }
+    let outcome = match kind {
+        "question.answered" => {
+            match serde_json::from_value(data.get("answers").cloned().unwrap_or_default()) {
+                Ok(answers) => QuestionResponse::Answered(answers),
+                Err(_) => return Ok(()),
+            }
+        }
+        _ => QuestionResponse::Closed,
+    };
+    close_question_layer(live, renderer, outcome, herdr_turn)
+}
+
+/// 回合结束了面板还开着（别处按了停、daemon 那头超时）：没人再等这个答案，收掉，记成
+/// 取消。
+pub(in crate::cli) fn abandon_question_layer(
+    live: &mut LiveReplTail,
+    renderer: &mut render::StreamRenderer,
+    herdr_turn: Option<&crate::cli::repl::herdr::TurnGuard>,
+) -> Result<()> {
+    if !matches!(
+        live.turn_panel,
+        Some(crate::cli::repl::midturn_panel::TurnPanel::Question(_))
+    ) {
+        return Ok(());
+    }
+    close_question_layer(live, renderer, QuestionResponse::Cancelled, herdr_turn)
+}
+
+fn close_question_layer(
+    live: &mut LiveReplTail,
+    renderer: &mut render::StreamRenderer,
+    outcome: QuestionResponse,
+    herdr_turn: Option<&crate::cli::repl::herdr::TurnGuard>,
+) -> Result<()> {
+    let Some(crate::cli::repl::midturn_panel::TurnPanel::Question(layer)) =
+        live.close_turn_panel()?
+    else {
+        return Ok(());
+    };
+    if let Some(guard) = herdr_turn {
+        guard.resumed();
+    }
+    record_exchange(renderer, layer.panel.request(), &outcome)?;
+    if matches!(outcome, QuestionResponse::Answered(_)) {
+        renderer.start_waiting()?;
+    }
+    live.apply_renderer_frame(renderer)
+}
+
 /// 在这块面板上答的 / 关的：把结果回发给 daemon。
 async fn reply(
     paths: &MiyuPaths,
@@ -177,6 +379,8 @@ fn record_exchange(
     request: &QuestionRequest,
     response: &QuestionResponse,
 ) -> Result<()> {
+    // 面板收掉了：转轮接着动（开面板时冻住的，见 `prepare_for_panel`）。
+    renderer.resume_after_panel();
     // 全屏下面板退场之后，下一帧就按缓冲恢复正文和输入区，
     // 问了什么、答了什么会一起消失（用户原话「回答完问题也没输出」）。
     // 写进缓冲它才算进了历史、回翻找得到。

@@ -215,7 +215,7 @@ pub(in crate::llm::openai_compatible) fn mark_endpoint_failure(
 
 pub(in crate::llm::openai_compatible) fn cooldown_for_status(status: u16) -> Option<Duration> {
     match status {
-        401 | 403 | 429 => Some(Duration::from_secs(600)),
+        401..=403 | 429 => Some(Duration::from_secs(600)),
         408 | 500..=599 => Some(Duration::from_secs(120)),
         _ => None,
     }
@@ -226,13 +226,22 @@ pub(in crate::llm::openai_compatible) fn cooldown_for_error(
 ) -> Option<Duration> {
     if let Some(failure) = error.downcast_ref::<HttpStatusFailure>() {
         return match failure.kind {
-            HttpFailureKind::Authentication | HttpFailureKind::RateLimit => {
+            HttpFailureKind::Authentication | HttpFailureKind::Quota => {
                 Some(Duration::from_secs(600))
             }
+            // 服务端说了多久以后再来，就按它的冷却，别一律关 600 秒（09-24 B6）；
+            // 夹一个下限免得「0 秒」把端点立刻放回来连打，上限维持原来的 600 秒。
+            HttpFailureKind::RateLimit => Some(
+                failure
+                    .retry_after
+                    .map(|wait| wait.clamp(Duration::from_secs(30), Duration::from_secs(600)))
+                    .unwrap_or(Duration::from_secs(600)),
+            ),
             HttpFailureKind::EndpointUnavailable => Some(Duration::from_secs(120)),
             HttpFailureKind::EndpointIncompatible
             | HttpFailureKind::InvalidRequest
-            | HttpFailureKind::ContentPolicy => None,
+            | HttpFailureKind::ContentPolicy
+            | HttpFailureKind::ContextOverflow => None,
             HttpFailureKind::Status => cooldown_for_status(failure.status),
         };
     }
@@ -266,9 +275,12 @@ pub(in crate::llm::openai_compatible) fn same_endpoint_retry_allowed(
             matches!(
                 failure.kind,
                 // 内容策略拦截同理:同一条提示词再打同一端点必然再被拦。
+                // 超长与额度用完也一样(09-24 B6):同一端点再打一百次也是这个结果。
                 HttpFailureKind::Authentication
                     | HttpFailureKind::RateLimit
                     | HttpFailureKind::ContentPolicy
+                    | HttpFailureKind::ContextOverflow
+                    | HttpFailureKind::Quota
             )
         })
 }

@@ -49,9 +49,6 @@ pub struct DisplayConfig {
     /// 预览的形式出现 tag 行的内容」）。
     #[serde(default = "default_true")]
     pub fold_timeline: bool,
-    /// How many finished turns a reopened REPL redraws; 0 disables replay.
-    #[serde(default = "default_repl_replay_turns")]
-    pub repl_replay_turns: usize,
     /// 空会话时在输入框上方画 MIYU banner（渐变艺术字 + 星空 + 模式行）。
     /// 关掉就只剩输入框。艺术字可用 `config/banner.txt` 替换。
     #[serde(default = "default_true")]
@@ -98,8 +95,6 @@ struct RawDisplayConfig {
     cross_session_preview_lines: Option<usize>,
     #[serde(default)]
     keep_timeline_open: Option<bool>,
-    #[serde(default)]
-    repl_replay_turns: Option<usize>,
     #[serde(default)]
     banner: Option<bool>,
     #[serde(flatten, default)]
@@ -159,9 +154,6 @@ impl<'de> Deserialize<'de> for DisplayConfig {
                 .cross_session_preview_lines
                 .unwrap_or_else(default_cross_session_preview_lines),
             fold_timeline,
-            repl_replay_turns: raw
-                .repl_replay_turns
-                .unwrap_or_else(default_repl_replay_turns),
             banner: raw.banner.unwrap_or(true),
             extra: raw.extra,
         })
@@ -181,7 +173,6 @@ impl Default for DisplayConfig {
             thinking_scroll_lines: default_thinking_scroll_lines(),
             cross_session_preview_lines: default_cross_session_preview_lines(),
             fold_timeline: true,
-            repl_replay_turns: default_repl_replay_turns(),
             banner: true,
             extra: BTreeMap::new(),
         }

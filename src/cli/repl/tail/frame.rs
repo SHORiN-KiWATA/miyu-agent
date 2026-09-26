@@ -176,11 +176,11 @@ impl LiveReplTail {
             clipped.extend(queue_lines.split_off(queue_lines.len().saturating_sub(keep)));
             queue_lines = clipped;
         }
-        let job_lines = background_job_lines(
-            &self.jobs,
+        let job_lines = crate::cli::repl::strip::strip_lines(
+            &self.strip_rows(),
             self.job_spinner_frame(),
             usize::from(cols),
-            self.job_hover,
+            self.strip_view(),
         );
         let job_rows = job_lines.len().min(u16::MAX as usize) as u16;
         // 空会话 banner:inline 下占活动区顶上几行;全屏下画进正文区(见下面)。
@@ -213,13 +213,20 @@ impl LiveReplTail {
                 return Ok(());
             }
         }
+        // 回合里开着的面板（B4）：活动区这会儿就是它，正文照常往上面画。
+        if self.turn_panel.is_some() && self.screen.is_some() {
+            if let Some(screen) = &mut self.screen {
+                screen.resize(cols, terminal_rows);
+            }
+            return self.paint_turn_panel(cols, terminal_rows, output_col);
+        }
         // 候选面板得在**这一帧**就画出来。
         //
         // 原来是 `paint` 之后才算的，于是它永远慢一帧：打一个 `/` 什么都不出，
         // 再补个空格（多一次按键 = 多一帧）才蹦出来——用户实测报的「我要打
         // `/` 空格才会出现」就是这个。
         let hint_lines = if self.screen.is_some() {
-            command_hint_lines(&self.editor.input, usize::from(cols))
+            command_hint_lines(&self.editor.input, usize::from(cols), self.command_pick())
         } else {
             Vec::new()
         };
@@ -396,7 +403,7 @@ impl LiveReplTail {
             crate::cli::footer::UsagePlacement::Fullscreen {
                 below: !crate::cli::footer::usage_fits_on_footer_line(
                     self.editor.mode,
-                    self.editor.readonly,
+                    self.footer_badges(),
                     &self.footer,
                     usize::from(cols),
                 ),
@@ -410,7 +417,8 @@ impl LiveReplTail {
             &mut rendered_rows,
             &mut drawn_input,
             self.editor.mode,
-            self.editor.readonly,
+            self.footer_badges(),
+            self.command_pick(),
             &self.editor.input,
             self.editor.cursor,
             self.editor.raw_pasted_lines,
@@ -466,7 +474,7 @@ impl LiveReplTail {
         if let crate::cli::footer::UsagePlacement::Fullscreen { below } = self.usage_placement {
             let width = usize::from(cols);
             let row = if below {
-                crate::cli::footer::repl_usage_line(&self.footer, width)
+                crate::cli::footer::repl_usage_line(&self.footer, self.cache_breaks, width)
             } else {
                 " ".repeat(width)
             };

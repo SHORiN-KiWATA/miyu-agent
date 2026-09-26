@@ -74,6 +74,8 @@ impl Agent {
         on_event(AgentEvent::TurnStarted {
             turn_id: turn_id.clone(),
         })?;
+        // 技能目录随回合尾巴发(指令源):先按指纹刷一次,尾巴里的才是此刻的目录。
+        self.refresh_tool_catalogs().await;
         let (mut messages, user_index) = self.chat_messages(&turn_id, &input)?;
         // 按显式下标把占位用户消息换成带附件的成品;瞬态尾巴保持原位。
         if let Some(user) = messages.get_mut(user_index) {
@@ -121,41 +123,22 @@ impl Agent {
             .into_iter()
             .map(|(_, report)| report)
             .collect::<Vec<_>>();
-        self.state.append_persisted_contexts(&turn_id, &reports)?;
-        let tokens = TurnTokens::from_usage(result.usage.as_ref());
-        guard.complete_with_model(
-            &result.content,
-            result.reasoning.as_deref(),
-            result.provider_id.as_deref(),
-            result.model.as_deref(),
-            tokens,
-            result.usage_estimated,
-        )?;
-        // 上下文锚点：这一轮最后一次请求的真实占用，下一次问上下文有多满时
-        // 直接读它，不再本地估算。
-        self.state.set_turn_context_end(
-            &turn_id,
-            crate::agent::context_meter::context_end_tokens(&result),
-        )?;
-        if let Some(usage) = result.usage.as_ref() {
-            if usage.generation_tokens > 0 && usage.generation_ms > 0 {
-                self.state.set_turn_generation(
-                    &turn_id,
-                    usage.generation_tokens,
-                    usage.generation_ms,
-                )?;
-            }
-        }
-        if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
-            self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
-        }
         // 工具输出的瘦身不在这里做——放在压缩那一刻(见 compact.rs 的
         // `tool_result_prune`)。在落库时剪，等于把**已经发出去的全文**改写成
         // 头尾，下一轮回放就和上游缓存里的对不上，前缀每轮断一次。
         let mut tool_flow = derive_tool_flow(&messages, replay_start, true);
         self.append_remote_tool_flow(&mut tool_flow);
-        if !tool_flow.is_empty() {
-            self.state.set_turn_tool_flow(&turn_id, &tool_flow)?;
+        // 完成标记、上下文锚点、输出速度、工具流、持久上下文同一个事务落库。
+        guard.finish(
+            &super::turn_completion(&result),
+            &TurnFinishExtras {
+                tool_flow: (!tool_flow.is_empty()).then_some(tool_flow.as_slice()),
+                persisted_contexts: &reports,
+                ..super::turn_finish_metrics(&result)
+            },
+        )?;
+        if let (Some(provider), Some(model)) = (&result.provider_id, &result.model) {
+            self.runtime.last_request_endpoint = Some((provider.clone(), model.clone()));
         }
         if self.memory.store.process_after_turn(
             // C10 三份内容分离(最小实现):日记读平台包装前的原文快照,
@@ -201,8 +184,8 @@ impl Agent {
             // repeat adds nothing and is skipped — the associative-memory
             // dedup reasoning. State snapshots (the WebUI artifact manifest)
             // are skipped when the most recent visible copy is byte-identical
-            // (`STATE_SNAPSHOT_TAGS`). Everything else ("this turn is system
-            // triggered", identity warnings, moderation prechecks) refers to
+            // (`HostSnapshot`, an instruction source). Everything else ("this
+            // turn is system triggered", identity warnings, moderation prechecks) refers to
             // the CURRENT turn, so an identical old fossil is no substitute
             // and those blocks are always sent.
             let fresh = self
@@ -212,10 +195,8 @@ impl Agent {
                 .filter(|block| {
                     let standing = block.starts_with(STANDING_ADVISORY_PREFIX)
                         && turn_context_block_visible(&messages, block);
-                    let unchanged_snapshot = STATE_SNAPSHOT_TAGS.iter().any(|tag| {
-                        block.starts_with(tag)
-                            && latest_visible_snapshot(&messages, tag) == Some(block.as_str())
-                    });
+                    let unchanged_snapshot = HostSnapshot::of(block)
+                        .is_some_and(|snapshot| project(&snapshot, messages).is_none());
                     !(standing || unchanged_snapshot)
                 })
                 .cloned()

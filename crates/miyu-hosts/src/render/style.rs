@@ -49,21 +49,3 @@ pub(crate) const PATCH_INSERT_STYLE: &str = "\x1b[48;2;32;52;67m\x1b[38;5;157m";
 
 /// 思考正文的配色:暗 + 绿。四处在用,抽出来省得改一处忘三处。
 pub(crate) const THOUGHT_BODY_STYLE: &str = "\x1b[2m\x1b[38;5;10m";
-
-/// 子代理那一步「交给它的差事」的图标。主线与两个面板共用一份——各留一份就是
-/// 等着漂移。
-///
-/// 它原来是个常量，于是**漏了 `MIYU_TUI_ASCII` 那条退路**：没装 Nerd Font 的人
-/// 在面板里看到的是「豆腐块 提示词 · …」，而同一块面板里的工具图标是认得出的
-/// （`glyphs_never_mix_nerd_and_ascii` 就是这么抓到它的）。
-///
-/// ASCII 那一侧给 `≡`：Nerd 那个字形本来就是「一份说明」的意思（同一个码位也
-/// 挂在 `manage_skill` / `load_skill` 上），三条横线是最不用解释的写法。按
-/// `timeline.rs` 定的规矩——没有 Nerd Font 的时候**别凑**，只留一眼认得出的。
-pub fn prompt_glyph() -> &'static str {
-    if crate::render::timeline::nerd() {
-        "\u{f4a5}"
-    } else {
-        "≡"
-    }
-}

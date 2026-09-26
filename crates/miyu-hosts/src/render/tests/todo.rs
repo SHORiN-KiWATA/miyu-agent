@@ -23,9 +23,9 @@ fn the_todo_tool_ends_the_timeline_segment() {
         renderer.finalize_tools_summary().unwrap();
         let frame = String::from_utf8_lossy(&renderer.take_output_frame()).into_owned();
         let text = crate::render::strip_ansi_text(&frame);
-        // 秒数太短时摘要不带 `Worked for …`,只剩计数——认收缩把手与计数即可。
+        // 收缩行只有计数——认收缩把手与计数即可。
         assert!(
-            text.contains('\u{203a}') && text.contains(t("tool", "tool")),
+            text.contains('\u{203a}') && text.contains(t("tool", "工具")),
             "清单那一批没有收段: {text:?}"
         );
         assert!(

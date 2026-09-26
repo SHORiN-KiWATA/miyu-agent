@@ -64,7 +64,8 @@ pub fn register_fetch(registry: &mut ToolRegistry) {
             "additionalProperties": false
         }),
         |args| async move { web_fetch(args).await },
-    ));
+    )
+    .concurrent());
 }
 
 fn register_search_tool(registry: &mut ToolRegistry, name: &'static str, config: WebPluginConfig) {
@@ -85,7 +86,8 @@ fn register_search_tool(registry: &mut ToolRegistry, name: &'static str, config:
             let config = config.clone();
             async move { web_search(args, config).await }
         },
-    ));
+    )
+    .concurrent());
 }
 
 async fn web_search(args: Value, config: WebPluginConfig) -> Result<String> {
@@ -331,6 +333,12 @@ async fn web_fetch(args: Value) -> Result<String> {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
+    if !is_textual_content_type(&content_type) {
+        // PDF、图片、压缩包按 UTF-8 硬解只会把乱码塞进上下文（09-24，对照 opencode）。
+        bail!(
+            "web_fetch only returns text, and {url} is {content_type}. Download it with run_command (for example `curl -L -o <file> <url>`) and inspect the file instead."
+        );
+    }
     let content = http_response::read_text(response, MAX_RESPONSE_SIZE).await?;
     let output = if content_type.contains("text/html") {
         match format {
@@ -342,6 +350,39 @@ async fn web_fetch(args: Value) -> Result<String> {
         content
     };
     Ok(clip_fetch_output(&output, max_chars))
+}
+
+/// 能当文本读的内容类型。没给类型的照旧当文本试一试。
+fn is_textual_content_type(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if essence.is_empty() || essence.starts_with("text/") {
+        return true;
+    }
+    let (kind, subtype) = essence.split_once('/').unwrap_or((essence.as_str(), ""));
+    kind == "application"
+        && (matches!(
+            subtype,
+            "json"
+                | "xml"
+                | "xhtml+xml"
+                | "javascript"
+                | "x-javascript"
+                | "ecmascript"
+                | "x-yaml"
+                | "yaml"
+                | "toml"
+                | "x-sh"
+                | "x-httpd-php"
+                | "sql"
+                | "graphql"
+                | "x-ndjson"
+        ) || subtype.ends_with("+json")
+            || subtype.ends_with("+xml"))
 }
 
 fn clip_fetch_output(value: &str, max_chars: usize) -> String {
@@ -391,6 +432,33 @@ mod tests {
         .unwrap();
         assert!(output.contains("你好，这是明文正文。"), "got: {output:?}");
         server.await.unwrap();
+    }
+
+    /// 09-24：PDF、图片这类按 UTF-8 硬解只会把乱码塞进上下文，要直接拒收并指路。
+    #[tokio::test]
+    async fn fetch_refuses_binary_content() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = sock.read(&mut buffer).await.unwrap();
+            let body: &[u8] = b"%PDF-1.7\n\x00\x01\x02\xff\xfe binary";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+        });
+        let error = web_fetch(serde_json::json!({ "url": format!("http://{addr}/paper.pdf") }))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("only returns text"), "{error}");
+        assert!(error.contains("application/pdf"), "{error}");
+        server.abort();
     }
 
     #[test]

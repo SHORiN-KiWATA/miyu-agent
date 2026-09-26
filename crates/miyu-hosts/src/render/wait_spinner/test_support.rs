@@ -14,7 +14,7 @@ impl WaitSpinner {
             .lines()
             .map(super::super::command_ansi_width)
             .collect::<Vec<_>>();
-        super::super::rendered_physical_rows(&self.rendered_line_widths, terminal_width)
+        super::super::rendered_physical_rows(&self.area.widths, terminal_width)
             != super::super::rendered_physical_rows(&next_widths, terminal_width)
     }
 }

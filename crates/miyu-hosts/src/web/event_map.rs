@@ -85,6 +85,28 @@ impl RunEventMapper {
         }
     }
 
+    /// 这一轮的实时上下文与会话累计记到守护进程这边：回合中途切回这条会话、列会话时用它
+    /// （09-25，见 `ManagerState::overlay_live_turn`）。
+    fn record_live_turn(&self, round: &Usage, cumulative: &miyu_core::llm::TurnTokens) {
+        let mut manager = self.manager.lock().unwrap();
+        let Some(session_id) = manager
+            .active_runs
+            .get(&self.run_id)
+            .map(|run| run.session_id.to_string())
+        else {
+            return;
+        };
+        manager.live_turns.insert(
+            session_id,
+            crate::runtime::LiveTurnFigures {
+                context_tokens: round.prompt_tokens.saturating_add(round.completion_tokens),
+                cumulative_tokens: cumulative.total,
+                cumulative_prompt_tokens: cumulative.prompt,
+                cumulative_cache_read_tokens: cumulative.cache_read,
+            },
+        );
+    }
+
     pub(in crate::web) fn publish(&self, kind: &str, data: Value) {
         self.events.publish(kind, data);
     }
@@ -215,6 +237,26 @@ impl RunEventMapper {
                         "tool_id": tool_id,
                         "name": tool_name,
                         "message": message,
+                    }),
+                );
+            }
+            AgentEvent::SubagentProgress {
+                call_id,
+                name,
+                status,
+            } => {
+                // 前台子代理那一行（会话项目第 4 段之二）：它在干什么、烧了多少、是哪条会话。
+                let (tool_id, tool_name) = self.tool_identity(&call_id, &name);
+                self.publish(
+                    "subagent.progress",
+                    json!({
+                        "run_id": self.run_id,
+                        "tool_id": tool_id,
+                        "name": tool_name,
+                        "peek": status.peek,
+                        "tokens_label": status.tokens_label,
+                        "tokens": status.tokens,
+                        "session_id": status.session_id,
                     }),
                 );
             }
@@ -457,7 +499,9 @@ impl RunEventMapper {
                 estimated,
                 provider_id,
                 model,
+                cache_breaks,
             } => {
+                self.record_live_turn(&round, &cumulative);
                 self.round_endpoint = match (provider_id.as_deref(), model.as_deref()) {
                     (None, None) => None,
                     (provider, model) => Some((
@@ -483,6 +527,8 @@ impl RunEventMapper {
                         "estimated": estimated,
                         "provider_id": provider_id,
                         "model": model,
+                        // 会话树断过几次缓存（09-25），footer 挂在 C% 后面。
+                        "cache_breaks": cache_breaks,
                     }),
                 );
             }
@@ -517,17 +563,17 @@ impl RunEventMapper {
 }
 
 pub(in crate::web) struct SseStreamState {
-    pub(in crate::web) pending: VecDeque<EventRecord>,
-    pub(in crate::web) receiver: broadcast::Receiver<EventRecord>,
+    pub(in crate::web) pending: VecDeque<SharedEvent>,
+    pub(in crate::web) receiver: broadcast::Receiver<SharedEvent>,
     pub(in crate::web) events: EventHub,
     pub(in crate::web) last_id: u64,
     /// 归属过滤(阶段 5):只放行登录者名下会话的事件。
     pub(in crate::web) owner_filter: EventOwnerFilter,
 }
 
-pub(in crate::web) fn record_to_sse(record: EventRecord) -> Event {
+pub(in crate::web) fn record_to_sse(record: SharedEvent) -> Event {
     Event::default()
         .id(record.id.to_string())
-        .event(record.kind)
-        .data(record.data)
+        .event(&record.kind)
+        .data(&record.data)
 }

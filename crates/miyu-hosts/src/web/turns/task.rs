@@ -247,6 +247,9 @@ async fn run_turn_task_inner(
         }
     }
     let _ = member_persona_applied;
+    // MCP 工具清单先异步列好（09-25）：下面建注册表是同步的，缺清单的服务器要现场列，原来
+    // actor 线程得干等最多 20 秒、别的会话跟着卡。这里等的时候 actor 照样干别的。
+    miyu_engine::tools::prefetch_mcp_listings(&config).await;
     let warming = !turn_engine.is_ready();
     if warming {
         turn_engine.set(TurnEngineState::INITIALIZING);
@@ -358,18 +361,14 @@ async fn run_turn_task_inner(
             .client
             .clone()
             .with_buffered_delivery(platform_context.is_some());
-        let variant_paths = match member_username.as_ref() {
-            Some(username) => {
-                // 共享 client 带的是管理员的全局档位;换成成员家里的偏好(没设 =
-                // 模型默认档),不改共享 client、不影响别的成员/管理员。
-                let member_paths = paths.member_thinking_view(username);
-                turn_client.reload_thinking_variants(&member_paths);
-                member_paths
-            }
-            None => paths.clone(),
-        };
+        if let Some(username) = member_username.as_ref() {
+            // 共享 client 带的是管理员的全局档位;换成成员家里的偏好(没设 =
+            // 模型默认档),不改共享 client、不影响别的成员/管理员。
+            turn_client.reload_thinking_variants(&paths.member_thinking_view(username));
+        }
         // 这个会话钉住的档位盖在上面(09-24:effort 做成会话级,改它不必等别的会话跑完)。
-        turn_client.apply_session_thinking_variants(&variant_paths, &session_id);
+        // 钉子存在会话自己的库里,`store` 就是这个会话所在的那个库。
+        turn_client.apply_session_thinking_variants(&store, &session_id);
         let agent_profile = if subagent_record.is_some() {
             miyu_engine::agent::AgentProfile::Subagent
         } else {
@@ -505,14 +504,17 @@ async fn run_turn_task_inner(
         }
         agent.prepare_for_turn()?;
         let mut control = AgentTurnControl::new(mode, normal_tools, dev_tools);
-        if let Some(signal) = manager
-            .lock()
-            .unwrap()
-            .active_runs
-            .get(run_id)
-            .map(|run| run.supersede.clone())
         {
-            control.set_supersede_signal(signal);
+            let mut manager = manager.lock().unwrap();
+            if let Some(signal) = manager
+                .active_runs
+                .get(run_id)
+                .map(|run| run.supersede.clone())
+            {
+                control.set_supersede_signal(signal);
+            }
+            // 回合跑着时敲的 `/compact` 排进这一轮（09-25，见 `compact_queue`）。
+            control.set_compact_request(manager.compact_request(&session_id));
         }
         if let Some(ingress) = profile
             .as_ref()

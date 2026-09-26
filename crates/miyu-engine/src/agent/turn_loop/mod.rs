@@ -7,8 +7,8 @@
 //! 被更新的同一回合超越、上下文溢出。三者都可能落在任意一次 await 上，所以状
 //! 态推进都写成「先落库再改内存」，中途挂掉能从库里接着走。
 //!
-//! `execute_parallel_task_calls` 负责一批工具的并发执行：**输出必须按请求顺序
-//! 映射回去**，不能按完成顺序——否则模型看到的结果和它发的调用对不上。
+//! `run_concurrent_segment` 负责一批里相邻可并发调用的一起执行：**输出必须按请求
+//! 顺序映射回去**，不能按完成顺序——否则模型看到的结果和它发的调用对不上。
 
 mod catalog_refresh;
 mod finish;
@@ -16,11 +16,13 @@ mod model_round;
 mod overflow_recovery;
 mod parallel;
 mod queue;
+mod queued_compact;
 mod redo;
 mod repeat_gate;
 mod round_request;
 mod round_state;
 mod stream;
+mod subagent_feed;
 mod tool_call;
 mod tool_exec;
 
@@ -65,13 +67,17 @@ impl Agent {
             loaded_tools,
         );
         loop {
-            let tool_limit_reached = (self.core.max_tool_rounds > 0
-                && st.tool_round >= self.core.max_tool_rounds)
-                || st.repeat_fused;
+            let rounds_exhausted =
+                self.core.max_tool_rounds > 0 && st.tool_round >= self.core.max_tool_rounds;
+            let tool_limit_reached = rounds_exhausted || st.repeat_fused;
 
             self.refresh_tool_catalogs().await;
 
-            let definitions = self.round_tool_definitions(tool_limit_reached);
+            // 复读保险丝熔断是端点故障态，收走工具逼模型成文（08-24 设计，不动）；
+            // 轮数用完则照带同一份工具、只是不许调（09-24 B5）：tools 排在前缀最前面，
+            // 原来一收走，整段缓存在上下文最大的这一轮全部作废。
+            let definitions = self.round_tool_definitions(st.repeat_fused);
+            let tool_choice_none = rounds_exhausted && !definitions.is_empty();
 
             on_event(AgentEvent::ReasoningStart {
                 received_at: Instant::now(),
@@ -96,6 +102,7 @@ impl Agent {
                     current_turn_id,
                     request_messages.clone(),
                     definitions,
+                    tool_choice_none,
                     st.responses_continuation.as_deref(),
                     control,
                     on_event,
@@ -244,6 +251,32 @@ impl Agent {
             calls,
             ..Default::default()
         });
+    }
+}
+
+/// 回合收尾写进 `turns` 的正文与用量(普通回合与重做同一份)。
+fn turn_completion(result: &ChatResult) -> TurnCompletion<'_> {
+    TurnCompletion {
+        content: &result.content,
+        reasoning: result.reasoning.as_deref(),
+        provider_id: result.provider_id.as_deref(),
+        model: result.model.as_deref(),
+        tokens: TurnTokens::from_usage(result.usage.as_ref()),
+        token_usage_estimated: result.usage_estimated,
+    }
+}
+
+/// 收尾时和完成标记一起写的两个量:上下文锚点(这一轮最后一次请求的真实占用,下一次
+/// 问上下文有多满时直接读它,不再本地估算)与输出速度。工具流和持久上下文由调用方补。
+fn turn_finish_metrics(result: &ChatResult) -> TurnFinishExtras<'static> {
+    TurnFinishExtras {
+        context_end: crate::agent::context_meter::context_end_tokens(result),
+        generation: result
+            .usage
+            .as_ref()
+            .filter(|usage| usage.generation_tokens > 0 && usage.generation_ms > 0)
+            .map(|usage| (usage.generation_tokens, usage.generation_ms)),
+        ..TurnFinishExtras::default()
     }
 }
 
