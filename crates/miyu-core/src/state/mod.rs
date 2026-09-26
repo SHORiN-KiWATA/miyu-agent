@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 pub use conversation_db::{
     interrupted_text, pending_placeholder, ArtifactAsset, ArtifactAssetData, BackgroundReportRow,
     CacheBreakRecord, ContextAnchor, ConversationDb, FlowMessage, GoalDenied, GoalPhase,
-    GoalRecord, ImageAsset, ImageAssetData, NewSponsorRecord, PlatformAccessActor,
+    GoalRecord, HeldJobReport, ImageAsset, ImageAssetData, NewSponsorRecord, PlatformAccessActor,
     PlatformAccessGrant, PlatformAccessGrantKey, PlatformMemeRefRecord, PlatformPluginScopeKey,
     PlatformSessionBinding, PlatformSessionBindingKey, QueuedPrompt, QueuedPromptAttachment,
     QueuedSyntheticPrompt, RedoCandidate, RedoInputKind, RedoStart, ReplayEntry, ReplayPage,

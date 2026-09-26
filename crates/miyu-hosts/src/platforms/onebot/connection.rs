@@ -474,6 +474,10 @@ pub(in crate::platforms::onebot) async fn connection_loop(
         .unwrap()
         .register(self_id, handle.clone());
     tracing::info!(target: "miyu::qq", self_id, generation, "{}", t("OneBot client connected", "OneBot 客户端已连接"));
+    if self_id != 0 {
+        // 掉线时留着的后台任务汇报，连上就补发（09-26）。
+        tokio::spawn(held_reports::deliver_for_account(state.clone(), self_id));
+    }
 
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {
@@ -562,6 +566,10 @@ pub(in crate::platforms::onebot) async fn connection_loop(
                     "{}",
                     t("OneBot connection identity bound from event", "已从事件绑定 OneBot 连接身份")
                 );
+                tokio::spawn(held_reports::deliver_for_account(
+                    state.clone(),
+                    bound_self_id,
+                ));
             } else if bound_self_id != event_self_id {
                 tracing::warn!(target: "miyu::qq",
                     expected = bound_self_id,

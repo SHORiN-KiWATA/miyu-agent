@@ -12,11 +12,13 @@
     CHILD spawn-gc-depth   前台开孙代理 GRANDCHILD try-spawn(孙代理试图再开一层)
     CHILD slow             前台跑 sleep 40(给「父被停级联」用)
     CHILD nap              前台跑 sleep 2.5 再交 CHILD_RESULT ok:比主回合收尾慢,报告一定另起一轮
+    CHILD quick-nap        前台跑 sleep 1 再交 CHILD_QUICK ok(和 nap 配对:同一轮派出去、先后跑完)
     GRANDCHILD plain       交 GC_RESULT ok
     GRANDCHILD try-spawn   工具面里有 subagent 就调(应被拒),没有就交 GC_NO_SUBAGENT_TOOL
 
 主会话的暗号在最后一条 user 消息里:TK fg-plain / fg-gc / fg-gc-bg / fg-bgcmd / fg-slow /
-gc-depth / bg-plain / bg-wait。被后台任务唤醒(<background-job-report>)时回 WOKEN: + 报告。
+gc-depth / bg-plain / bg-wait / nap / pair(一次并排派 nap 与 quick-nap 两个)。被后台任务唤醒
+(<background-job-report>)时回 `WOKEN: reports=<这一轮带了几份> ` + 报告。
 每个请求都记一行 JSONL(系统提示词开头、工具面、最后一条消息的角色与开头),取证用。
 """
 import json
@@ -43,9 +45,9 @@ def content_text(message):
     return content or ""
 
 
-def tool_call(name, arguments, call_id="call_1"):
+def tool_call(name, arguments, call_id="call_1", index=0):
     return {
-        "index": 0,
+        "index": index,
         "id": call_id,
         "type": "function",
         "function": {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)},
@@ -88,9 +90,19 @@ class Handler(BaseHTTPRequestHandler):
                     break
         else:
             directive = task
+        # 后台汇报叫醒的那一轮：本地会话里汇报就是最后一条消息；QQ 那边是「请求上下文 / 汇报 /
+        # 系统说明」几条 user 消息连着，所以数这一轮末尾那一串 user 消息里有几份汇报外壳。
+        tail = []
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                break
+            tail.append(content_text(message))
+        tail_text = "\n".join(reversed(tail))
+        reports = tail_text.count("<background-job-report>")
         log_line({
             "t": time.time(),
             "role": role,
+            "reports": reports,
             "system_head": system_head[:80],
             "tools": tools,
             "last_role": last.get("role"),
@@ -121,7 +133,11 @@ class Handler(BaseHTTPRequestHandler):
             done()
 
         def call(name, arguments):
-            sse({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [tool_call(name, arguments)]}, "finish_reason": None}]})
+            calls([(name, arguments)])
+
+        def calls(pairs):
+            batch = [tool_call(name, arguments, f"call_{i + 1}", i) for i, (name, arguments) in enumerate(pairs)]
+            sse({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": batch}, "finish_reason": None}]})
             sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
                  "usage": {"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50}})
             done()
@@ -152,6 +168,9 @@ class Handler(BaseHTTPRequestHandler):
             if "slow" in directive:
                 text_reply("CHILD_SLOW_DONE")
                 return
+            if directive.startswith("CHILD quick-nap"):
+                text_reply("CHILD_QUICK ok")
+                return
             if directive.startswith("CHILD nap"):
                 text_reply("CHILD_RESULT ok")
                 return
@@ -162,9 +181,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # ── daemon 合成的唤醒轮(后台任务/子代理完成) ──
-        if last.get("role") == "user" and last_text.lstrip().startswith("<background-job-report>"):
+        if reports:
             if role == "main":
-                text_reply("WOKEN: " + last_text[:1200])
+                # 回话里别原样带汇报外壳：QQ 群历史会把这句话带进后面的轮，外壳一在就又被认成唤醒。
+                echoed = tail_text[-4000:].replace("<background-job-report>", "[report]")
+                echoed = echoed.replace("</background-job-report>", "[/report]")
+                text_reply(f"WOKEN: reports={reports} " + echoed)
             elif "run-bg-cmd" in directive:
                 text_reply("CHILD_AFTER_BG done")
             elif "spawn-gc-bg" in directive:
@@ -193,6 +215,10 @@ class Handler(BaseHTTPRequestHandler):
             }
             token = re.search(r"TK (\S+)", directive)
             key = token.group(1) if token else ""
+            if key == "pair" and "subagent" in tools:
+                calls([("subagent", {"description": "pair nap", "prompt": "CHILD nap"}),
+                       ("subagent", {"description": "pair quick", "prompt": "CHILD quick-nap"})])
+                return
             if key in spawn and "subagent" in tools:
                 description, prompt, background = spawn[key]
                 args = {"description": description, "prompt": prompt}
@@ -222,6 +248,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if directive.startswith("CHILD spawn-gc"):
             call("subagent", {"description": "grandchild", "prompt": "GRANDCHILD plain"})
+            return
+        if directive.startswith("CHILD quick-nap"):
+            call("run_command", {"command": "sleep 1", "timeout_seconds": 60})
             return
         if directive.startswith("CHILD nap"):
             call("run_command", {"command": "sleep 2.5", "timeout_seconds": 60})

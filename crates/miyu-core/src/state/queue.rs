@@ -155,6 +155,34 @@ impl StateStore {
         self.conv_db
             .discard_queued_prompts(&self.session(), &self.queue_session_id)
     }
+
+    // ---- 平台会话留着的后台任务汇报（09-26）----
+    //
+    // 纯转发，SQL 与口径在 `conversation_db/held_reports.rs`。
+
+    pub fn hold_job_report(
+        &self,
+        session_id: &str,
+        batch: &str,
+        job_id: &str,
+        initiator: Option<&str>,
+        content: &str,
+    ) -> Result<()> {
+        self.conv_db
+            .hold_job_report(session_id, batch, job_id, initiator, content)
+    }
+
+    pub fn held_job_reports(&self, session_id: &str) -> Result<Vec<HeldJobReport>> {
+        self.conv_db.held_job_reports(session_id)
+    }
+
+    pub fn sessions_with_held_job_reports(&self) -> Result<Vec<String>> {
+        self.conv_db.sessions_with_held_job_reports()
+    }
+
+    pub fn release_held_job_reports(&self, ids: &[i64]) -> Result<usize> {
+        self.conv_db.release_held_job_reports(ids)
+    }
 }
 
 #[cfg(any(test, feature = "testkit"))]

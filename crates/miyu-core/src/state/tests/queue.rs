@@ -350,3 +350,50 @@ fn leftover_synthetic_prompts_are_taken_out_before_the_fold() {
     );
     assert!(store.load_queued_prompts().unwrap().is_empty());
 }
+
+/// 平台会话留着的后台任务汇报（09-26）：按到来先后取、交出去就删；删会话连它留着的一起走。
+#[test]
+fn held_job_reports_keep_order_and_leave_with_their_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = ConversationDb::open(&test_paths(temp.path()).state_dir).unwrap();
+    let group = db
+        .create_session("default", "QQ 群", "user", None, "")
+        .unwrap()
+        .session_id;
+    let private = db
+        .create_session("default", "QQ 私聊", "user", None, "")
+        .unwrap()
+        .session_id;
+    db.hold_job_report(&private, "job-p", "job-p", None, "私聊那份")
+        .unwrap();
+    db.hold_job_report(&group, "turn-1", "job-a", Some("10001"), "甲")
+        .unwrap();
+    db.hold_job_report(&group, "turn-1", "job-b", Some("10001"), "乙")
+        .unwrap();
+
+    let held = db.held_job_reports(&group).unwrap();
+    assert_eq!(
+        held.iter()
+            .map(|report| (
+                report.batch.as_str(),
+                report.job_id.as_str(),
+                report.content.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [("turn-1", "job-a", "甲"), ("turn-1", "job-b", "乙")]
+    );
+    assert_eq!(held[0].initiator.as_deref(), Some("10001"));
+    assert_eq!(
+        db.sessions_with_held_job_reports().unwrap(),
+        [private.clone(), group.clone()]
+    );
+
+    let released = db
+        .release_held_job_reports(&held.iter().map(|report| report.id).collect::<Vec<_>>())
+        .unwrap();
+    assert_eq!(released, 2);
+    assert!(db.held_job_reports(&group).unwrap().is_empty());
+
+    db.delete_session(&private).unwrap();
+    assert!(db.sessions_with_held_job_reports().unwrap().is_empty());
+}

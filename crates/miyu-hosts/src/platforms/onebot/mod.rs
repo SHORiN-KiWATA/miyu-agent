@@ -18,6 +18,8 @@ mod dispatch;
 mod files;
 mod forward;
 mod group_join;
+/// QQ 会话里的后台任务汇报：同一轮的子代理合成一份发，掉线时留着（09-26）。
+mod held_reports;
 mod identity;
 mod images;
 mod inbound;
@@ -39,6 +41,7 @@ pub(crate) use caches::cached_group_name;
 pub(crate) use connection::{onebot_ws_on_web_port, ConnectionRegistry, QqListenerManager};
 use files::*;
 use group_join::*;
+pub(crate) use held_reports::{deliver_held_reports, platform_binding, report_batch};
 use identity::*;
 use images::*;
 use inbound::*;
@@ -46,9 +49,7 @@ use notices::*;
 use outbound::*;
 pub(crate) use proactive::send_direct_text;
 use turn::*;
-pub(crate) use turn::{
-    account_connected, wake_conversation_for_job, wake_conversation_for_restart,
-};
+pub(crate) use turn::{account_connected, wake_conversation_for_restart};
 
 use super::access_control::{has_dynamic_access, AccessPermission};
 use super::{

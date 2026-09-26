@@ -1,7 +1,7 @@
 //! 后台任务完成后的唤醒。
 //!
 //! 任务跑完要把结论送到用户面前，但「面前」有三种：网页（走事件流）、发起它的
-//! 终端（`stream_job_wake_to_origin_tty`）、平台会话（`wake_platform_session_for_job`）。
+//! 终端（`stream_job_wake_to_origin_tty`）、平台会话（`hold_platform_job_report` 留下，onebot 那边合批、等连上再交）。
 //!
 //! 写回终端前要确认它还在、还停在提示符处——正在跑别的命令时插一段输出会把人家
 //! 的界面搅乱。
@@ -110,6 +110,16 @@ pub(in crate::web) async fn handle_job_completion(
             "job.acknowledged",
             json!({ "job_id": completion.job_id, "session_id": completion.session_id.as_deref() }),
         );
+        // 同一轮派出去的另几个子代理的汇报可能在等它（QQ 合成一份发）：它不交汇报了，那一批该走了。
+        if let Some(session_id) = completion.session_id.as_deref() {
+            if state
+                .state_store
+                .is_platform_session(session_id)
+                .unwrap_or(false)
+            {
+                crate::platforms::onebot::deliver_held_reports(&state, session_id).await;
+            }
+        }
         return;
     }
     let command_short = completion.command.chars().take(120).collect::<String>();
@@ -117,7 +127,16 @@ pub(in crate::web) async fn handle_job_completion(
     if let Some(session_id) = completion.session_id.clone() {
         match state.state_store.is_platform_session(&session_id) {
             Ok(true) => {
-                wake_platform_session_for_job(&state, &session_id, &completion).await;
+                hold_platform_job_report(&state, &session_id, &completion);
+                // 先摘掉再交：同一批等的是「还没交汇报的兄弟任务」，它自己的汇报已经留下了，不该再
+                // 拦着自己那一批（`held_reports::batch_waiting`）。
+                tools::jobs::acknowledge(&completion.job_id);
+                state.events.publish(
+                    "job.acknowledged",
+                    json!({ "job_id": completion.job_id, "session_id": &*session_id }),
+                );
+                crate::platforms::onebot::deliver_held_reports(&state, &session_id).await;
+                return;
             }
             Ok(false) => {
                 pending_wake_run =
@@ -574,41 +593,32 @@ pub(in crate::web) async fn wake_local_session_for_job(
     }
 }
 
-pub(in crate::web) async fn wake_platform_session_for_job(
+/// 平台会话（QQ）的后台任务汇报先落库留着，交不交、什么时候交归 onebot 那边定——同一轮派出去的
+/// 子代理等最后一个交完合成一份发，账号掉线时留着连上再发（09-26，`platforms::onebot::held_reports`）。
+pub(in crate::web) fn hold_platform_job_report(
     state: &DaemonState,
     session_id: &Arc<str>,
     completion: &tools::jobs::JobCompletion,
 ) {
-    let persona = state.manager.lock().unwrap().config.active_persona_scope();
-    let binding = state
-        .state_store
-        .platform_session_bindings(&persona, "onebot")
-        .ok()
-        .and_then(|bindings| {
-            bindings
-                .into_iter()
-                .find(|binding| binding.session_id == **session_id)
-        });
-    let Some(binding) = binding else {
+    if crate::platforms::onebot::platform_binding(state, session_id).is_none() {
         tracing::debug!(job_id = %completion.job_id, "job wake skipped: no platform binding");
         return;
-    };
+    }
     let command = completion.command.chars().take(200).collect::<String>();
     let content = job_report_content(completion, &command, false);
-    if let Err(error) = crate::platforms::onebot::wake_conversation_for_job(
-        state,
-        &binding.key.account_id,
-        &binding.key.conversation_kind,
-        &binding.key.conversation_id,
+    let batch =
+        crate::platforms::onebot::report_batch(state, &completion.job_id, completion.is_subagent);
+    if let Err(error) = state.stores.for_session(session_id).hold_job_report(
+        session_id,
+        &batch,
+        &completion.job_id,
         completion.platform_sender.as_deref(),
-        content,
-    )
-    .await
-    {
+        &content,
+    ) {
         tracing::warn!(
             job_id = %completion.job_id,
             error = %error,
-            "failed to wake the model for a background command in QQ"
+            "failed to hold a background job report for QQ"
         );
     }
 }
