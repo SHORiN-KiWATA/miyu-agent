@@ -160,7 +160,6 @@ pub struct StreamRenderer {
     /// 已经等了多久。窗口真正结束（新一轮思考／外部输出／工具跑完／回合
     /// 结束）才清这个。
     pub(crate) tool_preparing_since: Option<std::time::Instant>,
-    pub(crate) subagent_mode: Option<ChatStreamKind>,
     pub(crate) sent_meme_filter: SentMemeStreamFilter,
     /// 模型正文/思维链的流式转义过滤状态:与命令输出同一套状态机,
     /// 拦截 `\x1b[2J`/OSC 等正文里的终端控制序列(清屏/藏光标/伪造 UI)。
@@ -228,7 +227,6 @@ impl StreamRenderer {
             preparing_question_started_at: None,
             tool_preparing: None,
             tool_preparing_since: None,
-            subagent_mode: None,
             sent_meme_filter: SentMemeStreamFilter::default(),
             stream_control: TerminalControlState::default(),
             timeline: timeline::Timeline::default(),
@@ -524,7 +522,6 @@ impl StreamRenderer {
                 )?;
             }
         }
-        self.end_subagent_stream_line()?;
         if self.mode == Some(ChatStreamKind::Content) && !self.plain {
             // 能力位要在借走 `self.output` 之前问:借用检查不让同时拿。
             let expandable = self.caps().expandable;
@@ -672,7 +669,6 @@ impl StreamRenderer {
                 )?;
             }
         }
-        self.end_subagent_stream_line()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         self.clear_summary_lines()

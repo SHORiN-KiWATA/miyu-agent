@@ -209,7 +209,6 @@ impl StreamRenderer {
         self.stop_waiting()?;
         self.tool_preparing_since = None;
         self.reanchor_wait_timer();
-        self.end_subagent_stream_line()?;
         if is_subagent_tool(name) {
             // 回放没有 `subagent.progress`，会话 id 从结果里取。
             if let Some(session) = miyu_engine::tools::subagent_session_of_output(output) {
@@ -508,7 +507,6 @@ impl StreamRenderer {
     }
 
     pub(crate) fn update_tool_summary_display(&mut self) -> Result<()> {
-        self.end_subagent_stream_line()?;
         if self.wait_spinner.is_some() {
             let (header, sub) = if self.timeline_enabled() {
                 self.timeline_waiting()
@@ -520,21 +518,6 @@ impl StreamRenderer {
             self.end_active_stream_line()?;
             self.finalize_reasoning_summary()?;
             self.ensure_tool_waiting_phase()?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn end_subagent_stream_line(&mut self) -> Result<()> {
-        let was_reasoning = self.subagent_mode == Some(ChatStreamKind::Reasoning);
-        if was_reasoning {
-            execute!(self.output, ResetColor)?;
-        }
-        if self.subagent_mode.is_some() {
-            writeln!(self.output)?;
-            if was_reasoning {
-                writeln!(self.output)?;
-            }
-            self.subagent_mode = None;
         }
         Ok(())
     }

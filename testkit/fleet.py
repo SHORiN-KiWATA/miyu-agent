@@ -124,12 +124,16 @@ def run_one(entry, binary, out, base_env, tag=""):
     # 下一项一开跑就把上一项的日志抹了）。复跑的那次另起一个（`tag`），两次的都留着。
     home = out / "homes" / (entry["name"] + tag)
     shutil.rmtree(home, ignore_errors=True)
-    for sub in ("rt", "strt", "artifacts"):
+    for sub in ("rt", "strt"):
         (out / sub).mkdir(parents=True, exist_ok=True)
+    # 产物也是每项一个目录：不少走查起跑先整个清掉 `OUT`，共用一个的话排在前面那些的截屏
+    # 全被后面的抹了（09-26 查 round26 时截屏已经没了）。
+    artifacts = out / "artifacts" / (entry["name"] + tag)
+    artifacts.mkdir(parents=True, exist_ok=True)
     env = dict(base_env)
     env.update(BIN=str(binary), MIYU_BIN=str(binary), MIYU_HOME=str(home),
                MIYU_TUI_RUNTIME=str(out / "rt"), MIYU_ST_RUNTIME=str(out / "strt"),
-               OUT=str(out / "artifacts"))
+               OUT=str(artifacts))
     for key, value in entry.get("env", {}).items():
         env[key] = str(value).replace("{bin}", str(binary))
     argv = [arg.replace("{bin}", str(binary)) for arg in entry["argv"]]

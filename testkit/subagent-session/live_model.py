@@ -117,7 +117,8 @@ def main():
     print(f"退出码 {proc.returncode}，用时 {seconds}s，done：{done.get('text', '')[:200]!r}")
 
     first = runs[0] if runs else {"tools": [], "text": ""}
-    names = [name for name, _ in first["tools"]]
+    # 事件里的工具名带着描述：`subagent:统计passwd行数`。
+    names = [(name or "").split(":", 1)[0] for name, _ in first["tools"]]
     after_dispatch = names[names.index("subagent") + 1:] if "subagent" in names else []
     results = {
         "dispatched": "subagent" in names,

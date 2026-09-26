@@ -10,15 +10,15 @@
 //! `runs_changed`:`finish_run` 先于 `publish_completed` 触发,靠后者会读到空的
 //! `active_runs` 却拿不到正文。
 //!
-//! 前台等待的 future 被 drop(父回合被用户停掉)时,[`ChildRunGuard`] 顺手取消子会话
-//! 的活动回合——子的 chat future 被 drop 又会 drop 它等孙代理的那条,级联自动递归。
-//! 工具层没有取消令牌,这是唯一的路。后台子代理不装这个守卫:它包在后台任务注册表
-//! 的镜像任务里,`job(action=stop)` 中止那条任务时同样走 Drop。
+//! 09-26 起子代理只在后台跑:等终态的 future 包在后台任务注册表的镜像任务里。镜像任务被停
+//! (任务条上按 x、Ctrl+C、`job(action=stop)`)时 future 被 drop,[`ChildRunGuard`] 顺手取消
+//! 子会话的活动回合——子的 chat future 被 drop 又会 drop 它等孙代理的那条,级联自动递归。
+//! 工具层没有取消令牌,这是唯一的路。
 
 use crate::web::*;
 use miyu_base::host_ports::{
-    ChildOutcome, ChildTaskResult, ContinueChildRequest, CreateChildRequest, SpawnChildRequest,
-    SubagentHostPort, SubagentProgressSink, WatchChildRequest,
+    ChildOutcome, ChildTaskResult, ContinueChildRequest, CreateChildRequest, SubagentHostPort,
+    SubagentProgressSink, WatchChildRequest,
 };
 use miyu_core::state::{SubagentTaskState, SUBAGENT_SESSION_KIND};
 use std::collections::{HashMap, HashSet};
@@ -50,24 +50,8 @@ pub(in crate::web) struct SubagentHost {
 }
 
 impl SubagentHostPort for SubagentHost {
-    fn is_running(&self, child_session: &str) -> bool {
-        self.state
-            .manager
-            .lock()
-            .unwrap()
-            .session_has_runs(child_session)
-    }
-
-    fn spawn(
-        &self,
-        request: SpawnChildRequest,
-    ) -> futures_util::future::BoxFuture<'static, Result<ChildOutcome>> {
-        let state = self.state.clone();
-        Box::pin(async move { spawn_child(state, request).await })
-    }
-
     fn create_child(&self, request: CreateChildRequest) -> Result<String> {
-        create_child_session(&self.state, &request, true).map(|created| created.child)
+        create_child_session(&self.state, &request)
     }
 
     fn queue_followup(
@@ -124,19 +108,9 @@ fn child_name(description: &str) -> String {
     name
 }
 
-/// 建好的子会话：它自己的 id 和父会话的 id。
-struct CreatedChild {
-    child: String,
-    parent: String,
-}
-
-/// 建子会话（前台 `spawn` 与 09-26 起的后台 `create_child` 共用）：挂在父会话下，归属、沙盒
-/// 跟父，档位落成会话级模型池。`background` 只是记在会话行上的元数据。
-fn create_child_session(
-    state: &DaemonState,
-    request: &CreateChildRequest,
-    background: bool,
-) -> Result<CreatedChild> {
+/// 建子会话，交回它的 id：挂在父会话下，归属、沙盒跟父，档位落成会话级模型池。09-26 起子代理
+/// 只在后台跑，会话行上的 `background` 一律记真。
+fn create_child_session(state: &DaemonState, request: &CreateChildRequest) -> Result<String> {
     let parent_store = state.stores.for_session(&request.parent_session);
     let parent = parent_store
         .session_record(&request.parent_session)?
@@ -157,18 +131,16 @@ fn create_child_session(
     };
     // 子会话建在**父会话所属的库**里,归属跟父:成员开的子代理落成员库、记成员的账,
     // 管理员库里找不到它才对(老审计行落管理员库、owner 空,成员场景全错)。
-    // 派它的那一轮：没给就取父会话此刻正在跑的那一轮（09-26）——父回合被停时，连这一轮派
-    // 出去的子代理一起停，按这个认（`stop_children_of_turn`）。
-    let spawned_by_turn = request.spawned_by_turn.clone().or_else(|| {
-        state
-            .manager
-            .lock()
-            .unwrap()
-            .active_runs
-            .values()
-            .find(|run| *run.session_id == *parent.session_id)
-            .and_then(|run| run.turn_id.clone())
-    });
+    // 派它的那一轮：父会话此刻正在跑的那一轮（09-26）——父回合被停时，连这一轮派出去的子代理
+    // 一起停，按这个认（`stop_children_of_turn`）；QQ 那边同一轮的汇报按它合批。
+    let spawned_by_turn = state
+        .manager
+        .lock()
+        .unwrap()
+        .active_runs
+        .values()
+        .find(|run| *run.session_id == *parent.session_id)
+        .and_then(|run| run.turn_id.clone());
     let child = parent_store.create_subagent_session(
         &persona,
         &child_name(&request.description),
@@ -176,7 +148,7 @@ fn create_child_session(
         &parent.owner,
         depth,
         spawned_by_turn.as_deref(),
-        background,
+        true,
     )?;
     state
         .stores
@@ -203,43 +175,9 @@ fn create_child_session(
         child = %child.session_id,
         depth,
         dev = request.dev,
-        background,
         "subagent session spawned"
     );
-    Ok(CreatedChild {
-        child: child.session_id,
-        parent: parent.session_id,
-    })
-}
-
-async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<ChildOutcome> {
-    let created = create_child_session(
-        &state,
-        &CreateChildRequest {
-            parent_session: request.parent_session.clone(),
-            description: request.description.clone(),
-            dev: request.dev,
-            tier: request.tier,
-            spawned_by_turn: request.spawned_by_turn.clone(),
-        },
-        request.background,
-    )?;
-    // 子会话 id 第一条就报出去:父回合的标记流据它落 `child_session_id`,后台镜像
-    // 任务据它登记 job_id → 子会话。
-    (request.progress)(format!(
-        "{}{}",
-        miyu_engine::tools::SUBAGENT_SESSION_MARKER,
-        created.child
-    ));
-    run_child_turn(
-        state,
-        created.child,
-        created.parent,
-        request.prompt,
-        request.workdir,
-        request.progress,
-    )
-    .await
+    Ok(child.session_id)
 }
 
 /// 只认这个父会话自己的子级:别的会话的子代理、主会话本身都不能拿来续或等。
@@ -514,32 +452,17 @@ fn child_result(
     child: &str,
     task_state: SubagentTaskState,
 ) -> ChildTaskResult {
-    let store = state.stores.for_session(child).pinned(child);
-    let last = store
+    let last = state
+        .stores
+        .for_session(child)
+        .pinned(child)
         .session_replay(1)
         .ok()
         .and_then(|turns| turns.into_iter().last());
-    let turns = store
-        .load_visible_turns()
-        .map(|turns| turns.len() as i64)
-        .unwrap_or(0);
-    let total_tokens = store
-        .session_cumulative_token_totals()
-        .map(|tokens| tokens.total)
-        .unwrap_or(0);
     ChildTaskResult {
         session_id: child.to_string(),
         state: task_state.as_str().to_string(),
-        final_text: last
-            .as_ref()
-            .map(|turn| turn.assistant_content.clone())
-            .unwrap_or_default(),
-        turns,
-        total_tokens,
-        provider_id: last
-            .as_ref()
-            .and_then(|turn| turn.assistant_provider_id.clone()),
-        model: last.and_then(|turn| turn.assistant_model.clone()),
+        final_text: last.map(|turn| turn.assistant_content).unwrap_or_default(),
     }
 }
 

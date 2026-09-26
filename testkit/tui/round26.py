@@ -46,6 +46,16 @@ def is_running_row(line, marker):
     return bool(stripped) and stripped[0] in BRAILLE and marker in line
 
 
+def strip_child_row(screen, text):
+    """任务条上在跑的子代理那一行：`○ 子代理 走查子代理 …`（09-26 起子代理只在后台跑，
+    派完主回合就收了，在跑的它挂在任务条上；正文里那一步是 `子代理·走查子代理`，不算）。"""
+    for index in range(len(screen) - 1, -1, -1):
+        line = screen[index]
+        if text in line and f"·{text}" not in line and line.lstrip()[:1] == "○":
+            return index
+    return None
+
+
 LAST = {"screen": None}
 
 
@@ -318,7 +328,8 @@ ROW_SECS = re.compile(r"运行命令 · ([0-9.]+)s")
 def scenario_panel_spinner(report):
     """点跑着的子代理那一行：切进它的会话（会话项目第 3 段；原来开一块浮层，09-25 退役），
     里面正在跑的那条命令左边距上的转轮真的在转、秒数真的在走（用户实测过浮层上的转轮
-    不动、`准备执行 · 0.0s` 不动——同一件事在子会话里照样要成立）。"""
+    不动、`准备执行 · 0.0s` 不动——同一件事在子会话里照样要成立）。09-26 起子代理只在
+    后台跑：在跑的那一行在任务条上，点的是它。"""
     stub, daemon, tui, master, sink = start({
         "STUB_REASONING": "1",
         "STUB_SUBAGENT": "1",
@@ -333,15 +344,14 @@ def scenario_panel_spinner(report):
         os.write(master, b"\r")
         screen = wait_screen(
             master, sink,
-            lambda s: any(is_running_row(l, "走查子代理") for l in s),
+            lambda s: strip_child_row(s, "走查子代理") is not None,
             30.0,
         )
         report["r26_05_subagent_row_running"] = screen is not None
         if screen is None:
             save("panel-spinner-timeout", LAST["screen"] or [])
             return
-        row = next(i for i, l in enumerate(screen) if is_running_row(l, "走查子代理"))
-        h.click(master, sink, 5, row, quiet=0.3, timeout=1.0)
+        h.click(master, sink, 4, strip_child_row(screen, "走查子代理"), quiet=0.3, timeout=1.0)
 
         def running_in_child(s):
             joined = "\n".join(s)

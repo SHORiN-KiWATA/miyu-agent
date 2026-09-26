@@ -299,24 +299,10 @@ async fn send_subagent_message(
         };
         return run_via_host(port, params, limit, progress).await;
     }
-    if crate::tools::subagent_runner::deliver_to_subagent(&job_id, &message) {
-        Ok(serde_json::to_string_pretty(&json!({
-            "ok": true,
-            "job_id": job_id,
-            "queued": message,
-            "note": "The subagent will incorporate this before its next step."
-        }))?)
-    } else {
-        let running = crate::tools::subagent_runner::running_subagent_ids();
-        let hint = if running.is_empty() {
-            "no background subagent is running right now".to_string()
-        } else {
-            format!("running background subagents: {}", running.join(", "))
-        };
-        bail!(
-            "no running background subagent with job_id '{job_id}' (it may have already finished). {hint}"
-        )
-    }
+    // daemon 之外子代理只在前台跑(09-26):模型拿到结果时它已经跑完了,没有可追话的对象。
+    bail!(
+        "No running subagent has id '{job_id}'. Outside the Miyu daemon, subagents run in the foreground and finish before you see their result."
+    )
 }
 
 #[derive(Clone)]
@@ -331,9 +317,7 @@ struct SubagentParams {
     dev: bool,
 }
 
-/// Session linkage captured while still inside the turn scope — a detached
-/// background subagent loses the task-locals, so the audit anchor must be
-/// resolved before spawning.
+/// 审计会话挂在谁名下:父会话、人格作用域,从回合作用域里取。
 #[derive(Clone)]
 struct AuditAnchor {
     parent: Option<String>,
@@ -408,13 +392,8 @@ async fn run_subagent(
         let limit = context.config.tools.subagent_concurrency;
         return run_via_host(port, params, limit, progress).await;
     }
-    // daemon 之外(REPL 直连、`miyu tool-call`)没人装端口:沿用进程内的老循环,照旧前台
+    // daemon 之外(REPL 直连、`miyu tool-call`)没人装端口:沿用进程内的老循环,只在前台跑
     // (用户 09-26:这两条调试 / 兜底路径没人能把模型叫醒,只后台的话结果回不来)。
-    // `background` 只有这里还认,工具说明里已经不写它了。
-    let background = args
-        .get("background")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     if params.session_id.is_some() {
         bail!("session_id continuation needs the daemon; start a fresh subagent instead");
     }
@@ -422,13 +401,7 @@ async fn run_subagent(
         parent: miyu_base::workspace::try_session().map(|session| session.to_string()),
         persona: context.config.active_persona_scope(),
     };
-    if background {
-        return spawn_background(context, params, anchor, progress).await;
-    }
-    // 前台子代理阻塞在本次调用里,主体无从中途插话,不开收件箱(None)。
-    Ok(run_core(context, progress, params, anchor, None)
-        .await?
-        .output)
+    run_core(context, progress, params, anchor).await
 }
 
 /// 会话化路径(09-18),09-26 起只在后台跑(用户拍板):新开的先把子会话建好——回执带着它的
@@ -460,11 +433,7 @@ async fn run_via_host(
     if let Some(child) = child.as_deref() {
         if let Some(session_id) = port.queue_followup(&parent, child, &params.prompt).await? {
             progress.report(format!("{SUBAGENT_SESSION_MARKER}{session_id}"));
-            return format_child_outcome(
-                &params.description,
-                params.tier,
-                ChildOutcome::Queued { session_id },
-            );
+            return queued_followup_receipt(&session_id);
         }
     }
     let child = match child {
@@ -474,7 +443,6 @@ async fn run_via_host(
             description: params.description.clone(),
             dev,
             tier: params.tier,
-            spawned_by_turn: None,
         })?,
     };
     // 父回合的标记流据它落 `child_session_id`:时间线上那一步当场点得进子会话。
@@ -509,57 +477,21 @@ async fn run_via_host(
     .await
 }
 
-/// 会话化子代理的工具输出。成功路径沿用 08-21 的文本形态(`result:` 之后是结论
-/// 本体,`tool_report` 按它提取);终态不是 done 时多一句提示,告诉模型这条会话还在、
-/// 拿 session_id 能续。
-fn format_child_outcome(
-    description: &str,
-    tier: ModelTier,
-    outcome: ChildOutcome,
-) -> Result<String> {
-    match outcome {
-        ChildOutcome::Queued { session_id } => Ok(serde_json::to_string_pretty(&json!({
-            "ok": true,
-            "kind": "subagent_followup",
-            "session_id": session_id,
-            "note": "The message was queued into the running subagent; it picks it up before its next step and you are woken when it finishes.",
-        }))?),
-        ChildOutcome::Finished(result) => {
-            let state = match result.state.as_str() {
-                "done" => "completed",
-                other => other,
-            };
-            let mut output = format!(
-                "subagent {state} (tier {}, session {}): {description}\n",
-                tier.label(),
-                result.session_id
-            );
-            output.push_str(&format!(
-                "stats: {}\n",
-                json!({
-                    "turns": result.turns,
-                    "total_tokens": result.total_tokens,
-                    "provider_id": result.provider_id,
-                    "model": result.model,
-                })
-            ));
-            if state != "completed" {
-                output.push_str(&format!(
-                    "note: the subagent ended in state '{state}'; its session is kept — call subagent again with session_id=\"{}\" to continue it.\n",
-                    result.session_id
-                ));
-            }
-            output.push_str("result:\n");
-            output.push_str(result.final_text.trim());
-            Ok(output)
-        }
-    }
+/// 追话排进了正在跑的子代理那一轮：交回的回执。子代理这一轮收尾时照常带着结论叫醒你。
+fn queued_followup_receipt(session_id: &str) -> Result<String> {
+    Ok(serde_json::to_string_pretty(&json!({
+        "ok": true,
+        "kind": "subagent_followup",
+        "session_id": session_id,
+        "note": "The message was queued into the running subagent; it picks it up before its next step and you are woken when it finishes.",
+    }))?)
 }
 
-/// 子代理工具结果里的子会话 id：前台跑完是 `subagent <状态> (tier …, session <id>): …`
-/// 那一行，追话排进去了是 JSON 的 `session_id`。后台刚派出去时子会话还没建，结果里没有，
-/// 返回 `None`。回放没有派出去时报的那条标记，界面靠它把时间线上那一行链到子会话
-/// （会话项目第 3 段）。形状由 `format_child_outcome` 定，两边一起改。
+/// 子代理工具结果里的子会话 id：派出去的回执、追话排进去的回执都是 JSON 的 `session_id`
+/// （09-26 起子代理只在后台跑，派出去之前子会话就建好了）；老回合里前台跑完的是
+/// `subagent <状态> (tier …, session <id>): …` 那一行，回放还认。09-26 之前后台刚派出去的回执
+/// 里没有子会话，返回 `None`。回放没有派出去时报的那条标记，界面靠它把时间线上那一行链到
+/// 子会话（会话项目第 3 段）。
 pub fn subagent_session_of_output(output: &str) -> Option<String> {
     let output = output.trim_start();
     let id = if output.starts_with('{') {
@@ -571,111 +503,6 @@ pub fn subagent_session_of_output(output: &str) -> Option<String> {
         rest.split(')').next()?.trim().to_string()
     };
     (!id.is_empty()).then_some(id)
-}
-
-/// 一次子代理运行的结果。
-///
-/// `state` 以前是后台路径把 `output` 当 JSON 反解出来的——而 08-21 的
-/// token-diet 把成功路径改成了纯文本,那次反解从此永远失败、悄悄退化成
-/// "completed",`budget_reached` 被当成正常完成上报。现在直接带出来。
-struct SubagentRun {
-    output: String,
-    state: &'static str,
-}
-
-/// 回合作用域(沙盒策略、工作区、会话身份)不跟着 `tokio::spawn` 走:后台
-/// 子代理起在一条新任务上,task-local 到那边全是空的。后果不是显示问题
-/// ——成员回合的后台子代理会跑在 Landlock 之外,工具的工作目录也退回
-/// daemon 的 cwd。在还看得见的地方抓下来,进了后台原样套回去。
-async fn with_turn_scope<F>(
-    sandbox: Option<std::sync::Arc<miyu_base::sandbox::SandboxPolicy>>,
-    workspace: Option<std::path::PathBuf>,
-    session: Option<std::sync::Arc<str>>,
-    future: F,
-) -> F::Output
-where
-    F: std::future::Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    let mut future: std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + Send>> =
-        Box::pin(future);
-    if let Some(session) = session {
-        future = Box::pin(miyu_base::workspace::with_session(session, future));
-    }
-    if let Some(workspace) = workspace {
-        future = Box::pin(miyu_base::workspace::with_workspace(workspace, future));
-    }
-    // `None` 也照样套:显式「这一段没有策略」与回合里的语义一致。
-    miyu_base::sandbox::with_sandbox(sandbox, future).await
-}
-
-/// Detach the subagent run behind the shared background-job registry: its
-/// progress streams into the job log, and completion goes through the same
-/// wake path as background commands.
-async fn spawn_background(
-    context: SubagentContext,
-    params: SubagentParams,
-    anchor: AuditAnchor,
-    progress: crate::tools::ToolProgress,
-) -> Result<String> {
-    let description = params.description.clone();
-    let prompt = params.prompt.clone();
-    // 后台子代理起在 tokio::spawn 的新任务上,回合的 task-local(工作区/会话/
-    // 沙盒)到那儿全空了:相对路径退回 daemon 的 cwd、Landlock 失效、且
-    // mcp_bridge_config 因 try_session()=None 返回 None(claude-code 拿不到 Miyu 桥)。
-    // 在还处于父回合作用域的此刻抓下来,由 with_turn_scope 在 spawn 里套回去。
-    let sandbox = miyu_base::sandbox::current_sandbox();
-    let workspace = miyu_base::workspace::try_workspace();
-    let session = miyu_base::workspace::try_session();
-    crate::tools::jobs::spawn_background_subagent(
-        None,
-        &description,
-        params.dev,
-        None,
-        &progress,
-        move |job_id, log_path| async move {
-            write_subagent_prompt_header(&log_path, &prompt);
-            let bridge = spawn_subagent_log_bridge(job_id.clone(), log_path.clone());
-            // 后台子代理:用后台任务 id 作收件箱键,主体可用 send_subagent_message
-            // 中途投递 follow-up;主体从后台返回里拿到这个 job_id。工作区/会话/沙盒
-            // 由 with_turn_scope 套回(见上)。
-            let run = with_turn_scope(
-                sandbox,
-                workspace,
-                session,
-                run_core(context, bridge, params, anchor, Some(job_id.clone())),
-            )
-            .await;
-            let state_label = match &run {
-                Ok(run) => run.state,
-                Err(_) => "error",
-            };
-            let tail = match &run {
-                Ok(run) => format!(
-                    "\n{}\n{}\n",
-                    crate::tools::jobs::SUBAGENT_RESULT_MARKER,
-                    run.output
-                ),
-                Err(error) => format!("\n{}\n{error}\n", crate::tools::jobs::SUBAGENT_ERROR_MARKER),
-            };
-            let _ = std::fs::OpenOptions::new()
-                .append(true)
-                .open(&log_path)
-                .and_then(|mut file| {
-                    use std::io::Write as _;
-                    file.write_all(tail.as_bytes())
-                });
-            tracing::debug!(job_id = %job_id, state = %state_label, "background subagent finished");
-            match state_label {
-                "completed" | "budget_reached" => {
-                    crate::tools::jobs::JobState::Exited { code: Some(0) }
-                }
-                "timeout" => crate::tools::jobs::JobState::TimedOut,
-                _ => crate::tools::jobs::JobState::Exited { code: None },
-            }
-        },
-    )
-    .await
 }
 
 /// dev 子代理的系统提示词。
@@ -716,8 +543,7 @@ async fn run_core(
     progress: crate::tools::ToolProgress,
     params: SubagentParams,
     anchor: AuditAnchor,
-    inbox_id: Option<String>,
-) -> Result<SubagentRun> {
+) -> Result<String> {
     let SubagentParams {
         description,
         prompt,
@@ -800,26 +626,10 @@ async fn run_core(
     let mut runner = SubagentRunner::new(client, system_prompt, tools, sa_progress)
         .max_steps(max_steps)
         .timeout_seconds(tool_timeout)
-        .excluded_tools(SUBAGENT_EXCLUDED)
-        .inbox_id(inbox_id.clone());
+        .excluded_tools(SUBAGENT_EXCLUDED);
     if let Some(audit) = &audit {
         runner = runner.usage_sink(audit.usage_sink());
     }
-
-    // 后台子代理开收件箱:主体可在运行途中投递 follow-up(见 subagent_runner)。
-    // 用 drop guard 关箱,覆盖所有退出路径(正常返回 / `?` 早退 / panic)。
-    struct InboxGuard(Option<String>);
-    impl Drop for InboxGuard {
-        fn drop(&mut self) {
-            if let Some(id) = &self.0 {
-                crate::tools::subagent_runner::close_subagent_inbox(id);
-            }
-        }
-    }
-    if let Some(id) = &inbox_id {
-        crate::tools::subagent_runner::open_subagent_inbox(id);
-    }
-    let _inbox_guard = InboxGuard(inbox_id.clone());
 
     // 子代理不设总时长上限:它自然结束于任务完成或步数预算;逐工具超时
     // (tool_timeout)仍然兜底单步挂死。
@@ -854,10 +664,7 @@ async fn run_core(
                     &model_choice,
                 ),
             }
-            return Ok(SubagentRun {
-                output,
-                state: "error",
-            });
+            return Ok(output);
         }
     };
 
@@ -902,7 +709,7 @@ async fn run_core(
             &model_choice,
         ),
     }
-    Ok(SubagentRun { output, state })
+    Ok(output)
 }
 
 #[cfg(test)]

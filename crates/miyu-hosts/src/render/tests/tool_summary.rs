@@ -114,7 +114,6 @@ fn subagent_summary_keeps_current_internal_tool_without_raw_reasoning() {
     assert!(summary.contains("↳ 查询磁盘占用"));
     assert!(summary.contains("↳ 工具 #2：运行命令 · du -sh /home/shorin/* 运行中"));
     assert!(!summary.contains("private analysis"));
-    assert_eq!(renderer.subagent_mode, None);
 }
 
 #[test]
@@ -306,7 +305,6 @@ fn tool_summary_suppresses_subagent_reasoning_even_when_reasoning_is_full() {
     let stats = renderer.tool_stats.get("subagent").unwrap();
     assert_eq!(stats.calls, 1);
     assert!(stats.started_at.is_some());
-    assert_eq!(renderer.subagent_mode, None);
 }
 
 #[test]
