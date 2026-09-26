@@ -272,7 +272,7 @@ pub(in crate::config_tui) fn edit_scheduled_messages(
                 } else if selected <= tasks.len() {
                     let index = selected - 1;
                     let mut fields = task_fields(tasks.get(index));
-                    if run_form(ui, t(" EDIT TASK ", " 编辑任务 "), &mut fields)? {
+                    if run_edit_form(ui, t(" EDIT TASK ", " 编辑任务 "), &mut fields)? {
                         let mut tasks = tasks;
                         match task_from_fields(&fields) {
                             Ok(task) => tasks[index] = task,

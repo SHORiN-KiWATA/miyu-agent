@@ -585,7 +585,7 @@ impl<'a> ProviderBrowser<'a> {
     }
 
     fn add_provider(&mut self, ui: &mut Ui) -> Result<()> {
-        if let Some(provider) = edit_provider_form(ui, ProviderConfig::new_custom())? {
+        if let Some(provider) = edit_provider_form(ui, ProviderConfig::new_custom(), false)? {
             self.config.upsert_provider(provider);
             self.provider_idx = self.config.providers.len().saturating_sub(1);
             self.refresh_models();
@@ -760,7 +760,7 @@ impl<'a> ProviderBrowser<'a> {
                             &mut self.config.plugins.codebuddy,
                         )?
                     } else {
-                        edit_provider_form(ui, provider)?
+                        edit_provider_form(ui, provider, true)?
                     };
                     if let Some(provider) = edited {
                         let old_id = self.config.providers[self.provider_idx].id.clone();

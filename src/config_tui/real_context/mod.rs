@@ -173,7 +173,7 @@ pub(in crate::config_tui) fn edit_real_context_history(
             ),
             settings.group_member_search_max_results.to_string(),
         )];
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" GROUP MEMBER INFORMATION ", " 群成员信息查询 "),
             &mut fields,

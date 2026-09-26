@@ -14,7 +14,7 @@ pub(in crate::config_tui) fn edit_u16_value(
     current: u16,
 ) -> Result<Option<u16>> {
     let mut fields = vec![Field::new(label, current.to_string())];
-    if !run_form_editing(ui, t(" EDIT VALUE ", " 编辑数值 "), &mut fields)? {
+    if !run_edit_form_editing(ui, t(" EDIT VALUE ", " 编辑数值 "), &mut fields)? {
         return Ok(None);
     }
     match fields[0].value.trim().parse() {
@@ -104,21 +104,11 @@ pub(in crate::config_tui) fn run_form(
 ///
 /// `Link` = 回车落在了跳转行（[`Field::link`]）上。表单自己不认识那一行指向哪
 /// 个菜单，把下标交还调用方：调用方打开菜单、刷新那一行的显示值，再用
-/// [`run_form_linked`] 从同一行接着跑同一份 `fields`——没按保存的改动不会丢。
+/// [`run_edit_form_linked`] 从同一行接着跑同一份 `fields`——还没收下的改动不会丢。
 pub(in crate::config_tui) enum FormOutcome {
     Saved,
     Cancelled,
     Link(usize),
-}
-
-/// 带跳转行的表单。`selected` 是光标起始行，从跳转菜单回来时传那一行的下标。
-pub(in crate::config_tui) fn run_form_linked(
-    ui: &mut Ui,
-    title: &str,
-    fields: &mut [Field],
-    selected: usize,
-) -> Result<FormOutcome> {
-    run_form_outcome(ui, title, fields, false, selected)
 }
 
 /// `start_editing` puts the caret in the first field straight away, for forms
@@ -140,19 +130,121 @@ pub(in crate::config_tui) fn run_form_from(
     start_editing: bool,
 ) -> Result<bool> {
     Ok(matches!(
-        run_form_outcome(ui, title, fields, start_editing, 0)?,
+        run_form_outcome(ui, title, fields, start_editing, 0, true)?,
         FormOutcome::Saved
     ))
 }
 
+/// 编辑已有项的表单（用户 09-26）：不挂「保存 / 返回」两行，Esc 退出，写盘归主菜单的
+/// 「保存并退出」。返回改没改过：一个字没动就当没进来过，调用方照旧走原来「返回」那条路
+/// ——不收、也不触发收下时的附带动作（编辑模型收下会把当前供应商切过去）。
+pub(in crate::config_tui) fn run_edit_form(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+) -> Result<bool> {
+    run_edit_form_from(ui, title, fields, false)
+}
+
+/// 同 [`run_edit_form`]，一进来插入点就落在第一格（见 [`run_form_editing`]）。
+pub(in crate::config_tui) fn run_edit_form_editing(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+) -> Result<bool> {
+    run_edit_form_from(ui, title, fields, true)
+}
+
+/// 新增和编辑共用一张表单时：新增的保留「保存 / 返回」（Esc 不该建出半成品），
+/// 编辑已有项的走 [`run_edit_form`]（用户 09-26）。
+pub(in crate::config_tui) fn run_item_form(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    existing: bool,
+) -> Result<bool> {
+    if existing {
+        run_edit_form(ui, title, fields)
+    } else {
+        run_form(ui, title, fields)
+    }
+}
+
+/// 同 [`run_item_form`]，一进来插入点就落在第一格。
+pub(in crate::config_tui) fn run_item_form_editing(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    existing: bool,
+) -> Result<bool> {
+    if existing {
+        run_edit_form_editing(ui, title, fields)
+    } else {
+        run_form_editing(ui, title, fields)
+    }
+}
+
+/// 带跳转行、编辑已有项的表单：不挂按钮，Esc 退出时交回 `Saved`（= 看完了），回车落在
+/// 跳转行交回 `Link`。收不收由调用方拿进来时的 [`field_values`] 比对决定——跳转一次就要
+/// 重进一次表单，改没改过得从最早那一刻算。
+pub(in crate::config_tui) fn run_edit_form_linked(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    selected: usize,
+) -> Result<FormOutcome> {
+    run_form_outcome(ui, title, fields, false, selected, false)
+}
+
+/// 各字段此刻的值，给「改没改过」做底。
+pub(in crate::config_tui) fn field_values(fields: &[Field]) -> Vec<String> {
+    fields.iter().map(|field| field.value.clone()).collect()
+}
+
+/// 和 [`field_values`] 拿到的那份比，有没有哪一格变了。
+pub(in crate::config_tui) fn fields_changed(fields: &[Field], before: &[String]) -> bool {
+    fields.len() != before.len()
+        || fields
+            .iter()
+            .zip(before)
+            .any(|(field, value)| field.value != *value)
+}
+
+fn run_edit_form_from(
+    ui: &mut Ui,
+    title: &str,
+    fields: &mut [Field],
+    start_editing: bool,
+) -> Result<bool> {
+    let before = field_values(fields);
+    let mut selected = 0;
+    let mut start_editing = start_editing;
+    // 这里没人接跳转行：回车落在上面等于没按，原地接着跑。
+    while let FormOutcome::Link(index) =
+        run_form_outcome(ui, title, fields, start_editing, selected, false)?
+    {
+        selected = index;
+        start_editing = false;
+    }
+    Ok(fields_changed(fields, &before))
+}
+
+/// 表单主循环。`buttons` = 末尾挂「保存 / 返回」两行：Esc 是放弃，`s` 是保存。不挂的时候
+/// Esc 是「看完了」（交回 `Saved`，收不收由调用方比对），光标只在字段之间走。
 fn run_form_outcome(
     ui: &mut Ui,
     title: &str,
     fields: &mut [Field],
     start_editing: bool,
     start_selected: usize,
+    buttons: bool,
 ) -> Result<FormOutcome> {
-    let mut selected = start_selected.min(fields.len() + 1);
+    let last = if buttons {
+        fields.len() + 1
+    } else {
+        fields.len().saturating_sub(1)
+    };
+    let mut selected = start_selected.min(last);
     let mut fcitx = FcitxState::new();
     // Only a plain text field can be typed into directly; the others open
     // their own picker on Enter, so landing "inside" them would mean typing
@@ -174,21 +266,27 @@ fn run_form_outcome(
         .map(|field| field.value.chars().count())
         .collect::<Vec<_>>();
     loop {
-        draw_form(ui, title, fields, selected, editing, &cursors, true)?;
+        draw_form(ui, title, fields, selected, editing, &cursors, buttons)?;
         match read_key(ui)? {
             KeyCode::Esc if editing => {
                 fcitx.leave_editing();
                 editing = false;
             }
-            KeyCode::Esc | KeyCode::Char('q') if !editing => return Ok(FormOutcome::Cancelled),
+            KeyCode::Esc | KeyCode::Char('q') if !editing => {
+                return Ok(if buttons {
+                    FormOutcome::Cancelled
+                } else {
+                    FormOutcome::Saved
+                })
+            }
             KeyCode::Enter if editing => {
                 fcitx.leave_editing();
                 editing = false;
             }
-            KeyCode::Enter if !editing && selected == fields.len() => {
+            KeyCode::Enter if !editing && buttons && selected == fields.len() => {
                 return Ok(FormOutcome::Saved)
             }
-            KeyCode::Enter if !editing && selected == fields.len() + 1 => {
+            KeyCode::Enter if !editing && buttons && selected == fields.len() + 1 => {
                 return Ok(FormOutcome::Cancelled)
             }
             KeyCode::Enter if !editing && fields[selected].link => {
@@ -256,15 +354,17 @@ fn run_form_outcome(
                     editing = true;
                 }
             }
-            KeyCode::Char('s') if !editing => return Ok(FormOutcome::Saved),
+            KeyCode::Char('s') if !editing && buttons => return Ok(FormOutcome::Saved),
             KeyCode::Up | KeyCode::Char('k') if !editing => selected = selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') if !editing => {
-                selected = (selected + 1).min(fields.len() + 1)
-            }
-            KeyCode::Left | KeyCode::Char('h') if !editing && selected == fields.len() + 1 => {
+            KeyCode::Down | KeyCode::Char('j') if !editing => selected = (selected + 1).min(last),
+            KeyCode::Left | KeyCode::Char('h')
+                if !editing && buttons && selected == fields.len() + 1 =>
+            {
                 selected = fields.len()
             }
-            KeyCode::Right | KeyCode::Char('l') if !editing && selected == fields.len() => {
+            KeyCode::Right | KeyCode::Char('l')
+                if !editing && buttons && selected == fields.len() =>
+            {
                 selected = fields.len() + 1
             }
             KeyCode::Left if editing => cursors[selected] = cursors[selected].saturating_sub(1),
@@ -290,121 +390,14 @@ fn run_form_outcome(
     }
 }
 
+/// 没有「保存 / 返回」的表单：Esc 退出，调用方照单收下（全局设置、开发模式、语音这几张）。
+/// 和 [`run_edit_form`] 同一个主循环，只是不管改没改过。
 pub(in crate::config_tui) fn run_form_without_buttons(
     ui: &mut Ui,
     title: &str,
     fields: &mut [Field],
 ) -> Result<()> {
-    let mut selected = 0usize;
-    let mut editing = false;
-    let mut fcitx = FcitxState::new();
-    let mut cursors = fields
-        .iter()
-        .map(|field| field.value.chars().count())
-        .collect::<Vec<_>>();
-    loop {
-        draw_form(ui, title, fields, selected, editing, &cursors, false)?;
-        match read_key(ui)? {
-            KeyCode::Esc if editing => {
-                fcitx.leave_editing();
-                editing = false;
-            }
-            KeyCode::Esc | KeyCode::Char('q') if !editing => return Ok(()),
-            KeyCode::Enter if editing => {
-                fcitx.leave_editing();
-                editing = false;
-            }
-            KeyCode::Enter if !editing && fields[selected].boolean => {
-                let value = select_bool(
-                    ui,
-                    fields[selected].label,
-                    parse_bool_field(&fields[selected].value)?,
-                )?;
-                fields[selected].value = value.to_string();
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            KeyCode::Enter if !editing && !fields[selected].multi_choices.is_empty() => {
-                fields[selected].value = select_multi_choice(
-                    ui,
-                    fields[selected].label,
-                    &fields[selected].value,
-                    &fields[selected].multi_choices.clone(),
-                )?;
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            KeyCode::Enter if !editing && fields[selected].modalities => {
-                fields[selected].value = select_multi_choice(
-                    ui,
-                    fields[selected].label,
-                    &fields[selected].value,
-                    &["text", "image", "audio", "video", "pdf"]
-                        .iter()
-                        .map(|item| item.to_string())
-                        .collect::<Vec<_>>(),
-                )?;
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            KeyCode::Enter if !editing && !fields[selected].choices.is_empty() => {
-                fields[selected].value = select_choice(
-                    ui,
-                    fields[selected].label,
-                    &fields[selected].value,
-                    &fields[selected].choices,
-                    fields[selected].empty_choice_label,
-                    fields[selected].raw_choice_labels,
-                )?;
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            // 短字符串列表(唤醒词):无按钮表单此前漏了这一臂,回车落到普通文本编辑。
-            KeyCode::Enter if !editing && fields[selected].string_list => {
-                edit_string_list(ui, fields[selected].label, &mut fields[selected].value)?;
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            KeyCode::Enter if !editing && fields[selected].dialog_list => {
-                edit_dialog_list(ui, &mut fields[selected].value)?;
-                cursors[selected] = fields[selected].value.chars().count();
-            }
-            KeyCode::Enter if !editing && fields[selected].textarea => {
-                edit_textarea(ui, &mut fields[selected].value)?;
-                cursors[selected] = fields[selected].value.chars().count();
-                if !fields[selected].sensitive {
-                    return Ok(());
-                }
-            }
-            // 跳转行要调用方接手（`run_form_linked`），这里没有出口交还——至少
-            // 别把它当成可以打字的文本框。
-            KeyCode::Enter if !editing && fields[selected].link => {}
-            KeyCode::Enter if !editing => {
-                if !fields[selected].boolean {
-                    fcitx.enter_editing();
-                    editing = true;
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') if !editing => selected = selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') if !editing => {
-                selected = (selected + 1).min(fields.len().saturating_sub(1))
-            }
-            KeyCode::Left if editing => cursors[selected] = cursors[selected].saturating_sub(1),
-            KeyCode::Right if editing => {
-                cursors[selected] =
-                    (cursors[selected] + 1).min(fields[selected].value.chars().count())
-            }
-            KeyCode::Home if editing => cursors[selected] = 0,
-            KeyCode::End if editing => cursors[selected] = fields[selected].value.chars().count(),
-            KeyCode::Backspace if editing => {
-                if cursors[selected] > 0 {
-                    remove_char_before_cursor(&mut fields[selected].value, &mut cursors[selected]);
-                }
-            }
-            KeyCode::Delete if editing => {
-                remove_char_at_cursor(&mut fields[selected].value, cursors[selected])
-            }
-            KeyCode::Char(char) if editing => {
-                insert_char_at_cursor(&mut fields[selected].value, &mut cursors[selected], char)
-            }
-            _ => {}
-        }
-    }
+    run_edit_form(ui, title, fields).map(|_| ())
 }
 
 /// 预设对话列表式编辑器(验收 #19):每行一对 user/assistant,回车编辑、
@@ -679,11 +672,12 @@ pub(in crate::config_tui) fn draw_form(
         )
     };
     let (_, keys) = key_bar(&cx, help);
-    // 横线上方那行说的是「现在是什么状态」，不是按键——按键在底下那条。
+    // 横线上方那行说的是「现在是什么状态」，不是按键——按键在底下那条。只在打字时写
+    // 「编辑中」；导航时那句「导航中」是废话（用户 09-26），留一个空行，进出编辑版面不跳。
     let mode = if editing {
         t("Editing", "编辑中")
     } else {
-        t("Navigating", "导航中")
+        ""
     };
     ui.show(
         title,

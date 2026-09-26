@@ -90,6 +90,7 @@ pub(in crate::config_tui) fn prompt_real_context_identity(
     ui: &mut Ui,
     current: Option<RealContextIdentityMapping>,
 ) -> Result<Option<RealContextIdentityMapping>> {
+    let existing = current.is_some();
     let mut fields = vec![
         Field::new(
             t("Protected nickname", "受保护昵称"),
@@ -106,7 +107,12 @@ pub(in crate::config_tui) fn prompt_real_context_identity(
                 .unwrap_or_default(),
         ),
     ];
-    if !run_form(ui, t(" IDENTITY MAPPING ", " 编辑识人映射 "), &mut fields)? {
+    if !run_item_form(
+        ui,
+        t(" IDENTITY MAPPING ", " 编辑识人映射 "),
+        &mut fields,
+        existing,
+    )? {
         return Ok(None);
     }
     let nickname = fields[0].value.trim();

@@ -130,7 +130,12 @@ pub(in crate::config_tui) fn edit_qq_admin_list(
                         current_alias,
                     ),
                 ];
-                if !run_form_editing(ui, t(" ADMINISTRATOR ", " 管理员 "), &mut fields)? {
+                if !run_item_form_editing(
+                    ui,
+                    t(" ADMINISTRATOR ", " 管理员 "),
+                    &mut fields,
+                    current_id.is_some(),
+                )? {
                     continue;
                 }
                 let id = match parse_positive_id(&fields[0].value) {

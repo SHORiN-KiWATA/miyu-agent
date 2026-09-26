@@ -352,13 +352,16 @@ def main():
         values = [value_start(line_with(text, label), label)
                   for label in ("工具最大轮数", "界面语言", "命令显示行数")]
         check(len(set(values)) == 1 and values[0] > 0, "表单右列对齐", str(values))
-        check("导航中" in text, "横线上方写着现在什么状态")
+        # 导航时横线上方不再写「导航中」（用户 09-26：废话），那一行空着，打字时才写「编辑中」。
+        check("导航中" not in text, "导航时横线上方不写「导航中」")
         check(driver.fg_of("简体中文") == DIM, "右列的值不压到最暗那档",
               f"值是 {driver.fg_of('简体中文')}，FAINT 是 {FAINT}")
         rows = text.split("\n")
-        status_row = next(index for index, line in enumerate(rows) if "导航中" in line)
-        above = re.sub(r"[✦✶+.\s]", "", rows[status_row - 1])
-        check(above == "", "正文与底下那行之间空一行", f"上一行是「{rows[status_row - 1].strip()[:40]}」")
+        rule_row = next(index for index, line in enumerate(rows)
+                        if "────" in line and "移动" in rows[min(index + 1, len(rows) - 1)])
+        between = [re.sub(r"[✦✶+.\s]", "", rows[rule_row - offset]) for offset in (1, 2)]
+        check(between == ["", ""], "正文与底下那根横线之间空着",
+              f"横线上面两行是「{rows[rule_row - 2].strip()[:40]}」「{rows[rule_row - 1].strip()[:40]}」")
 
         # ── 换层不再逐行铺开：一眼就是整屏 ──
         os.write(driver.master, b"\x1b")
@@ -379,7 +382,8 @@ def main():
         check(text is not None, "进得了编辑态")
         caret_x = driver.screen.cursor.x
         check(caret_x >= values[0], "光标落在值那一列", f"光标 {caret_x} < 值列 {values[0]}")
-        driver.send(b"\x1b", "导航中")
+        os.write(driver.master, b"\x1b")
+        driver.pump(0.6)
 
         # ── 退一层：面包屑弹回去 ──
         text = driver.send(b"\x1b", "供应商和模型", "保存并退出")

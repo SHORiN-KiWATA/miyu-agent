@@ -136,7 +136,7 @@ pub(in crate::config_tui) fn edit_real_context_emotion_values(
                 settings.emotion_daily_valence_loss_limit.to_string(),
             ),
         ];
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" EMOTION DECAY AND LIMITS ", " 情绪衰减与限制 "),
             &mut fields,

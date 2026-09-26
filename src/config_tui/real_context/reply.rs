@@ -308,7 +308,7 @@ pub(in crate::config_tui) fn edit_real_context_judge_advanced(
                 settings.judge_should_reply_penalty_score.to_string(),
             ),
         ];
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" JUDGEMENT ADVANCED ", " 主动判断高级设置 "),
             &mut fields,
@@ -364,7 +364,7 @@ pub(in crate::config_tui) fn edit_real_context_triggers(
                 settings.privileged_direct_trigger_skip_active_judgement,
             ),
         ];
-        if !run_form(ui, t(" TRIGGER METHODS ", " 触发方式 "), &mut fields)? {
+        if !run_edit_form(ui, t(" TRIGGER METHODS ", " 触发方式 "), &mut fields)? {
             return Ok(());
         }
         let mut candidate = settings.clone();
@@ -404,7 +404,7 @@ pub(in crate::config_tui) fn edit_real_context_continuation(
                 settings.continuation_boost_score.to_string(),
             ),
         ];
-        if !run_form(ui, t(" CONTINUATION WINDOW ", " 续聊窗口 "), &mut fields)? {
+        if !run_edit_form(ui, t(" CONTINUATION WINDOW ", " 续聊窗口 "), &mut fields)? {
             return Ok(());
         }
         let mut candidate = settings.clone();

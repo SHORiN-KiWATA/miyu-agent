@@ -450,7 +450,7 @@ pub(in crate::config_tui) fn edit_embedding_advanced(
             config.embedding.min_score.to_string(),
         ),
     ];
-    if !run_form(
+    if !run_edit_form(
         ui,
         t(" EMBEDDING ADVANCED ", " EMBEDDING 高级设置 "),
         &mut fields,
@@ -498,9 +498,11 @@ pub(in crate::config_tui) fn edit_embedding_advanced(
     Ok(())
 }
 
+/// `existing` = 编辑已有的供应商（不挂「保存 / 返回」，没改过就当没进来）；新建的保留按钮。
 pub(in crate::config_tui) fn edit_provider_form(
     ui: &mut Ui,
     provider: ProviderConfig,
+    existing: bool,
 ) -> Result<Option<ProviderConfig>> {
     // 将 extra_body 格式化为 JSON 字符串，方便编辑
     let extra_body_string = provider
@@ -541,7 +543,12 @@ pub(in crate::config_tui) fn edit_provider_form(
 
     // 循环直到用户取消或输入合法 JSON 对象
     loop {
-        if !run_form(ui, t(" EDIT PROVIDER ", " 编辑供应商 "), &mut fields)? {
+        if !run_item_form(
+            ui,
+            t(" EDIT PROVIDER ", " 编辑供应商 "),
+            &mut fields,
+            existing,
+        )? {
             return Ok(None);
         }
 
@@ -724,7 +731,7 @@ pub(in crate::config_tui) fn edit_model_form(
         .empty_choice_label(t("inherit global", "跟随全局")),
     ];
     loop {
-        if !run_form(ui, t(" EDIT MODEL ", " 编辑模型 "), &mut fields)? {
+        if !run_edit_form(ui, t(" EDIT MODEL ", " 编辑模型 "), &mut fields)? {
             return Ok(false);
         }
         // 价格:选了货币才生效;三个价按所选货币记,估算时统一折 USD。

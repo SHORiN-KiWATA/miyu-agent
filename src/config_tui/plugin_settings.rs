@@ -286,6 +286,7 @@ pub(in crate::config_tui) fn prompt_group_join_approval_group(
     ui: &mut Ui,
     current: Option<QqGroupJoinApprovalGroupConfig>,
 ) -> Result<Option<QqGroupJoinApprovalGroupConfig>> {
+    let existing = current.is_some();
     let current = current.unwrap_or(QqGroupJoinApprovalGroupConfig {
         group_id: 0,
         approve_condition: String::new(),
@@ -304,10 +305,11 @@ pub(in crate::config_tui) fn prompt_group_join_approval_group(
             current.approve_condition.clone(),
         ),
     ];
-    if !run_form_editing(
+    if !run_item_form_editing(
         ui,
         t(" GROUP JOIN APPROVAL CONDITION ", " 编辑入群审批条件 "),
         &mut fields,
+        existing,
     )? {
         return Ok(None);
     }
@@ -526,7 +528,7 @@ pub(in crate::config_tui) fn edit_message_history(
             settings.allow_cross_conversation_search,
         ),
     ];
-    if !run_form(
+    if !run_edit_form(
         ui,
         t(" QQ TEXT MESSAGE HISTORY ", " QQ 纯文字消息历史 "),
         &mut fields,
@@ -594,7 +596,7 @@ pub(in crate::config_tui) fn edit_meme_collector(
             settings.allow_non_admin_save_tool,
         ),
     ];
-    if !run_form(ui, t(" QQ MEME POCKET ", " QQ 表情口袋 "), &mut fields)? {
+    if !run_edit_form(ui, t(" QQ MEME POCKET ", " QQ 表情口袋 "), &mut fields)? {
         return Ok(());
     }
     let enabled = fields[0].value.parse::<bool>()?;

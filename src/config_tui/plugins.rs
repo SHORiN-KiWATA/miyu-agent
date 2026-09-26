@@ -26,15 +26,22 @@ pub(in crate::config_tui) fn edit_plugin_detail(
         return Ok(());
     }
     let title = format!(" {display_name} ");
+    // 编辑已有插件的设置：不挂「保存 / 返回」（用户 09-26），Esc 退出时改过才收。
+    let mut before = field_values(&fields);
     let mut selected = 0;
     loop {
-        match run_form_linked(ui, &title, &mut fields, selected)? {
-            FormOutcome::Saved => return apply_plugin_fields(config, id, &fields),
-            FormOutcome::Cancelled => return Ok(()),
+        match run_edit_form_linked(ui, &title, &mut fields, selected)? {
             FormOutcome::Link(index) => {
                 follow_plugin_link(ui, config, id, &mut fields[index])?;
+                // 跳转行打开的菜单自己改自己的，回来刷新的只是这一行的显示值，
+                // 不算这张表单的改动。
+                before[index] = fields[index].value.clone();
                 selected = index;
             }
+            _ if fields_changed(&fields, &before) => {
+                return apply_plugin_fields(config, id, &fields)
+            }
+            _ => return Ok(()),
         }
     }
 }

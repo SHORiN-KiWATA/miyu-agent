@@ -57,7 +57,7 @@ pub(in crate::config_tui) fn edit_claude_code_provider_form(
         ),
     ];
     loop {
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" EDIT CLAUDE CODE ", " 编辑 Claude Code "),
             &mut fields,

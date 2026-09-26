@@ -169,7 +169,7 @@ pub(in crate::config_tui) fn edit_real_context_affection_values(
                 settings.affection_update_timeout_seconds.to_string(),
             ),
         ];
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" AFFECTION SCORE AND LIMITS ", " 好感度分值与限制 "),
             &mut fields,

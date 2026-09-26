@@ -624,6 +624,16 @@
       "lane": "tui"
     },
     {
+      "name": "config_forms",
+      "argv": [
+        "python3",
+        "testkit/tui/config_forms.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
       "name": "persona_menu",
       "argv": [
         "python3",

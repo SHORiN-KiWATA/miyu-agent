@@ -565,7 +565,7 @@ pub(in crate::config_tui) fn edit_platform_session_limits(
         ),
         Field::new(t("Queued turns", "等待队列数量"), limits.queued.to_string()),
     ];
-    if !run_form_editing(
+    if !run_edit_form_editing(
         ui,
         t(" CONVERSATION CONCURRENCY ", " 会话并发 "),
         &mut fields,
@@ -623,7 +623,7 @@ pub(in crate::config_tui) fn edit_platform_rate_limit(
             limit.window_seconds.to_string(),
         ),
     ];
-    if !run_form_editing(ui, t(" RATE LIMIT ", " 限流配置 "), &mut fields)? {
+    if !run_edit_form_editing(ui, t(" RATE LIMIT ", " 限流配置 "), &mut fields)? {
         return Ok(());
     }
     let (Ok(max_messages), Ok(window_seconds)) = (
@@ -718,7 +718,7 @@ pub(in crate::config_tui) fn edit_qq_advanced(ui: &mut Ui, config: &mut AppConfi
             qq.group_context.trim_batch_ratio.to_string(),
         ),
     ];
-    if run_form(ui, t(" QQ ADVANCED ", " QQ 高级设置 "), &mut fields)? {
+    if run_edit_form(ui, t(" QQ ADVANCED ", " QQ 高级设置 "), &mut fields)? {
         config.platforms.qq.asset_base_url =
             fields[0].value.trim().trim_end_matches('/').to_string();
         let overflow = fields[2].value.trim().to_ascii_lowercase();

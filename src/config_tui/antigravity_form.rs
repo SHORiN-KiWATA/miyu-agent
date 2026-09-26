@@ -73,7 +73,7 @@ pub(in crate::config_tui) fn edit_antigravity_provider_form(
         ),
     ];
     loop {
-        if !run_form(
+        if !run_edit_form(
             ui,
             t(" EDIT ANTIGRAVITY ", " 编辑 Antigravity "),
             &mut fields,

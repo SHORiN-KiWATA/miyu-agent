@@ -53,7 +53,7 @@ pub(in crate::config_tui) fn edit_codex_provider_form(
         ),
     ];
     loop {
-        if !run_form(ui, t(" EDIT CODEX ", " 编辑 Codex "), &mut fields)? {
+        if !run_edit_form(ui, t(" EDIT CODEX ", " 编辑 Codex "), &mut fields)? {
             return Ok(None);
         }
         let enabled = match parse_bool_field(&fields[0].value) {
