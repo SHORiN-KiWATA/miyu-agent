@@ -796,7 +796,7 @@
    * 连续的思考块和工具签串成一条时间线(.proc-line):一根 1px 细线穿过图标列的中心,
    * 图标处断开,图标就是节点。正文、媒体、任何不是思考/工具的东西一出现,就把当前
    * 时间线「切断」——后面再来工具就另起一条。
-   * 「过程自动收起」开着时,切断那一刻收成一行总结(运行了 2 次命令 · 用了 3 个工具);
+   * 「过程自动收起」开着时,切断那一刻收成一行总结(Ran 2 commands · 3 tools);
    * 关着就保持展开,也不出总结行。运行中(还没切断)永远没有总结行。
    * 细线是独立元素,起点和终点跟着可见节点走,ResizeObserver 一触发就重算,
    * 高度交给 CSS transition——新出一行,线就平滑长到那个图标,不是瞬间跳。
@@ -1016,10 +1016,10 @@
     return "other";
   }
 
-  // 总结行文字(09-26 用户拍板,与 TUI 的 summary_line 同一套规则):
-  //   动过手 → 运行了 3 次命令 · 编辑了 2 次 · 用了 4 个工具 · 思考了 1 次 · 出错了 1 次
-  //            (英文界面 Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err)
-  //   只想了想 → 思考了 1 次(网页的思考块不记耗时)
+  // 总结行文字(与 TUI 的 summary_line 同一套规则,一字不差):
+  //   动过手 → Ran 3 commands · 2 edits · 4 tools · 1 thought · 1 err
+  //   只想了想 → 1 thought(网页的思考块不记耗时)
+  // 一律英文,不随界面语言变(用户 09-26:中文「运行了 3 次命令 · 编辑了 2 次」太杂)。
   // 不再有 Worked for,也不挂耗时:一轮花了多久看回复末尾的 ✻ 那一行(turnend.js)。
   function procLineRefresh(line) {
     const proc = line?.miyuProc;
@@ -1041,23 +1041,19 @@
       span.textContent = text;
       return span;
     };
-    // 中文按「动词了 + 次数」;英文照旧按单复数。
-    const zh = window.MiyuI18n?.lang === "zh";
     const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-    const thoughtText = zh ? t("思考了 {n} 次", { n: thoughts }) : count(thoughts, "thought", "thoughts");
+    const thoughtText = count(thoughts, "thought", "thoughts");
     // 先排好文字,打头那一项加粗;报错那一项标红。
     const items = [];
     const acted = counts.command + counts.edit + counts.other > 0;
     if (!acted) {
-      items.push({ text: thoughts ? thoughtText : t("已完成") });
+      items.push({ text: thoughts ? thoughtText : "done" });
     } else {
-      if (counts.command) {
-        items.push({ text: zh ? t("运行了 {n} 次命令", { n: counts.command }) : `Ran ${count(counts.command, "command", "commands")}` });
-      }
-      if (counts.edit) items.push({ text: zh ? t("编辑了 {n} 次", { n: counts.edit }) : count(counts.edit, "edit", "edits") });
-      if (counts.other) items.push({ text: zh ? t("用了 {n} 个工具", { n: counts.other }) : count(counts.other, "tool", "tools") });
+      if (counts.command) items.push({ text: `Ran ${count(counts.command, "command", "commands")}` });
+      if (counts.edit) items.push({ text: count(counts.edit, "edit", "edits") });
+      if (counts.other) items.push({ text: count(counts.other, "tool", "tools") });
       if (thoughts) items.push({ text: thoughtText });
-      if (errs) items.push({ text: zh ? t("出错了 {n} 次", { n: errs }) : `${errs} err`, className: "proc-err" });
+      if (errs) items.push({ text: `${errs} err`, className: "proc-err" });
     }
     const parts = items.map((item, index) => (index === 0 ? strong(item.text) : plain(item.text, item.className || "")));
     proc.summary.replaceChildren();

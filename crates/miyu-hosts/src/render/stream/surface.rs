@@ -66,7 +66,7 @@ pub struct SurfaceCaps {
     pub expandable: bool,
     /// 步跑完立刻落 scrollback（而不是攒在活动区里等收段）。
     pub commit_immediately: bool,
-    /// 段末写收缩行（`› 运行了 N 次命令 · …`）。
+    /// 段末写收缩行（`› Ran N commands · …`）。
     pub fold: bool,
     /// 详情放哪。
     pub detail: DetailPlacement,

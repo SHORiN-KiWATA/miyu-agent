@@ -4,7 +4,6 @@
 //! 再长。
 
 use super::timeline::{timeline_renderer, with_blocks};
-use crate::render::t;
 
 /// 用清单 = 这一段忙完了(WebUI 一直是这个样子,用户 09-16 裁定全屏与 shellhook
 /// 都对齐它)。退回这条规则之前,表要等模型开口说正文、整段收完才出得来,而
@@ -25,7 +24,7 @@ fn the_todo_tool_ends_the_timeline_segment() {
         let text = crate::render::strip_ansi_text(&frame);
         // 收缩行只有计数——认收缩把手与计数即可。
         assert!(
-            text.contains('\u{203a}') && text.contains(t("tool", "工具")),
+            text.contains('\u{203a}') && text.contains("tool"),
             "清单那一批没有收段: {text:?}"
         );
         assert!(

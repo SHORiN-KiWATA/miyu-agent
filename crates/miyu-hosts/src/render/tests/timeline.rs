@@ -33,65 +33,54 @@ fn counts(commands: usize, edits: usize, tools: usize, thoughts: usize, errors: 
     }
 }
 
-/// 按界面语言挑期望值（收缩行 09-26 起中英两套）。
-fn say(en: &str, zh: &str) -> String {
-    if miyu_base::i18n::is_zh() { zh } else { en }.to_string()
-}
-
-/// 09-26 用户拍板的收缩行写法：动作在前、思考在后、出错垫底，为零的项不写；不再有
-/// `Worked for`、不挂耗时（一轮花了多久看末尾的 `✻` 那行）。中文统一「动词了 + 次数」。
+/// 收缩行写法：动作在前、思考在后、出错垫底，为零的项不写；不再有 `Worked for`、不挂耗时
+/// （一轮花了多久看末尾的 `✻` 那行）。一律英文，中文界面也一样（用户 09-26：中文太杂）。
 #[test]
 fn summary_leads_with_commands_then_edits_tools_thoughts() {
     let twelve = Duration::from_millis(12_300);
     assert_eq!(
         summary_line(twelve, counts(3, 2, 2, 2, 1)),
-        say(
-            "Ran 3 commands · 2 edits · 2 tools · 2 thoughts · 1 err",
-            "运行了 3 次命令 · 编辑了 2 次 · 用了 2 个工具 · 思考了 2 次 · 出错了 1 次"
-        )
+        "Ran 3 commands · 2 edits · 2 tools · 2 thoughts · 1 err".to_string()
     );
     assert_eq!(
         summary_line(Duration::from_millis(2_500), counts(1, 0, 0, 0, 0)),
-        say("Ran 1 command", "运行了 1 次命令")
+        "Ran 1 command".to_string()
     );
     // 没跑命令：不再拿 `Worked for` 打头，edits 与 tools 分开数。
     assert_eq!(
         summary_line(twelve, counts(0, 2, 1, 0, 0)),
-        say("2 edits · 1 tool", "编辑了 2 次 · 用了 1 个工具")
+        "2 edits · 1 tool".to_string()
     );
     assert_eq!(
         summary_line(twelve, counts(0, 0, 3, 1, 0)),
-        say("3 tools · 1 thought", "用了 3 个工具 · 思考了 1 次")
+        "3 tools · 1 thought".to_string()
     );
     // 只想了想：写想了多久，不写次数。
     assert_eq!(
         summary_line(Duration::from_millis(400), counts(0, 0, 0, 2, 0)),
-        say("Thought for 400ms", "思考了不到 1 秒")
+        "Thought for 400ms".to_string()
     );
     assert_eq!(
         summary_line(Duration::from_millis(5_200), counts(0, 0, 0, 2, 0)),
-        say("Thought for 5.2s", "思考了 5.2 秒")
+        "Thought for 5.2s".to_string()
     );
 }
 
-/// 回放历史时没有计时。报 `思考了 0.0 秒` 会让人以为"这一轮瞬间就完了"，只想了想的
+/// 回放历史时没有计时。报 `Thought for 0.0s` 会让人以为"这一轮瞬间就完了"，只想了想的
 /// 那种就写想了几次。
 #[test]
 fn summary_without_timing_drops_the_duration() {
     assert_eq!(
         summary_line(Duration::ZERO, counts(3, 2, 0, 1, 0)),
-        say(
-            "Ran 3 commands · 2 edits · 1 thought",
-            "运行了 3 次命令 · 编辑了 2 次 · 思考了 1 次"
-        )
+        "Ran 3 commands · 2 edits · 1 thought".to_string()
     );
     assert_eq!(
         summary_line(Duration::ZERO, counts(0, 0, 2, 1, 0)),
-        say("2 tools · 1 thought", "用了 2 个工具 · 思考了 1 次")
+        "2 tools · 1 thought".to_string()
     );
     assert_eq!(
         summary_line(Duration::ZERO, counts(0, 0, 0, 2, 0)),
-        say("2 thoughts", "思考了 2 次")
+        "2 thoughts".to_string()
     );
     // 什么都没有时也得说句人话，不能给个空串
     assert!(!summary_line(Duration::ZERO, Counts::default()).is_empty());
@@ -103,11 +92,11 @@ fn a_run_without_timing_reports_what_it_did_not_zero_seconds() {
     // 本来就不挂耗时，有没有计时写出来一个样。
     assert_eq!(
         summary_line(Duration::from_micros(40), counts(0, 0, 1, 2, 0)),
-        say("1 tool · 2 thoughts", "用了 1 个工具 · 思考了 2 次")
+        "1 tool · 2 thoughts".to_string()
     );
     assert_eq!(
         summary_line(Duration::from_millis(2_500), counts(0, 0, 1, 2, 0)),
-        say("1 tool · 2 thoughts", "用了 1 个工具 · 思考了 2 次")
+        "1 tool · 2 thoughts".to_string()
     );
     // 收缩行里再也不出现 `Worked for`（用户 09-26）。
     for elapsed in [Duration::ZERO, Duration::from_secs(12)] {
@@ -354,10 +343,7 @@ fn replay_keeps_the_thought_when_the_turn_also_ran_tools() {
             .unwrap();
         renderer.finish().unwrap();
         let frame = String::from_utf8_lossy(&renderer.take_output_frame()).to_string();
-        assert!(
-            frame.contains(t("thought", "思考了")),
-            "收缩行没数到思考: {frame}"
-        );
+        assert!(frame.contains("thought"), "收缩行没数到思考: {frame}");
         let steps = frame
             .lines()
             .filter_map(block_id_in)
@@ -429,7 +415,7 @@ fn the_peek_is_separated_by_a_dot() {
 
 /// 回放要把这一段想了多久算回来。
 ///
-/// 回放是一瞬间喂完的，墙上时间是零——那一截于是整个消失，重开之后只剩「思考了 1 次」
+/// 回放是一瞬间喂完的，墙上时间是零——那一截于是整个消失，重开之后只剩「1 thought」
 /// （用户实测对比图）。每一步自己带着耗时，累加起来就是这一段的下限。动过手的那一段
 /// 收缩行不挂耗时（09-26），只想了想的那一段还要写想了多久。
 #[test]
@@ -454,7 +440,7 @@ fn a_replayed_segment_still_says_how_long_it_took() {
         renderer.finish().unwrap();
         let frame = String::from_utf8_lossy(&renderer.take_output_frame()).to_string();
         assert!(
-            frame.contains(t("Thought for 2.4s", "思考了 2.4 秒")),
+            frame.contains("Thought for 2.4s"),
             "回放没把耗时算回来: {frame}"
         );
     });
@@ -821,7 +807,7 @@ fn a_tool_still_running_when_the_terminal_is_borrowed_is_not_cut_as_interrupted(
             .find(|line| line.trim_start().starts_with('\u{203a}'))
             .unwrap_or_else(|| panic!("没有收缩行: {frame:?}"));
         assert!(
-            summary.contains(t("1 tool", "用了 1 个工具")) && !summary.contains(t("err", "出错")),
+            summary.contains("1 tool") && !summary.contains("err"),
             "收缩行把一次发图记成了多次/记了错: {summary:?}"
         );
         // 点开也只有那一步。

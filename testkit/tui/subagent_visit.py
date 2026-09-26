@@ -40,7 +40,7 @@ BADGE = "子代理 ↳1"
 REPLY_HEAD = "好的,收到"
 FOLLOW_UP = "子会话里追问一句"
 # 主回合收尾后那一段收成一行（`fold_timeline` 默认开）。
-FOLD = "用了 1 个工具"
+FOLD = "1 tool"
 # 汇报叫醒主会话的那一轮开头那一行。
 WAKE = "子代理完成"
 STUB = {

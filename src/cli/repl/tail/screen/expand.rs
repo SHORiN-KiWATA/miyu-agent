@@ -591,14 +591,14 @@ impl Screen {
 
     /// 展开 / 收起。返回真表示视图变了，得重画。
     ///
-    /// 展开时**钉住视口**：块的头行留在原处，后面的内容往下撑。
+    /// 展开时**钉住视口**：块的头行留在屏幕原处，展开的内容往下撑，先看到的是开头。
+    /// 贴着底的时候也一样（用户 09-26 拍板）：原来贴底就一直贴底，展开出来的行全堆到
+    /// 点的那一行上面，看到的是尾巴；代价是下面的回复被推到视口外，往下翻或 End 回去。
     ///
     /// 收起之后跟随要能**自己回来**。写死 `follow = false` 的代价很隐蔽：
     /// 点开又收起以后视口就再也不跟新输出了，命令结果落在视口下面，
     /// 看起来像「命令没反应」。按「是不是已经贴底」重算才对。
     pub(in crate::cli) fn toggle_block(&mut self, id: u64) -> bool {
-        // 展开前在底部，展开后还该在底部——否则新撑出来的几十行会把**正文**
-        // 顶到视口下面去，看着像"一展开正文就没了"。不在底部时才钉住原位。
         let following = self.following();
         if self.expanded.remove(&id).is_some() {
             // 告诉登记处一声：这一步从「正在跑」落成「跑完了」时要换一块新的,
@@ -616,7 +616,9 @@ impl Screen {
         miyu_hosts::render::blocks::set_user_open(id, true);
         self.expanded.insert(id, body);
         self.note_expanded_changed();
-        self.restore_follow(following);
+        // 视口顶端不动（`scroll` 记的是顶端在第几行），撑出来的行都在点的那一行下面；
+        // 跟不跟底按展开后的实际位置重判——撑长了就不再贴底。
+        self.refresh_follow();
         self.invalidate();
         true
     }

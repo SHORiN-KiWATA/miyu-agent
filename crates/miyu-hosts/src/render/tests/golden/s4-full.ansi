@@ -1,7 +1,7 @@
 ]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>󰝨 思考中 · <N> 词元 · <DUR>[0m
 [2m[36m[2m  │[0m [2m[38;5;10m先看一眼需求，[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[2m  󰝨 已思考 · <N> 词元 · <DUR>[0m]1337;miyu-block-end[0m
 [2m[36m[2m  │[0m[0m
-[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 任务列表 · <DUR>]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › 用了 1 个工具 · 思考了 1 次[0m
+[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID> 任务列表 · <DUR>]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › 1 tool · 1 thought[0m
 ]1337;miyu-block-end
   [2m┌──────────────────┐[0m
   [2m│[0m 任务列表         [2m│[0m
@@ -60,13 +60,13 @@
 [2m[36m]1337;miyu-block=<ID>[2m   询问用户 · 已回答 · 今晚的打算[0m]1337;miyu-block-end[0m
 [2m[36m[2m  │[0m[0m
 [2m[36m]1337;miyu-block=<ID>[2m  󰚩 子代理 · 450 · <DUR>[0m]1337;miyu-block-end[0m
-[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › 运行了 1 次命令 · 编辑了 1 次 · 用了 2 个工具[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Ran 1 command · 1 edit · 2 tools[0m
 
 ]1337;miyu-block-end  跑完了，结果如上。
 
 ]1337;miyu-live-rewind[2m[36m⠋[0m [2m[36m]1337;miyu-block=<ID>$ 运行命令 · <DUR> · 故意跑砸[0m
 [2m[36m[2m  │[0m [2mexit 3[0m]1337;miyu-block-end[0m]1337;miyu-live-end]1337;miyu-live-rewind[2m[36m]1337;miyu-block=<ID>[31m   运行命令 · <DUR> · 故意跑砸[0m[0m
 [2m[36m[2m  │[0m [31mexit 3[0m]1337;miyu-block-end[0m
-[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › 运行了 1 次命令 · 出错了 1 次[0m
+[2m[36m⠋[0m [2m[36m│[0m]1337;miyu-live-end]1337;miyu-block=<ID>[2m  › Ran 1 command · 1 err[0m
 
 ]1337;miyu-block-end

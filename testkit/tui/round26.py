@@ -284,7 +284,7 @@ def scenario_interrupt(report):
         text = "\n".join(after)
         report["r26_03_no_inline_card"] = "×1" not in text and "↳" not in text
         (h.OUT / "round26-interrupt-raw.bin").write_bytes(bytes(sink))
-        # 收缩行：09-26 起「动词了 + 次数」——`› 运行了 1 次命令 · 出错了 1 次`（英文界面
+        # 收缩行一律英文 `› Ran 1 command · 1 err`（09-26 当天那版中文「运行了 1 次命令」也认；英文界面
         # `› Ran 1 command · 1 err`），老二进制是 `› Ran 1 command · … · 220ms`。
         head = max(
             (
