@@ -4,7 +4,7 @@ use anyhow::{bail, Context as _, Result};
 use miyu_base::config::PersonaLane;
 use miyu_base::config::{AppConfig, ModelTier};
 use miyu_base::host_ports::{
-    ChildOutcome, ContinueChildRequest, SpawnChildRequest, SubagentHostPort, SubagentProgressSink,
+    ChildOutcome, ContinueChildRequest, CreateChildRequest, SubagentHostPort, SubagentProgressSink,
 };
 use miyu_base::paths::MiyuPaths;
 use miyu_core::llm::OpenAiCompatibleClient;
@@ -19,6 +19,7 @@ mod log;
 /// 过程协议（标签清单、行解析、标记解析）。格式由**写的这一侧**定，读的那一侧
 /// （后台面板）对着同一份。
 pub mod protocol;
+mod slots;
 /// 前台子代理的进度收成状态行要的三样（会话项目第 4 段之二）。
 pub mod status;
 
@@ -172,6 +173,8 @@ pub fn register(
     paths: MiyuPaths,
     tools: ToolRegistry,
 ) {
+    // 追话起的新一轮和新开的子代理共用同一个并发上限(按父会话算,见 `slots`)。
+    let followup_limit = config.tools.subagent_concurrency;
     let context = SubagentContext {
         config,
         paths,
@@ -198,10 +201,6 @@ pub fn register(
                 "max_steps": {
                     "type": "integer",
                     "description": "Optional tool-call budget. Unlimited by default: the subagent ends when the task is done. Set a number only when you want a hard cap."
-                },
-                "background": {
-                    "type": "boolean",
-                    "description": "Run the subagent detached in the background: returns a job_id immediately; check with job(action=status) (its log holds live progress) and you are woken automatically on completion. Use for long research/tasks that should not block the conversation."
                 },
                 "session_id": {
                     "type": "string",
@@ -257,13 +256,14 @@ pub fn register(
             "required": ["job_id", "message"],
             "additionalProperties": false
         }),
-        move |args, progress| async move { send_subagent_message(args, progress).await },
+        move |args, progress| async move { send_subagent_message(args, progress, followup_limit).await },
     ));
 }
 
 async fn send_subagent_message(
     args: Value,
     progress: crate::tools::ToolProgress,
+    limit: usize,
 ) -> Result<String> {
     let job_id = args
         .get("job_id")
@@ -297,7 +297,7 @@ async fn send_subagent_message(
             tier: ModelTier::Standard,
             dev: false,
         };
-        return run_via_host(port, params, true, progress).await;
+        return run_via_host(port, params, limit, progress).await;
     }
     if crate::tools::subagent_runner::deliver_to_subagent(&job_id, &message) {
         Ok(serde_json::to_string_pretty(&json!({
@@ -401,16 +401,20 @@ async fn run_subagent(
     progress: crate::tools::ToolProgress,
 ) -> Result<String> {
     let params = parse_params(&args)?;
+    // 会话化(09-18):daemon 里子代理是一条真会话——建会话、起回合、等任务终态都在
+    // 场所层(`web::subagent_host`),这里只剩把结果整理成工具输出。09-26 起只在后台跑
+    // (用户拍板),不再看 `background` 参数。
+    if let Some(port) = miyu_base::host_ports::subagent_port() {
+        let limit = context.config.tools.subagent_concurrency;
+        return run_via_host(port, params, limit, progress).await;
+    }
+    // daemon 之外(REPL 直连、`miyu tool-call`)没人装端口:沿用进程内的老循环,照旧前台
+    // (用户 09-26:这两条调试 / 兜底路径没人能把模型叫醒,只后台的话结果回不来)。
+    // `background` 只有这里还认,工具说明里已经不写它了。
     let background = args
         .get("background")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    // 会话化(09-18):daemon 里子代理是一条真会话——建会话、起回合、等任务终态都在
-    // 场所层(`web::subagent_host`),这里只剩把结果整理成工具输出。
-    if let Some(port) = miyu_base::host_ports::subagent_port() {
-        return run_via_host(port, params, background, progress).await;
-    }
-    // daemon 之外(REPL 直连、`miyu tool-call`)没人装端口:沿用进程内的老循环。
     if params.session_id.is_some() {
         bail!("session_id continuation needs the daemon; start a fresh subagent instead");
     }
@@ -431,14 +435,14 @@ fn progress_sink(progress: crate::tools::ToolProgress) -> SubagentProgressSink {
     Arc::new(move |message| progress.report(message))
 }
 
-/// 会话化路径(09-18):前台就在本次调用里等子会话的任务终态;后台包进后台任务
-/// 注册表的镜像任务里等——任务条、`job(action=stop)`、完成唤醒全走后台命令那一套,
-/// 唤醒报告里带的是子会话最后一轮的正文。父回合被停时前台那条 future 被 drop,
-/// 宿主端口的 Drop 守卫会顺手取消子会话的活动回合(级联到孙代理)。
+/// 会话化路径(09-18),09-26 起只在后台跑(用户拍板):新开的先把子会话建好——回执带着它的
+/// id,父回合那一步当场链得到子会话——再把它这一轮包进后台任务注册表的镜像任务里等。任务条、
+/// `job(action=stop)`、完成唤醒全走后台命令那一套,唤醒报告里带的是子会话最后一轮的正文。
+/// 同一个父会话同时最多 `limit` 个在跑,多的在镜像任务里排队([`slots`])。
 async fn run_via_host(
     port: Arc<dyn SubagentHostPort>,
     params: SubagentParams,
-    background: bool,
+    limit: usize,
     progress: crate::tools::ToolProgress,
 ) -> Result<String> {
     let depth = miyu_base::workspace::current_subagent_depth();
@@ -456,7 +460,7 @@ async fn run_via_host(
     let dev =
         params.dev || miyu_base::workspace::current_turn_lane().is_some_and(|lane| lane.is_dev());
     let child = params.session_id.as_deref().map(resolve_child_session);
-    // 跑着的子会话:话排进它当前那一轮,立刻返回,不管前后台。
+    // 跑着的子会话:话排进它当前那一轮,立刻返回。
     if let Some(child) = child.as_deref().filter(|child| port.is_running(child)) {
         let outcome = port
             .continue_child(ContinueChildRequest {
@@ -469,69 +473,46 @@ async fn run_via_host(
             .await?;
         return format_child_outcome(&params.description, params.tier, outcome);
     }
-    if background {
-        let description = params.description.clone();
-        let prompt = params.prompt.clone();
-        return crate::tools::jobs::spawn_background_subagent(
-            None,
-            &description,
+    let child = match child {
+        Some(child) => child,
+        None => port.create_child(CreateChildRequest {
+            parent_session: parent.clone(),
+            description: params.description.clone(),
             dev,
-            &progress,
-            move |job_id, log_path| {
-                run_mirrored_child(job_id, log_path, prompt, move |sink| match child {
-                    Some(child) => port.continue_child(ContinueChildRequest {
+            tier: params.tier,
+            spawned_by_turn: None,
+        })?,
+    };
+    // 父回合的标记流据它落 `child_session_id`:时间线上那一步当场点得进子会话。
+    progress.report(format!("{SUBAGENT_SESSION_MARKER}{child}"));
+    let description = params.description.clone();
+    let prompt = params.prompt.clone();
+    let slots = slots::slots_for(&parent, limit);
+    let job_child = child.clone();
+    crate::tools::jobs::spawn_background_subagent(
+        None,
+        &description,
+        dev,
+        Some(&child),
+        &progress,
+        move |job_id, log_path| {
+            let slot_job = job_id.clone();
+            run_mirrored_child(job_id, log_path, prompt, move |sink| {
+                Box::pin(async move {
+                    let _slot = slots::take_slot(slots, &slot_job).await;
+                    port.continue_child(ContinueChildRequest {
                         parent_session: parent,
-                        child_session: child,
+                        child_session: job_child,
                         message: params.prompt,
                         workdir,
                         progress: sink,
-                    }),
-                    None => port.spawn(SpawnChildRequest {
-                        parent_session: parent,
-                        description: params.description,
-                        prompt: params.prompt,
-                        dev,
-                        tier: params.tier,
-                        background: true,
-                        max_steps: params.max_steps,
-                        spawned_by_turn: None,
-                        workdir,
-                        progress: sink,
-                    }),
+                    })
+                    .await
                 })
-            },
-        )
-        .await;
-    }
-    let sink = progress_sink(progress);
-    let outcome = match child {
-        Some(child) => {
-            port.continue_child(ContinueChildRequest {
-                parent_session: parent,
-                child_session: child,
-                message: params.prompt.clone(),
-                workdir,
-                progress: sink,
             })
-            .await?
-        }
-        None => {
-            port.spawn(SpawnChildRequest {
-                parent_session: parent,
-                description: params.description.clone(),
-                prompt: params.prompt.clone(),
-                dev,
-                tier: params.tier,
-                background: false,
-                max_steps: params.max_steps,
-                spawned_by_turn: None,
-                workdir,
-                progress: sink,
-            })
-            .await?
-        }
-    };
-    format_child_outcome(&params.description, params.tier, outcome)
+        },
+    )
+    .await
 }
 
 /// 会话化子代理的工具输出。成功路径沿用 08-21 的文本形态(`result:` 之后是结论
@@ -656,6 +637,7 @@ async fn spawn_background(
         None,
         &description,
         params.dev,
+        None,
         &progress,
         move |job_id, log_path| async move {
             write_subagent_prompt_header(&log_path, &prompt);

@@ -34,6 +34,17 @@ pub struct SpawnChildRequest {
     pub progress: SubagentProgressSink,
 }
 
+/// 只建子会话、不起回合（09-26 子代理只在后台跑）：工具层先拿到子会话 id，写进回执、让父回合
+/// 那一步链得过去；第一轮由后台镜像任务经 [`SubagentHostPort::continue_child`] 起。
+pub struct CreateChildRequest {
+    pub parent_session: String,
+    pub description: String,
+    pub dev: bool,
+    pub tier: ModelTier,
+    /// 父会话里开它的那一轮。
+    pub spawned_by_turn: Option<String>,
+}
+
 pub struct ContinueChildRequest {
     pub parent_session: String,
     pub child_session: String,
@@ -76,6 +87,8 @@ pub trait SubagentHostPort: Send + Sync {
     /// 建子会话并起第一轮,等到任务终态才完成。future 被 drop(父回合被停)时
     /// 宿主要顺手取消子会话的活动回合——工具层没有取消令牌,只有这一条路。
     fn spawn(&self, request: SpawnChildRequest) -> BoxFuture<'static, Result<ChildOutcome>>;
+    /// 只建子会话(挂在父会话下、归属与沙盒跟父、档位落成会话级模型池),交回它的 id。
+    fn create_child(&self, request: CreateChildRequest) -> Result<String>;
     /// 给已有子会话追话:跑着就排 follow-up 立刻返回;闲着/中断了就起新一轮并等终态。
     fn continue_child(
         &self,

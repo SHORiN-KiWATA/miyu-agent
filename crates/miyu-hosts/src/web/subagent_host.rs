@@ -17,8 +17,8 @@
 
 use crate::web::*;
 use miyu_base::host_ports::{
-    ChildOutcome, ChildTaskResult, ContinueChildRequest, SpawnChildRequest, SubagentHostPort,
-    SubagentProgressSink, WatchChildRequest,
+    ChildOutcome, ChildTaskResult, ContinueChildRequest, CreateChildRequest, SpawnChildRequest,
+    SubagentHostPort, SubagentProgressSink, WatchChildRequest,
 };
 use miyu_core::state::{SubagentTaskState, SUBAGENT_SESSION_KIND};
 use std::collections::{HashMap, HashSet};
@@ -66,6 +66,10 @@ impl SubagentHostPort for SubagentHost {
         Box::pin(async move { spawn_child(state, request).await })
     }
 
+    fn create_child(&self, request: CreateChildRequest) -> Result<String> {
+        create_child_session(&self.state, &request, true).map(|created| created.child)
+    }
+
     fn continue_child(
         &self,
         request: ContinueChildRequest,
@@ -101,7 +105,19 @@ fn child_name(description: &str) -> String {
     name
 }
 
-async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<ChildOutcome> {
+/// 建好的子会话：它自己的 id 和父会话的 id。
+struct CreatedChild {
+    child: String,
+    parent: String,
+}
+
+/// 建子会话（前台 `spawn` 与 09-26 起的后台 `create_child` 共用）：挂在父会话下，归属、沙盒
+/// 跟父，档位落成会话级模型池。`background` 只是记在会话行上的元数据。
+fn create_child_session(
+    state: &DaemonState,
+    request: &CreateChildRequest,
+    background: bool,
+) -> Result<CreatedChild> {
     let parent_store = state.stores.for_session(&request.parent_session);
     let parent = parent_store
         .session_record(&request.parent_session)?
@@ -129,7 +145,7 @@ async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<C
         &parent.owner,
         depth,
         request.spawned_by_turn.as_deref(),
-        request.background,
+        background,
     )?;
     state
         .stores
@@ -156,20 +172,38 @@ async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<C
         child = %child.session_id,
         depth,
         dev = request.dev,
-        background = request.background,
+        background,
         "subagent session spawned"
     );
+    Ok(CreatedChild {
+        child: child.session_id,
+        parent: parent.session_id,
+    })
+}
+
+async fn spawn_child(state: DaemonState, request: SpawnChildRequest) -> Result<ChildOutcome> {
+    let created = create_child_session(
+        &state,
+        &CreateChildRequest {
+            parent_session: request.parent_session.clone(),
+            description: request.description.clone(),
+            dev: request.dev,
+            tier: request.tier,
+            spawned_by_turn: request.spawned_by_turn.clone(),
+        },
+        request.background,
+    )?;
     // 子会话 id 第一条就报出去:父回合的标记流据它落 `child_session_id`,后台镜像
     // 任务据它登记 job_id → 子会话。
     (request.progress)(format!(
         "{}{}",
         miyu_engine::tools::SUBAGENT_SESSION_MARKER,
-        child.session_id
+        created.child
     ));
     run_child_turn(
         state,
-        child.session_id,
-        parent.session_id,
+        created.child,
+        created.parent,
         request.prompt,
         request.workdir,
         request.progress,
