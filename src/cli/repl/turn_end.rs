@@ -6,9 +6,9 @@
 use crate::cli::repl::tail::*;
 use crate::cli::*;
 
-/// 落一行收尾。用时从库里这一轮开始的时刻算起——回放也是从它算的，两边才对得上（转轮起转
-/// 比它晚零点几秒，短回合会差出一整秒）；库读不到才用活动区的回合计时（熄转轮之前取）。
-/// 轮号不知道就不画：动词按轮号挑，回放时才对得上。
+/// 落一行收尾，返回画没画。用时从库里这一轮开始的时刻算起——回放也是从它算的，两边才对得上
+/// （转轮起转比它晚零点几秒，短回合会差出一整秒）；库读不到才用活动区的回合计时（熄转轮之前
+/// 取）。轮号不知道就不画：动词按轮号挑，回放时才对得上。
 pub(in crate::cli) fn show_turn_end(
     paths: &MiyuPaths,
     live: &mut LiveReplTail,
@@ -16,15 +16,15 @@ pub(in crate::cli) fn show_turn_end(
     model: Option<&str>,
     elapsed: Option<std::time::Duration>,
     interrupted: bool,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(turn_id) = turn_id.filter(|turn_id| !turn_id.is_empty()) else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(elapsed) = turn_started_instant(paths, turn_id)
         .map(|started| started.elapsed())
         .or(elapsed)
     else {
-        return Ok(());
+        return Ok(false);
     };
     let end = render::timeline::TurnEnd {
         turn_id,
@@ -33,7 +33,34 @@ pub(in crate::cli) fn show_turn_end(
         finished_at: chrono::Local::now(),
         interrupted,
     };
-    live.apply_output_frame(render::timeline::turn_end_frame(&end).as_bytes())
+    live.apply_output_frame(render::timeline::turn_end_frame(&end).as_bytes())?;
+    Ok(true)
+}
+
+/// 收尾那行的模型位置写什么。混合模型池开着「本次供应商 / 模型」时写「供应商 / 模型」，原来单独
+/// 那一行就不画了（用户 09-26：同一个模型名写了两遍）；否则只写模型。供应商不知道时也只写模型。
+pub(in crate::cli) fn turn_end_model(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    session_id: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Option<String> {
+    let model = model.map(str::trim).filter(|model| !model.is_empty())?;
+    let provider = provider
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty());
+    let session_config = crate::cli::footer::footer_config_for_session(paths, config, session_id);
+    match provider {
+        Some(provider)
+            if crate::cli::model_cmds::show_mixed_model_endpoint(&session_config, true) =>
+        {
+            Some(crate::cli::model_cmds::mixed_model_endpoint_label(
+                provider, model, None,
+            ))
+        }
+        _ => Some(model.to_string()),
+    }
 }
 
 /// 库里这一轮开始的时刻，换算成本进程的 `Instant`（计时要的是单调钟）。

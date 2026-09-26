@@ -74,6 +74,10 @@ impl Agent {
             // 打断记账的依据:累计器本身是这个函数的栈上局部态,打断时随栈没了,
             // 回合守卫够不着。每次请求入账后往共享镜像同步一份。
             self.runtime.turn_usage.set(turn_tokens);
+            // 被打断时也记得下这一轮是哪家哪个模型答的（回放那行 `✻` 用，09-26）。
+            self.runtime
+                .turn_usage
+                .set_endpoint(result.provider_id.clone(), result.model.clone());
             // 与 footer 同一个口径:这次请求结束时的上下文 = prompt + completion。
             self.runtime
                 .turn_usage

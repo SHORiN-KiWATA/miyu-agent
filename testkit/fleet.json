@@ -794,6 +794,14 @@
       "lane": "web"
     },
     {
+      "name": "webui_turn_end",
+      "argv": [
+        "python3",
+        "testkit/webui-turn-end/run.py"
+      ],
+      "lane": "web"
+    },
+    {
       "name": "webui_delete_footer",
       "argv": [
         "python3",

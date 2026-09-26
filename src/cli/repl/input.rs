@@ -190,6 +190,10 @@ pub(in crate::cli) fn read_live_repl_input(
             live.expire_hover()?;
             live.tick_overlay()?;
             if let Some(job_id) = live.pending_stop_job.take() {
+                // 停任务要等 daemon 回话：raw 交给下一次读键，等的时候不回到回显模式（见下面 Ctrl+C
+                // 第三级那一支）。
+                raw_mode.handoff();
+                live.raw_mode_handoff = true;
                 return Ok(LiveReplOutcome::StopJob { job_id });
             }
             if let Some(action) = live.take_strip_action() {
@@ -362,6 +366,11 @@ pub(in crate::cli) fn read_live_repl_input(
                 // refreshed on every idle tick (in a subagent session: the rows
                 // hanging under it). Ctrl+D (`Exit`) always quits outright.
                 LiveEditorAction::Interrupt if live.has_background_work() => {
+                    // 停后台任务要等 daemon 回话：raw 交给下一次读键，不在中间回到回显模式。原来这里
+                    // 把 raw 关了，子代理一多要等好一会儿，这段里按的键被终端回显、方向键的转义符
+                    // 落进输入框（用户 09-26）。
+                    raw_mode.handoff();
+                    live.raw_mode_handoff = true;
                     return Ok(LiveReplOutcome::StopJobs);
                 }
                 // Ctrl+C 的最后一级在全屏下不退出。

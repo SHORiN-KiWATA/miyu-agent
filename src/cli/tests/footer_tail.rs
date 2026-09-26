@@ -221,6 +221,41 @@ fn replayed_turns_end_with_the_turn_end_line() {
     assert!(!replay(turn(false, None)).contains("✻ "));
 }
 
+/// 混合模型池时「本次供应商 / 模型」写在收尾那行 `✻` 的模型位置上，不再单独占一行（用户 09-26：
+/// 同一个模型名写了两遍）；库里缺时刻、收尾那行画不出来的老轮才退回单独那一行（下一条测试）。
+#[test]
+fn replayed_mixed_pool_turns_show_the_endpoint_in_the_end_line() {
+    let config = AppConfig::default();
+    let answered = miyu_core::state::TurnReplay {
+        display_content: "第一句走查".to_string(),
+        assistant_content: "回放里的回复".to_string(),
+        assistant_provider_id: Some("stub".to_string()),
+        assistant_model: Some("stub-b".to_string()),
+        turn_id: "turn_1790180210926_acd86d38".to_string(),
+        started_at: Some("2026-09-26T01:49:53+00:00".to_string()),
+        finished_at: Some("2026-09-26T01:53:07+00:00".to_string()),
+        ..Default::default()
+    };
+    let frame = session_replay_frame(&[answered], PersonaLane::Active, &config, 80, true).unwrap();
+    let raw = String::from_utf8_lossy(&frame).to_string();
+    let plain = miyu_hosts::render::strip_ansi_text(&raw);
+    let line = plain
+        .lines()
+        .find(|line| line.starts_with("✻ "))
+        .unwrap_or_else(|| panic!("no end line: {plain}"));
+    assert!(line.starts_with("✻ stub / stub-b · "), "{line}");
+    let separate = crate::cli::model_cmds::mixed_model_endpoint_frame("stub", "stub-b", None);
+    assert!(
+        !raw.contains(&separate),
+        "供应商 / 模型那一行不该再单独画: {plain}"
+    );
+    assert_eq!(
+        plain.matches("stub-b").count(),
+        1,
+        "模型名只写一遍: {plain}"
+    );
+}
+
 /// 混合模型池时回放要补回每轮末尾那行「本次供应商 / 模型」（BUG-05），而且挂在
 /// 回复后面。这件事以前只有 `mixed_endpoint` 走查兜着。
 #[test]

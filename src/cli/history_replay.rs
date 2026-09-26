@@ -272,22 +272,24 @@ pub(super) fn session_replay_frame(
         }
         renderer.finish()?;
         frame.extend_from_slice(&renderer.take_output_frame());
-        // 混合模型池：实时那一轮末尾有「本次供应商 / 模型」，回放也补上，重开之后
-        // 才对得上（提交的是哪家答的，库里记着）。
-        if endpoint_line {
-            if let (Some(provider), Some(model)) = (
+        // 混合模型池：实时那一轮末尾有「本次供应商 / 模型」，回放也补上，重开之后才对得上（提交的
+        // 是哪家答的，库里记着）。09-26 起它写在收尾那行 `✻` 的模型位置上（用户：同一个模型名写了
+        // 两遍），收尾那行画不出来（库里缺时刻的老数据）才退回单独一行。
+        let endpoint = endpoint_line
+            .then(|| {
                 replay
                     .assistant_provider_id
                     .as_deref()
-                    .filter(|s| !s.is_empty()),
-                replay.assistant_model.as_deref().filter(|s| !s.is_empty()),
-            ) {
-                frame.extend_from_slice(
-                    crate::cli::model_cmds::mixed_model_endpoint_frame(provider, model, None)
-                        .as_bytes(),
-                );
-            }
-        }
+                    .filter(|s| !s.is_empty())
+                    .zip(replay.assistant_model.as_deref().filter(|s| !s.is_empty()))
+            })
+            .flatten();
+        let model = match endpoint {
+            Some((provider, model)) => Some(crate::cli::model_cmds::mixed_model_endpoint_label(
+                provider, model, None,
+            )),
+            None => replay.assistant_model.clone(),
+        };
         // 收尾那行 `✻ 模型 · 处理了多久 · 几点完成`（用户 09-26），和实时那一轮收尾时一个样子。
         // 被打断的轮它末尾写「中断」，就不再另起一行「已中断」；库里缺时刻（老数据）才退回那一行。
         let turn_end = render::timeline::turn_end_span(
@@ -296,11 +298,17 @@ pub(super) fn session_replay_frame(
         )
         .map(|(elapsed, finished_at)| render::timeline::TurnEnd {
             turn_id: &replay.turn_id,
-            model: replay.assistant_model.as_deref(),
+            model: model.as_deref(),
             elapsed,
             finished_at,
             interrupted: replay.interrupted,
         });
+        if let (None, Some((provider, model))) = (&turn_end, endpoint) {
+            frame.extend_from_slice(
+                crate::cli::model_cmds::mixed_model_endpoint_frame(provider, model, None)
+                    .as_bytes(),
+            );
+        }
         if let Some(end) = &turn_end {
             frame.extend_from_slice(render::timeline::turn_end_frame(end).as_bytes());
         } else if replay.interrupted {

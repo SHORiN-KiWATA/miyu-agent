@@ -234,7 +234,15 @@ async fn dispatch_ipc_connection(
             // 主会话也按整棵树停——原来只停它自己名下的任务，靠停子代理的镜像任务顺带停那一支；
             // 可子代理被打断过、又在它自己的会话里接着聊起了新的孙代理，镜像任务早收了，任务条上
             // 还列着它，Ctrl+C 却一个都停不到（用户 09-26）。
-            let stopped = stop_subagent_subtree(&state, &session_id).await;
+            //
+            // 后台任务当场停、当场回话；各层的轮在后台一起收——它们退场要等，等完再回话的话子代理一
+            // 多，终端就卡在这儿（用户 09-26：打断的时候会卡住）。
+            let (stopped, descendants) = stop_subtree_jobs(&state, &session_id).await;
+            let background = state.clone();
+            let root = session_id.clone();
+            tokio::spawn(async move {
+                settle_subtree_runs(&background, &root, &descendants).await;
+            });
             state
                 .events
                 .publish("job.acknowledged", json!({ "session_id": session_id }));

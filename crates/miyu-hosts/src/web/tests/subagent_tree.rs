@@ -305,12 +305,17 @@ async fn stopping_an_idle_subagent_takes_its_branch_down() {
     );
     assert!(grandchild_stopped, "the grandchild kept running");
     assert!(!below_running, "the grandchild's command kept running");
+    // 各层的轮在后台收（回话不等它们退场），状态稍后才记上。
     assert_eq!(
-        task_state(&state, &tree.grandchild).as_deref(),
+        settled_task_state(&state, &tree.grandchild, "interrupted")
+            .await
+            .as_deref(),
         Some("interrupted")
     );
     assert_eq!(
-        task_state(&state, &tree.child).as_deref(),
+        settled_task_state(&state, &tree.child, "interrupted")
+            .await
+            .as_deref(),
         Some("interrupted")
     );
 }
@@ -355,14 +360,80 @@ async fn stopping_an_idle_main_session_takes_branches_without_mirrors_down() {
     );
     assert!(!below_running, "the grandchild's command kept running");
     assert!(grandchild_stopped, "the grandchild kept running");
+    // 各层的轮在后台收（回话不等它们退场），状态稍后才记上。
     assert_eq!(
-        task_state(&state, &tree.grandchild).as_deref(),
+        settled_task_state(&state, &tree.grandchild, "interrupted")
+            .await
+            .as_deref(),
         Some("interrupted")
     );
     assert_eq!(
-        task_state(&state, &tree.child).as_deref(),
+        settled_task_state(&state, &tree.child, "interrupted")
+            .await
+            .as_deref(),
         Some("interrupted")
     );
+}
+
+/// 子代理一多、轮退场又慢（卡在一次长工具调用里），主会话闲着按 Ctrl+C 也当场回话：后台任务当场
+/// 停，各层的轮在后台一起收（用户 09-26：打断的时候会卡住，这段里按的键还被回显进输入框）。原来一层
+/// 层停、每层等轮退场最多 5 秒，这里两层就要等十秒才回话。
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_busy_tree_answers_without_waiting_for_runs() {
+    shared_jobs_home();
+    let temp = tempfile::tempdir().unwrap();
+    let state = DaemonState::for_test(test_paths(temp.path()), 8300).unwrap();
+    let tree = tree(&state);
+    // 叫停了也不退场的两轮：收着取消信号，但不理它。
+    let mut asked = Vec::new();
+    for (run_id, session) in [
+        ("slow-child", &tree.child),
+        ("slow-grandchild", &tree.grandchild),
+    ] {
+        let (cancel, cancelled) = tokio::sync::watch::channel(false);
+        state
+            .manager
+            .lock()
+            .unwrap()
+            .active_runs
+            .insert(run_id.to_string(), fake_run(session, cancel));
+        asked.push(cancelled);
+    }
+
+    let (mut client, server) = tokio::net::UnixStream::pair().unwrap();
+    let server_state = state.clone();
+    let server = tokio::spawn(async move { handle_ipc_connection(server_state, server).await });
+    let started = std::time::Instant::now();
+    ipc::send(
+        &mut client,
+        &IpcRequest::new(IpcCommand::StopSessionJobs {
+            session_id: tree.main.clone(),
+        }),
+    )
+    .await
+    .unwrap();
+    let reply = ipc::receive::<IpcFrame>(&mut client).await.unwrap();
+    let waited = started.elapsed();
+    let _ = server.await;
+    assert!(
+        matches!(reply, Some(IpcFrame::AdminResult { .. })),
+        "{reply:?}"
+    );
+    assert!(waited < Duration::from_secs(3), "回话等了 {waited:?}");
+    // 两轮都被叫停了（在后台叫的，稍等一下）。
+    for _ in 0..100 {
+        if asked.iter().all(|cancelled| *cancelled.borrow()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        asked.iter().all(|cancelled| *cancelled.borrow()),
+        "有一轮没被叫停"
+    );
+    let mut manager = state.manager.lock().unwrap();
+    manager.active_runs.remove("slow-child");
+    manager.active_runs.remove("slow-grandchild");
 }
 
 /// 任务条那一行的窥视、量、用时不再只靠后台子代理的镜像任务（09-26 用户：停下之后接着聊的那条

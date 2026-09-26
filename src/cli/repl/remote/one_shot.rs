@@ -5,7 +5,7 @@
 
 use crate::cli::repl::editor::*;
 use crate::cli::repl::tail::*;
-use crate::cli::repl::turn_end::show_turn_end;
+use crate::cli::repl::turn_end::{show_turn_end, turn_end_model};
 use crate::cli::*;
 
 /// 收口:这一轮不管怎么结束,footer 的声波都得熄。
@@ -154,6 +154,7 @@ async fn run_remote_chat_inner(
     let mut turn_id: Option<String> = None;
     // 最近一次请求是哪个模型答的：被打断的轮收尾那行 `✻` 写它（run.cancelled 里没有）。
     let mut round_model = String::new();
+    let mut round_provider = String::new();
 
     let config = AppConfig::load_or_default(paths)?;
     let reasoning_mode = if show_reasoning == Some(false) {
@@ -1014,6 +1015,7 @@ async fn run_remote_chat_inner(
                 let model = ipc_text(&data, "model");
                 if !model.is_empty() {
                     round_model = model.to_string();
+                    round_provider = ipc_text(&data, "provider_id").to_string();
                 }
                 if let Some(live) = live.as_deref_mut() {
                     // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
@@ -1100,11 +1102,18 @@ async fn run_remote_chat_inner(
                     // 终端底部取消时最后一帧波浪就留在屏上(08-20 实测)。
                     live.stop_footer_spinner()?;
                     live.apply_renderer_frame(&mut renderer)?;
+                    let model = turn_end_model(
+                        paths,
+                        &config,
+                        &turn_session_id,
+                        Some(round_provider.as_str()),
+                        Some(round_model.as_str()),
+                    );
                     show_turn_end(
                         paths,
                         live,
                         turn_id.as_deref(),
-                        Some(round_model.as_str()),
+                        model.as_deref(),
                         elapsed,
                         true,
                     )?;
@@ -1181,17 +1190,28 @@ async fn run_remote_chat_inner(
         let elapsed = live.turn_elapsed();
         live.stop_footer_spinner()?;
         live.apply_renderer_frame(&mut renderer)?;
-        if let Some((provider, model)) = &endpoint {
-            live.apply_output_frame(mixed_model_endpoint_frame(provider, model, None).as_bytes())?;
-        }
-        show_turn_end(
+        // 收尾那行 `✻`。混合模型池的「本次供应商 / 模型」并进它的模型位置（用户 09-26：同一个模型名
+        // 写了两遍），它画不出来（不知道轮号）才退回单独一行。
+        let model = match &endpoint {
+            Some((provider, model)) => Some(crate::cli::model_cmds::mixed_model_endpoint_label(
+                provider, model, None,
+            )),
+            None => completion
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        };
+        let drawn = show_turn_end(
             paths,
             live,
             turn_id.as_deref(),
-            completion.get("model").and_then(serde_json::Value::as_str),
+            model.as_deref(),
             elapsed,
             false,
         )?;
+        if let (false, Some((provider, model))) = (drawn, &endpoint) {
+            live.apply_output_frame(mixed_model_endpoint_frame(provider, model, None).as_bytes())?;
+        }
         if let Some(raw) = raw.as_mut() {
             raw.handoff();
             live.raw_mode_handoff = true;

@@ -22,10 +22,19 @@ pub(in crate::agent) const MAX_QUESTION_ROUNDS_PER_TURN: usize = 8;
 #[derive(Clone, Default)]
 pub(in crate::agent) struct TurnUsageMirror(Arc<Mutex<LiveTurnUsage>>);
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct LiveTurnUsage {
     tokens: TurnTokens,
     context: Option<u64>,
+    endpoint: TurnEndpoint,
+}
+
+/// 最后一次请求是哪家哪个模型答的。被打断的轮原来不记，回放时收尾那行 `✻` 写不出模型，
+/// 实时那一下却写着（09-26）；每次请求入账时和用量一起同步，打断时一起落库。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::agent) struct TurnEndpoint {
+    pub(in crate::agent) provider_id: Option<String>,
+    pub(in crate::agent) model: Option<String>,
 }
 
 impl TurnUsageMirror {
@@ -39,6 +48,23 @@ impl TurnUsageMirror {
         if let Ok(mut slot) = self.0.lock() {
             slot.context = Some(tokens);
         }
+    }
+
+    pub(in crate::agent) fn set_endpoint(
+        &self,
+        provider_id: Option<String>,
+        model: Option<String>,
+    ) {
+        if let Ok(mut slot) = self.0.lock() {
+            slot.endpoint = TurnEndpoint { provider_id, model };
+        }
+    }
+
+    pub(in crate::agent) fn endpoint(&self) -> TurnEndpoint {
+        self.0
+            .lock()
+            .map(|slot| slot.endpoint.clone())
+            .unwrap_or_default()
     }
 
     pub(in crate::agent) fn reset(&self) {
@@ -97,6 +123,7 @@ impl PendingTurnGuard {
         if !self.completed {
             self.state
                 .interrupt_turn_with_usage(&self.turn_id, self.usage.get())?;
+            record_endpoint(&self.state, &self.turn_id, &self.usage.endpoint());
             self.completed = true;
         }
         Ok(())
@@ -110,6 +137,7 @@ impl Drop for PendingTurnGuard {
                 &self.state,
                 &self.turn_id,
                 self.usage.get(),
+                &self.usage.endpoint(),
                 miyu_base::process::daemon_shutting_down(),
             ) {
                 tracing::error!(
@@ -129,12 +157,28 @@ pub(in crate::agent) fn settle_unfinished_turn(
     state: &StateStore,
     turn_id: &str,
     usage: TurnTokens,
+    endpoint: &TurnEndpoint,
     daemon_shutting_down: bool,
 ) -> Result<()> {
     if daemon_shutting_down {
-        state.suspend_turn_with_usage(turn_id, usage)
-    } else {
-        state.interrupt_turn_with_usage(turn_id, usage)
+        return state.suspend_turn_with_usage(turn_id, usage);
+    }
+    state.interrupt_turn_with_usage(turn_id, usage)?;
+    record_endpoint(state, turn_id, endpoint);
+    Ok(())
+}
+
+/// 被打断的轮记下最后一次请求的供应商和模型；记不上不算打断失败。
+fn record_endpoint(state: &StateStore, turn_id: &str, endpoint: &TurnEndpoint) {
+    if endpoint.provider_id.is_none() && endpoint.model.is_none() {
+        return;
+    }
+    if let Err(error) = state.record_turn_endpoint(
+        turn_id,
+        endpoint.provider_id.as_deref(),
+        endpoint.model.as_deref(),
+    ) {
+        tracing::debug!(turn_id, error = %error, "interrupted turn endpoint not recorded");
     }
 }
 
@@ -179,17 +223,18 @@ impl PendingRedoGuard {
 impl Drop for PendingRedoGuard {
     fn drop(&mut self) {
         if !self.completed {
-            if let Err(error) = self.state.interrupt_turn_revision_with_usage(
+            match self.state.interrupt_turn_revision_with_usage(
                 &self.turn_id,
                 self.revision,
                 self.usage.get(),
             ) {
-                tracing::error!(
+                Ok(()) => record_endpoint(&self.state, &self.turn_id, &self.usage.endpoint()),
+                Err(error) => tracing::error!(
                     turn_id = %self.turn_id,
                     revision = self.revision,
                     error = %error,
                     "failed to recover an interrupted redo generation"
-                );
+                ),
             }
         }
     }

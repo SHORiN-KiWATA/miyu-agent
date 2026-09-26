@@ -112,6 +112,17 @@ impl StateStore {
         self.recover_journal_assets(&session_id, turn_id)
     }
 
+    /// 见 `ConversationDb::record_turn_endpoint`。
+    pub fn record_turn_endpoint(
+        &self,
+        turn_id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<()> {
+        self.conv_db
+            .record_turn_endpoint(turn_id, provider_id, model)
+    }
+
     /// daemon 有序关停时的收尾：只记用量、不改状态，见
     /// `ConversationDb::suspend_turn_with_usage`（09-24 断点续跑）。
     pub fn suspend_turn_with_usage(&self, turn_id: &str, tokens: TurnTokens) -> Result<()> {

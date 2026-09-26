@@ -7,7 +7,8 @@
 
 会话池两个模型（stub-model / stub-b），全局设置 mixed_model_endpoint_display 默认
 interactive。桩模型会按请求里的 model 回，所以那一行应是 `stub / stub-model` 或
-`stub / stub-b`。
+`stub / stub-b`。09-26 起它写在回复末尾那行 `✻` 的模型位置上（`✻ stub / stub-b · 处理了 1 秒 ·
+1:53 完成`），不再单独占一行——判据照旧认这几个字。
 """
 
 import json

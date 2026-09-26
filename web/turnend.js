@@ -8,7 +8,8 @@
  *
  * - 动词按轮号固定(FNV-1a),刷新、重开、终端和网页上都是同一个词;
  * - 不是今天的轮在时刻前面带上日期;
- * - 网页只给跑完的轮画:被打断的轮已经有「本轮已中断」那一行(带词元数)。
+ * - 网页只给跑完的轮画:被打断的轮已经有「本轮已中断」那一行(带词元数);
+ * - 混合模型池时「供应商 / 模型」写在这一行的模型位置上,不再在用量那一行另写一遍。
  *
  * 单独成文件:app.js 已经一万四千行。
  */
@@ -74,15 +75,23 @@ window.MiyuTurnEnd = (() => {
     return `✻ ${parts.join(" · ")}`;
   }
 
-  // 挂在这段回复的最末尾;同一个 article 只有一行,重画时就地改。
+  // 挂在这段回复的最末尾;同一个 article 只有一行,重画时就地改。混合模型池时用量那一行开头的
+  // 「供应商 / 模型」并进这一行的模型位置、那个标签藏起来(用户 09-26:同一个模型名写了两遍),
+  // 和终端一个样子。并过一次就记在 article 上,重画时标签已经藏了也还认得。
   function attach(article, info) {
     if (!article) return;
-    const value = text(info || {});
+    const endpoint = article.querySelector(".assistant-meta .assistant-endpoint");
+    const shown = endpoint && !endpoint.hidden ? endpoint.textContent.trim() : "";
+    if (shown) article.dataset.endpointLabel = shown;
+    const label = article.dataset.endpointLabel || "";
+    const value = text({ ...(info || {}), model: label || info?.model });
     let line = article.querySelector(":scope > .turn-end");
     if (!value) {
       line?.remove();
+      if (endpoint && label) endpoint.hidden = false;
       return;
     }
+    if (endpoint && label) endpoint.hidden = true;
     if (!line) {
       line = document.createElement("div");
       line.className = "turn-end";

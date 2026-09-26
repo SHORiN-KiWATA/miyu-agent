@@ -52,30 +52,65 @@ pub(in crate::web) fn is_subagent_session(state: &DaemonState, session_id: &str)
 /// 留着，停在哪看得到；它自己闲着等后台的话，也记成被打断，等它的主会话照常收到汇报。
 /// 返回停掉了几个后台任务。
 ///
-/// 主会话闲着按 Ctrl+C（`StopSessionJobs`）也走这里：它名下各层子代理的轮与命令一起停，主会话
-/// 自己没有任务状态，最后那一下「记成被打断」对它不起作用。
-///
-/// 它自己的镜像任务先停：标成「已停止」的任务收尾时不叫醒谁。先停孙代理的轮的话，孙代理一
-/// 收尾就把这条子代理叫醒、再跑一轮汇报——人刚按了停止，它自己又动起来了。
+/// 主会话闲着按 Ctrl+C（`StopSessionJobs`）也停这一整棵树，只是分两段走：后台任务当场停、当场
+/// 回话，各层的轮在后台收（见 `stop_subtree_jobs`、`settle_subtree_runs`）。主会话自己没有任务
+/// 状态，最后那一下「记成被打断」对它不起作用。
 pub(in crate::web) async fn stop_subagent_subtree(state: &DaemonState, root: &str) -> usize {
-    let mut stopped = tools::jobs::stop_session_jobs(root).await;
+    let (stopped, descendants) = stop_subtree_jobs(state, root).await;
+    settle_subtree_runs(state, root, &descendants).await;
+    stopped
+}
+
+/// 第一段：树上所有会话的后台任务一起停，返回停了几个和名下的后代会话（从浅到深）。
+///
+/// 镜像任务要在任何一轮被取消之前停掉：标成「已停止」的任务收尾时不叫醒谁。先停孙代理的轮的
+/// 话，孙代理一收尾就把这条子代理叫醒、再跑一轮汇报——人刚按了停止，它自己又动起来了。原来
+/// 一层层停、每停一层等一遍，子代理一多就要等很久（用户 09-26：打断的时候会卡住）。
+pub(in crate::web) async fn stop_subtree_jobs(
+    state: &DaemonState,
+    root: &str,
+) -> (usize, Vec<String>) {
     let descendants = state
         .stores
         .for_session(root)
         .descendant_session_ids(root)
         .unwrap_or_default();
+    let stopped = futures_util::future::join_all(
+        std::iter::once(root)
+            .chain(descendants.iter().map(String::as_str))
+            .map(tools::jobs::stop_session_jobs),
+    )
+    .await
+    .into_iter()
+    .sum();
+    (stopped, descendants)
+}
+
+/// 第二段：各层子代理的轮一起取消、一起等它们退场（最多 5 秒，不再一层层各等 5 秒），再把还没
+/// 到终态的记成被打断——由深到浅，根最后。
+pub(in crate::web) async fn settle_subtree_runs(
+    state: &DaemonState,
+    root: &str,
+    descendants: &[String],
+) {
+    let running: Vec<&str> = descendants
+        .iter()
+        .map(String::as_str)
+        .filter(|id| state.manager.lock().unwrap().session_has_runs(id))
+        .collect();
+    futures_util::future::join_all(
+        running
+            .iter()
+            .map(|id| stop_session_runs(state, id, Duration::from_secs(5))),
+    )
+    .await;
     for id in descendants.iter().rev() {
-        stopped += tools::jobs::stop_session_jobs(id).await;
-        if state.manager.lock().unwrap().session_has_runs(id) {
-            stop_session_runs(state, id, Duration::from_secs(5)).await;
-        }
         interrupt_if_pending(state, id);
     }
     interrupt_if_pending(state, root);
     if !descendants.is_empty() {
-        tracing::info!(root = %root, sessions = descendants.len(), stopped, "subagent subtree stopped");
+        tracing::info!(root = %root, sessions = descendants.len(), "subagent subtree stopped");
     }
-    stopped
 }
 
 /// 还挂着「运行中 / 等待后台」的会话记成被打断，等着它的父回合（前台）或镜像任务（后台）

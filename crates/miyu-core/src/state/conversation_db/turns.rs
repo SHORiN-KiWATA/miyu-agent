@@ -314,6 +314,24 @@ impl ConversationDb {
         Ok(())
     }
 
+    /// 被打断的轮记下最后一次请求是哪家哪个模型答的（09-26：回放那行 `✻` 要写模型，原来被打断的
+    /// 轮不记）。库里已经有的不覆盖：重做被打断、退回备份时，备份那一份就是对的。
+    pub fn record_turn_endpoint(
+        &self,
+        turn_id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE turns SET assistant_provider_id = COALESCE(assistant_provider_id, ?2),
+                              assistant_model = COALESCE(assistant_model, ?3)
+              WHERE turn_id = ?1",
+            params![turn_id, provider_id, model],
+        )?;
+        Ok(())
+    }
+
     pub fn interrupt_turn_revision(&self, turn_id: &str, revision: i64) -> Result<bool> {
         self.interrupt_turn_revision_with_usage(turn_id, revision, TurnTokens::default())
     }

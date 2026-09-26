@@ -6,7 +6,7 @@
 
 use crate::cli::repl::editor::*;
 use crate::cli::repl::tail::*;
-use crate::cli::repl::turn_end::{show_turn_end, turn_started_instant};
+use crate::cli::repl::turn_end::{show_turn_end, turn_end_model, turn_started_instant};
 use crate::cli::*;
 
 /// Attach to a daemon-initiated wake turn and render it live: streaming
@@ -194,8 +194,9 @@ pub(in crate::cli) async fn follow_wake_run(
     input_tick.tick().await;
     let mut follow_strip_tick: u32 = 0;
     // 这一轮怎么结束的（是不是被打断、哪个模型答的），收尾那行 `✻` 用。
-    let mut ended: Option<(bool, String)> = None;
+    let mut ended: Option<(bool, String, String)> = None;
     let mut round_model = String::new();
+    let mut round_provider = String::new();
 
     'outer: loop {
         // 装箱而不是 `tokio::pin!`：取到这一帧就把它放掉，分发表里提问那一支
@@ -816,6 +817,7 @@ pub(in crate::cli) async fn follow_wake_run(
                 let model = ipc_text(&data, "model");
                 if !model.is_empty() {
                     round_model = model.to_string();
+                    round_provider = ipc_text(&data, "provider_id").to_string();
                 }
                 // 断缓存次数随每次请求一起来（09-25），footer 挂在 C% 后面。
                 live.cache_breaks = ipc_u64(&data, "cache_breaks");
@@ -878,8 +880,12 @@ pub(in crate::cli) async fn follow_wake_run(
             "run.completed" | "run.failed" | "run.cancelled" => {
                 // 收尾那行 `✻`：说完的写「完成」、被打断的写「中断」，报错的不画（回放也没有它）。
                 ended = match kind.as_str() {
-                    "run.completed" => Some((false, ipc_text(&data, "model").to_string())),
-                    "run.cancelled" => Some((true, round_model.clone())),
+                    "run.completed" => Some((
+                        false,
+                        ipc_text(&data, "provider_id").to_string(),
+                        ipc_text(&data, "model").to_string(),
+                    )),
+                    "run.cancelled" => Some((true, round_provider.clone(), round_model.clone())),
                     _ => None,
                 };
                 // 没走到检查点就收场的，守护进程事后补压。
@@ -900,13 +906,21 @@ pub(in crate::cli) async fn follow_wake_run(
     live.flush_pending_chunks(&mut renderer)?;
     renderer.finish()?;
     live.apply_renderer_frame(&mut renderer)?;
-    if let Some((interrupted, model)) = &ended {
+    if let Some((interrupted, provider, model)) = &ended {
         let elapsed = live.turn_elapsed();
+        // 混合模型池的「本次供应商 / 模型」写在收尾那行的模型位置上（用户 09-26）。
+        let model = turn_end_model(
+            paths,
+            &config,
+            session_id,
+            Some(provider.as_str()),
+            Some(model.as_str()),
+        );
         show_turn_end(
             paths,
             live,
             turn_id.as_deref(),
-            Some(model.as_str()),
+            model.as_deref(),
             elapsed,
             *interrupted,
         )?;
