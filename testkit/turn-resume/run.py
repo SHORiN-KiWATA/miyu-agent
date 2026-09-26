@@ -9,8 +9,8 @@
     tool_not_replayed             那条命令只跑过一次(counter.txt 里只有一行),系统没替模型重放
     graceful_keeps_the_claim      SIGTERM(有序关停)同样接着跑;被打断那一轮的用量记下了
     user_stop_is_final            人按停止的那一轮,重启后不续、也不留认领
-    subagent_resumes              前台子代理:子会话里那一轮被打断,新 daemon 把它挂回父会话名下接着跑,命令没重放
-    parent_told_subagents_continue  父那一轮(在等子代理)的续跑消息里列着接着跑的子代理
+    subagent_resumes              子代理:子会话里那一轮被打断,新 daemon 把它挂回父会话名下接着跑,命令没重放
+    parent_turn_not_held          派它的那一轮派完就收了(09-26 起子代理只在后台跑),daemon 被杀时没有要续的
     parent_gets_the_subagent_result 子代理跑完,结果照后台任务那套送回父会话
     goal_round_resumes            /goal 续轮被打断:这一轮带着续轮的身份接着跑
     goal_keeps_going              续完那一轮,自动续轮也恢复了:接着开了下一轮
@@ -325,7 +325,7 @@ def scenario(box):
           and not box.events(cut.get("turn_id", ""), "restart_orphaned"),
           {"status": cut.get("status"), "run_ids": run_ids, "restart_turns": len(restart_turns(box, stopped))})
 
-    # —— 前台子代理:父那一轮在等它、子会话里的命令睡着,一起被打断 ——
+    # —— 子代理:子会话里的命令睡着时被打断。09-26 起只在后台跑,派它的那一轮早就收了 ——
     interrupt_mid_tool(box, parent, "TK sub SUB1", "SUB1", signal.SIGKILL)
     children = box.query("SELECT session_id FROM sessions WHERE kind = 'subagent' AND parent_session_id = ?",
                          (parent,))
@@ -336,10 +336,11 @@ def scenario(box):
           and box.counter("SUB1") == 1,
           {"child": child, "restarts": [(t["user_content"][:40], t["status"]) for t in restart_turns(box, child)],
            "ran": box.counter("SUB1")})
-    parent_resumed = wait_for(lambda: [t for t in restart_turns(box, parent) if t["status"] == "completed"], 60)
-    check("parent_told_subagents_continue",
-          parent_resumed and "subagents=1" in (parent_resumed[0]["assistant_content"] or ""),
-          [(t["user_content"][:60], t["assistant_content"][:80]) for t in restart_turns(box, parent)])
+    dispatch = [t for t in box.turns(parent) if "TK sub SUB1" in t["user_content"]]
+    check("parent_turn_not_held",
+          bool(dispatch) and dispatch[0]["status"] == "completed" and not restart_turns(box, parent),
+          {"dispatch": [(t["status"], (t["assistant_content"] or "")[:40]) for t in dispatch],
+           "parent_restarts": [(t["user_content"][:60], t["status"]) for t in restart_turns(box, parent)]})
     got = wait_for(lambda: [t for t in box.turns(parent) if "GOT REPORT" in (t["assistant_content"] or "")], 90)
     check("parent_gets_the_subagent_result", got,
           [(t["user_content"][:40], t["status"], (t["assistant_content"] or "")[:60]) for t in box.turns(parent)])
