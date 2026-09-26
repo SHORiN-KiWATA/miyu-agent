@@ -10,6 +10,7 @@ pub(in crate::config_tui) fn select_platform_model_routes(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     let mut selected = 0usize;
     loop {
@@ -40,8 +41,12 @@ pub(in crate::config_tui) fn select_platform_model_routes(
             KeyCode::Down | KeyCode::Char('j') => {
                 selected = (selected + 1).min(options.len().saturating_sub(1));
             }
-            KeyCode::Enter if selected == 0 => edit_platform_model_route(ui, paths, config, None)?,
-            KeyCode::Enter => edit_platform_model_route(ui, paths, config, Some(selected - 1))?,
+            KeyCode::Enter if selected == 0 => {
+                edit_platform_model_route(ui, paths, config, None, pending)?
+            }
+            KeyCode::Enter => {
+                edit_platform_model_route(ui, paths, config, Some(selected - 1), pending)?
+            }
             KeyCode::Char('d') | KeyCode::Delete if selected > 0 => {
                 config.platforms.qq.conversations.remove(selected - 1);
                 selected = selected.min(config.platforms.qq.conversations.len());
@@ -91,6 +96,7 @@ pub(in crate::config_tui) fn edit_platform_model_route(
     paths: &MiyuPaths,
     config: &mut AppConfig,
     route_index: Option<usize>,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     let mut route = route_index
         .and_then(|index| config.platforms.qq.conversations.get(index).cloned())
@@ -243,7 +249,7 @@ pub(in crate::config_tui) fn edit_platform_model_route(
                         route.conversation.id = value.trim().to_string();
                     }
                 }
-                2 => edit_platform_personas(ui, paths, config, &mut route.persona)?,
+                2 => edit_platform_personas(ui, paths, config, &mut route.persona, pending)?,
                 3 => select_platform_route_models(
                     ui,
                     config,
@@ -431,12 +437,14 @@ pub(in crate::config_tui) fn edit_platform_personas(
     paths: &MiyuPaths,
     config: &mut AppConfig,
     persona: &mut PlatformPersonaOverride,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     if let Some(updated) = manage_personas(
         ui,
         paths,
         config,
         PersonaMenuTarget::Platform(persona.clone()),
+        pending,
     )? {
         *persona = updated;
     }

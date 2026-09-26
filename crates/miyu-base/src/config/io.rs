@@ -79,7 +79,13 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn save(&self, paths: &MiyuPaths) -> Result<()> {
+    /// 存得下吗：和 [`AppConfig::save`] 走同一套整理与校验，但不写盘。设置界面在「保存并退出」
+    /// 时先问一句——人格改名这类独立文件要排在配置前面落，配置存不进去就别先动它们（09-26）。
+    pub fn check_savable(&self, paths: &MiyuPaths) -> Result<()> {
+        self.prepared_for_save(paths).map(|_| ())
+    }
+
+    fn prepared_for_save(&self, paths: &MiyuPaths) -> Result<AppConfig> {
         let mut config = self.clone();
         config.migrate()?;
         config.normalize_platform_model_routes();
@@ -90,6 +96,11 @@ impl AppConfig {
         config.plugins.memory = effective_memory;
         config.memory = MemoryConfig::default();
         config.validate()?;
+        Ok(config)
+    }
+
+    pub fn save(&self, paths: &MiyuPaths) -> Result<()> {
+        let mut config = self.prepared_for_save(paths)?;
         paths.create_dirs()?;
         if let Some(prompt) = config.system_prompt.take() {
             let prompt_file = config.system_prompt_path(paths);

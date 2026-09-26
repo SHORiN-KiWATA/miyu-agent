@@ -27,6 +27,7 @@ pub(in crate::config_tui) fn select_platforms(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     let mut selected = 0usize;
     loop {
@@ -80,7 +81,7 @@ pub(in crate::config_tui) fn select_platforms(
             KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => selected = (selected + 1).min(options.len() - 1),
             KeyCode::Enter => match selected {
-                0 => edit_qq(ui, paths, config)?,
+                0 => edit_qq(ui, paths, config, pending)?,
                 1 => edit_platform_command_prefix(ui, config)?,
                 2 => select_platform_commands(ui, config)?,
                 3 => edit_platform_max_tool_rounds(ui, config)?,
@@ -249,6 +250,7 @@ pub(in crate::config_tui) fn edit_qq(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     let mut selected = 0usize;
     loop {
@@ -529,7 +531,7 @@ pub(in crate::config_tui) fn edit_qq(
                 }
                 // 尾部三项随"并行数量"是否出现整体顺延一位。
                 index if index == 23 - usize::from(!parallel) && matches!(key, KeyCode::Enter) => {
-                    select_platform_model_routes(ui, paths, config)?
+                    select_platform_model_routes(ui, paths, config, pending)?
                 }
                 index if index == 24 - usize::from(!parallel) && matches!(key, KeyCode::Enter) => {
                     select_platform_plugins(ui, paths, config)?

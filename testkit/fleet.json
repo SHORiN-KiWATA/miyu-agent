@@ -643,6 +643,16 @@
       "lane": "tui"
     },
     {
+      "name": "config_personas",
+      "argv": [
+        "python3",
+        "testkit/tui/config_personas.py",
+        "--binary",
+        "{bin}"
+      ],
+      "lane": "tui"
+    },
+    {
       "name": "persona_menu",
       "argv": [
         "python3",

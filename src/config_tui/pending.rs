@@ -7,6 +7,10 @@
 //!
 //! 读的那一侧也得走这里：功能表二进二出、人格菜单上的计数，都要看得见这一轮
 //! 还没写盘的改动，否则退出去再进来会看到旧的。
+//!
+//! 09-26 起人格正文、防失忆提示、预设对话、用户身份也攒着（[`PersonaDrafts`]，用户：
+//! 编辑表单去掉「保存 / 返回」之后，这几张也要归「保存并退出」管）。它们要在存配置
+//! **之前**落（[`PendingWrites::flush_before_config`]），清单和开发提示词在存配置之后。
 
 use crate::config_tui::*;
 use miyu_base::config::PersonaManifest;
@@ -18,11 +22,13 @@ pub(in crate::config_tui) struct PendingWrites {
     manifests: BTreeMap<String, PersonaManifest>,
     /// 开发模式提示词的正文；空串 = 清空（落盘时删文件，回退内置默认）。
     dev_prompt: Option<String>,
+    /// 人格与用户身份攒着的改动。
+    pub(in crate::config_tui) drafts: PersonaDrafts,
 }
 
 impl PendingWrites {
     pub(in crate::config_tui) fn is_empty(&self) -> bool {
-        self.manifests.is_empty() && self.dev_prompt.is_none()
+        self.manifests.is_empty() && self.dev_prompt.is_none() && self.drafts.is_empty()
     }
 
     /// 这一层人格此刻的清单：先看这一轮改过没有，没有再读盘。
@@ -35,11 +41,48 @@ impl PendingWrites {
         self.manifests
             .get(scope)
             .cloned()
-            .unwrap_or_else(|| PersonaManifest::load(config, paths, scope))
+            // 攒着改名的人格，盘上还在老名字的目录里。
+            .unwrap_or_else(|| PersonaManifest::load(config, paths, &self.drafts.disk_scope(scope)))
     }
 
     pub(in crate::config_tui) fn set_manifest(&mut self, scope: &str, manifest: PersonaManifest) {
         self.manifests.insert(scope.to_string(), manifest);
+    }
+
+    /// 攒下一次人格编辑（键是盘上的名字）。改了名的话，这一轮攒着的功能清单跟着换到新
+    /// scope 名下——落盘时目录先搬过去，清单才写得进新名字那里。
+    pub(in crate::config_tui) fn set_persona_draft(&mut self, disk: String, draft: PersonaDraft) {
+        let shown = self
+            .drafts
+            .persona_by_disk(&disk)
+            .map(|previous| previous.name.clone())
+            .unwrap_or_else(|| disk.clone());
+        let (from, to) = (
+            miyu_base::config::persona_scope_name(&shown),
+            miyu_base::config::persona_scope_name(&draft.name),
+        );
+        if from != to {
+            if let Some(manifest) = self.manifests.remove(&from) {
+                self.manifests.insert(to, manifest);
+            }
+        }
+        self.drafts.set_persona(disk, draft);
+    }
+
+    /// 删掉界面上这个人格：它攒着的编辑和功能清单都作废，交回盘上的名字。
+    pub(in crate::config_tui) fn forget_persona(&mut self, shown: &str) -> String {
+        self.manifests
+            .remove(&miyu_base::config::persona_scope_name(shown));
+        self.drafts.forget_persona(shown)
+    }
+
+    /// 人格、用户身份落盘：在存配置之前（见 [`PersonaDrafts::flush`]）。
+    pub(in crate::config_tui) fn flush_before_config(
+        &mut self,
+        config: &mut AppConfig,
+        paths: &MiyuPaths,
+    ) -> Result<()> {
+        self.drafts.flush(config, paths)
     }
 
     /// 开发模式提示词此刻的正文。

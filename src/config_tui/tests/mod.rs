@@ -2,6 +2,7 @@
 
 mod custom_models;
 mod fields;
+mod persona_drafts;
 mod plugins;
 mod pools;
 mod qq;

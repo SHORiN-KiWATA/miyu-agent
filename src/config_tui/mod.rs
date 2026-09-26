@@ -4,6 +4,7 @@ mod codebuddy_form;
 mod codex_form;
 mod features;
 mod pending;
+mod persona_drafts;
 mod personas;
 mod platforms;
 mod plugin_settings;
@@ -22,6 +23,7 @@ use codebuddy_form::edit_codebuddy_provider_form;
 use codex_form::*;
 use features::*;
 use pending::*;
+use persona_drafts::*;
 use personas::*;
 use platforms::*;
 use plugin_settings::*;
@@ -197,6 +199,25 @@ fn sync_usage_ledger_after_save(
 /// 里永远看不见它,而 `save()` 会把它折进 `plugins.memory` 再写盘。直接比
 /// 序列化结果的话,只动到旧位置的修改就是「看不见的脏」——退出不提示保存,
 /// 改动静默丢失。这里按 `save()` 的同一套折叠先归一再比。
+/// 「保存并退出」：先确认配置存得下，再落人格与用户身份（改名会连配置里的引用一起存下，
+/// 所以排在配置前面），然后存配置、思考档位、功能清单与开发提示词。任何一步失败都交回
+/// 错误、留在菜单里——内存里的改动都还在（09-26）。
+fn save_everything(
+    paths: &MiyuPaths,
+    config: &mut AppConfig,
+    thinking_variants: &mut ThinkingVariantPreferences,
+    pending: &mut PendingWrites,
+    pristine_config: Option<&String>,
+) -> Result<()> {
+    config.check_savable(paths)?;
+    pending.flush_before_config(config, paths)?;
+    config.save(paths)?;
+    thinking_variants.save(paths)?;
+    pending.flush(config, paths)?;
+    sync_usage_ledger_after_save(paths, pristine_config, config);
+    Ok(())
+}
+
 fn dirty_snapshot(config: &AppConfig) -> Option<String> {
     let mut probe = config.clone();
     probe.plugins.memory = probe.memory_config().clone();
@@ -280,13 +301,14 @@ fn run_main_menu(
                     return Ok(false);
                 }
                 if confirm_save_on_exit(ui)? {
-                    match config.save(paths) {
-                        Ok(()) => {
-                            thinking_variants.save(paths)?;
-                            pending.flush(config, paths)?;
-                            sync_usage_ledger_after_save(paths, pristine_config.as_ref(), config);
-                            return Ok(true);
-                        }
+                    match save_everything(
+                        paths,
+                        config,
+                        thinking_variants,
+                        &mut pending,
+                        pristine_config.as_ref(),
+                    ) {
+                        Ok(()) => return Ok(true),
                         Err(error) => {
                             // 保存失败(如校验不过)不能崩出:崩出会丢掉本次
                             // 全部内存修改,留在菜单让用户改完再存。
@@ -307,16 +329,17 @@ fn run_main_menu(
                     3 => edit_embedding_model(ui, config),
                     4 => select_model_tiers(ui, config),
                     5 => edit_persona_menu(ui, paths, config, &mut pending),
-                    6 => select_platforms(ui, paths, config),
+                    6 => select_platforms(ui, paths, config, &mut pending),
                     7 => edit_settings(ui, config),
                     8 => edit_voice(ui, paths, config),
-                    9 => match config.save(paths) {
-                        Ok(()) => {
-                            thinking_variants.save(paths)?;
-                            pending.flush(config, paths)?;
-                            sync_usage_ledger_after_save(paths, pristine_config.as_ref(), config);
-                            return Ok(true);
-                        }
+                    9 => match save_everything(
+                        paths,
+                        config,
+                        thinking_variants,
+                        &mut pending,
+                        pristine_config.as_ref(),
+                    ) {
+                        Ok(()) => return Ok(true),
                         Err(error) => Err(error),
                     },
                     _ => Ok(()),

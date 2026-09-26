@@ -84,14 +84,14 @@ pub(in crate::config_tui) fn edit_persona_menu(
             }
             KeyCode::Enter => match selected {
                 0 => {
-                    edit_personas(ui, paths, config)?;
+                    edit_personas(ui, paths, config, pending)?;
                     counts = feature_counts(config, paths, pending);
                 }
                 1 => {
                     edit_features(ui, paths, config, pending)?;
                     counts = feature_counts(config, paths, pending);
                 }
-                2 => edit_active_persona_prompt(ui, paths, config)?,
+                2 => edit_active_persona_prompt(ui, paths, config, pending)?,
                 3 => config.prompt.persona_reminder = !config.prompt.persona_reminder,
                 4 => {
                     if let Some(value) = edit_inline_value(
@@ -105,7 +105,7 @@ pub(in crate::config_tui) fn edit_persona_menu(
                         }
                     }
                 }
-                6 => edit_identities(ui, paths, config)?,
+                6 => edit_identities(ui, paths, config, pending)?,
                 7 => edit_dev_prompt(ui, paths, pending)?,
                 _ => {}
             },
@@ -150,25 +150,20 @@ fn edit_active_persona_prompt(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     let name = config.prompt.active_persona.trim().to_string();
     if name.is_empty() {
-        return edit_miyu_persona_extras(ui, paths, config);
+        return edit_miyu_persona_extras(ui, paths, config, pending);
     }
-    if let Some(values) = edit_persona(ui, paths, config, &name)? {
-        apply_persona_edit(paths, config, &name, &values.name, &values.content)?;
-        write_persona_aux(
-            paths,
-            config,
-            &miyu_base::config::persona_scope_name(&values.name),
-            &values.hint,
-            &values.dialogs,
-        )?;
-        if config.prompt.active_persona == name {
-            config.prompt.active_persona = values.name;
-        }
-    }
-    Ok(())
+    stage_persona_edit(
+        ui,
+        paths,
+        config,
+        pending,
+        &name,
+        &mut PersonaMenuTarget::Global,
+    )
 }
 
 /// 开发模式的「AI 提示词」:编辑 config/dev-prompt.md 一个文件。09-24 起默认为空
@@ -207,8 +202,9 @@ pub(in crate::config_tui) fn edit_personas(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
-    manage_personas(ui, paths, config, PersonaMenuTarget::Global)?;
+    manage_personas(ui, paths, config, PersonaMenuTarget::Global, pending)?;
     Ok(())
 }
 
@@ -293,11 +289,13 @@ pub(in crate::config_tui) fn manage_personas(
     paths: &MiyuPaths,
     config: &mut AppConfig,
     mut target: PersonaMenuTarget,
+    pending: &mut PendingWrites,
 ) -> Result<Option<PlatformPersonaOverride>> {
     std::fs::create_dir_all(config.prompts_dir_path(paths))?;
     let mut selected = 0usize;
     loop {
-        let personas = list_personas(paths, config)?;
+        // 攒着改名的，列的是改后的名字（09-26 起编辑等「保存并退出」才落盘）。
+        let personas = pending.drafts.persona_names(list_personas(paths, config)?);
         let custom_offset = target.custom_offset();
         let mut options = Vec::with_capacity(personas.len() + custom_offset);
         if let PersonaMenuTarget::Platform(persona) = &target {
@@ -349,37 +347,29 @@ pub(in crate::config_tui) fn manage_personas(
                 }
             }
             KeyCode::Char('a') => {
-                if let Some(name) = new_persona(ui, paths, config)? {
+                if let Some(name) = new_persona(ui, paths, config, &pending.drafts)? {
                     target.activate_custom(config, name);
                 }
             }
             KeyCode::Enter if selected >= custom_offset => {
                 if let Some(name) = personas.get(selected - custom_offset) {
-                    if let Some(values) = edit_persona(ui, paths, config, name)? {
-                        apply_persona_edit(paths, config, name, &values.name, &values.content)?;
-                        write_persona_aux(
-                            paths,
-                            config,
-                            &miyu_base::config::persona_scope_name(&values.name),
-                            &values.hint,
-                            &values.dialogs,
-                        )?;
-                        target.rename_custom(name, &values.name);
-                    }
+                    stage_persona_edit(ui, paths, config, pending, name, &mut target)?;
                 }
             }
             // 默认 Miyu 人格本体只读,但防失忆提示与预设对话是独立文件
             // (hints/default.md、dialogs/default.md),回车打开精简表单。
             KeyCode::Enter if selected + 1 == custom_offset => {
-                edit_miyu_persona_extras(ui, paths, config)?;
+                edit_miyu_persona_extras(ui, paths, config, pending)?;
             }
             KeyCode::Char('d') if selected >= custom_offset => {
                 if let Some(name) = personas.get(selected - custom_offset) {
+                    // 攒着改名的：盘上、已存的配置里都还是老名字。
+                    let disk = pending.drafts.persona_disk_name(name);
                     let persisted = AppConfig::load_or_default(paths)?;
                     let references = config
                         .platforms
                         .persona_reference_count(name)
-                        .max(persisted.platforms.persona_reference_count(name))
+                        .max(persisted.platforms.persona_reference_count(&disk))
                         .max(target.pending_reference_count(name));
                     if references > 0 {
                         message(
@@ -396,7 +386,12 @@ pub(in crate::config_tui) fn manage_personas(
                         )?;
                         continue;
                     }
-                    apply_persona_delete(paths, config, persisted, name)?;
+                    apply_persona_delete(paths, config, persisted, &disk)?;
+                    // 删掉了就别再落它攒着的编辑（不然保存时又写回来）。
+                    pending.forget_persona(name);
+                    if config.prompt.active_persona == *name {
+                        config.prompt.active_persona.clear();
+                    }
                     selected = selected.saturating_sub(1);
                 }
             }
@@ -584,6 +579,7 @@ pub(in crate::config_tui) fn new_persona(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &AppConfig,
+    drafts: &PersonaDrafts,
 ) -> Result<Option<String>> {
     let mut fields = vec![
         Field::new(t("Name", "名称"), String::new()),
@@ -594,7 +590,7 @@ pub(in crate::config_tui) fn new_persona(
         return Ok(None);
     }
     let name = sanitize_persona_name(&fields[0].value)?;
-    ensure_persona_name_available(paths, config, &name, None)?;
+    ensure_draft_name_available(paths, config, drafts, &name, None)?;
     write_persona(paths, config, &name, &fields[1].value)?;
     write_persona_aux(
         paths,
@@ -606,18 +602,30 @@ pub(in crate::config_tui) fn new_persona(
     Ok(Some(name))
 }
 
+/// 编辑人格的表单：先看这一轮攒着的样子，没攒过才读盘。没改过就交回 `None`。
 pub(in crate::config_tui) fn edit_persona(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &AppConfig,
+    drafts: &PersonaDrafts,
     current_name: &str,
 ) -> Result<Option<PersonaFormValues>> {
-    let content = read_persona(paths, config, current_name)?;
-    let (hint, dialogs) = persona_aux_values(
-        paths,
-        config,
-        &miyu_base::config::persona_scope_name(current_name),
-    );
+    let (content, hint, dialogs) = match drafts.persona(current_name) {
+        Some(draft) => (
+            draft.content.clone(),
+            draft.hint.clone(),
+            draft.dialogs.clone(),
+        ),
+        None => {
+            let content = read_persona(paths, config, current_name)?;
+            let (hint, dialogs) = persona_aux_values(
+                paths,
+                config,
+                &miyu_base::config::persona_scope_name(current_name),
+            );
+            (content, hint, dialogs)
+        }
+    };
     let mut fields = vec![
         Field::new(
             t("Name", "名称"),
@@ -626,7 +634,7 @@ pub(in crate::config_tui) fn edit_persona(
         Field::textarea(t("Content", "内容"), content),
     ];
     fields.extend(persona_aux_fields(hint, dialogs, false));
-    if !run_form(ui, t(" EDIT PERSONA ", " 编辑人格 "), &mut fields)? {
+    if !run_edit_form(ui, t(" EDIT PERSONA ", " 编辑人格 "), &mut fields)? {
         return Ok(None);
     }
     let name = sanitize_persona_name(&fields[0].value)?;
@@ -639,18 +647,107 @@ pub(in crate::config_tui) fn edit_persona(
 }
 
 /// 默认 Miyu 人格:本体只读,回车只编辑附属的防失忆提示与预设对话
-/// (scope 固定为 default)。
+/// (scope 固定为 default)。改完攒着，「保存并退出」才写（用户 09-26）。
 pub(in crate::config_tui) fn edit_miyu_persona_extras(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
-    let (hint, dialogs) = miyu_core::persona_hint::miyu_aux_prefill(config, paths);
+    let (hint, dialogs) = match pending.drafts.miyu_extras() {
+        Some((hint, dialogs)) => (hint.clone(), dialogs.clone()),
+        None => miyu_core::persona_hint::miyu_aux_prefill(config, paths),
+    };
     let mut fields = persona_aux_fields(hint, dialogs, true);
-    if !run_form(ui, t(" MIYU EXTRAS ", " Miyu 人格附加 "), &mut fields)? {
+    if !run_edit_form(ui, t(" MIYU EXTRAS ", " Miyu 人格附加 "), &mut fields)? {
         return Ok(());
     }
-    write_persona_aux(paths, config, "default", &fields[0].value, &fields[1].value)
+    pending
+        .drafts
+        .set_miyu_extras(fields[0].value.clone(), fields[1].value.clone());
+    Ok(())
+}
+
+/// 编辑一个自定义人格（用户 09-26：跟设置界面其余部分一样等「保存并退出」）：改完的样子
+/// 攒进 `pending`，界面上的名字和配置里的引用当场换成新名字；盘上的文件、人格目录、库里
+/// 的归属等保存时再由 [`apply_persona_edit`] 一起搬。
+fn stage_persona_edit(
+    ui: &mut Ui,
+    paths: &MiyuPaths,
+    config: &mut AppConfig,
+    pending: &mut PendingWrites,
+    shown: &str,
+    target: &mut PersonaMenuTarget,
+) -> Result<()> {
+    let Some(values) = edit_persona(ui, paths, config, &pending.drafts, shown)? else {
+        return Ok(());
+    };
+    ensure_draft_name_available(paths, config, &pending.drafts, &values.name, Some(shown))?;
+    let disk = pending.drafts.persona_disk_name(shown);
+    let renamed = values.name != shown;
+    let new_name = values.name.clone();
+    pending.set_persona_draft(
+        disk,
+        PersonaDraft {
+            name: values.name,
+            content: values.content,
+            hint: values.hint,
+            dialogs: values.dialogs,
+        },
+    );
+    if renamed {
+        config.platforms.rename_persona_references(shown, &new_name);
+        if config.prompt.active_persona == shown {
+            config.prompt.active_persona = new_name.clone();
+        }
+        target.rename_custom(shown, &new_name);
+    }
+    Ok(())
+}
+
+/// 名字能不能用：界面上别的人格（按攒着的改名换过）不能重名、不能撞 scope；盘上正被改名
+/// 改走的老名字也不能用——落盘前那个文件还在，新建或改名成它会撞上。
+pub(in crate::config_tui) fn ensure_draft_name_available(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    drafts: &PersonaDrafts,
+    candidate: &str,
+    current: Option<&str>,
+) -> Result<()> {
+    let on_disk = list_personas(paths, config)?;
+    let current_disk = current.map(|shown| drafts.persona_disk_name(shown));
+    let taken = on_disk
+        .iter()
+        .filter(|disk| Some(*disk) != current_disk.as_ref() && drafts.persona_renamed_away(disk))
+        .cloned()
+        .chain(
+            drafts
+                .persona_names(on_disk.clone())
+                .into_iter()
+                .filter(|shown| Some(shown.as_str()) != current),
+        );
+    let candidate_scope = miyu_base::config::persona_scope_name(candidate);
+    for existing in taken {
+        if existing == candidate {
+            bail!(
+                "{}",
+                t(
+                    "A persona with this name already exists.",
+                    "同名人格已存在。"
+                )
+            );
+        }
+        if miyu_base::config::persona_scope_name(&existing) == candidate_scope {
+            bail!(
+                "{}",
+                t(
+                    "This persona name conflicts with another persona's persistent scope.",
+                    "该人格名称与另一个人格的持久化作用域冲突。",
+                )
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(in crate::config_tui) fn ensure_persona_name_available(
@@ -795,11 +892,15 @@ pub(in crate::config_tui) fn edit_identities(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &mut AppConfig,
+    pending: &mut PendingWrites,
 ) -> Result<()> {
     std::fs::create_dir_all(config.identities_dir_path(paths))?;
     let mut selected = 0usize;
     loop {
-        let identities = list_identities(paths, config)?;
+        // 攒着改名的，列的是改后的名字（09-26 起编辑等「保存并退出」才落盘）。
+        let identities = pending
+            .drafts
+            .identity_names(list_identities(paths, config)?);
         let mut options = Vec::with_capacity(identities.len() + 1);
         let default_marker = if config.prompt.active_identity.trim().is_empty() {
             "* "
@@ -841,22 +942,20 @@ pub(in crate::config_tui) fn edit_identities(
                 };
             }
             KeyCode::Char('a') => {
-                if let Some(name) = new_identity(ui, paths, config)? {
+                if let Some(name) = new_identity(ui, paths, config, &pending.drafts)? {
                     config.prompt.active_identity = name;
                 }
             }
             KeyCode::Enter if selected > 0 => {
                 if let Some(name) = identities.get(selected - 1) {
-                    if let Some(new_name) = edit_identity(ui, paths, config, name)? {
-                        if config.prompt.active_identity == *name {
-                            config.prompt.active_identity = new_name;
-                        }
-                    }
+                    stage_identity_edit(ui, paths, config, pending, name)?;
                 }
             }
             KeyCode::Char('d') if selected > 0 => {
                 if let Some(name) = identities.get(selected - 1) {
-                    let path = config.identity_path(paths, name);
+                    // 删盘上那份；攒着的编辑一并作废，不然保存时又写回来。
+                    let disk = pending.drafts.forget_identity(name);
+                    let path = config.identity_path(paths, &disk);
                     if path.exists() {
                         std::fs::remove_file(path)?;
                     }
@@ -875,38 +974,89 @@ pub(in crate::config_tui) fn new_identity(
     ui: &mut Ui,
     paths: &MiyuPaths,
     config: &AppConfig,
+    drafts: &PersonaDrafts,
 ) -> Result<Option<String>> {
-    edit_prompt_file_form(
+    let Some((name, content)) = edit_prompt_file_values(
         ui,
         t(" NEW IDENTITY ", " 新建用户身份 "),
         None,
         String::new(),
-        |name, content| write_identity(paths, config, name, content),
-    )
+    )?
+    else {
+        return Ok(None);
+    };
+    ensure_identity_name_available(paths, config, drafts, &name, None)?;
+    write_identity(paths, config, &name, &content)?;
+    Ok(Some(name))
 }
 
-pub(in crate::config_tui) fn edit_identity(
+/// 编辑一个用户身份：改完攒进 `pending`，「保存并退出」才写（改了名就连旧文件一起换掉）；
+/// 界面上的名字、当前用的身份当场换成新名字（用户 09-26）。
+fn stage_identity_edit(
     ui: &mut Ui,
     paths: &MiyuPaths,
-    config: &AppConfig,
-    current_name: &str,
-) -> Result<Option<String>> {
-    let content = read_identity(paths, config, current_name)?;
-    edit_prompt_file_form(
+    config: &mut AppConfig,
+    pending: &mut PendingWrites,
+    shown: &str,
+) -> Result<()> {
+    let content = match pending.drafts.identity(shown) {
+        Some(draft) => draft.content.clone(),
+        None => read_identity(paths, config, shown)?,
+    };
+    let Some((name, content)) = edit_prompt_file_values(
         ui,
         t(" EDIT IDENTITY ", " 编辑用户身份 "),
-        Some(current_name),
+        Some(shown),
         content,
-        |name, content| {
-            if name != current_name {
-                let old_path = config.identity_path(paths, current_name);
-                if old_path.exists() {
-                    std::fs::remove_file(old_path)?;
-                }
-            }
-            write_identity(paths, config, name, content)
+    )?
+    else {
+        return Ok(());
+    };
+    ensure_identity_name_available(paths, config, &pending.drafts, &name, Some(shown))?;
+    let disk = pending.drafts.identity_disk_name(shown);
+    pending.drafts.set_identity(
+        disk,
+        IdentityDraft {
+            name: name.clone(),
+            content,
         },
-    )
+    );
+    if config.prompt.active_identity == shown {
+        config.prompt.active_identity = name;
+    }
+    Ok(())
+}
+
+/// 用户身份的名字能不能用：界面上别的身份（按攒着的改名换过）不能重名，盘上正被改名改走的
+/// 老名字也不能用。以前新建同名的会悄悄把那份覆盖掉。
+fn ensure_identity_name_available(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    drafts: &PersonaDrafts,
+    candidate: &str,
+    current: Option<&str>,
+) -> Result<()> {
+    let on_disk = list_identities(paths, config)?;
+    let current_disk = current.map(|shown| drafts.identity_disk_name(shown));
+    let renamed_away = on_disk.iter().any(|disk| {
+        Some(disk) != current_disk.as_ref()
+            && drafts.identity_renamed_away(disk)
+            && disk == candidate
+    });
+    let shown_taken = drafts
+        .identity_names(on_disk.clone())
+        .iter()
+        .any(|shown| Some(shown.as_str()) != current && shown == candidate);
+    if renamed_away || shown_taken {
+        bail!(
+            "{}",
+            t(
+                "A user identity with this name already exists.",
+                "同名用户身份已存在。"
+            )
+        );
+    }
+    Ok(())
 }
 
 pub(in crate::config_tui) fn list_identities(
@@ -943,23 +1093,6 @@ pub(in crate::config_tui) fn write_identity(
     Ok(())
 }
 
-pub(in crate::config_tui) fn edit_prompt_file_form<F>(
-    ui: &mut Ui,
-    title: &str,
-    current_name: Option<&str>,
-    content: String,
-    write: F,
-) -> Result<Option<String>>
-where
-    F: FnOnce(&str, &str) -> Result<()>,
-{
-    let Some((name, content)) = edit_prompt_file_values(ui, title, current_name, content)? else {
-        return Ok(None);
-    };
-    write(&name, &content)?;
-    Ok(Some(name))
-}
-
 pub(in crate::config_tui) fn edit_prompt_file_values(
     ui: &mut Ui,
     title: &str,
@@ -976,7 +1109,8 @@ pub(in crate::config_tui) fn edit_prompt_file_values(
         ),
         Field::textarea(t("Content", "内容"), content),
     ];
-    if !run_form(ui, title, &mut fields)? {
+    // 新建的保留「保存 / 返回」，编辑已有的不挂按钮、没改过就当没进来（用户 09-26）。
+    if !run_item_form(ui, title, &mut fields, current_name.is_some())? {
         return Ok(None);
     }
     let name = sanitize_persona_name(&fields[0].value)?;
