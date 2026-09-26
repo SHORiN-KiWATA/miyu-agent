@@ -130,6 +130,28 @@ fn display_language_roundtrips_and_rejects_unknown_values() {
     assert!(config.validate().is_err());
 }
 
+/// 打开终端界面默认开新会话（用户 09-20），09-26 起可改成接着上次那条；老配置没有这一项
+/// 照旧是新会话，写错的值不让存。
+#[test]
+fn tui_start_session_defaults_to_new_and_rejects_unknown_values() {
+    let config = AppConfig::default();
+    assert_eq!(config.tui_start_session, "new");
+    assert!(!config.tui_resumes_last_session());
+
+    // 老配置：整份照默认写出，再把这一项拿掉读回来。
+    let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+    value.as_object_mut().unwrap().remove("tui_start_session");
+    let old: AppConfig = serde_json::from_value(value).unwrap();
+    assert_eq!(old.tui_start_session, "new");
+
+    let mut config = AppConfig::default();
+    config.tui_start_session = "LAST".to_string();
+    assert!(config.tui_resumes_last_session());
+    assert!(config.validate().is_ok());
+    config.tui_start_session = "resume".to_string();
+    assert!(config.validate().is_err());
+}
+
 #[test]
 fn display_language_hint_reads_jsonc_without_loading_full_config() {
     let temp = tempfile::tempdir().unwrap();

@@ -130,6 +130,17 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
             ),
             config.display.cross_session_preview_lines.to_string(),
         ),
+        // 09-26:敲 `miyu` 打开终端界面时进新会话,还是这条车道上次用的那条。
+        Field::new(
+            t("TUI startup session", "打开终端界面时进入"),
+            if config.tui_resumes_last_session() {
+                "last"
+            } else {
+                "new"
+            }
+            .to_string(),
+        )
+        .choices(&["new", "last"]),
     ];
     // The read-back below is by index, so an insert in the middle silently
     // writes every later value into the wrong setting. This catches that in
@@ -137,7 +148,7 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
     // 提到第一行,后面的索引一并重排,见下面逐行对应)。
     debug_assert_eq!(
         fields.len(),
-        19,
+        20,
         "global settings fields changed: update the positional read-back below"
     );
     run_form_without_buttons(ui, t(" GLOBAL SETTINGS ", " 全局设置 "), &mut fields)?;
@@ -179,6 +190,12 @@ pub(in crate::config_tui) fn edit_settings(ui: &mut Ui, config: &mut AppConfig) 
         .trim()
         .parse::<usize>()?
         .min(MAX_CROSS_SESSION_PREVIEW_LINES);
+    config.tui_start_session = if fields[19].value.trim().eq_ignore_ascii_case("last") {
+        "last"
+    } else {
+        "new"
+    }
+    .to_string();
     Ok(())
 }
 

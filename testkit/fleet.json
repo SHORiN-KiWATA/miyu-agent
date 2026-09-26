@@ -236,6 +236,15 @@
       "lane": "tui"
     },
     {
+      "name": "start_session_last",
+      "argv": [
+        "python3",
+        "testkit/tui/start_session_last.py"
+      ],
+      "pass": "(\\d+)/\\1 passed",
+      "lane": "tui"
+    },
+    {
       "name": "switch_back",
       "argv": [
         "python3",

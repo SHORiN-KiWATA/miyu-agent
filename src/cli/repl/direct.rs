@@ -346,7 +346,8 @@ pub(in crate::cli) async fn run_direct_repl(
     };
     // 与远端 `GetReplSession { fresh: true }` 同一条语义：**启动**一律开新
     // 会话（用户 09-20 拍板），指针那条本来就空则原地复用；绝不退到终端集成
-    // 那条车道。
+    // 那条车道。设置里的「打开终端界面时进入 = 最近会话」（09-26）这里不跟：
+    // 直连模式启动时不回放历史，接着上次那条会一句之前的话都看不见。
     // 上键历史是按会话存的，开新会话后得从被换掉的那条接着来（远端那条路由
     // daemon 用 `previous_repl_session` 带回，这里自己读指针）。
     let previous_repl_session = state

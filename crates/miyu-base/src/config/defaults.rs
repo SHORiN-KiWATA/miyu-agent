@@ -492,6 +492,11 @@ pub(crate) fn default_terminal_session_mode() -> String {
     "normal".to_string()
 }
 
+/// 打开终端界面默认开新会话（用户 09-20 定的，09-26 起可改成接着上次那条）。
+pub(crate) fn default_tui_start_session() -> String {
+    "new".to_string()
+}
+
 pub(crate) fn bool_is_true(value: &bool) -> bool {
     *value
 }

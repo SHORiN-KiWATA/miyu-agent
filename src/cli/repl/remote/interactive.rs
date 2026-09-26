@@ -21,14 +21,15 @@ pub(in crate::cli) async fn run_remote_repl(paths: &MiyuPaths, mode: PersonaLane
     let paths = &refreshed;
     initialize_models_cache(paths);
     let config = AppConfig::load_or_default(paths)?;
-    // REPL 走的是自己的车道(不是 shellhook 那条终端会话),而**启动**一律
-    // 开新会话:用户 09-20 拍板,敲 `miyu` 要的是一张白纸,接着上次聊是
-    // `/session` 的事。指针那条本来就空就原地复用(见 `fresh_repl_session`)。
+    // REPL 走的是自己的车道(不是 shellhook 那条终端会话)。**启动**默认开新会话:
+    // 用户 09-20 拍板,敲 `miyu` 要的是一张白纸,指针那条本来就空就原地复用(见
+    // `fresh_repl_session`);09-26 起可在设置里改成接着这条车道上次那条
+    // (`tui_start_session = "last"`)。
     let (daemon_state, repl_session_data) = send_ipc_admin(
         paths,
         IpcCommand::GetReplSession {
             mode: mode.is_dev().then(|| "dev".to_string()),
-            fresh: true,
+            fresh: !config.tui_resumes_last_session(),
         },
     )
     .await?;

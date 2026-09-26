@@ -185,6 +185,10 @@ pub(in crate::config_tui) fn localized_choice_label(value: &str, zh: bool) -> Op
         ("pdf", true) => Some("PDF"),
         ("自动", false) => Some("Auto"),
         ("自动", true) => Some("自动"),
+        ("new", false) => Some("New session"),
+        ("new", true) => Some("新会话"),
+        ("last", false) => Some("Last session"),
+        ("last", true) => Some("最近会话"),
         _ => None,
     }
 }

@@ -17,6 +17,11 @@ impl AppConfig {
             .eq_ignore_ascii_case("dev")
     }
 
+    /// 打开终端界面时接着这条车道上次那条会话吗（`tui_start_session == "last"`）。
+    pub fn tui_resumes_last_session(&self) -> bool {
+        self.tui_start_session.trim().eq_ignore_ascii_case("last")
+    }
+
     pub fn display_language_hint(paths: &MiyuPaths) -> Option<String> {
         let raw = std::fs::read_to_string(&paths.config_file).ok()?;
         let stripped = json_comments::StripComments::new(raw.as_bytes());
@@ -297,6 +302,12 @@ impl AppConfig {
             "normal" | "dev"
         ) {
             bail!("terminal_session_mode must be 'normal' or 'dev'");
+        }
+        if !matches!(
+            self.tui_start_session.trim().to_ascii_lowercase().as_str(),
+            "new" | "last"
+        ) {
+            bail!("tui_start_session must be 'new' or 'last'");
         }
         if crate::i18n::UiLanguage::parse(&self.display.language).is_none() {
             bail!(

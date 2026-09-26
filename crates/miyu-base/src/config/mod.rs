@@ -135,6 +135,12 @@ pub struct AppConfig {
     /// （`web::sessions::apply_terminal_session_mode`），启动和重载配置时各对一次。
     #[serde(default = "default_terminal_session_mode")]
     pub terminal_session_mode: String,
+    /// 敲 `miyu` 打开终端界面时进哪条会话（用户 09-26 加的开关）：`"new"`（默认，09-20 定的
+    /// 「一张白纸」，这条车道上的会话本来就空则原地复用）| `"last"`（这条车道上次用的那条）。
+    /// 大厅里按 Tab 换模式后发第一句不跟它：那是在白纸上起新话头；直连模式（调试用）也不跟：
+    /// 它启动时不回放历史。
+    #[serde(default = "default_tui_start_session")]
+    pub tui_start_session: String,
     /// Tiered model pools. The pre-09-05 key `subagent_tiers` stays readable.
     #[serde(
         default,
@@ -498,6 +504,7 @@ impl Default for AppConfig {
             system_prompt: None,
             oobe_done: false,
             terminal_session_mode: default_terminal_session_mode(),
+            tui_start_session: default_tui_start_session(),
             model_tiers: ModelTiersConfig::default(),
             platforms: PlatformsConfig::default(),
             voice: VoiceConfig::default(),

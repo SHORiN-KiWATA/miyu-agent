@@ -266,6 +266,17 @@
           ],
           default: "normal",
         },
+        {
+          path: "tui_start_session",
+          label: t("打开终端界面时进入"),
+          hint: t("敲 miyu 打开终端界面时，开一条新会话，还是接着这种模式上次用的那条会话"),
+          kind: "select",
+          choices: [
+            { value: "new", label: t("新会话") },
+            { value: "last", label: t("最近会话") },
+          ],
+          default: "new",
+        },
       ],
     },
     {

@@ -1990,6 +1990,8 @@ window.MIYU_I18N_EN = Object.freeze({
   "终端 chafa 预览": "Terminal chafa preview",
   "终端/WebUI 会话": "Terminal / WebUI sessions",
   "终端集成会话默认模式": "Terminal session default mode",
+  "打开终端界面时进入": "TUI startup session",
+  "敲 miyu 打开终端界面时，开一条新会话，还是接着这种模式上次用的那条会话": "When miyu opens the terminal UI, start a new session or continue the last session of that mode",
   "经 MCP 桥挂载;与原生重复的剔除": "Mounted through the MCP bridge; duplicates of native tools are dropped.",
   "经历": "Episodes",
   "结果": "Result",
