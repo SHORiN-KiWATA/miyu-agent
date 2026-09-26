@@ -111,12 +111,35 @@ pub fn patch_envelope_lines_from_args(
     patch_envelope_lines(patch, width)
 }
 
+/// 调用参数里补丁信封的加减行数（`+3 -1` 那个量），和真 diff 同一个数法。
+pub(crate) fn patch_envelope_stat_from_args(tool: &str, arguments: &str) -> Option<(usize, usize)> {
+    if !matches!(
+        crate::render::tool_event_base_name(tool),
+        "edit" | "kb" | "artifact" | "apply_patch" | "apply_artifact_patch"
+    ) {
+        return None;
+    }
+    let args = serde_json::from_str::<Value>(arguments.trim()).ok()?;
+    let patch = args
+        .get("patchText")
+        .or_else(|| args.get("patch_text"))
+        .and_then(Value::as_str)?;
+    diff_stat(patch)
+}
+
+/// 新建文件那一段补的 hunk 头：只为让行号从 1 起，渲染时本身不出字。
+const NEW_FILE_HUNK: &str = "@@ -0,0 +1 @@";
+
 pub(crate) fn patch_envelope_lines(patch: &str, width: usize) -> Option<Vec<String>> {
     let mut sections: Vec<(String, Vec<String>)> = Vec::new();
     for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            // 新建的文件从第 1 行起：补一个 hunk 头，行号才对得上（信封里没有行号）。
+            sections.push((path.trim().to_string(), vec![NEW_FILE_HUNK.to_string()]));
+            continue;
+        }
         if let Some(path) = line
-            .strip_prefix("*** Add File: ")
-            .or_else(|| line.strip_prefix("*** Update File: "))
+            .strip_prefix("*** Update File: ")
             .or_else(|| line.strip_prefix("*** Delete File: "))
         {
             sections.push((path.trim().to_string(), Vec::new()));
@@ -130,10 +153,16 @@ pub(crate) fn patch_envelope_lines(patch: &str, width: usize) -> Option<Vec<Stri
             body.push(line.to_string());
         }
     }
+    // 只改一个文件时不带文件头：时间线那一行已经写过路径了（和 `patch_preview_lines` 一个口径）。
+    // 改好几个文件时逐个带上，不然分不清哪段是哪个。
+    let heading = sections.len() > 1;
     let mut out: Vec<String> = Vec::new();
     for (path, body) in sections {
         // 「删除文件」那种信封里一行内容都没有——那也是一条信息，得说出来。
-        let diff = if body.iter().all(|line| line.trim().is_empty()) {
+        let diff = if body
+            .iter()
+            .all(|line| line.trim().is_empty() || line == NEW_FILE_HUNK)
+        {
             String::new()
         } else {
             body.join("\n")
@@ -149,7 +178,7 @@ pub(crate) fn patch_envelope_lines(patch: &str, width: usize) -> Option<Vec<Stri
             continue;
         }
         out.extend(trim_blank_edges(render_patch_diff_at(
-            &path, &diff, width, true,
+            &path, &diff, width, heading,
         )));
     }
     (!out.is_empty()).then_some(out)

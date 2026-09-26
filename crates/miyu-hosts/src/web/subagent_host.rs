@@ -70,6 +70,25 @@ impl SubagentHostPort for SubagentHost {
         create_child_session(&self.state, &request, true).map(|created| created.child)
     }
 
+    fn queue_followup(
+        &self,
+        parent_session: &str,
+        child_session: &str,
+        message: &str,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<String>>> {
+        let state = self.state.clone();
+        let (parent, child, message) = (
+            parent_session.to_string(),
+            child_session.to_string(),
+            message.to_string(),
+        );
+        Box::pin(async move {
+            let store = state.stores.for_session(&child);
+            let child = own_child(&store, &parent, &child)?.session_id;
+            queue_followup_into_child(&state, &child, &message).await
+        })
+    }
+
     fn continue_child(
         &self,
         request: ContinueChildRequest,

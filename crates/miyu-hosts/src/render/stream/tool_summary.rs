@@ -8,6 +8,75 @@ use super::timeline::{command_peek, tool_output_lines};
 use crate::render::*;
 
 impl StreamRenderer {
+    /// 编辑那一步的详情是 diff，抬头补上 `+3 -1`。实时那一轮走 `__patch_preview__` 侧信道（真 diff），
+    /// 回放走 [`Self::replay_patch_detail`]（调用参数里的补丁信封）。
+    fn set_patch_detail(
+        &mut self,
+        name: &str,
+        stat: Option<(usize, usize)>,
+        lines: Option<Vec<String>>,
+    ) {
+        if let Some((added, removed)) = stat {
+            let subject = self.tool_stats_entry(name).subject.clone();
+            let stat = diff_stat_label(added, removed);
+            self.tool_stats_entry(name).peek = Some(match subject {
+                Some(subject) => format!("{subject}{}{stat}", super::timeline::PEEK_SEP),
+                None => stat,
+            });
+        }
+        if let Some(lines) = lines {
+            self.tool_stats_entry(name).detail = lines;
+        }
+    }
+
+    /// 回放库里的轮（09-26）：编辑那一步点开也是 diff。实时那一轮的 diff 走 `__patch_preview__` 侧信道，
+    /// 库里的流水没有它，只剩调用参数里的补丁信封——按信封画。放在调用之后、结果之前，和实时同一个
+    /// 先后。
+    pub fn replay_patch_detail(&mut self, name: &str, arguments: &str) {
+        if !self.timeline_enabled() {
+            return;
+        }
+        let lines =
+            patch_envelope_lines_from_args(name, arguments, super::timeline::detail_width());
+        if lines.is_none() {
+            return;
+        }
+        self.set_patch_detail(name, patch_envelope_stat_from_args(name, arguments), lines);
+    }
+
+    /// 回放库里的轮（09-26）：命令那一步点开也看得到输出。实时那一轮的输出一段段流进命令块，库里的
+    /// 流水只有最后的结果文本——拆回 stdout / stderr 喂进去，放在结果之前，和实时同一个先后。后台命令
+    /// 的回执、报错的 JSON 不是命令输出，不喂。
+    pub fn replay_command_output(&mut self, name: &str, output: &str) -> Result<()> {
+        if !is_command_tool(name) {
+            return Ok(());
+        }
+        let not_output = serde_json::from_str::<Value>(output.trim())
+            .ok()
+            .is_some_and(|value| {
+                value.get("job_id").is_some() || value.get("ok") == Some(&Value::Bool(false))
+            });
+        if not_output {
+            return Ok(());
+        }
+        let (stdout, stderr) = miyu_engine::tools::split_command_text(output);
+        if !stdout.is_empty() {
+            self.write_command_output(
+                name,
+                CommandOutputStream::Stdout,
+                format!("{stdout}\n").as_bytes(),
+            )?;
+        }
+        if !stderr.is_empty() {
+            self.write_command_output(
+                name,
+                CommandOutputStream::Stderr,
+                format!("{stderr}\n").as_bytes(),
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn write_tool_call(&mut self, name: &str, arguments: &str) -> Result<()> {
         // The arguments finished arriving, so the "still receiving" hint has
         // done its job and hands the spinner back to the tool summary.
@@ -338,19 +407,11 @@ impl StreamRenderer {
             if self.timeline_enabled() {
                 // 抬头那一行补上 `+3 -1`:光有路径看不出这次编辑是顺手一改还是
                 // 大手术。真 diff 只有这条侧信道有,所以在这儿补(用户 09-17)。
-                if let Some((added, removed)) = preview_diff_stat(json) {
-                    let subject = self.tool_stats_entry(name).subject.clone();
-                    let stat = diff_stat_label(added, removed);
-                    self.tool_stats_entry(name).peek = Some(match subject {
-                        Some(subject) => {
-                            format!("{subject}{}{stat}", super::timeline::PEEK_SEP)
-                        }
-                        None => stat,
-                    });
-                }
-                if let Some(diff) = patch_preview_lines(json, super::timeline::detail_width()) {
-                    self.tool_stats_entry(name).detail = diff;
-                }
+                self.set_patch_detail(
+                    name,
+                    preview_diff_stat(json),
+                    patch_preview_lines(json, super::timeline::detail_width()),
+                );
                 return Ok(());
             }
             self.release_transient_output()?;

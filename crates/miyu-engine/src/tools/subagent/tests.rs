@@ -537,3 +537,85 @@ async fn subagent_slots_are_counted_per_parent_session() {
     .await;
     assert!(after.is_ok(), "放掉一个就轮到排着的");
 }
+
+/// 追已有子代理的话：排不进去（它闲着，或者恰好在「跑着吗」问完之后收了尾）就另起后台那一轮，
+/// 绝不在父回合这一步里把整轮跑完（09-26 审查：原来先问 `is_running` 再 `continue_child`，两步之间
+/// 子会话收尾的话，`continue_child` 就在工具调用里起新一轮、等到终态）。
+///
+/// 假宿主说「跑着」，排队时却已经闲了；它的 `continue_child` 永远不返回——工具调用里要是直接等它，
+/// 这条就卡到超时。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_followup_that_cannot_be_queued_runs_in_the_background() {
+    use futures_util::future::BoxFuture;
+    use miyu_base::host_ports::{
+        ChildOutcome, ContinueChildRequest, CreateChildRequest, SpawnChildRequest,
+        SubagentHostPort, WatchChildRequest,
+    };
+
+    struct IdleByNow;
+    impl SubagentHostPort for IdleByNow {
+        fn is_running(&self, _child_session: &str) -> bool {
+            true
+        }
+        fn spawn(&self, _request: SpawnChildRequest) -> BoxFuture<'static, Result<ChildOutcome>> {
+            unreachable!("the daemon path never spawns in the foreground")
+        }
+        fn create_child(&self, _request: CreateChildRequest) -> Result<String> {
+            unreachable!("a follow-up reuses its child session")
+        }
+        fn queue_followup(
+            &self,
+            _parent_session: &str,
+            _child_session: &str,
+            _message: &str,
+        ) -> BoxFuture<'static, Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn continue_child(
+            &self,
+            _request: ContinueChildRequest,
+        ) -> BoxFuture<'static, Result<ChildOutcome>> {
+            Box::pin(std::future::pending())
+        }
+        fn watch_child(
+            &self,
+            _request: WatchChildRequest,
+        ) -> BoxFuture<'static, Result<ChildOutcome>> {
+            unreachable!()
+        }
+    }
+
+    static JOBS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    JOBS.get_or_init(|| {
+        let temp = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        crate::tools::jobs::init(&test_paths(temp.path()));
+    });
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let params = SubagentParams {
+        description: "追话".to_string(),
+        prompt: "再查一样".to_string(),
+        session_id: Some("sess_idle_child".to_string()),
+        resume_id: None,
+        max_steps: 0,
+        tier: ModelTier::Standard,
+        dev: false,
+    };
+    let reply = tokio::time::timeout(
+        Duration::from_secs(5),
+        miyu_base::workspace::with_session(
+            "sess_followup_parent".into(),
+            run_via_host(
+                Arc::new(IdleByNow),
+                params,
+                4,
+                crate::tools::ToolProgress::new(sender),
+            ),
+        ),
+    )
+    .await
+    .expect("the follow-up must not wait for a child turn inside the tool call")
+    .unwrap();
+    let receipt: Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(receipt["kind"], "background_subagent", "{reply}");
+    assert_eq!(receipt["session_id"], "sess_idle_child", "{reply}");
+}

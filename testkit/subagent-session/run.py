@@ -4,7 +4,8 @@
 子代理不再是工具层的小循环,而是挂在父会话下的真会话;孙代理再挂一层;「任务完成」=
 子会话没有活动回合且名下没有未完成的后台任务。判据:
 
-    fg_plain_returns_child_result          前台子代理的结论回到父回合
+    child_result_reaches_parent            子代理(09-26 起只在后台跑)的结论经汇报叫醒回到父会话;一次性 JSON
+                                           输出等整棵子树跑完,终态就是那一轮
     child_session_rows                     子会话 kind=subagent、depth=1、parent=主会话、done
     parent_turn_links_child_session        父回合 tool_flow 里落了 child_session_id
     grandchild_rows                        孙代理 depth=2、挂在子代理下、done
@@ -13,7 +14,7 @@
                                            唤醒子代理 → done → 父才拿到最终结论
     grandchild_background_wakes_child_not_parent  后台孙代理完成唤醒的是子代理,不是主会话
     background_child_wakes_parent_with_report     后台子代理完成 → 主会话被合成轮唤醒,报告带结论
-    cancel_parent_cascades_to_child        父回合被停(一次性客户端断线)→ 子会话回合跟着取消、标中断
+    ctrl_c_while_waiting_stops_the_subtree 一次性命令等子代理时按 Ctrl+C → 子会话那一轮取消、标中断,命令按取消退出
     restart_marks_interrupted_and_reply_resumes   daemon 重启把 waiting 的子代理标 interrupted;
                                            回复它就接着跑并进 done
     tokens_rollup_recursive                主会话累计 = 三层 turns 之和
@@ -67,11 +68,15 @@ def check(name, ok, detail=""):
 
 
 def build_home():
-    for path in (OUT, RUN):
+    # 只清自己的家目录、运行目录和桩日志：`OUT` 在走查账里是各项共用的产物目录，整个删掉会把
+    # 排在前面那些走查的截屏一起抹了（09-26）。
+    for path in (HOME, RUN):
         if path.exists():
             shutil.rmtree(path)
+    STUB_LOG.unlink(missing_ok=True)
     (HOME / "config").mkdir(parents=True)
     RUN.mkdir(parents=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     cfg = persona_ab.load_real_config()
     for key in ("platforms", "web", "voice", "alarm", "terminal_session_mode"):
         cfg.pop(key, None)
@@ -137,6 +142,27 @@ def ask(session, text, create=False, timeout=180, mode=None):
         if line.startswith("{"):
             done = json.loads(line)
     return done or {}
+
+
+def spawn_ask(session, text, create=False, mode=None):
+    """在后台起一条一次性命令(它会等整棵子树跑完才退出)。"""
+    args = ["ask", "--output-format", "json", "--session", session]
+    if create:
+        args.append("--create")
+    if mode:
+        args += ["--mode", mode]
+    return subprocess.Popen([str(BIN), *args, text], env=env(), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def interrupt(proc):
+    """等子代理的一次性命令按 Ctrl+C 收场:整棵子树跟着停。"""
+    proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def reply_text(done):
@@ -267,10 +293,11 @@ def main():
         time.sleep(0.5)
         daemon = start_daemon()
 
-        # 1. 前台子代理
+        # 1. 子代理(09-26 起只在后台跑):派完这一轮就收,结论由汇报叫醒的那一轮带回来;
+        #    一次性 JSON 输出等整棵子树跑完,终态就是那一轮的结论。
         done = ask("main", "TK fg-plain", create=True)
         text = reply_text(done)
-        check("fg_plain_returns_child_result", "PARENT_DONE" in text and "CHILD_RESULT ok" in text, text[:160])
+        check("child_result_reaches_parent", "WOKEN" in text and "CHILD_RESULT ok" in text, text[:160])
         main_row = session_by_name("main")
         assert main_row, "main session missing"
         main_id = main_row["session_id"]
@@ -278,12 +305,11 @@ def main():
         child_turns = turns_of(child["session_id"]) if child else []
         check("child_session_rows",
               child and child["kind"] == "subagent" and child["depth"] == 1 and child["task_state"] == "done"
-              and child["background"] == 0 and len(child_turns) == 1 and child_turns[0]["status"] == "completed",
+              and child["background"] == 1 and len(child_turns) == 1 and child_turns[0]["status"] == "completed",
               {k: child.get(k) for k in ("kind", "depth", "task_state", "background")} if child else None)
-        main_turns = turns_of(main_id)
-        flow = main_turns[-1]["tool_flow"] if main_turns else ""
-        check("parent_turn_links_child_session", child and child["session_id"] in (flow or ""),
-              (flow or "")[:200])
+        # 派它的那一轮(不一定是最后一轮:后面还有汇报叫醒的那一轮)的 tool_flow 里落了子会话 id。
+        flow = " ".join(turn["tool_flow"] or "" for turn in turns_of(main_id))
+        check("parent_turn_links_child_session", child and child["session_id"] in flow, flow[:200])
 
         # 2. 孙代理(前台)
         done = ask("main", "TK fg-gc")
@@ -317,21 +343,24 @@ def main():
               and bg_child and bg_child["task_state"] == "done" and len(bg_turns) == 2 and elapsed >= 3,
               {"reply": text[:80], "turns": len(bg_turns), "elapsed": round(elapsed, 1)})
 
-        # 5. 后台孙代理唤醒子代理而不是主会话
-        synthetic_before = len([t for t in turns_of(main_id) if t["user_content"].startswith("<background-job-report>")])
+        # 5. 后台孙代理唤醒的是子代理:主会话只收到子代理那一份汇报,孙代理的汇报不直达主会话
+        def parent_reports():
+            return [t["user_content"] for t in turns_of(main_id) if t["user_content"].startswith("<background-job-report>")]
+        reports_before = len(parent_reports())
         done = ask("main", "TK fg-gc-bg")
         text = reply_text(done)
         gcbg_child = child_by_directive(main_id, "CHILD spawn-gc-bg")
         gcbg = child_by_directive(gcbg_child["session_id"], "GRANDCHILD plain") if gcbg_child else None
-        synthetic_after = len([t for t in turns_of(main_id) if t["user_content"].startswith("<background-job-report>")])
+        new_reports = parent_reports()[reports_before:]
         # 孙代理跑得快时唤醒直接排进子代理还在跑的那一轮(1 轮);慢则另起一轮(2 轮)。
         child_turn_count = len(turns_of(gcbg_child["session_id"])) if gcbg_child else 0
         check("grandchild_background_wakes_child_not_parent",
               "CHILD_AFTER_GC done" in text and gcbg and gcbg["background"] == 1 and gcbg["task_state"] == "done"
               and gcbg_child["task_state"] == "done" and child_turn_count in (1, 2)
-              and synthetic_after == synthetic_before,
+              and len(new_reports) <= 1 and not any("bg grandchild" in report for report in new_reports),
               {"after_gc": "CHILD_AFTER_GC done" in text, "child_turns": child_turn_count,
-               "gc_bg": gcbg and (gcbg["background"], gcbg["task_state"]), "parent_synthetic": (synthetic_before, synthetic_after)})
+               "gc_bg": gcbg and (gcbg["background"], gcbg["task_state"]),
+               "parent_reports": [report[:60] for report in new_reports]})
 
         # 6. 后台子代理唤醒主会话
         done = ask("main", "TK bg-plain")
@@ -346,43 +375,45 @@ def main():
               inline or (woke and "CHILD_RESULT ok" in woke["assistant_content"]),
               {"inline": inline, "reply": text[:60], "woken": (woke or {}).get("assistant_content", "")[:120]})
 
-        # 7. 父被停 → 子级联
-        # 常驻客户端断线不取消回合(回合归 daemon);取消要显式发 IPC Cancel。
-        # run_id 从 stream-json 的第一条 started 事件里拿。
+        # 7. 一次性命令等子代理时按 Ctrl+C:整棵子树停下,子会话那一轮标中断,命令按取消退出(130)。
+        # (主回合还在跑时停它、连它这一轮派出去的子代理一起停,Rust 那边有单测。)
         proc = subprocess.Popen([str(BIN), "ask", "--output-format", "stream-json", "--session", "main", "TK fg-slow"],
                                 env=env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        started = json.loads(proc.stdout.readline() or "{}")
-        parent_run = started.get("run_id")
         slow_child = wait_for(lambda: child_by_directive(main_id, "CHILD slow"), 30)
         running = wait_for(lambda: any(t["status"] == "running" for t in turns_of(slow_child["session_id"])), 20) if slow_child else None
         sleeping = wait_for(lambda: leftovers("sleep 40.5"), 10)
-        cancel_reply = ipc_cancel(parent_run) if parent_run else ""
+        proc.send_signal(signal.SIGINT)
         try:
-            proc.wait(timeout=20)
+            code = proc.wait(timeout=20)
         except subprocess.TimeoutExpired:
             proc.kill()
+            code = None
         interrupted = wait_for(lambda: (lambda row: row and row["task_state"] == "interrupted")(child_by_directive(main_id, "CHILD slow")), 20)
         slow_turns = turns_of(slow_child["session_id"]) if slow_child else []
         gone = wait_for(lambda: not leftovers("sleep 40.5"), 15)
-        check("cancel_parent_cascades_to_child",
-              slow_child and running and sleeping and interrupted and slow_turns and slow_turns[-1]["status"] == "interrupted" and gone,
-              {"run": parent_run, "cancel": cancel_reply[:60], "running_seen": bool(running), "sleep_seen": bool(sleeping),
+        check("ctrl_c_while_waiting_stops_the_subtree",
+              slow_child and running and sleeping and code == 130 and interrupted
+              and slow_turns and slow_turns[-1]["status"] == "interrupted" and gone,
+              {"exit": code, "running_seen": bool(running), "sleep_seen": bool(sleeping),
                "task_state": (child_by_directive(main_id, "CHILD slow") or {}).get("task_state"),
                "turn_status": slow_turns[-1]["status"] if slow_turns else None, "leftover_gone": bool(gone)})
 
         # 7b. 开发模式会话开的后台子代理(没传 dev)也是开发模式:镜像任务的标签按实际来,
         #     子会话人格是 dev(用户 09-18:任务条上孙代理写成「子代理」)。
-        ask("devmain", "TK bg-wait", create=True, mode="dev")
-        dev_row = session_by_name("devmain")
+        # 一次性命令会一直等到子树跑完(子代理那条后台命令要睡 60 秒):放在后台跑,看完就 Ctrl+C。
+        dev_proc = spawn_ask("devmain", "TK bg-wait", create=True, mode="dev")
+        dev_row = wait_for(lambda: session_by_name("devmain"), 30)
         dev_waiting = wait_for(lambda: (lambda row: row and row["task_state"] == "waiting")(child_by_directive(dev_row["session_id"], "CHILD run-bg-cmd-long")), 40) if dev_row else None
         dev_child = child_by_directive(dev_row["session_id"], "CHILD run-bg-cmd-long") if dev_row and dev_waiting else None
         dev_jobs = [j for j in jobs_overview() if dev_row and j.get("session_id") == dev_row["session_id"]]
         check("dev_parent_child_labelled_dev",
               dev_child and dev_child["persona"] == "dev" and dev_jobs and all(j.get("kind") == "dev" for j in dev_jobs),
               {"persona": dev_child and dev_child["persona"], "kinds": [j.get("kind") for j in dev_jobs]})
+        interrupt(dev_proc)
 
-        # 8. 重启把 waiting 标 interrupted,回复即续
-        done = ask("main", "TK bg-wait")
+        # 8. 重启把 waiting 标 interrupted,回复即续。一次性命令等着子树:它挂着的时候终端被关掉
+        #    (SIGKILL,来不及停子代理),子代理照旧在 daemon 里等它的后台命令。
+        wait_proc = spawn_ask("main", "TK bg-wait")
         waiting = wait_for(lambda: (lambda row: row and row["task_state"] == "waiting")(child_by_directive(main_id, "CHILD run-bg-cmd-long")), 40)
         # 后代的后台任务带树根:子代理开的那条 sleep 60 归子会话,root 是主会话,主会话的
         # 任务条据此把它列出来(用户 09-18:主会话里看不见孙代理)。
@@ -393,6 +424,8 @@ def main():
               nested and all(j.get("root_session_id") == main_id for j in nested)
               and all(j.get("root_session_id") == main_id for j in jobs if j.get("session_id") == main_id),
               {"jobs": [(j.get("kind"), j.get("session_id", "")[:20], j.get("root_session_id", "")[:20]) for j in jobs]})
+        wait_proc.kill()
+        wait_proc.wait()
         stop_daemon(daemon)
         daemon = start_daemon()
         wait_child = child_by_directive(main_id, "CHILD run-bg-cmd-long")

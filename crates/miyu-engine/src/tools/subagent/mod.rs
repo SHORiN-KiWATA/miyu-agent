@@ -431,10 +431,6 @@ async fn run_subagent(
         .output)
 }
 
-fn progress_sink(progress: crate::tools::ToolProgress) -> SubagentProgressSink {
-    Arc::new(move |message| progress.report(message))
-}
-
 /// 会话化路径(09-18),09-26 起只在后台跑(用户拍板):新开的先把子会话建好——回执带着它的
 /// id,父回合那一步当场链得到子会话——再把它这一轮包进后台任务注册表的镜像任务里等。任务条、
 /// `job(action=stop)`、完成唤醒全走后台命令那一套,唤醒报告里带的是子会话最后一轮的正文。
@@ -460,18 +456,16 @@ async fn run_via_host(
     let dev =
         params.dev || miyu_base::workspace::current_turn_lane().is_some_and(|lane| lane.is_dev());
     let child = params.session_id.as_deref().map(resolve_child_session);
-    // 跑着的子会话:话排进它当前那一轮,立刻返回。
-    if let Some(child) = child.as_deref().filter(|child| port.is_running(child)) {
-        let outcome = port
-            .continue_child(ContinueChildRequest {
-                parent_session: parent,
-                child_session: child.to_string(),
-                message: params.prompt,
-                workdir,
-                progress: progress_sink(progress),
-            })
-            .await?;
-        return format_child_outcome(&params.description, params.tier, outcome);
+    // 跑着的子会话:话排进它当前那一轮,立刻返回;排不进去(闲着、刚收尾)再起后台那一轮。
+    if let Some(child) = child.as_deref() {
+        if let Some(session_id) = port.queue_followup(&parent, child, &params.prompt).await? {
+            progress.report(format!("{SUBAGENT_SESSION_MARKER}{session_id}"));
+            return format_child_outcome(
+                &params.description,
+                params.tier,
+                ChildOutcome::Queued { session_id },
+            );
+        }
     }
     let child = match child {
         Some(child) => child,

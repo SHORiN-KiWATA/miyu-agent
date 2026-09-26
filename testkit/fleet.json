@@ -1030,6 +1030,14 @@
       "lane": "daemon"
     },
     {
+      "name": "oneshot_wait",
+      "argv": [
+        "python3",
+        "testkit/subagent-session/oneshot_wait.py"
+      ],
+      "lane": "daemon"
+    },
+    {
       "name": "subagent_dev",
       "argv": [
         "python3",
@@ -1223,6 +1231,14 @@
       "argv": [
         "python3",
         "testkit/qq-reset-recall/run.py"
+      ],
+      "lane": "qq-relay"
+    },
+    {
+      "name": "qq_subagent_reports",
+      "argv": [
+        "python3",
+        "testkit/qq-subagent-reports/run.py"
       ],
       "lane": "qq-relay"
     },

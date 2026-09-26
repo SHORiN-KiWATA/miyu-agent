@@ -373,8 +373,8 @@ async fn reply(
     Ok(())
 }
 
-/// 把一问一答记进这一步，全屏下再写进正文。
-fn record_exchange(
+/// 把一问一答记进这一步，全屏下再写进正文。回放库里的轮也走这里（`history_replay`，09-26）。
+pub(in crate::cli) fn record_exchange(
     renderer: &mut render::StreamRenderer,
     request: &QuestionRequest,
     response: &QuestionResponse,

@@ -89,6 +89,15 @@ pub trait SubagentHostPort: Send + Sync {
     fn spawn(&self, request: SpawnChildRequest) -> BoxFuture<'static, Result<ChildOutcome>>;
     /// 只建子会话(挂在父会话下、归属与沙盒跟父、档位落成会话级模型池),交回它的 id。
     fn create_child(&self, request: CreateChildRequest) -> Result<String>;
+    /// 给已有子会话追话,只排不跑:它跑着就把话排进它当前那一轮、交回子会话 id,闲着就 `None`
+    /// (调用方另起后台那一轮)。先问 [`Self::is_running`] 再 [`Self::continue_child`] 的话,子会话恰好
+    /// 在两步之间收尾,`continue_child` 就会在父回合的这一步里把整轮跑完(09-26 审查)。
+    fn queue_followup(
+        &self,
+        parent_session: &str,
+        child_session: &str,
+        message: &str,
+    ) -> BoxFuture<'static, Result<Option<String>>>;
     /// 给已有子会话追话:跑着就排 follow-up 立刻返回;闲着/中断了就起新一轮并等终态。
     fn continue_child(
         &self,

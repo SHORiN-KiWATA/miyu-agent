@@ -370,6 +370,34 @@ pub(in crate::tools) fn command_text(
     body
 }
 
+/// [`command_text`] 反过来：结果文本拆回 stdout 与 stderr（回放用，09-26：库里的流水只有这段文本，
+/// 实时那一轮的输出是一段段流进来的）。状态标记（退出码、被信号杀掉）和「没有输出」那句不算输出。
+pub fn split_command_text(text: &str) -> (String, String) {
+    let mut body = text;
+    for marker in ["\n[killed by signal]", "[killed by signal]"] {
+        if let Some(rest) = body.strip_suffix(marker) {
+            body = rest;
+            break;
+        }
+    }
+    if let Some(at) = body.rfind("[exit code: ") {
+        let tail = &body[at..];
+        if tail.ends_with(']') && tail[12..tail.len() - 1].parse::<i32>().is_ok() {
+            body = body[..at].strip_suffix('\n').unwrap_or(&body[..at]);
+        }
+    }
+    if body == "(no output)" {
+        return (String::new(), String::new());
+    }
+    match body.split_once("[stderr]\n") {
+        Some((stdout, stderr)) => (
+            stdout.strip_suffix('\n').unwrap_or(stdout).to_string(),
+            stderr.to_string(),
+        ),
+        None => (body.to_string(), String::new()),
+    }
+}
+
 /// 正文部分：stdout，有 stderr 才追加 `[stderr]` 段，各自截到末尾两万字。返回值第二项
 /// 表示有没有截掉东西。超时报错也用它，所以不带退出码。
 fn command_body(stdout: &[u8], stderr: &[u8]) -> (String, bool) {

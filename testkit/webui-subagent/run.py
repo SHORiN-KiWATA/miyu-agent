@@ -5,11 +5,13 @@
     BIN=target/debug/miyu python3 testkit/webui-subagent/run.py
     # 对照改前：BIN=~/.local/bin/miyu …
 
-沙箱 daemon + repl-smoke 的桩（主线派一个前台子代理，子代理跑一条 15 秒的命令）+ Playwright：
+沙箱 daemon + repl-smoke 的桩（主线派一个子代理，子代理跑一条 15 秒的命令；09-26 起子代理只在后台跑，
+主线派完这一轮就收）+ Playwright：
 - 接口：子会话的回合、上下文、待办都能取（改前 404），回合接口报它是子会话、父会话是谁；
   `/api/sessions/{id}/subagents` 列得出它；
-- 网页：子代理那张卡片认出子会话（实时那条标记），卡片上的词元小标有数，点抬头换到子会话，
-  输入框上方挂「↑ 主会话」，第一句画成「来自主会话的任务」；点「↑ 主会话」回来；
+- 网页：子代理那张卡片认出子会话（实时那条标记）；它在后台跑，在干什么、烧了多少露在任务条那一行上；
+  这一段收起来之后先点开，再点卡片抬头换到子会话，输入框上方挂「↑ 主会话」，第一句画成「来自主会话的
+  任务」；点「↑ 主会话」回来；
 - 这一轮跑完、刷新之后（卡片是回看画的）照样点得进去，看得到子代理的回复；
 - 老标记中继的标记（`__subagent_session__`、`__subagent_metric__` 等）一条都不漏到页面上。
 """
@@ -189,17 +191,8 @@ def main():
             except Exception:
                 linked = False
             check("实时那张子代理卡片认出了子会话", linked)
-            # daemon 发的词元标记（`__subagent_metric__`）网页原来不认：小标一直空着，标记本身
-            # 漏进窥视那一行。
-            token = page.locator(".tool-card.is-task .tool-task-token").first
-            try:
-                page.wait_for_function(
-                    "el => el && el.textContent.trim().length > 0", arg=token.element_handle(), timeout=15000
-                )
-                token_text = token.text_content().strip()
-            except Exception:
-                token_text = ""
-            check("实时卡片上有子代理的词元数", bool(token_text), token_text)
+            # 子代理在后台跑：它在干什么、烧了多少露在任务条那一行上（daemon 发的词元标记
+            # `__subagent_metric__` 网页原来不认，小标一直空着）。卡片上只说一句交到了后台。
             peek = page.locator(".tool-card.is-task .tool-peek").first
             try:
                 page.wait_for_function(
@@ -208,11 +201,30 @@ def main():
                 peek_text = peek.text_content().strip()
             except Exception:
                 peek_text = ""
-            check("实时卡片上露出子代理在干什么", bool(peek_text), peek_text[:40])
+            check("卡片上说交到了后台", "后台" in peek_text, peek_text[:40])
+            live_chip = page.locator(".job-chip").filter(has_text="走查子代理").first
+            try:
+                live_chip.wait_for(timeout=15000)
+                page.wait_for_function(
+                    """() => [...document.querySelectorAll('.job-chip')]
+                        .filter(el => el.textContent.includes('走查子代理'))
+                        .some(el => el.querySelector('.job-chip-peek')?.textContent.trim()
+                                 && el.querySelector('.job-chip-token')?.textContent.trim())""",
+                    timeout=15000,
+                )
+                chip_text = live_chip.text_content().strip()
+            except Exception:
+                chip_text = ""
+            check("任务条上那一行露出子代理在干什么、词元数有数", bool(chip_text), chip_text[:60])
             leaked = leaks(page)
             check("标记没漏到页面上", not leaked, ", ".join(leaked))
             page.screenshot(path=str(OUT / "01-parent-live.png"))
             if linked:
+                # 主线派完就收，这一段收成了一行：先点开那一行，再点卡片。
+                folded = page.locator(".proc-line:not(.is-open)").filter(has=card)
+                if folded.count():
+                    folded.first.locator(":scope > .proc-head .proc-summary").click()
+                    page.wait_for_timeout(600)
                 card.locator(":scope > .tool-head").click()
                 bar = page.locator("#subagentParentBar")
                 try:
@@ -233,13 +245,12 @@ def main():
                     back = bar.is_hidden() and "走查一句" in (page.text_content("#timeline") or "")
                     check("点「↑ 主会话」回来", back)
 
-            done = wait_until(
-                lambda: all(t.get("status") == "completed"
-                            for t in api("GET", f"/api/sessions/{parent_id}/turns").get("turns") or [{}])
-                and api("GET", f"/api/sessions/{parent_id}/turns").get("turns"),
-                90,
-            )
-            check("这一轮跑完了", bool(done))
+            # 主线派完就收：等子代理跑完、它的汇报叫醒主会话的那一轮也收尾（主会话两轮都完成）。
+            def settled():
+                turns = api("GET", f"/api/sessions/{parent_id}/turns").get("turns") or []
+                return len(turns) >= 2 and all(t.get("status") == "completed" for t in turns)
+            done = wait_until(settled, 90)
+            check("子代理跑完、汇报叫醒的那一轮也收尾了", bool(done))
             page.reload()
             page.wait_for_timeout(2500)
             saved = page.locator(".tool-card.is-task.has-child-session").first

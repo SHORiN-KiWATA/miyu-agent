@@ -192,7 +192,9 @@ class Handler(BaseHTTPRequestHandler):
             elif "spawn-gc-bg" in directive:
                 text_reply("CHILD_AFTER_GC done")
             else:
-                text_reply("CHILD_WOKEN " + last_text[:200])
+                # 孙代理的结论在汇报末尾那段：留尾巴，别截掉（09-26 起孙代理也只在后台跑）。
+                echoed = tail_text[-600:].replace("<background-job-report>", "[report]")
+                text_reply("CHILD_WOKEN " + echoed.replace("</background-job-report>", "[/report]"))
             return
 
         if last.get("role") != "user":
