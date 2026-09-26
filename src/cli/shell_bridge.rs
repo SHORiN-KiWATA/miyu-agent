@@ -195,7 +195,9 @@ pub(in crate::cli) async fn run_shell_intercept(
 
     let result = if pasted_images.is_empty() {
         // shell-hook keeps landing in the terminal session: that lane is the
-        // whole point of typing natural language at the prompt.
+        // whole point of typing natural language at the prompt. It hands the
+        // prompt back right away: subagent reports are written back there by
+        // the daemon when they arrive.
         run_chat_with_options(
             paths,
             clean_message,
@@ -204,6 +206,7 @@ pub(in crate::cli) async fn run_shell_intercept(
             PersonaLane::Active,
             TurnSession::Current,
             None,
+            AfterTurn::Exit,
         )
         .await
     } else {

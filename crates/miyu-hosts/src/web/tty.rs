@@ -83,6 +83,24 @@ pub(in crate::web) fn origin_shell_at_prompt(origin: &miyu_core::ipc::OriginTty)
     if stdin_target != origin.path {
         return false;
     }
+    in_terminal_foreground(pid)
+}
+
+/// 发起这一轮的一次性命令还在那个终端的前台吗——在的话后面的轮它自己在画（等子代理，
+/// 见 `OriginTty::follower_pid`）。进程没了、pid 被别的终端里的进程复用、被挂到后台都
+/// 算不在。它的 stdin 常是管道（`--stdin` 喂正文），和记指纹时一样按 stderr→stdout→stdin 认。
+pub(in crate::web) fn origin_follower_in_foreground(origin: &miyu_core::ipc::OriginTty) -> bool {
+    let Some(pid) = origin.follower_pid else {
+        return false;
+    };
+    let on_origin_tty = [2, 1, 0].into_iter().any(|fd| {
+        std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok_and(|target| target == origin.path)
+    });
+    on_origin_tty && in_terminal_foreground(pid)
+}
+
+/// 进程自己就是它那个终端的前台进程组。
+fn in_terminal_foreground(pid: u32) -> bool {
     let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };

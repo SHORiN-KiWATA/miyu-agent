@@ -97,6 +97,11 @@ mod tests {
 pub struct OriginTty {
     pub path: std::path::PathBuf,
     pub shell_pid: u32,
+    /// 发起这一轮的一次性命令跑完还留在前台，把子代理报告叫醒的那几轮一轮轮画出来
+    /// （09-26 子代理只在后台跑）。它还在前台的时候 daemon 不往这个终端回写、也不补
+    /// 桌面通知；退出之后照旧。shellhook 不等，不带。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follower_pid: Option<u32>,
 }
 
 tokio::task_local! {

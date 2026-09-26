@@ -8,6 +8,27 @@ use crate::cli::repl::tail::*;
 use crate::cli::repl::turn_end::{show_turn_end, turn_end_model};
 use crate::cli::*;
 
+/// 这一轮从哪儿来。
+pub(in crate::cli) enum RemoteTurnSource<'a> {
+    /// 发一条消息起一轮（这个会话正有一轮在跑，就排进那一轮）。
+    Start {
+        message: &'a str,
+        images: &'a [Option<miyu_base::clipboard::PastedImage>],
+        session_override: Option<String>,
+        overrides: Option<miyu_core::ipc::TurnOverrides>,
+        /// 跑完这一轮还留在前台，把子代理报告叫醒的那几轮接着画（一次性命令，09-26）。
+        /// 记进触发终端的指纹：这期间 daemon 不往这个终端回写。
+        stays_to_follow: bool,
+    },
+    /// 跟着一轮已经起了的：一次性命令等子代理时，报告叫醒的那一轮（09-26）。
+    Follow {
+        run_id: String,
+        session_id: String,
+        /// 从这个事件号之后补（这一轮已经跑完也补得全）；没有就从这一轮开头补。
+        after: Option<u64>,
+    },
+}
+
 /// 收口:这一轮不管怎么结束,footer 的声波都得熄。
 ///
 /// 各个出口里那几处 `stop_footer_spinner()` 不能删——它们要在 `handoff_raw!()`
@@ -15,9 +36,10 @@ use crate::cli::*;
 /// 帧通道断了、IPC 写失败、终端尺寸读不到,都会跳过所有收尾代码,最后一帧
 /// 波浪就冻在 footer 上(用户 09-21 报的是模型报错那条,机制是同一个)。
 /// 幂等:已经熄过的直接返回,不会重画,也不会在交接之后往屏幕上乱写。
+#[allow(clippy::too_many_arguments)]
 pub(in crate::cli) async fn try_run_remote_chat(
     paths: &MiyuPaths,
-    mut live: Option<&mut LiveReplTail>,
+    live: Option<&mut LiveReplTail>,
     message: &str,
     show_reasoning: Option<bool>,
     plain: bool,
@@ -27,17 +49,42 @@ pub(in crate::cli) async fn try_run_remote_chat(
     jobs_feed: Option<&JobsFeed>,
     overrides: Option<miyu_core::ipc::TurnOverrides>,
 ) -> Result<Option<RemoteTurnSummary>> {
-    let outcome = run_remote_chat_inner(
+    run_remote_turn(
         paths,
-        live.as_deref_mut(),
-        message,
+        live,
+        RemoteTurnSource::Start {
+            message,
+            images,
+            session_override,
+            overrides,
+            stays_to_follow: false,
+        },
         show_reasoning,
         plain,
         mode,
-        images,
-        session_override,
         jobs_feed,
-        overrides,
+    )
+    .await
+}
+
+/// 跑一轮（或跟一轮），画出来。`try_run_remote_chat` 是它「发消息起一轮」的那一面。
+pub(in crate::cli) async fn run_remote_turn(
+    paths: &MiyuPaths,
+    mut live: Option<&mut LiveReplTail>,
+    source: RemoteTurnSource<'_>,
+    show_reasoning: Option<bool>,
+    plain: bool,
+    mode: PersonaLane,
+    jobs_feed: Option<&JobsFeed>,
+) -> Result<Option<RemoteTurnSummary>> {
+    let outcome = run_remote_chat_inner(
+        paths,
+        live.as_deref_mut(),
+        source,
+        show_reasoning,
+        plain,
+        mode,
+        jobs_feed,
     )
     .await;
     if let Some(live) = live.as_deref_mut() {
@@ -46,18 +93,14 @@ pub(in crate::cli) async fn try_run_remote_chat(
     outcome
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_remote_chat_inner(
     paths: &MiyuPaths,
     mut live: Option<&mut LiveReplTail>,
-    message: &str,
+    source: RemoteTurnSource<'_>,
     show_reasoning: Option<bool>,
     plain: bool,
     mode: PersonaLane,
-    images: &[Option<miyu_base::clipboard::PastedImage>],
-    session_override: Option<String>,
     jobs_feed: Option<&JobsFeed>,
-    overrides: Option<miyu_core::ipc::TurnOverrides>,
 ) -> Result<Option<RemoteTurnSummary>> {
     let refreshed_paths = if direct_mode_requested() {
         None
@@ -79,17 +122,28 @@ async fn run_remote_chat_inner(
     // Turns run in parallel daemon-side: a running turn in this session does
     // not block a new one (the old multi-process placeholder semantics).
     let state_probe = StateStore::new(paths)?;
+    let pinned_session = match &source {
+        RemoteTurnSource::Start {
+            session_override, ..
+        } => session_override.clone(),
+        RemoteTurnSource::Follow { session_id, .. } => Some(session_id.clone()),
+    };
     // 这一轮跑在哪个会话上：流式渲染中途静默执行 `/goal` 需要它。
-    let turn_session_id = session_override
+    let turn_session_id = pinned_session
         .clone()
         .unwrap_or_else(|| state_probe.session_id().to_string());
-    let state_probe = session_override
+    let state_probe = pinned_session
         .as_deref()
         .map(|session_id| state_probe.pinned(session_id))
         .unwrap_or(state_probe);
-    ipc::send(
-        &mut stream,
-        &IpcRequest::new(IpcCommand::StartTurn {
+    let request = match source {
+        RemoteTurnSource::Start {
+            message,
+            images,
+            session_override,
+            overrides,
+            stays_to_follow,
+        } => IpcCommand::StartTurn {
             content: message.to_string(),
             mode: ipc_mode_name(mode).to_string(),
             images: ipc_images(images),
@@ -98,14 +152,19 @@ async fn run_remote_chat_inner(
             // REPL 常驻连接,后台任务有自己的 FollowWake 通道;只有阅后即焚的
             // 单次/shellhook 触发才需要记下终端供 daemon 回写。
             origin_tty: if live.is_none() {
-                detect_origin_tty()
+                detect_origin_tty(stays_to_follow)
             } else {
                 None
             },
             overrides,
-        }),
-    )
-    .await?;
+        },
+        RemoteTurnSource::Follow { run_id, after, .. } => IpcCommand::FollowRun {
+            run_id,
+            from_start: after.is_none(),
+            after,
+        },
+    };
+    ipc::send(&mut stream, &IpcRequest::new(request)).await?;
     // 收帧走带缓冲的读取器：提问面板开着时要靠它往前看一眼事件流（09-24，见
     // `question_flow`）。
     let mut frames = ipc::FrameReader::new(stream);
@@ -116,8 +175,16 @@ async fn run_remote_chat_inner(
     // daemon 把这条消息**排进了那一轮**而不是并行起一轮。接下来推的是那一轮的
     // 事件，照常渲染；人得知道自己是在排队，不然会以为消息发丢了。
     let mut queued_into_running = false;
+    // 跟着的那一轮在受理帧里就带着轮号；自己起的轮等 `turn.started`。
+    let mut turn_id: Option<String> = None;
     let run_id = match first {
-        IpcFrame::Accepted { run_id, .. } => run_id,
+        IpcFrame::Accepted {
+            run_id,
+            turn_id: accepted_turn,
+        } => {
+            turn_id = accepted_turn;
+            run_id
+        }
         IpcFrame::TurnUpdateAccepted { run_id, .. } => {
             queued_into_running = true;
             run_id
@@ -151,7 +218,6 @@ async fn run_remote_chat_inner(
         // 一次性 / shellhook：跑完进程就没了，收尾要把 pane 还回去。
         herdr::TurnGuard::begin_transient(&turn_session_id)
     };
-    let mut turn_id: Option<String> = None;
     // 最近一次请求是哪个模型答的：被打断的轮收尾那行 `✻` 写它（run.cancelled 里没有）。
     let mut round_model = String::new();
     let mut round_provider = String::new();
@@ -220,6 +286,8 @@ async fn run_remote_chat_inner(
     // 最后看到的事件号。回合中执行斜杠命令走「分离 → 执行 → 挂回来」，挂回来
     // 时从它之后接着看，已经看过的那半截不会再来一遍（09-20）。
     let mut last_event_id = 0u64;
+    // 这一轮收到的第一个事件号：一次性命令接着等子代理时，凭它认出「这一轮之后起的轮」（09-26）。
+    let mut first_event_id: Option<u64> = None;
     // 点了任务条上的会话行、或者时间线上子代理那一行（会话项目第 3 段）：这一轮留在
     // daemon 里接着跑，人切走——和 `/session` 面板挑了别的会话同一条路。鼠标事件在
     // 下面那一批里就抽干了，走不到按键那条路，两处都要看一眼。
@@ -646,6 +714,7 @@ async fn run_remote_chat_inner(
         };
         if let IpcFrame::Event { id, at_ms, .. } = &frame {
             last_event_id = *id;
+            first_event_id.get_or_insert(*id);
             // 事件时钟停在这个事件上，直到下一个事件（补发的一轮按事件自己的时刻掐表）。
             renderer.set_event_clock(crate::cli::repl::live_turn::event_instant(*at_ms));
         }
@@ -1307,6 +1376,10 @@ async fn run_remote_chat_inner(
         context_tokens,
         context_window,
         cumulative_tokens,
+        session_id: turn_session_id,
+        run_id,
+        turn_id,
+        first_event_id,
     }))
 }
 

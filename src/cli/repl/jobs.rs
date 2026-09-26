@@ -645,6 +645,9 @@ pub(in crate::cli) struct WakeRun {
     /// 挂上去时从这一轮开头补：跨会话消息起的轮，开头那条消息就是要看的内容
     /// （09-23）。后台任务汇报照旧只接实时，抬头由 `label` 画。
     pub(in crate::cli) from_start: bool,
+    /// 这一轮登记前的事件号（老 daemon 没有）。一次性命令等子代理时从它之后补整轮，
+    /// 挂上去之前就跑完了也补得全（09-26）。
+    pub(in crate::cli) first_event_id: Option<u64>,
 }
 
 /// 一条会话此刻的目标（`/goal`）。
@@ -726,59 +729,89 @@ pub(in crate::cli) fn goal_hint_from_admin_data(
 }
 
 pub(in crate::cli) async fn fetch_jobs_overview(paths: &MiyuPaths) -> Result<JobsOverviewSnapshot> {
+    let Some((state, data)) = jobs_overview_frame(paths).await? else {
+        return Ok((Vec::new(), None, Vec::new(), Vec::new()));
+    };
+    let peer_runs = data
+        .get("peer_runs")
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    Some((
+                        row.get("run_id")?.as_str()?.to_string(),
+                        row.get("session_id")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok((
+        overview_jobs(&data),
+        Some(state.session_id),
+        wake_rows(&data, "wake_runs"),
+        peer_runs,
+    ))
+}
+
+/// 一次性命令等子代理时看的那一份：任务，加上这会儿在跑的和刚跑完的唤醒轮（09-26）。
+/// 刚跑完的是两次看之间就收了的，按起点补看得到；按起点排，先起的在前。
+pub(in crate::cli) async fn fetch_wake_overview(
+    paths: &MiyuPaths,
+) -> Result<(Vec<miyu_engine::tools::jobs::JobOverview>, Vec<WakeRun>)> {
+    let Some((_, data)) = jobs_overview_frame(paths).await? else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let mut wakes = wake_rows(&data, "recent_wake_runs");
+    wakes.extend(wake_rows(&data, "wake_runs"));
+    wakes.sort_by_key(|wake| wake.first_event_id.unwrap_or(u64::MAX));
+    Ok((overview_jobs(&data), wakes))
+}
+
+async fn jobs_overview_frame(
+    paths: &MiyuPaths,
+) -> Result<Option<(miyu_core::ipc::SessionState, serde_json::Value)>> {
     let mut stream = ipc::connect(&paths.ipc_socket()).await?;
     ipc::send(&mut stream, &IpcRequest::new(IpcCommand::JobsOverview)).await?;
     match ipc::receive::<IpcFrame>(&mut stream).await? {
-        Some(IpcFrame::AdminResult { state, data }) => {
-            let peer_runs = data
-                .get("peer_runs")
-                .and_then(serde_json::Value::as_array)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(|row| {
-                            Some((
-                                row.get("run_id")?.as_str()?.to_string(),
-                                row.get("session_id")?.as_str()?.to_string(),
-                            ))
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let wake_runs = data
-                .get("wake_runs")
-                .and_then(serde_json::Value::as_array)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(|row| {
-                            Some(WakeRun {
-                                run_id: row.get("run_id")?.as_str()?.to_string(),
-                                session_id: row.get("session_id")?.as_str()?.to_string(),
-                                label: row
-                                    .get("label")
-                                    .and_then(serde_json::Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                from_start: row
-                                    .get("from_start")
-                                    .and_then(serde_json::Value::as_bool)
-                                    .unwrap_or(false),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            Ok((
-                data.get("jobs")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .unwrap_or_default()
-                    .unwrap_or_default(),
-                Some(state.session_id),
-                wake_runs,
-                peer_runs,
-            ))
-        }
-        _ => Ok((Vec::new(), None, Vec::new(), Vec::new())),
+        Some(IpcFrame::AdminResult { state, data }) => Ok(Some((state, data))),
+        _ => Ok(None),
     }
+}
+
+fn overview_jobs(data: &serde_json::Value) -> Vec<miyu_engine::tools::jobs::JobOverview> {
+    data.get("jobs")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .unwrap_or_default()
+        .unwrap_or_default()
+}
+
+fn wake_rows(data: &serde_json::Value, key: &str) -> Vec<WakeRun> {
+    data.get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    Some(WakeRun {
+                        run_id: row.get("run_id")?.as_str()?.to_string(),
+                        session_id: row.get("session_id")?.as_str()?.to_string(),
+                        label: row
+                            .get("label")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        from_start: row
+                            .get("from_start")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                        first_event_id: row
+                            .get("first_event_id")
+                            .and_then(serde_json::Value::as_u64),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }

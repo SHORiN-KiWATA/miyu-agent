@@ -68,7 +68,17 @@ pub(super) async fn run_one_shot(
     if !programmatic {
         let session =
             one_shot_session(paths, options.session.as_deref(), options.continue_session).await?;
-        return run_chat_with_options(paths, message, None, plain, mode, session, None).await;
+        return run_chat_with_options(
+            paths,
+            message,
+            None,
+            plain,
+            mode,
+            session,
+            None,
+            AfterTurn::AwaitSubagents,
+        )
+        .await;
     }
     if message.is_empty() {
         return Err(exit_code::usage_error(t(

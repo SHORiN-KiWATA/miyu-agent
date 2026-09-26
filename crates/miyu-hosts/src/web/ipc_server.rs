@@ -124,8 +124,8 @@ async fn dispatch_ipc_connection(
             let _ = state.shutdown_tx.send(());
         }
         IpcCommand::JobsOverview => {
-            let (wake_runs, peer_runs) = {
-                let manager = state.manager.lock().unwrap();
+            let (wake_runs, peer_runs, recent_wake_runs) = {
+                let mut manager = state.manager.lock().unwrap();
                 let wake = manager
                     .active_runs
                     .iter()
@@ -147,6 +147,9 @@ async fn dispatch_ipc_connection(
                                         | miyu_base::workspace::TurnOrigin::ServiceRestart { .. }
                                         | miyu_base::workspace::TurnOrigin::GoalRound { .. }
                                 ),
+                            // 这一轮登记前的事件号。一次性命令等子代理时按它补整轮：挂上去之前
+                            // 这一轮可能已经跑完了（09-26）。
+                            "first_event_id": info.first_event_id,
                         })
                     })
                     .collect::<Vec<_>>();
@@ -165,7 +168,21 @@ async fn dispatch_ipc_connection(
                         })
                     })
                     .collect::<Vec<_>>();
-                (wake, peers)
+                // 刚跑完的唤醒轮：一次性命令等子代理时两次看之间就收了的，凭它补看（09-26）。
+                // 单列一项：REPL 的唤醒泵只认上面那张，挂到跑完的轮上就是重画一遍。
+                let recent = manager
+                    .recent_wakes
+                    .list()
+                    .map(|wake| {
+                        json!({
+                            "run_id": wake.run_id,
+                            "session_id": &*wake.session_id,
+                            "label": wake.label,
+                            "first_event_id": wake.first_event_id,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                (wake, peers, recent)
             };
             let mut jobs = tools::jobs::overview();
             annotate_job_roots(&state, &mut jobs);
@@ -177,6 +194,7 @@ async fn dispatch_ipc_connection(
                         "jobs": jobs,
                         "wake_runs": wake_runs,
                         "peer_runs": peer_runs,
+                        "recent_wake_runs": recent_wake_runs,
                     }),
                 },
             )

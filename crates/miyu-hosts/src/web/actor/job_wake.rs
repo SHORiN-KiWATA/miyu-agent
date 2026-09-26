@@ -201,6 +201,12 @@ pub(in crate::web) async fn stream_job_wake_to_origin_tty(
     let Some(origin) = completion.origin_tty.clone() else {
         return;
     };
+    // 发起的一次性命令还在前台等子代理：这一轮它自己在画，这里既不回写也不补通知——
+    // 补的话每份报告都弹一条「终端不在提示符」（09-26）。
+    if origin_follower_in_foreground(&origin) {
+        tracing::info!(job_id = %completion.job_id, "job wake shown by the originating command");
+        return;
+    }
     let config = miyu_base::config::AppConfig::load_or_default(&state.paths).unwrap_or_default();
     if !config.notifications.job_writeback_to_terminal {
         return;

@@ -11,6 +11,7 @@
     CHILD spawn-gc-bg      后台开孙代理,结束回合;被唤醒后交 CHILD_AFTER_GC done
     CHILD spawn-gc-depth   前台开孙代理 GRANDCHILD try-spawn(孙代理试图再开一层)
     CHILD slow             前台跑 sleep 40(给「父被停级联」用)
+    CHILD nap              前台跑 sleep 2.5 再交 CHILD_RESULT ok:比主回合收尾慢,报告一定另起一轮
     GRANDCHILD plain       交 GC_RESULT ok
     GRANDCHILD try-spawn   工具面里有 subagent 就调(应被拒),没有就交 GC_NO_SUBAGENT_TOOL
 
@@ -151,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
             if "slow" in directive:
                 text_reply("CHILD_SLOW_DONE")
                 return
+            if directive.startswith("CHILD nap"):
+                text_reply("CHILD_RESULT ok")
+                return
             if "GRANDCHILD" in directive and called == "subagent":
                 text_reply("GC_SPAWN_RESULT " + output)
                 return
@@ -182,6 +186,7 @@ class Handler(BaseHTTPRequestHandler):
                 "fg-gc-bg": ("gc-bg child", "CHILD spawn-gc-bg", False),
                 "fg-bgcmd": ("bgcmd child", "CHILD run-bg-cmd", False),
                 "fg-slow": ("slow child", "CHILD slow", False),
+                "nap": ("nap child", "CHILD nap", False),
                 "gc-depth": ("depth child", "CHILD spawn-gc-depth", False),
                 "bg-plain": ("bg plain child", "CHILD plain", True),
                 "bg-wait": ("bg wait child", "CHILD run-bg-cmd-long", True),
@@ -217,6 +222,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if directive.startswith("CHILD spawn-gc"):
             call("subagent", {"description": "grandchild", "prompt": "GRANDCHILD plain"})
+            return
+        if directive.startswith("CHILD nap"):
+            call("run_command", {"command": "sleep 2.5", "timeout_seconds": 60})
             return
         if directive.startswith("CHILD slow"):
             # sh 会把单条命令 exec 成 sleep 本体,注释标记会丢;用独特的时长当标记。

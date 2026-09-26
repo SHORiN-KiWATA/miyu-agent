@@ -115,6 +115,12 @@ pub(in crate::cli) struct RemoteTurnSummary {
     pub(in crate::cli) context_tokens: u64,
     pub(in crate::cli) context_window: Option<usize>,
     pub(in crate::cli) cumulative_tokens: TurnTokens,
+    /// 这一轮是哪条会话里的哪一轮：一次性命令接着等它派出去的子代理要用（09-26）。
+    pub(in crate::cli) session_id: String,
+    pub(in crate::cli) run_id: String,
+    pub(in crate::cli) turn_id: Option<String>,
+    /// 这一轮在 daemon 事件流里收到的第一个号。
+    pub(in crate::cli) first_event_id: Option<u64>,
 }
 
 /// Marker error for a remote turn interrupted by the user (Ctrl+C) or a
@@ -246,7 +252,12 @@ pub(in crate::cli) fn is_remote_turn_cancelled(error: &anyhow::Error) -> bool {
 /// 所以按 stderr→stdout→stdin 找第一个 tty;父进程就是触发它的 shell。后台任务
 /// 完成后 daemon 凭这份指纹校验「shell 还活着、仍在这个 tty、空闲在提示符」,
 /// 才把跟进回复写回终端。检测不到(纯管道/重定向/cron)就不带。
-pub(in crate::cli) fn detect_origin_tty() -> Option<miyu_core::ipc::OriginTty> {
+///
+/// `stays_to_follow`:这条命令跑完这一轮还留在前台画后续的轮(等子代理,09-26),
+/// 指纹里记上自己,它在前台的时候 daemon 就不回写。
+pub(in crate::cli) fn detect_origin_tty(
+    stays_to_follow: bool,
+) -> Option<miyu_core::ipc::OriginTty> {
     let fd = [2, 1, 0]
         .into_iter()
         .find(|&fd| unsafe { libc::isatty(fd) } == 1)?;
@@ -257,6 +268,7 @@ pub(in crate::cli) fn detect_origin_tty() -> Option<miyu_core::ipc::OriginTty> {
     Some(miyu_core::ipc::OriginTty {
         path,
         shell_pid: std::os::unix::process::parent_id(),
+        follower_pid: stays_to_follow.then(std::process::id),
     })
 }
 

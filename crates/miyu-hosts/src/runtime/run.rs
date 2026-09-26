@@ -104,6 +104,60 @@ pub(crate) struct ManagerState {
     /// 正在跑的会话这一轮的实时数（每次模型请求结束时更新，回合全部退场就清）。快照里的
     /// 上下文与累计本来只在回合结束时落定，回合中途切回来看到的是库里现估的旧数（09-25）。
     pub(crate) live_turns: HashMap<String, LiveTurnFigures>,
+    /// 刚跑完的唤醒轮，见 [`RecentWakes`]。
+    pub(crate) recent_wakes: RecentWakes,
+}
+
+/// 刚跑完的唤醒轮（一分钟内）。一次性命令等子代理时是隔一会儿看一眼任务总览的，两次之间
+/// 唤醒轮可能已经起了又收了（端点当场报错、桩模型秒回）；在这儿留一小会儿，它还能按
+/// `first_event_id` 把那一轮整个补看一遍，报错也看得见（09-26）。只记补得出来的轮。
+#[derive(Default)]
+pub(crate) struct RecentWakes(std::collections::VecDeque<FinishedWake>);
+
+pub(crate) struct FinishedWake {
+    pub(crate) run_id: String,
+    pub(crate) session_id: Arc<str>,
+    pub(crate) label: Option<String>,
+    pub(crate) first_event_id: u64,
+    finished_at: std::time::Instant,
+}
+
+impl RecentWakes {
+    const KEEP_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+    const CAPACITY: usize = 64;
+
+    fn record(&mut self, run_id: &str, run: &RunInfo) {
+        let (true, Some(first_event_id)) = (run.job_wake, run.first_event_id) else {
+            return;
+        };
+        self.prune();
+        self.0.push_back(FinishedWake {
+            run_id: run_id.to_string(),
+            session_id: run.session_id.clone(),
+            label: run.job_wake_label.clone(),
+            first_event_id,
+            finished_at: std::time::Instant::now(),
+        });
+        while self.0.len() > Self::CAPACITY {
+            self.0.pop_front();
+        }
+    }
+
+    /// 还留着的，先跑完的在前。
+    pub(crate) fn list(&mut self) -> impl Iterator<Item = &FinishedWake> {
+        self.prune();
+        self.0.iter()
+    }
+
+    fn prune(&mut self) {
+        while self
+            .0
+            .front()
+            .is_some_and(|wake| wake.finished_at.elapsed() > Self::KEEP_FOR)
+        {
+            self.0.pop_front();
+        }
+    }
 }
 
 /// 一条正在跑的会话此刻的上下文与会话累计，口径同 `chat.round_usage`：上下文是最近一次请求的
@@ -275,6 +329,7 @@ pub(crate) fn finish_run(
         manager.context = context;
     }
     if let Some(run) = manager.active_runs.remove(run_id) {
+        manager.recent_wakes.record(run_id, &run);
         if let Some(followup) = run.platform_followup {
             followup.close();
         }

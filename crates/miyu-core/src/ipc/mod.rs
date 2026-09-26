@@ -548,6 +548,7 @@ mod tests {
             origin_tty: Some(OriginTty {
                 path: std::path::PathBuf::from("/dev/pts/7"),
                 shell_pid: 4321,
+                follower_pid: None,
             }),
             overrides: None,
         });

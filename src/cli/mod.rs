@@ -55,6 +55,8 @@ mod repl_history;
 mod select;
 mod shell_bridge;
 mod stt;
+/// 一次性命令等子代理：主回合之后的下一步（09-26）。
+mod subagent_wait;
 mod terminal_guard;
 mod variant_menu;
 
@@ -86,7 +88,7 @@ pub(in crate::cli) use repl::{
 };
 // 命令表已上提到 crate 级与 WebUI 共用；这里再导出一次，cli 内的调用点不变。
 pub(in crate::cli) use miyu_core::slash_commands::*;
-use repl::direct::{run_chat_with_images, run_chat_with_options, run_direct_repl};
+use repl::direct::{run_chat_with_images, run_chat_with_options, run_direct_repl, AfterTurn};
 use repl::editor::{load_repl_input_history, repl_input_lines};
 pub(in crate::cli) use repl::herdr;
 use repl::input::render_repl_input_with_footer;
