@@ -506,3 +506,34 @@ fn a_long_thought_keeps_only_its_tail() {
     assert!(peek.ends_with("最后一句"), "{peek}");
     assert!(peek.chars().count() <= 240);
 }
+
+/// 并发按父会话算（用户 09-26）：同一个会话的名额用完就排队，别的会话不受影响，放掉一个就轮到
+/// 排着的。
+#[tokio::test]
+async fn subagent_slots_are_counted_per_parent_session() {
+    use std::time::Duration;
+    let first = super::slots::slots_for("sess_slots_test_a", 1);
+    let held = super::slots::take_slot(first.clone(), "job_slots_a1").await;
+    let queued = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(first.clone(), "job_slots_a2"),
+    )
+    .await;
+    assert!(queued.is_err(), "同一个会话第二个该排队");
+    let other = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(
+            super::slots::slots_for("sess_slots_test_b", 1),
+            "job_slots_b1",
+        ),
+    )
+    .await;
+    assert!(other.is_ok(), "别的会话不受影响");
+    drop(held);
+    let after = tokio::time::timeout(
+        Duration::from_millis(100),
+        super::slots::take_slot(first, "job_slots_a3"),
+    )
+    .await;
+    assert!(after.is_ok(), "放掉一个就轮到排着的");
+}

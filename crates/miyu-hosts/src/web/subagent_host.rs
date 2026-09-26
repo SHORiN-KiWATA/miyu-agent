@@ -138,13 +138,25 @@ fn create_child_session(
     };
     // 子会话建在**父会话所属的库**里,归属跟父:成员开的子代理落成员库、记成员的账,
     // 管理员库里找不到它才对(老审计行落管理员库、owner 空,成员场景全错)。
+    // 派它的那一轮：没给就取父会话此刻正在跑的那一轮（09-26）——父回合被停时，连这一轮派
+    // 出去的子代理一起停，按这个认（`stop_children_of_turn`）。
+    let spawned_by_turn = request.spawned_by_turn.clone().or_else(|| {
+        state
+            .manager
+            .lock()
+            .unwrap()
+            .active_runs
+            .values()
+            .find(|run| *run.session_id == *parent.session_id)
+            .and_then(|run| run.turn_id.clone())
+    });
     let child = parent_store.create_subagent_session(
         &persona,
         &child_name(&request.description),
         &parent.session_id,
         &parent.owner,
         depth,
-        request.spawned_by_turn.as_deref(),
+        spawned_by_turn.as_deref(),
         background,
     )?;
     state

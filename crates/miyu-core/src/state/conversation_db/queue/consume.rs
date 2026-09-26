@@ -394,10 +394,11 @@ impl ConversationDb {
         )? == 1)
     }
 
-    /// Hard-drop every still-queued prompt of a queue session and return
-    /// their ids. Unlike `discard_queued_prompts` this never folds prompts
-    /// into the conversation: it backs an explicit user cancel, where the
-    /// queued follow-ups are withdrawn rather than preserved as context.
+    /// Hard-drop the still-queued prompts the user typed and return their ids.
+    /// Unlike `discard_queued_prompts` this never folds prompts into the
+    /// conversation: it backs an explicit user cancel, where the queued
+    /// follow-ups are withdrawn rather than preserved as context. Synthetic
+    /// messages stay for the end-of-turn redelivery (09-26).
     pub fn delete_queued_prompts(
         &self,
         session_id: &str,
@@ -405,12 +406,16 @@ impl ConversationDb {
     ) -> Result<Vec<String>> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // 只撤用户排的话；后台汇报、跨会话消息这类合成消息留着，这一轮收尾时照常另起一轮去回
+        // （09-26：子代理只在后台跑之后，结论全靠这份汇报，它只来这一次，删了就没了）。
+        let user_only = format!(
+            "status = 'queued' AND session_id = ?1 AND queue_session_id = ?2 AND NOT ({})",
+            crate::state::synthetic_user_content_sql("content")
+        );
         let prompt_ids = {
-            let mut stmt = tx.prepare(
-                "SELECT prompt_id FROM queued_prompts
-                 WHERE status = 'queued' AND session_id = ?1 AND queue_session_id = ?2
-                 ORDER BY seq",
-            )?;
+            let mut stmt = tx.prepare(&format!(
+                "SELECT prompt_id FROM queued_prompts WHERE {user_only} ORDER BY seq"
+            ))?;
             let prompt_ids = stmt
                 .query_map(params![session_id, queue_session_id], |row| {
                     row.get::<_, String>(0)
@@ -420,8 +425,7 @@ impl ConversationDb {
         };
         if !prompt_ids.is_empty() {
             tx.execute(
-                "DELETE FROM queued_prompts
-                 WHERE status = 'queued' AND session_id = ?1 AND queue_session_id = ?2",
+                &format!("DELETE FROM queued_prompts WHERE {user_only}"),
                 params![session_id, queue_session_id],
             )?;
         }

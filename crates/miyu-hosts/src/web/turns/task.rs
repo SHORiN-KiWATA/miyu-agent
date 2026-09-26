@@ -842,7 +842,9 @@ pub(in crate::web) fn finish_turn_task(
         return;
     }
     // 队列里剩下的合成消息（后台汇报、跨会话消息）另起一轮去回，不并进刚结束的这一轮
-    // （09-23）。被停止的那一轮走不到这里：取消路径先把队列删了，停了就不再自己跑起来。
+    // （09-23）。被停止的那一轮也一样：取消只撤用户排的话，已经交回来的汇报照样去回——
+    // 它只来这一次（09-26，子代理只在后台跑之后结论全靠它）；这一轮派出去的子代理取消时
+    // 已经一起停了，停掉的不叫醒谁。
     // 只替本地会话重投：平台会话（QQ）的后台汇报有 onebot 自己那条路，这里按本地会话
     // 起一轮就是拿属主身份替群聊起回合。
     let session = store.session_id();
@@ -865,11 +867,12 @@ pub(in crate::web) enum OverflowOutcome {
     Cancelled,
 }
 
-/// An explicit cancel withdraws the follow-ups still queued behind the
+/// An explicit cancel withdraws the follow-ups the user queued behind the
 /// reply: the user aborted the exchange, so folding them into context would
-/// keep answering messages they no longer want processed. Published before
-/// `run.cancelled` so clients still draining the event stream can clear
-/// their queue bubbles.
+/// keep answering messages they no longer want processed. Background-job
+/// reports and cross-session messages stay and are redelivered when the turn
+/// winds down (09-26). Published before `run.cancelled` so clients still
+/// draining the event stream can clear their queue bubbles.
 pub(in crate::web) fn drop_cancelled_queue(
     store: &StateStore,
     events: &EventHub,

@@ -136,8 +136,10 @@ impl StateStore {
         )
     }
 
-    /// Explicit-cancel variant of queue cleanup: drop still-queued prompts
-    /// outright (no fold into context) and return the dropped ids.
+    /// Explicit-cancel variant of queue cleanup: drop the prompts the user queued
+    /// outright (no fold into context) and return the dropped ids. Synthetic
+    /// messages (background-job reports, cross-session messages) stay queued for
+    /// the end-of-turn redelivery: they arrive only once (09-26).
     pub fn delete_queued_prompts(&self) -> Result<Vec<String>> {
         self.conv_db
             .delete_queued_prompts(&self.session(), &self.queue_session_id)
