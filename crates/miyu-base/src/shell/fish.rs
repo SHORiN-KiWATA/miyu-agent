@@ -154,7 +154,8 @@ function __miyu_replay_buffer
 end
 
 function __miyu_restore_cursor
-    printf '\e[?25h'
+    # 交给 AI 时开的同步输出:出错、被打断也要关上,不然认它的终端会一直等。
+    printf '\e[?2026l\e[?25h'
     set -e __miyu_cursor_hidden
 end
 
@@ -168,6 +169,8 @@ function __miyu_on_prompt --on-event fish_prompt
     trap __miyu_restore_cursor INT TERM EXIT
     __miyu_replay_buffer "$buffer"
     printf '\n'
+    # 清空输入行、红字重放都画完了:一次交给终端(开头在 __miyu_hand_to_ai)。
+    printf '\e[?2026l'
     printf '%s' "$buffer" | miyu --shell-intercept --shell fish --stdin
     set -l miyu_status $status
     trap - INT TERM EXIT
@@ -238,8 +241,10 @@ function __miyu_hand_to_ai
     set -g __miyu_cursor_hidden 1
     history append -- "$argv[1]"
     set -g __miyu_pending_buffer "$argv[1]"
+    # 同步输出:fish 清空输入行会先擦掉长文,再由 __miyu_on_prompt 红字重放,中间那一下就是闪。
+    # 从这里起终端先不画,重放完一起画。
+    printf '\e[?2026h\e[?25l'
     commandline -b -- ""
-    printf '\e[?25l'
     commandline -f execute
 end
 
@@ -447,7 +452,7 @@ mod tests {
         assert!(hook.contains("printf '\\e[1A\\e[%sG' $prompt_col"));
         assert!(hook.contains("not set_color $fish_color_error 2>/dev/null"));
         assert!(hook.contains("set_color normal"));
-        assert!(hook.contains("printf '\\e[?25h'"));
+        assert!(hook.contains("printf '\\e[?2026l\\e[?25h'"));
         assert!(hook.contains("set -g __miyu_cursor_hidden 1"));
         assert!(hook.contains("set -e __miyu_cursor_hidden"));
         assert!(hook.contains("return $miyu_status"));
@@ -474,6 +479,39 @@ mod tests {
         assert!(hook.contains("bind ctrl-j __miyu_insert_newline"));
         assert!(hook.contains("bind -M insert enter __miyu_accept_line"));
         assert!(hook.contains("bind -M insert ctrl-j __miyu_insert_newline"));
+    }
+
+    /// 钩子里一个函数的正文：从 `function <名字>` 到它自己的 `end`。
+    fn function_body<'a>(hook: &'a str, name: &str) -> &'a str {
+        let start = hook
+            .find(&format!("function {name}"))
+            .unwrap_or_else(|| panic!("钩子里没有 {name}"));
+        let end = hook[start..].find("\nend\n").expect("函数有 end") + start;
+        &hook[start..end]
+    }
+
+    #[test]
+    fn fish_hook_hands_long_text_to_ai_without_a_flash() {
+        // 2026-10-01 用户报：粘一段长提示词回车，变红交给 AI 之前闪一下。fish 清空输入行先擦掉长文，
+        // __miyu_on_prompt 再红字重放，中间那一下被终端画了出来。用同步输出把擦和重放包成一帧。
+        let hook = hook();
+        let hand = function_body(&hook, "__miyu_hand_to_ai");
+        let open = hand.find("\\e[?2026h").expect("交给 AI 时开同步输出");
+        let clear = hand.find("commandline -b -- \"\"").expect("清空输入行");
+        assert!(open < clear, "先开同步输出再清空输入行：{hand}");
+        let prompt = function_body(&hook, "__miyu_on_prompt");
+        let replay = prompt.find("__miyu_replay_buffer").expect("红字重放");
+        let close = prompt.find("\\e[?2026l").expect("重放完关同步输出");
+        let ask = prompt.find("--shell-intercept").expect("交给 AI");
+        assert!(
+            replay < close && close < ask,
+            "重放完、问 AI 之前关：{prompt}"
+        );
+        let restore = function_body(&hook, "__miyu_restore_cursor");
+        assert!(
+            restore.contains("\\e[?2026l"),
+            "出错、被打断也要关上，不然终端一直等：{restore}"
+        );
     }
 
     #[test]
