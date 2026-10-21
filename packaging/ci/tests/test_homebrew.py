@@ -71,7 +71,20 @@ class TemplateContractTests(unittest.TestCase):
             self.assertIn(f'  depends_on "{dependency}"\n', TEMPLATE)
         self.assertIn('    prefix.install "bin", "share"\n', TEMPLATE)
         fields = homebrew.formula_fields(TEMPLATE)
-        self.assertEqual(fields['sha256'], '0'*64, '真哈希只能由 channel_update 写入')
+        # 全零是「还没发过带 macOS 包的版本」的占位符；发过一次之后，channel_update --apply
+        # 就把真哈希留在真相源里，于是这里只能钉住「要么占位、要么是一份和 url 对得上的真哈希」。
+        # 09-27 发 0.7.0 时 apply 写入了真哈希，这条断言从此恒红（CI 36335873005 起），
+        # 不是「有人手改了 formula」——真哈希本来就该在发版之后留在仓库里。
+        if fields['sha256'] == '0'*64:
+            self.assertTrue(fields['url'].endswith('-aarch64-apple-darwin.tar.gz'))
+        else:
+            self.assertRegex(fields['sha256'], r'^[0-9a-f]{64}$')
+            package_revision = fields['revision'] + 1
+            self.assertEqual(
+                fields['url'],
+                homebrew.release_url(f"v{fields['version']}",
+                                     f"miyu-{fields['version']}-{package_revision}-aarch64-apple-darwin.tar.gz"),
+                'truth source 的地址、版本、修订号必须是同一次 apply 写出来的')
 
     def test_tap_readme_installs_by_fully_qualified_name(self):
         readme = (ROOT/'packaging/homebrew/README.md').read_text()
