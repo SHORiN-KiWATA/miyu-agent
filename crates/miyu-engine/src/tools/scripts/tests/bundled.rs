@@ -203,6 +203,7 @@ fn bundled_descriptions_follow_the_header_style_rules() {
             "codec",
             "crack_search",
             "divine",
+            "douyin_dl",
             "game_compat",
             "get_weather",
             "goofish_search",
