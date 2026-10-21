@@ -17,6 +17,7 @@ import sys
 
 from .common import BlockedError, write_json
 from . import homebrew
+from . import smoke
 from .isolation import mock_config
 
 PROBE = Path(__file__).resolve().parents[1]/'probes/installed.py'
@@ -78,7 +79,8 @@ def extract_and_probe(session, box, manifest, asset_id, record, package, config,
     argv = [sys.executable, PROBE, '--record', package.parent/'package-record.json',
             '--prefix', prefix, '--version', manifest['version'],
             '--revision', manifest['package_revision'], '--fedora-version', manifest['fedora_version'],
-            '--test-home', home, '--uid', os.getuid(), '--gid', os.getgid(), '--functional']
+            '--test-home', home, '--uid', os.getuid(), '--gid', os.getgid(), '--functional',
+            '--provider-id', smoke.PROVIDER_ID, '--model', smoke.MODEL]
     if not live:
         argv.append('--skip-provider')
     output = session.run(argv, asset_id+'-probe.txt', 420)
@@ -139,8 +141,8 @@ def verify_macos(args, manifest, source, required, records, provider, out, box):
     host = host_facts(manifest)
     config = mock_config()
     if provider:
-        config.update(active_provider='opencodego', providers=[provider],
-                      active_provider_models=[{'provider_id': 'opencodego', 'model': 'deepseek-v4.1-flash'}])
+        config.update(active_provider=smoke.PROVIDER_ID, providers=[provider],
+                      active_provider_models=[{'provider_id': smoke.PROVIDER_ID, 'model': smoke.MODEL}])
     status, results, brew_ran = {}, {}, False
     for asset_id, record in records.items():
         package = args.packages/asset_id/record['asset']['filename']

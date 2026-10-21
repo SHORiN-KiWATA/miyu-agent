@@ -37,7 +37,7 @@
   `--functional`：资源按前缀找得到、内置技能加载得出、出厂脚本跑得起来），再用本次包渲染的
   formula 真 `brew install` + `brew test`。后者会往 Homebrew 装依赖，只在一次性 runner 上跑
   （`--allow-homebrew-changes`），个人 Mac 上默认拒绝。
-- **凭据**：只有验收那一步拿到 `OPENCODEGO_PROVIDER_CONFIG`（`test_workflows.py` 钉住）。
+- **凭据**：只有验收那一步拿到 `MIYU_SMOKE_PROVIDER_CONFIG`（`test_workflows.py` 钉住）。
   release 模式缺它直接失败；预览模式缺它时 provider-live 记 SKIPPED，其余检查必须全过。
 
 ## 工作流职责
@@ -72,7 +72,7 @@ Python 固定 3.11，发布 Rust 固定 1.96.1，MSRV 为 1.89.0。Cargo vendor 
 2. 要求输入 tag 恰为 `v<Cargo.toml version>`，这个已存在 tag、checkout HEAD 与控制工作流的 commit 必须一致；正整数 revision 经 argparse/metadata 校验。
 3. `metadata.py --mode release --profile linux-smoke` 冻结源码，再完整 `prepare.py`。
 4. GNU/Arch 原生容器构建 core/voice，stage 后打包。
-5. Arch 跑 `arch-x86_64`；GNU 跑 Debian 13、Ubuntu 24.04、Ubuntu 26.04、Linux Mint 22.3、冻结 Fedora 版本这五个安装目标。每个目标都实际调用 `verify.py`，使用专用 opencodego/deepseek-v4.1-flash 配置。GNU tar 的验收由 manifest 固定到 Debian 目标，不能漏掉。
+5. Arch 跑 `arch-x86_64`；GNU 跑 Debian 13、Ubuntu 24.04、Ubuntu 26.04、Linux Mint 22.3、冻结 Fedora 版本这五个安装目标。每个目标都实际调用 `verify.py`，使用专用 cline/deepseek-v4.1-flash 配置。GNU tar 的验收由 manifest 固定到 Debian 目标，不能漏掉。
 6. `verify_release.py` 必须收到全部真实 PASS 报告，覆盖 final package hash；随后才能调用 `publish.py --dry-run` 检查公开附件名单，只列 Arch、DEB、RPM 主包与 voice 包，共六个。
 7. 单独 publish job 下载这份已校验 bundle，调用 `publish.py --execute`。唯一拥有 `contents: write` 的 job 是 publish。所有其他 job 默认只有 contents read；渠道 patch job 额外需要 actions read，以读取指定 run 的 artifact。
 
@@ -86,9 +86,9 @@ SHA256SUMS、验收 JSON、SBOM、provenance 和输入/输出 manifest 保留在
 
 ## 专用凭据契约
 
-只有显式执行发布的准备预检和安装验证步骤读取 `OPENCODEGO_PROVIDER_CONFIG`。reusable workflow 通过同名 secret 显式传参，不使用 `secrets: inherit`。构建、打包、聚合不接收该凭据。
+只有显式执行发布的准备预检和安装验证步骤读取 `MIYU_SMOKE_PROVIDER_CONFIG`。reusable workflow 通过同名 secret 显式传参，不使用 `secrets: inherit`。构建、打包、聚合不接收该凭据。
 
-secret 必须是只含一个 `providers` 数组的 JSON，并且数组里恰好一个 `id: opencodego` 的 provider。需要非空 `api_key`，`models` 包含 `deepseek-v4.1-flash`；可保留 `display_name`、`base_url`、`protocol`。使用专用测试凭据，不复制完整生产配置。
+secret 必须是只含一个 `providers` 数组的 JSON，并且数组里恰好一个 `id: cline` 的 provider。需要非空 `api_key`，`models` 包含 `deepseek/deepseek-v4.1-flash`；可保留 `display_name`、`base_url`、`protocol`。使用专用测试凭据，不复制完整生产配置。
 
 wrapper 只保留上述 provider 字段，在输出树以外创建 0600 临时配置；验证结束后 finally 删除。artifact 只包含源码输入、包或已脱敏报告，从不打包这个临时配置。凭据缺失返回 exit 3，不能放行非 dry-run 发布。provider 调用成功与否仍由真实安装验收报告决定。
 

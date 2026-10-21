@@ -18,7 +18,7 @@ on:
       notes-path:
         description: Reviewed release notes inside this source commit.
         type: string
-        default: docs/releases/0.7.0/release-notes.md
+        default: docs/releases/0.7.1/release-notes.md
 
 permissions:
   contents: read
@@ -64,7 +64,7 @@ jobs:
           python-version: '3.11'
       - name: Reject missing dedicated provider configuration before building
         env:
-          OPENCODEGO_PROVIDER_CONFIG: ${{ secrets.OPENCODEGO_PROVIDER_CONFIG }}
+          MIYU_SMOKE_PROVIDER_CONFIG: ${{ secrets.MIYU_SMOKE_PROVIDER_CONFIG }}
         run: python3 packaging/ci/workflow.py check-provider
       - name: Install the locked preparation toolchain
         run: rustup toolchain install 1.96.1 --profile minimal
@@ -95,7 +95,7 @@ jobs:
     with:
       build-id: ${{ matrix.build-id }}
     secrets:
-      OPENCODEGO_PROVIDER_CONFIG: ${{ secrets.OPENCODEGO_PROVIDER_CONFIG }}
+      MIYU_SMOKE_PROVIDER_CONFIG: ${{ secrets.MIYU_SMOKE_PROVIDER_CONFIG }}
 
   aggregate:
     needs: build-package-verify

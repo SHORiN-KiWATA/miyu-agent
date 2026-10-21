@@ -13,6 +13,7 @@ from lib.isolation import Sandbox
 from lib.manifest import read_manifest
 from lib.matrix import SMOKE_PROFILES
 from lib.native_verify import verify_macos
+from lib import smoke
 from prepare import verify_source
 
 NATIVE_TARGETS = ('macos-arm64',)
@@ -22,9 +23,9 @@ def local_provider(config_path):
     if config_path is None:
         raise BlockedError('Real provider acceptance requires an explicit --provider-config path.')
     config=load_json(config_path)
-    providers=[p for p in config.get('providers',[]) if p.get('id')=='opencodego']
-    if len(providers)!=1 or 'deepseek-v4.1-flash' not in providers[0].get('models',[]):
-        raise BlockedError('The requested opencodego/deepseek-v4.1-flash provider is missing.')
+    providers=[p for p in config.get('providers',[]) if p.get('id')==smoke.PROVIDER_ID]
+    if len(providers)!=1 or smoke.MODEL not in providers[0].get('models',[]):
+        raise BlockedError(f'The requested {smoke.TARGET} provider is missing.')
     if not providers[0].get('api_key'):
         raise BlockedError('The requested provider has no configured credential.')
     return providers[0]
@@ -123,8 +124,8 @@ def verify_container(args, manifest, required, records, provider, out):
         return result.stdout
     box=Sandbox()
     try:
-        config={'config_version':3,'oobe_done':True,'active_provider':'opencodego',
-            'active_provider_models':[{'provider_id':'opencodego','model':'deepseek-v4.1-flash'}],
+        config={'config_version':3,'oobe_done':True,'active_provider':smoke.PROVIDER_ID,
+            'active_provider_models':[{'provider_id':smoke.PROVIDER_ID,'model':smoke.MODEL}],
             'providers':[provider],'memory':{'enabled':False}}
         config_path=box.root/'miyu/config/config.jsonc'
         write_json(config_path,config)
@@ -162,7 +163,8 @@ def verify_container(args, manifest, required, records, provider, out):
                     '--prefix',prefix,'--version',manifest['version'],
                     '--revision',str(manifest['package_revision']),'--fedora-version',str(manifest['fedora_version']),
                     '--test-home',f'/test-home/probes/{asset_id}','--uid',str(os.getuid()),
-                    '--gid',str(os.getgid())],asset_id+'-probe.txt',300)
+                    '--gid',str(os.getgid()),'--provider-id',smoke.PROVIDER_ID,
+                    '--model',smoke.MODEL],asset_id+'-probe.txt',300)
                 results[asset_id]=json.loads(output.strip().splitlines()[-1])
             for check in required:
                 checks.append(dict(check,status='PASS',artifact_sha256=records[check['asset_id']]['sha256']))

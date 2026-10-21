@@ -120,6 +120,8 @@ def main():
     parser.add_argument('--gid',required=True,type=int)
     parser.add_argument('--functional',action='store_true',help='Also load bundled skills and run a script.')
     parser.add_argument('--skip-provider',action='store_true',help='Preview only: no real model call.')
+    parser.add_argument('--provider-id',help='Provider id the packaged binary has to report back.')
+    parser.add_argument('--model',dest='model_id',help='Model id the packaged binary has to report back.')
     args=parser.parse_args()
     if not args.prefix.is_absolute():
         parser.error('--prefix must be absolute')
@@ -150,9 +152,11 @@ def main():
         if args.functional:
             result['functional']=verify_functional(run,binary,args.prefix,record['files'])
     if component=='core' and not args.skip_provider:
+        if not args.provider_id or not args.model_id:
+            parser.error('--provider-id and --model are required unless --skip-provider is given')
         prompt='Say hello in one short sentence.'
         argv=[str(binary),'ask','--no-tools','--no-memory','--quiet','--output-format','json',
-              '--model','opencodego/deepseek-v4.1-flash','--timeout','180',prompt]
+              '--model',f'{args.provider_id}/{args.model_id}','--timeout','180',prompt]
         try:
             response=run(argv,timeout=210)
         finally:
@@ -165,8 +169,8 @@ def main():
         except (ValueError,IndexError) as error:
             raise ValueError('Miyu did not return final JSON: '+response.stdout+response.stderr) from error
         if (response.returncode or done.get('type')!='done' or not done.get('text','').strip()
-                or done.get('provider_id')!='opencodego'
-                or done.get('model')!='deepseek-v4.1-flash'):
+                or done.get('provider_id')!=args.provider_id
+                or done.get('model')!=args.model_id):
             raise ValueError('Real provider response failed: '+json.dumps(done,ensure_ascii=False))
         result['provider_live']={key:done.get(key) for key in
             ('type','text','provider_id','model','usage','elapsed_ms')}

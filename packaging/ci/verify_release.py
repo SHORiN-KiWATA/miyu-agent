@@ -9,6 +9,7 @@ import sys
 from lib.common import canonical_json, fresh_directory, load_json, sha256_file, write_json
 from lib.native_verify import version_tuple
 from lib.release_bundle import bundle_checksums, output_name, sums_name, verify_bundle
+from lib import smoke
 from prepare import verify_source
 from stage import payload_binary_hash, validate_build_evidence
 
@@ -49,8 +50,8 @@ def public_report(report, records, manifest, cleanup_path):
         if component == 'core':
             live = result.get('provider_live', {})
             if (live.get('type') != 'done' or not isinstance(live.get('text'), str)
-                    or not live['text'].strip() or live.get('provider_id') != 'opencodego'
-                    or live.get('model') != 'deepseek-v4.1-flash'):
+                    or not live['text'].strip() or live.get('provider_id') != smoke.PROVIDER_ID
+                    or live.get('model') != smoke.MODEL):
                 raise ValueError('Real provider evidence is missing or failed.')
             public['provider_live'] = {key: live[key] for key in ('type', 'text', 'provider_id', 'model')}
             if isinstance(live.get('elapsed_ms'), (int, float)):

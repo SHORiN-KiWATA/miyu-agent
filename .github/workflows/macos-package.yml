@@ -79,7 +79,7 @@ jobs:
         run: python3 packaging/ci/workflow.py macos-build --root "$RELEASE_ROOT" --out "$RELEASE_ROOT/macos"
       - name: Install from the tarball and through the Homebrew formula
         env:
-          OPENCODEGO_PROVIDER_CONFIG: ${{ secrets.OPENCODEGO_PROVIDER_CONFIG }}
+          MIYU_SMOKE_PROVIDER_CONFIG: ${{ secrets.MIYU_SMOKE_PROVIDER_CONFIG }}
           MODE: ${{ steps.params.outputs.mode }}
         run: |
           if [ "$MODE" = release ]; then require=--require-provider; else require=; fi

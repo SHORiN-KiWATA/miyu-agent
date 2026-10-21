@@ -149,7 +149,7 @@ runner 上做了什么：锁文件里的 Xcode（`sudo xcode-select`，SDK 对�
 全部加载得出、出厂脚本跑得起来、真模型回一句），再用本次的包渲染 formula（file:// 地址）真
 `brew install` + `brew test`，最后卸载并确认测试 tap 已移除。
 
-真模型那一项要仓库的 Actions secret `OPENCODEGO_PROVIDER_CONFIG`（专用测试凭据，格式见
+真模型那一项要仓库的 Actions secret `MIYU_SMOKE_PROVIDER_CONFIG`（专用测试凭据，格式见
 `docs/plan/distribution/ci.md`）。候选分支（release 模式）缺它直接失败；`macos-preview/**`
 分支是预览模式，没有凭据时这一项记 SKIPPED，其余照验，产物只供调试，不能进发布。
 
@@ -164,8 +164,8 @@ python3 packaging/ci/verify.py --manifest out/distribution/release-0.6.1/release
   --provider-config /home/shorin/.miyu/config/config.jsonc
 ```
 
-这条本机配置路径仅用于本次用户已授权的本地验收。脚本只临时复制 opencodego provider，
-调用 deepseek-v4.1-flash，不上传凭据。远端 Actions 另需专用测试 secret，不能把宿主配置
+这条本机配置路径仅用于本次用户已授权的本地验收；供应商与模型名在 `packaging/ci/lib/smoke.py` 里只写一次（0.7.1 起是 `cline` 的 `deepseek/deepseek-v4.1-flash`，opencodego 那个 key 已于 2026-10-21 过期）。脚本只临时复制 cline provider，
+调用 cline 的 deepseek-v4.1-flash，不上传凭据。远端 Actions 另需专用测试 secret，不能把宿主配置
 上传为 artifact。成功要求请求退出正常、最终回复非空、provider/model 正确，不要求人格
 逐字照抄某个测试口令。
 

@@ -10,6 +10,7 @@ from lib.common import load_json, sha256_file, write_json
 from lib.github_release import publish_verified
 from lib.matrix import release_matrix, selected_targets, signing_channel
 from lib.identity import build_identity
+from lib import smoke
 from lib.release_bundle import bundle_checksums, output_name, sums_name, verify_bundle
 import publish
 from test_metadata import fixture
@@ -84,8 +85,8 @@ def bundle_fixture(test, profile):
                 'version':('miyu-voice' if component=='voice' else 'miyu')+' 0.6.0',
                 'files_verified':2,'host_path':'/private/test/home', 'api_key':'fixture-secret'}
             if component=='core':results[asset_id]['provider_live']={
-                'type':'done','text':'Hello from the test fixture.', 'provider_id':'opencodego',
-                'model':'deepseek-v4.1-flash','usage':{'input_tokens':1,'output_tokens':3},
+                'type':'done','text':'Hello from the test fixture.', 'provider_id':smoke.PROVIDER_ID,
+                'model':smoke.MODEL,'usage':{'input_tokens':1,'output_tokens':3},
                 'elapsed_ms':42, 'api_key':'fixture-secret'}
         environment={'image':manifest['toolchain']['install_images'].get(target)}
         if target=='macos-arm64':

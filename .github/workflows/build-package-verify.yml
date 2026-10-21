@@ -8,8 +8,8 @@ on:
         required: true
         type: string
     secrets:
-      OPENCODEGO_PROVIDER_CONFIG:
-        description: Dedicated opencodego/deepseek-v4.1-flash test provider configuration.
+      MIYU_SMOKE_PROVIDER_CONFIG:
+        description: Dedicated cline/deepseek-v4.1-flash test provider configuration.
         required: true
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
       - name: Install on every mapped distribution and call the dedicated live provider
         env:
           NATIVE_BUILD_ID: ${{ inputs.build-id }}
-          OPENCODEGO_PROVIDER_CONFIG: ${{ secrets.OPENCODEGO_PROVIDER_CONFIG }}
+          MIYU_SMOKE_PROVIDER_CONFIG: ${{ secrets.MIYU_SMOKE_PROVIDER_CONFIG }}
         run: python3 packaging/ci/workflow.py verify --root out/ci-release --build-id "$NATIVE_BUILD_ID" --out out/ci-build
       - name: Archive packages and actual reports without credentials
         env:

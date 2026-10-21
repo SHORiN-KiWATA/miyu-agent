@@ -16,6 +16,7 @@ from lib.common import BlockedError, fresh_directory, load_json, sha256_file, wr
 from lib.downloads import safe_extract
 from lib.inputs import verify_prepared
 from lib.source import git, safe_relative
+from lib import smoke
 from prepare import verify_source
 from verify import local_provider
 
@@ -38,21 +39,21 @@ def run(script, *arguments, timeout=9000):
 
 
 def provider_configuration():
-    value = os.environ.get('OPENCODEGO_PROVIDER_CONFIG', '')
+    value = os.environ.get(smoke.SECRET, '')
     if not value:
-        raise BlockedError('OPENCODEGO_PROVIDER_CONFIG is required for real provider acceptance.')
+        raise BlockedError(f'{smoke.SECRET} is required for real provider acceptance.')
     config = json.loads(value)
     if (not isinstance(config, dict) or set(config) != {'providers'}
             or not isinstance(config['providers'], list) or len(config['providers']) != 1
             or not isinstance(config['providers'][0], dict)
-            or config['providers'][0].get('id') != 'opencodego'):
-        raise ValueError('Dedicated provider secret must contain exactly one opencodego provider.')
+            or config['providers'][0].get('id') != smoke.PROVIDER_ID):
+        raise ValueError(f'Dedicated provider secret must contain exactly one {smoke.PROVIDER_ID} provider.')
     provider = config['providers'][0]
     allowed = ('id', 'display_name', 'base_url', 'protocol', 'api_key', 'models')
     provider = {key: provider[key] for key in allowed if key in provider}
     if (not isinstance(provider.get('api_key'), str) or not provider['api_key']
-            or 'deepseek-v4.1-flash' not in provider.get('models', [])):
-        raise ValueError('Dedicated provider secret needs a key and deepseek-v4.1-flash.')
+            or smoke.MODEL not in provider.get('models', [])):
+        raise ValueError(f'Dedicated provider secret needs a key and {smoke.MODEL}.')
     return {'providers': [provider]}
 
 
@@ -69,7 +70,7 @@ def plan(args):
         'steps': ['metadata', 'prepare', 'native GNU/Arch container build', 'stage',
                   'package', 'five real installation/provider checks', 'aggregate',
                   'publish dry-run', 'publish execute'],
-        'required_secret': 'OPENCODEGO_PROVIDER_CONFIG',
+        'required_secret': smoke.SECRET,
         'execution_requirements': ['Existing version tag equals the workflow source commit',
                                    'Dedicated provider secret is configured',
                                    'All five target reports pass against the final package hashes'],
@@ -224,9 +225,9 @@ def macos_verify(args):
     command = ['--manifest', root/'release-input.json', '--packages', args.out/'packages',
                '--target-id', MACOS_BUILD, '--report-dir', args.out/'reports'/MACOS_BUILD,
                '--allow-homebrew-changes']
-    if not os.environ.get('OPENCODEGO_PROVIDER_CONFIG'):
+    if not os.environ.get(smoke.SECRET):
         if args.require_provider:
-            raise BlockedError('OPENCODEGO_PROVIDER_CONFIG is required for release acceptance.')
+            raise BlockedError(f'{smoke.SECRET} is required for release acceptance.')
         # 预览:除了没调模型的 provider-live 记 SKIPPED,其余检查必须全过。
         subprocess.run([sys.executable, str(SCRIPTS/'verify.py'), *map(str, command), '--skip-provider'],
                        cwd=REPO, timeout=9000)
