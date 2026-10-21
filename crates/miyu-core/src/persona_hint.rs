@@ -463,7 +463,7 @@ mod tests {
         let pairs = parse_dialogs(&miyu_base::prompts::default_miyu_dialogs());
         assert!(pairs.len() >= 12);
         assert_eq!(pairs[0].0, "问个事，现在兼容层玩终末地咋样？");
-        assert_eq!(pairs[0].1, "挺好的，帧数表现完全原生");
+        assert_eq!(pairs[0].1, "挺好的呀，帧数表现完全原生");
         assert!(pairs
             .iter()
             .all(|(user, assistant)| !user.is_empty() && !assistant.is_empty()));
