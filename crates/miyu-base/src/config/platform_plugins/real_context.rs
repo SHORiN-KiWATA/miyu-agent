@@ -189,10 +189,12 @@ impl Default for RealContextPluginSettings {
             continuation_window_seconds: 15,
             after_speaking_enable: true,
             after_speaking_window_seconds: default_after_speaking_window_seconds(),
-            continuation_boost_score: 0.1,
+            // 10-23 减半(0.1 → 0.05):用户嫌主动回复太多,本机先改,出厂跟进。
+            continuation_boost_score: 0.05,
             after_speaking_score_boost: default_after_speaking_score_boost(),
             takeover_direct_trigger_enable: true,
-            takeover_direct_trigger_boost_score: 0.3,
+            // 10-23 减半(0.3 → 0.15),同上。
+            takeover_direct_trigger_boost_score: 0.15,
             privileged_direct_trigger_skip_active_judgement: true,
             active_reply_reaction_enable: true,
             active_reply_reaction_emoji_ids: vec![289],
@@ -988,7 +990,8 @@ fn default_after_speaking_window_seconds() -> u64 {
     30
 }
 
-/// 用户 09-24 从 0.15 降到 0.10:观察窗口里的插话偏多。
+/// 用户 09-24 从 0.15 降到 0.10:观察窗口里的插话偏多;10-23 再减半到 0.05
+/// (主动回复整体偏多,续聊、直接触发一起减半)。
 fn default_after_speaking_score_boost() -> f64 {
-    0.10
+    0.05
 }

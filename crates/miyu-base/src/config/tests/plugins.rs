@@ -65,10 +65,11 @@ fn real_context_defaults_match_the_deployed_contract() {
     assert_eq!(settings.active_reply_supersede_window_seconds, 7);
     assert_eq!(settings.continuation_window_seconds, 15);
     assert_eq!(settings.after_speaking_window_seconds, 30);
-    // 09-24 用户拍板 0.15 → 0.10。
-    assert_eq!(settings.after_speaking_score_boost, 0.10);
+    // 09-24 用户拍板 0.15 → 0.10；10-23 续聊、观察、直接触发三项加分一起减半。
+    assert_eq!(settings.after_speaking_score_boost, 0.05);
+    assert_eq!(settings.continuation_boost_score, 0.05);
     assert!(settings.takeover_direct_trigger_enable);
-    assert_eq!(settings.takeover_direct_trigger_boost_score, 0.3);
+    assert_eq!(settings.takeover_direct_trigger_boost_score, 0.15);
     assert!(settings.privileged_direct_trigger_skip_active_judgement);
     assert_eq!(settings.active_reply_reaction_emoji_ids, [289]);
     assert_eq!(settings.active_reply_reaction_timeout_seconds, 600);

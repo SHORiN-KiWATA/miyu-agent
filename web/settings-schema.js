@@ -2414,7 +2414,7 @@
               unit: t("秒"),
               default: 30,
             },
-            score01("after_speaking_score_boost", t("群聊发完消息后观察窗口加分"), 0.1, t("她发完消息后那段时间,每条消息都判一次;这个值给判断分数加一点,让她更容易接上话")),
+            score01("after_speaking_score_boost", t("群聊发完消息后观察窗口加分"), 0.05, t("她发完消息后那段时间,每条消息都判一次;这个值给判断分数加一点,让她更容易接上话")),
             {
               key: "continuation_window_seconds",
               label: t("续聊窗口(秒)"),
@@ -2425,7 +2425,7 @@
               unit: t("秒"),
               default: 15,
             },
-            score01("continuation_boost_score", t("续聊加分"), 0.1),
+            score01("continuation_boost_score", t("续聊加分"), 0.05),
             {
               key: "takeover_direct_trigger_enable",
               label: t("接管直接触发"),
@@ -2433,7 +2433,7 @@
               kind: "toggle",
               default: true,
             },
-            score01("takeover_direct_trigger_boost_score", t("直接触发加分"), 0.3),
+            score01("takeover_direct_trigger_boost_score", t("直接触发加分"), 0.15),
             {
               key: "privileged_direct_trigger_skip_active_judgement",
               label: t("管理员和私聊白名单跳过群聊主动回复判断"),
