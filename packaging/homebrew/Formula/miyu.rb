@@ -4,9 +4,9 @@
 class Miyu < Formula
   desc "Anime girl living in your terminal: open-source AI assistant"
   homepage "https://github.com/SHORiN-KiWATA/miyu-agent"
-  url "https://github.com/SHORiN-KiWATA/miyu-agent/releases/download/v0.7.1/miyu-0.7.1-1-aarch64-apple-darwin.tar.gz"
-  version "0.7.1"
-  sha256 "dd44ac9e50d86cb2df86b7f6d18610f894b0620a81f5568c55ba944bb7e28201"
+  url "https://github.com/SHORiN-KiWATA/miyu-agent/releases/download/v0.7.2/miyu-0.7.2-1-aarch64-apple-darwin.tar.gz"
+  version "0.7.2"
+  sha256 "9ca717cffc7b0d1aa2655953b404609ea59f789b60f3bcf034f11d581cd8d0fe"
   license all_of: ["MIT", "OFL-1.1"]
 
   livecheck do
