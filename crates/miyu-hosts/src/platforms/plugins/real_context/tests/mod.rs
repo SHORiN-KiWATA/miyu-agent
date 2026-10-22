@@ -2,6 +2,7 @@
 
 mod history;
 mod reaction;
+mod repeat;
 mod restraint;
 mod runtime;
 mod shared;

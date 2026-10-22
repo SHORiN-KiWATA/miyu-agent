@@ -41,17 +41,17 @@ flowchart TD
 
 | 条件 | 判据 | 窗口 | 加分 | 配置项 |
 |---|---|---|---|---|
-| `direct` | @她 / 私聊 / 命令 | — | +0.3 | `takeover_direct_trigger_boost_score` |
+| `direct` | @她 / 私聊 / 命令 | — | +0.15（10-23 前 0.3） | `takeover_direct_trigger_boost_score` |
 | `inherited` | 覆盖窗口内沿用上一轮 | 7s | 看继承到的是什么 | `active_reply_supersede_enable` / `active_reply_supersede_window_seconds` |
-| `continuation` | **同一个人**又说话 | 15s | +0.1 | `continuation_enable` / `continuation_window_seconds` / `continuation_boost_score` |
-| `after_speaking` | 她刚发过言，**任何人**说话（纯表情包除外） | 30s | +0.10（09-24 前 0.15） | `after_speaking_enable` / `after_speaking_window_seconds` / `after_speaking_score_boost` |
+| `continuation` | **同一个人**又说话 | 15s | +0.05（10-23 前 0.1） | `continuation_enable` / `continuation_window_seconds` / `continuation_boost_score` |
+| `after_speaking` | 她刚发过言，**任何人**说话（纯表情包除外） | 30s | +0.05（10-23 前 0.10，09-24 前 0.15） | `after_speaking_enable` / `after_speaking_window_seconds` / `after_speaking_score_boost` |
 | `probability` | 摇中骰子 | — | 0 | `active_judge_probability`（默认 5%） |
 | `moderation` | 命中违规关键词 | — | 0 | `moderation_enable` / `moderation_keywords` |
 
 **两件事要分清**：
 
 - **加分按成立的条件求和**，不封顶。她刚发完言（观察窗口开着）时有人 @ 她，
-  `+0.3 + 0.10` 两份都拿到——回复意愿本来就该更高，冷静机制在另一头压着。
+  `+0.15 + 0.05` 两份都拿到——回复意愿本来就该更高，冷静机制在另一头压着。
   （判官侧一直是 `final_score += continuation_boost + system_trigger_boost +
   after_speaking_score_boost`；09-19 之前卡住叠加的是 `inject.rs` 让它们互斥。）
 - **主触发（`primary()`）只用于归类**：好感度算不算「直接互动」、要不要注入
@@ -65,6 +65,22 @@ flowchart TD
 > 09-19 之前它排在优先级第二位、会抢断社交触发：你正跟她聊着、说了一句含关键词
 > 的话，trigger 就被降成 Moderation，不是真违规就一声不吭，连续聊窗口都跟着断
 > 掉。而违规检查本来就与 trigger 无关，降格换不来任何东西。
+
+### 复读只判第一条（10-23）
+
+10-22 23:44 她重启回来，五个人各发一句「miyu似了」，四条各判一次、各回一句、各自引用加 @。
+每条都是名字开头的 `direct`，判官每次都看出「大家在刷这句」，却不知道自己刚对同一串判过回。
+
+- **程序认复读**（`repeat.rs`）：正文去掉空白、标点、符号并转小写后相同，串里有别人说过，
+  相邻两条不超过 120 秒（旧群 363 串复读：相邻间隔 p50 7s / p95 48s / p99 123s）。认出来的
+  只记一行「复读」跳过日志，不判断、不回；一串只有第一条走正常判断。终端管理员不受限；
+  同一个人在覆盖窗口里改口照旧走顶替；她自己的话、撤回的不算串里的一条。
+- **回串首不带引用和 @**：她回的那条后来有人跟着复读了，那句话已经是大家一起说的，发出去
+  时去掉引用和 @（`before_send` 置位，`turn_context` 在判定指向后清掉）。
+- **判官看得见自己刚放行的**：别人的、已放行还没发完的回复（`pending` 里 `committed` 的那些）
+  摆在群聊记录和当前消息之间，开头一句 “The bot is already answering these messages. If the
+  current message says the same thing or repeats one of them, do not reply again.”，没有就不出现。
+  几乎同时到的同义句里，前一条还在判时后一条看不到它，仍可能各回一句。
 
 ### 覆盖窗口（「发错了马上改」）
 

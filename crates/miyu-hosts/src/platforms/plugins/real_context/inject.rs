@@ -46,6 +46,14 @@ impl RealContextPlugin {
             self.clear_cancelled_pending(context, &event.sender_id)
                 .await;
             decision.should_reply = system_triggered;
+            if decision.should_reply
+                && self
+                    .skip_repeat(context, event, settings, TriggerKind::Direct)
+                    .await
+            {
+                decision.should_reply = false;
+                return Ok(());
+            }
             // 限额耗尽时直触发照样回复,但整段主动判断被跳过。这里不写
             // TRIGGER_KEY 的话,下游拿不到本轮的唤醒理由(08-29:注入块因此
             // 整条哑火,排查时被误判成"改了没生效")。
@@ -127,6 +135,14 @@ impl RealContextPlugin {
                 .await;
             if let Some(fallback) = core_fallback.as_ref() {
                 restore_core_trigger(context, decision, fallback);
+            }
+            if decision.should_reply
+                && self
+                    .skip_repeat(context, event, settings, TriggerKind::Direct)
+                    .await
+            {
+                decision.should_reply = false;
+                return Ok(());
             }
             if decision.should_reply {
                 context.set_plugin_value(
@@ -268,6 +284,10 @@ impl RealContextPlugin {
         let Some(trigger) = conditions.primary() else {
             return Ok(());
         };
+        // 复读只判第一条。同一个人在覆盖窗口里改口(inherited)照旧走顶替。
+        if !inherited && self.skip_repeat(context, event, settings, trigger).await {
+            return Ok(());
+        }
         inherited_targets.push(active_reply_target(event));
         normalize_active_targets(&mut inherited_targets, &event.sender_id);
         set_active_targets(context, &inherited_targets);
@@ -455,6 +475,7 @@ impl RealContextPlugin {
                 0.0
             }
         };
+        let already_answering = self.already_answering(&session_key, &event.sender_id);
         let judged = tokio::select! {
             biased;
             _ = wait_for_supersede(&mut cancel_rx) => {
@@ -477,6 +498,7 @@ impl RealContextPlugin {
                     affection_prompt,
                     affection_bias,
                     emotion_adjustment,
+                    already_answering: &already_answering,
                 },
             ) => judged,
         };

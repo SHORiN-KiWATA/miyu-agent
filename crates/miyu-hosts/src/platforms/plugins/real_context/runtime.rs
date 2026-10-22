@@ -73,6 +73,8 @@ pub(in crate::platforms::plugins::real_context) struct SessionRuntime {
     pub(in crate::platforms::plugins::real_context) pressure: ReplyPressure,
     pub(in crate::platforms::plugins::real_context) continuation: Option<Continuation>,
     pub(in crate::platforms::plugins::real_context) pending: HashMap<String, PendingReply>,
+    /// 后来被人复读的消息(串首)→ 登记时间,见 repeat.rs。回它时不带引用和 @。
+    pub(in crate::platforms::plugins::real_context) repeated_heads: HashMap<String, Instant>,
 }
 
 impl SessionRuntime {
@@ -83,6 +85,7 @@ impl SessionRuntime {
             pressure: ReplyPressure::new(now),
             continuation: None,
             pending: HashMap::new(),
+            repeated_heads: HashMap::new(),
         }
     }
 

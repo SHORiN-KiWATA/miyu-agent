@@ -252,6 +252,39 @@ impl RealContextPlugin {
         }
     }
 
+    /// 别人的、已经放行还没发完的回复对应的消息,给判官看(见 judge::AlreadyAnswering)。
+    pub(in crate::platforms::plugins::real_context) fn already_answering(
+        &self,
+        session_key: &str,
+        sender_id: &str,
+    ) -> Vec<judge::AlreadyAnswering> {
+        let runtime = self.runtime.lock().unwrap();
+        let Some(session) = runtime.sessions.get(session_key) else {
+            return Vec::new();
+        };
+        let mut items = session
+            .pending
+            .iter()
+            .filter(|(owner, pending)| owner.as_str() != sender_id && pending.committed)
+            .flat_map(|(_, pending)| {
+                pending
+                    .targets
+                    .iter()
+                    .map(move |target| (pending.started, target))
+            })
+            .filter(|(_, target)| !target.supplemental && !target.content.trim().is_empty())
+            .collect::<Vec<_>>();
+        items.sort_by_key(|(started, target)| (*started, target.timestamp));
+        items
+            .into_iter()
+            .map(|(_, target)| judge::AlreadyAnswering {
+                sender_name: target.sender_name.clone(),
+                sender_id: target.sender_id.clone(),
+                text: target.content.clone(),
+            })
+            .collect()
+    }
+
     pub(in crate::platforms::plugins::real_context) fn drop_pending(
         &self,
         session_key: &str,

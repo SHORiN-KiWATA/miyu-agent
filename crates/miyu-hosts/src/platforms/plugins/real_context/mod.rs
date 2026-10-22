@@ -2,6 +2,7 @@ mod decision_log;
 mod history;
 mod inject;
 mod pending;
+mod repeat;
 mod restraint;
 mod runtime;
 mod targeting;
@@ -417,10 +418,20 @@ impl PlatformPlugin for RealContextPlugin {
 
     fn before_send<'a>(
         &'a self,
-        _context: &'a PlatformTurnContext,
+        context: &'a PlatformTurnContext,
         mut message: OutboundMessage,
     ) -> BoxFuture<'a, Result<PreparedSend>> {
         Box::pin(async move {
+            // 回的这条后来被人复读了:那句话已经是大家一起说的,不再引用、@ 某一个人。
+            if context.conversation.kind == ConversationKind::Group
+                && matches!(
+                    message.origin,
+                    OutboundOrigin::FinalReply | OutboundOrigin::Tool
+                )
+                && self.replying_to_repeated(context)
+            {
+                context.send_without_reply_cues();
+            }
             if !message.metadata.contains_key(ORIGINAL_TEXT_KEY) {
                 message.metadata.insert(
                     ORIGINAL_TEXT_KEY.to_string(),

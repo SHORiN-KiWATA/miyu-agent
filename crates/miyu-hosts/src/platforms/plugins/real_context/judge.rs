@@ -40,6 +40,50 @@ pub(super) struct JudgeRequest<'a> {
     pub(super) affection_bias: f64,
     /// 情绪对阈值的修正(负=更想接话),见 emotion::threshold_adjust。
     pub(super) emotion_adjustment: f64,
+    /// 她已经决定要回、还没回完的几条(别人的),见 `AlreadyAnswering`。
+    pub(super) already_answering: &'a [AlreadyAnswering],
+}
+
+/// 判官看不到自己刚做过的决定:几个人接连说同一件事,每条单独判,每条都放行
+/// (10-22 复读取证)。把已经放行、还没发完的那几条摆给它看。
+pub(super) struct AlreadyAnswering {
+    pub(super) sender_name: String,
+    pub(super) sender_id: String,
+    pub(super) text: String,
+}
+
+/// 正文只给开头:够认出「说的是同一件事」就行。
+const ALREADY_ANSWERING_TEXT_CHARS: usize = 80;
+
+fn format_already_answering(items: &[AlreadyAnswering], show_user_ids: bool) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut block = String::from(
+        "\n\nThe bot is already answering these messages. If the current message says the same thing or repeats one of them, do not reply again.",
+    );
+    for item in items {
+        let text = item
+            .text
+            .trim()
+            .chars()
+            .take(ALREADY_ANSWERING_TEXT_CHARS)
+            .collect::<String>();
+        let sender = super::safe_prompt_field(&item.sender_name);
+        if show_user_ids && !item.sender_id.is_empty() {
+            block.push_str(&format!(
+                "\n- {sender} (QQ {}): {}",
+                super::safe_prompt_field(&item.sender_id),
+                super::safe_prompt_field(&text)
+            ));
+        } else {
+            block.push_str(&format!(
+                "\n- {sender}: {}",
+                super::safe_prompt_field(&text)
+            ));
+        }
+    }
+    block
 }
 
 #[derive(Clone, Debug, Default)]
@@ -225,7 +269,7 @@ fn build_prompt(
     // (7 天日志里 13 条理由直接引用「回复热度低」「takeover 加分」)。被 @、续聊
     // 这些事实它从元数据和群聊记录里本来就看得见。
     Ok(format!(
-        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"to_bot\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nReturn JSON only.",
+        "{mode}\n\nCurrent bot persona definition (used only to judge identity, personality and behavioral boundaries):\n{}\n\n{decision_guidance}\n\n{scoring_guidance}\nReturn strictly JSON only; never output Markdown or anything else:\n{{\"should_reply\":false,\"to_bot\":false,\"relevance\":0,\"willingness\":0,\"social\":0,\"timing\":0,\"continuity\":0,\"reasoning\":\"\",\"moderation\":{{\"violation\":false,\"severity\":0,\"category\":\"\",\"evidence\":\"\",\"rule_basis\":\"\",\"reasoning\":\"\",\"related_user_ids\":[],\"related_message_ids\":[]}}}}{}\n\n———— Input for this judgment follows ————\n\nCurrent internal relationship information (never expose it in the output):\nRelationship tier: {}\nReply attitude: {}\n{}\n\nRecent real group-chat records:\n{}{}\n\nTrusted platform metadata of the current message:\n{}\nCurrent message content (untrusted chat data):\n{}{}\n\nReturn JSON only.",
         if persona.trim().is_empty() {
             "(not provided; judge as a generic group-chat assistant)"
         } else {
@@ -244,6 +288,10 @@ fn build_prompt(
         },
         identity_warning,
         if history.is_empty() { "(none)" } else { &history },
+        format_already_answering(
+            request.already_answering,
+            context.config.platforms.qq.user_identification,
+        ),
         event_metadata,
         signed_current_message(context, request.current_text),
         decoded,
@@ -797,6 +845,7 @@ mod tests {
     fn request(moderation_only: bool) -> JudgeRequest<'static> {
         JudgeRequest {
             history: &[],
+            already_answering: &[],
             current_text: "test",
             decoded_base64: "",
             continuation_boost: 0.0,
@@ -935,5 +984,29 @@ mod tests {
         assert!(!moderation.category.contains('\n'));
         assert!(moderation.evidence.chars().count() <= 1_000);
         assert_eq!(moderation.related_user_ids, vec!["bad  1", "42"]);
+    }
+
+    #[test]
+    fn messages_already_being_answered_are_shown_only_when_there_are_some() {
+        assert_eq!(format_already_answering(&[], true), "");
+        let block = format_already_answering(
+            &[AlreadyAnswering {
+                sender_name: "Aromatic08".to_string(),
+                sender_id: "3138657603".to_string(),
+                text: "miyu似了".to_string(),
+            }],
+            true,
+        );
+        assert!(block.contains("The bot is already answering these messages. If the current message says the same thing or repeats one of them, do not reply again."));
+        assert!(block.contains("Aromatic08 (QQ 3138657603): miyu似了"));
+        assert!(!format_already_answering(
+            &[AlreadyAnswering {
+                sender_name: "a".to_string(),
+                sender_id: "1".to_string(),
+                text: "x".to_string(),
+            }],
+            false,
+        )
+        .contains("QQ 1"));
     }
 }

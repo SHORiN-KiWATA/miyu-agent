@@ -862,3 +862,30 @@ fn final_reply_repeating_a_tool_send_is_caught_even_when_short() {
         "工具侧的闸也要认逐字相同的短句"
     );
 }
+
+/// 回的那条后来被人复读了(real_context/repeat.rs):照常回,但不带引用和 @。
+#[tokio::test]
+async fn a_reply_marked_plain_drops_the_quote_and_the_mention() {
+    for plain in [false, true] {
+        let (_temp, mut context, adapter) = test_turn_context(false);
+        context.conversation.kind = ConversationKind::Group;
+        context.set_response_target(Some(ResponseTarget {
+            message_id: "first".to_string(),
+            message_seq: None,
+            user_id: "20000".to_string(),
+            quote: true,
+            mention: true,
+            explicit_mention_user_ids: Vec::new(),
+        }));
+        if plain {
+            context.send_without_reply_cues();
+        }
+        context
+            .send(OutboundMessage::text(OutboundOrigin::FinalReply, "没似"))
+            .await
+            .unwrap();
+        let messages = adapter.messages.lock().unwrap();
+        let target = messages[0].response_target.as_ref().unwrap();
+        assert_eq!((target.quote, target.mention), (!plain, !plain));
+    }
+}

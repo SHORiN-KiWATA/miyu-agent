@@ -86,6 +86,8 @@ pub struct PlatformTurnContext {
     pub(crate) reply_rate_available: AtomicBool,
     pub(crate) pending_final_reply_suppression: AtomicBool,
     pub(crate) pending_prior_reply_suppression: AtomicBool,
+    /// 本回合的回复不带引用和 @(插件在 before_send 里置位,见 real_context/repeat.rs)。
+    pub(crate) plain_reply_target: AtomicBool,
     /// 后台还在传的附件消息（见 `background_send`）。
     pub(crate) uploads: UploadsInFlight,
     /// 后台发的附件没传上去时往哪报（平台那边装，没装就只记日志）。
@@ -153,6 +155,7 @@ impl PlatformTurnContext {
             reply_rate_available: AtomicBool::new(true),
             pending_final_reply_suppression: AtomicBool::new(false),
             pending_prior_reply_suppression: AtomicBool::new(false),
+            plain_reply_target: AtomicBool::new(false),
             uploads: UploadsInFlight::default(),
             undelivered_hook: None,
         }
@@ -241,6 +244,20 @@ impl PlatformTurnContext {
             }
             None => *pending = None,
         }
+    }
+
+    /// 本回合预留的回复目标指向哪条消息(还没被 send 取走时)。
+    pub(crate) fn reserved_response_target_message_id(&self) -> Option<String> {
+        self.response_target
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|pending| pending.target.message_id.clone())
+    }
+
+    /// 本回合接下来的回复照常回,但不带引用和 @。
+    pub(crate) fn send_without_reply_cues(&self) {
+        self.plain_reply_target.store(true, Ordering::Relaxed);
     }
 
     pub(crate) fn set_adaptive_response_target(
@@ -516,7 +533,14 @@ impl PlatformTurnContext {
                         Instant::now(),
                     )
                 })
-                .or_else(|| target.policy.is_none().then(|| target.target.clone()));
+                .or_else(|| target.policy.is_none().then(|| target.target.clone()))
+                .map(|mut resolved| {
+                    if self.plain_reply_target.load(Ordering::Relaxed) {
+                        resolved.quote = false;
+                        resolved.mention = false;
+                    }
+                    resolved
+                });
             // 这一行是「她为什么没引用那条消息」唯一能事后查的依据：库里只留
             // 结果，留不下判断时的现场（隔了几条、当时最后一条是不是她自己
             // 发的）。用户 09-19 问的就是这个，而当时查不出来。
