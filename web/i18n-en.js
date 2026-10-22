@@ -1940,7 +1940,7 @@ window.MIYU_I18N_EN = Object.freeze({
   "空 = 按名字找：先 PATH，再常见安装目录": "Empty = look it up by name: PATH first, then common install directories.",
   "空 = 内置默认字体": "Empty = the built-in default font.",
   "空 = 跟随正文字体": "Empty = follow the body font.",
-  "空 Token 只接受本机回环连接": "An empty token accepts loopback connections only.",
+  "空 Token 只接受本机和局域网连接": "An empty token accepts local and LAN connections only.",
   "空心 = 存储态(已衰减),实心 = 叠加时段与冷清后的有效态": "Hollow = stored state (decayed); solid = effective state after time-of-day and idle adjustments",
   "空文件": "Empty file",
   "空白页上的四个快捷入口；留空用默认。": "The four shortcuts on the blank page; empty uses the defaults.",

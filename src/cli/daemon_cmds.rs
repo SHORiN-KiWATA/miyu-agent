@@ -275,10 +275,19 @@ pub(in crate::cli) async fn print_daemon_status(paths: &MiyuPaths) -> Result<()>
     } else {
         format!("{}: {}", t("connected", "已连接"), accounts.join(", "))
     };
-    println!(
-        "{} ws://localhost:{port}/ws · {connection}",
-        t("Tencent QQ:", "腾讯 QQ：")
-    );
+    // QQ 监听器总是绑 0.0.0.0,把本机各个 IPv4 地址都列出来。
+    let urls: Vec<String> = ipc::web_access_urls_for(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        port as u16,
+    )
+    .into_iter()
+    .map(|url| format!("{}/ws", url.replacen("http://", "ws://", 1)))
+    .collect();
+    let label = t("Tencent QQ:", "腾讯 QQ：");
+    for line in daemon_web_status_lines(label, &urls) {
+        println!("{line}");
+    }
+    println!("{} {connection}", " ".repeat(visible_width(label)));
     Ok(())
 }
 

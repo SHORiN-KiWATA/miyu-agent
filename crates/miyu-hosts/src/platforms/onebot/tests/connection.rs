@@ -114,23 +114,35 @@ fn token_check_accepts_bearer_and_rejects_wrong() {
 }
 
 #[test]
-fn empty_token_only_authorizes_loopback_connections() {
+fn empty_token_authorizes_only_local_network_connections() {
     let headers = HeaderMap::new();
-    assert!(connection_authorized(
-        &headers,
-        "",
-        "127.0.0.1:1234".parse().unwrap()
-    ));
-    assert!(connection_authorized(
-        &headers,
-        "",
-        "[::1]:1234".parse().unwrap()
-    ));
-    assert!(!connection_authorized(
-        &headers,
-        "",
-        "192.168.1.5:1234".parse().unwrap()
-    ));
+    for peer in [
+        "127.0.0.1:1234",
+        "[::1]:1234",
+        "192.168.1.5:1234",
+        "10.0.0.2:1234",
+        "172.17.0.2:1234",
+        "100.101.102.103:1234",
+        "[fd00::5]:1234",
+        "[fe80::1]:1234",
+        "[::ffff:192.168.1.5]:1234",
+    ] {
+        assert!(
+            connection_authorized(&headers, "", peer.parse().unwrap()),
+            "{peer} should be accepted"
+        );
+    }
+    for peer in [
+        "8.8.8.8:1234",
+        "100.128.0.1:1234",
+        "[2001:db8::1]:1234",
+        "[::ffff:8.8.8.8]:1234",
+    ] {
+        assert!(
+            !connection_authorized(&headers, "", peer.parse().unwrap()),
+            "{peer} should be rejected"
+        );
+    }
 }
 
 #[test]

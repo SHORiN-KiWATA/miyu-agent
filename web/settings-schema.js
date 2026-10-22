@@ -1896,7 +1896,7 @@
       {
         path: "access_token",
         label: t("反向 WebSocket 验证 Token"),
-        hint: t("空 Token 只接受本机回环连接"),
+        hint: t("空 Token 只接受本机和局域网连接"),
         kind: "secret",
         default: "",
       },

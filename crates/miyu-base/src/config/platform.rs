@@ -614,7 +614,7 @@ pub struct OneBotConfig {
     pub enabled: bool,
     pub reverse_ws_port: u16,
     /// Checked against NapCat's `Authorization: Bearer` handshake header.
-    /// Empty tokens are accepted only from a loopback peer.
+    /// Empty tokens are accepted only from loopback or private-network peers.
     pub access_token: String,
     pub admin_users: Vec<i64>,
     /// 管理员别名(键 = QQ 号字符串):终端发消息工具的 `to` 选项用它列出

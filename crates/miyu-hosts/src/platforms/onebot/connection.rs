@@ -360,7 +360,7 @@ pub(crate) async fn onebot_ws(
     }
     if !connection_authorized(&headers, &config.access_token, peer) {
         if config.access_token.trim().is_empty() {
-            tracing::warn!(target: "miyu::qq", %peer, reason = "non_loopback_without_token", "{}", t("OneBot client rejected", "OneBot 客户端已拒绝"));
+            tracing::warn!(target: "miyu::qq", %peer, reason = "public_peer_without_token", "{}", t("OneBot client rejected", "OneBot 客户端已拒绝"));
         } else {
             tracing::warn!(target: "miyu::qq", %peer, reason = "bad_token", "{}", t("OneBot client rejected", "OneBot 客户端已拒绝"));
         }
@@ -396,9 +396,30 @@ pub(in crate::platforms::onebot) fn connection_authorized(
 ) -> bool {
     let expected = expected.trim();
     if expected.is_empty() {
-        peer.ip().is_loopback()
+        is_local_network_peer(peer.ip())
     } else {
         token_matches(headers, expected)
+    }
+}
+
+/// 空 Token 放行的来源:本机回环和局域网私有地址(含 Tailscale 等用的
+/// 100.64/10、IPv6 ULA / 链路本地)。公网来源仍必须带 Token。
+fn is_local_network_peer(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || (a == 100 && (b & 0xc0) == 64)
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_local_network_peer(std::net::IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
     }
 }
 
