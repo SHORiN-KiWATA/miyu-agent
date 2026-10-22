@@ -43,3 +43,18 @@ brew install shorin-kiwata/miyu/miyu
 ```
 
 六个 Linux 包都在 Arch、Debian 13、Ubuntu 24.04、Ubuntu 26.04、Linux Mint 22.3、Fedora 44 的干净容器里装过一遍，macOS 包在 macOS 15 上解压验收并真装了一遍 Homebrew formula，每个都让她真回了一句话。Arch 也可以走 AUR：`miyu` / `miyu-voice` 是二进制包装，`miyu-git` 从源码构建。
+
+<details>
+<summary>SHA256 校验值（七个安装包）</summary>
+
+```text
+54b77daf53ab0d393c12d15f194c2f23bcd8a8535fa467448fae3d58eac9d837  miyu-0.7.3-1-aarch64-apple-darwin.tar.gz
+7938df38d9eb37708c4f222a47602ed070a2a0f359ef2185044832d6ca02dfbf  miyu-0.7.3-1-x86_64.pkg.tar.zst
+fc4da8f23ffc7b9e2b5b0d35678120395b3c6abefbda084d92efa48f3839a6f6  miyu-0.7.3-1.fc44.x86_64.rpm
+c514763d3fe332dd478ec15b674cc588b8035001197ba4e659f114d90a84468d  miyu-voice-0.7.3-1-x86_64.pkg.tar.zst
+02b780e29709b20e0fdbddaf6543e9dfd248ed1426a17811d2fb7c45abdab43c  miyu-voice-0.7.3-1.fc44.x86_64.rpm
+ce84beeab8e0e449eddae46395dc23004bfc6462630c864fa63626dcd4cb7c2e  miyu-voice_0.7.3-1_amd64.deb
+324476216680743b1c1fc0e2ccc413465a0cda4601dfeb7075bcf741f604ba04  miyu_0.7.3-1_amd64.deb
+```
+
+</details>
