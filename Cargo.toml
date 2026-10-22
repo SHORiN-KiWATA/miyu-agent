@@ -1,6 +1,6 @@
 [package]
 name = "miyu"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
@@ -74,7 +74,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.7.2"
+version = "0.7.3"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
