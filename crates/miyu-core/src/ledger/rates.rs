@@ -230,7 +230,26 @@ pub async fn fetch_rate(
     if !config.free_fallback_enabled {
         anyhow::bail!("exchange rate API key failed or missing and free fallback is disabled");
     }
-    let url = format!("https://open.er-api.com/v6/latest/{base}");
+    let error =
+        match fetch_open_rate(&format!("https://open.er-api.com/v6/latest/{base}"), target).await {
+            Ok(rate) => return Ok((rate, "er-api")),
+            Err(error) => error,
+        };
+    // er-api 失败（网络 / 限流 / 没有这个币种）时再问一个免 key 源：同样的 JSON
+    // 结构，ECB 参考汇率，约 30 种货币。它也拿不到就报 er-api 的原错误。
+    match fetch_open_rate(
+        &format!("https://allratestoday.com/api/open/latest/{base}"),
+        target,
+    )
+    .await
+    {
+        Ok(rate) => Ok((rate, "allratestoday")),
+        Err(_) => Err(error),
+    }
+}
+
+/// 免 key 源的共同形状：`{"rates": {"JPY": 151.2, …}}`。
+async fn fetch_open_rate(url: &str, target: &str) -> Result<f64> {
     let data: Value = miyu_base::http_response::shared_client()
         .get(url)
         .send()
@@ -238,10 +257,8 @@ pub async fn fetch_rate(
         .error_for_status()?
         .json()
         .await?;
-    let rate = data
-        .get("rates")
+    data.get("rates")
         .and_then(|rates| rates.get(target))
         .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("target currency not found: {target}"))?;
-    Ok((rate, "er-api"))
+        .ok_or_else(|| anyhow::anyhow!("target currency not found: {target}"))
 }

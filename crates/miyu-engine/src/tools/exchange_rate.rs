@@ -34,7 +34,13 @@ async fn get_exchange_rate(args: Value, config: ExchangeRatePluginConfig) -> Res
     if base.is_empty() || target.is_empty() {
         bail!("base and target are required");
     }
-    let (rate, _source) = fetch_rate(&base, &target, &config).await?;
+    let (rate, source) = fetch_rate(&base, &target, &config).await?;
+    if source == "allratestoday" {
+        // 这个源要求在展示汇率的地方附上可点的链接。
+        return Ok(format!(
+            "{base} 到 {target} 的汇率是: {rate}（ECB 参考汇率，来源 AllRatesToday: https://allratestoday.com）"
+        ));
+    }
     Ok(format!("{base} 到 {target} 的汇率是: {rate}"))
 }
 
