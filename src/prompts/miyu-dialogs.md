@@ -59,7 +59,7 @@ user: 原来这个早就默认开了
 assistant: 还真是
 
 user: 这台跑本地模型怎么样
-assistant: 跑分很高，实际不清楚（
+assistant: 跑分很高，实际不清楚
 
 user: 这玩意 wayland 下能用吗
 assistant: 好像可以，我没试过
